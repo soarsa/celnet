@@ -1,43 +1,33 @@
 /**
- * CurveWorkspace — the fixed-income (rates curve) LENS of the shared,
- * class-parametric `MarketDataWorkspace` (`fe-fi-migration` #2); the `curve` rail
- * row opens the Market Data workspace on this lens. Behaviour is unchanged: it is
- * the rates CURVE inspection surface (FI-ARCHITECTURE §4.2). A
- * trader builds / perturbs the calibrated USD-SOFR curve set (its par-OIS pillars)
- * and inspects the bootstrapped discount curve three ways: the discount factor
- * `DF(t)`, the continuously-compounded zero rate `z(t) = −ln DF(t)/t`, and the
- * instantaneous forward `f(t) = −d ln DF/dt`, across the curve span, alongside the
- * pillar par-rate ladder.
+ * CurveWorkspace — the fixed-income CURVES multi-curve manager (server commit
+ * 38bcff9a); the rates lens of the shared, class-parametric `MarketDataWorkspace`.
+ * It is now a full manager over the server's persisted {@link CurveDefinition}
+ * registry rather than one hardcoded curve:
  *
- * Pillars are not restricted to the whole-year grid: each pillar's maturity is a
- * `PillarTenor` — a whole-year tenor, a month tenor (sub-/broken-year), or an
- * explicit odd-dated ("broken date") maturity — and the editor lets the trader add,
- * remove, and re-point pillars across all three arms.
+ *   • **Dashboard** (landing) — every persisted curve in a table (name + primary
+ *     badge, currency, index, interpolation, pillar summary); row → edit, "New
+ *     curve" → a blank definition.
+ *   • a **curve picker** in the header selects the ACTIVE curve (with its per-currency
+ *     primary badge); the Definition / Pillars / Query lenses operate on it.
+ *   • **Definition** — create / edit the metadata + the now-WIRE-REAL interpolation
+ *     scheme, persisted via create / update.
+ *   • **Pillars** — the par-OIS pillar ladder of the SELECTED curve, with the live
+ *     bootstrap reprice/preview, saved via `update_curve_definition`.
+ *   • **By instrument reference** — the server `BuildCurve` calibration tool (a
+ *     request-scoped build, unchanged).
+ *   • **Query · mark · scenario** — the SurfaceService GetCurve / MarkCurve /
+ *     CurveScenario query lens, seeded from the selected curve (ADR-0021).
  *
- * The curve math is REAL and SHARED: the workspace samples the SAME in-browser
- * bootstrap the OIS pricer uses (`src/data/ratesPricing.ts`, `bootstrapCurveFromSet`
- * / `sampleCurve`), interpolated log-linear-on-log-DF — the shipping default of the
- * server's `celnet-rates::curve`. Editing a pillar re-bootstraps the curve and
- * re-samples every view; a malformed edit surfaces the real validation error rather
- * than a fabricated curve.
+ * The curve math is REAL and SHARED: every lens samples the SAME in-browser bootstrap
+ * the OIS pricer uses (`src/data/ratesPricing.ts`), interpolated log-linear-on-log-DF
+ * (the server's shipping default). The definition's chosen interpolation rides the
+ * wire and the SERVER bootstraps with it; the in-browser preview is honestly labelled
+ * as the log-linear approximation of the pillar shape.
  *
- * The pillar-editor term structure is drawn by the design-system `YieldCurve` chart
- * (mockup 14): the bootstrapped pillar zero rates feed its `CurveNode` contract, and
- * because it interpolates ln(DF) log-linearly from those nodes — the same scheme as
- * the bootstrap — the drawn zero / forward / DF overlays reproduce the workspace's
- * real curve, with an on-chart hover readout off the identical math. The curve model
- * is stated honestly: only log-linear-on-log-DF is wired here; monotone-convex and
- * turn / meeting jumps exist server-engine-side but are not on the wire `CurveSet`,
- * so they render as DISABLED Target affordances, never as fabricated curve math.
- *
- * A third lens — **Query · mark · scenario** — drives the FI market-data query
- * surface (SurfaceService `GetCurve` / `MarkCurve` / `CurveScenario`, ADR-0021: the
- * asset-class-agnostic query seam the FX vol surface already has, generalized so
- * fixed income rides it too). It reads a bootstrapped curve on a tenor axis, pins it
- * under a fresh server-assigned version (a later query reproduces that exact marked
- * curve), and bump-and-reprices it (parallel + optional per-pillar key-rate shift,
- * with an optional repriced leg). Every call rides the ONE contract through
- * `app.transport`, byte-identical live vs. the offline `?mock` bootstrap.
+ * Gating: list / view rides `view · fixed_income`; create / update / delete / save
+ * ride `refdata · fixed_income` (the server requires Refdata·FixedIncome). A read-only
+ * viewer sees the dashboard and every lens but cannot mutate — write controls are
+ * hidden or disabled, never faked.
  */
 
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -52,6 +42,7 @@ import type { ColumnDef } from "../lib/grid";
 import type {
   BrokenDate,
   CalibratedCurve,
+  CurveDefinition,
   CurvePoint,
   CurveScenarioResult,
   DatePillar,
@@ -64,6 +55,7 @@ import type {
   RatesInstrument,
 } from "../data/contract";
 import {
+  curveInterpolationLabel,
   INSTRUMENT_FAMILY_LABELS,
   oisRatesInstrument,
   pillarTenorLabel,
@@ -71,6 +63,7 @@ import {
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import { useApp } from "../app/AppContext";
 import { useReferenceData } from "../hooks/useReferenceData";
+import { useCurveDefinitions } from "../hooks/useCurveDefinitions";
 import {
   bootstrapCurveFromSet,
   discountFactorAt,
@@ -81,16 +74,23 @@ import {
   DEFAULT_USD_SOFR_CURVE,
   type CurveSamplePoint,
 } from "../data/ratesPricing";
+import { CurveDashboard } from "./CurveDashboard";
+import { CurveDefinitionEditor } from "./CurveDefinitionEditor";
 import styles from "./CurveWorkspace.module.css";
 
-/** The curve-authoring / query modes the workspace offers. */
-type AuthoringMode = "pillars" | "instruments" | "query";
+/** The manager lenses, in the order the tab bar offers them. */
+type ManagerMode =
+  | "dashboard"
+  | "definition"
+  | "pillars"
+  | "instruments"
+  | "query";
 
 /** Number of points sampled across the span for the term-structure plots. */
 const SAMPLE_COUNT = 96;
 
-/** The curve reference (spot-anchor) date all pillar schedules roll from. */
-const REFERENCE_DATE: BrokenDate = DEFAULT_USD_SOFR_CURVE.referenceDate;
+/** The default reference (spot-anchor) date for the instrument-reference builder. */
+const DEFAULT_REFERENCE_DATE: BrokenDate = DEFAULT_USD_SOFR_CURVE.referenceDate;
 
 /** One editable par-OIS pillar in the builder (the par rate held in percent). */
 interface EditablePillar {
@@ -108,30 +108,50 @@ function nextPillarId(): string {
 }
 
 /**
- * Order a pillar set by true maturity — the single year-fraction coordinate
- * `pillarMaturityYears` yields for every arm (years / months / broken date), so a
- * `1M` pillar sorts above `1Y`, and a broken date sorts into its real slot. The
- * bootstrap requires strictly-increasing maturities; holding this as an invariant
- * after every edit keeps the ladder valid and the horizon picks in tenor order.
+ * Order a pillar set by true maturity against a reference date — the single
+ * year-fraction coordinate `pillarMaturityYears` yields for every arm (years /
+ * months / broken date), so a `1M` pillar sorts above `1Y`, and a broken date sorts
+ * into its real slot. The bootstrap requires strictly-increasing maturities; holding
+ * this as an invariant after every edit keeps the ladder valid.
  */
 function sortByMaturity(
   list: readonly EditablePillar[],
+  refDate: BrokenDate,
 ): readonly EditablePillar[] {
   return [...list].sort(
     (a, b) =>
-      pillarMaturityYears(a.tenor, REFERENCE_DATE) -
-      pillarMaturityYears(b.tenor, REFERENCE_DATE),
+      pillarMaturityYears(a.tenor, refDate) -
+      pillarMaturityYears(b.tenor, refDate),
   );
 }
 
-/** The DEFAULT pillar ladder, lifted into the editor's percent representation. */
-const INITIAL_PILLARS: readonly EditablePillar[] = sortByMaturity(
-  DEFAULT_USD_SOFR_CURVE.pillars.map((p) => ({
-    id: nextPillarId(),
-    tenor: p.tenor,
-    parRatePct: p.parRate * 100,
-  })),
-);
+/** Lift a curve set's pillar ladder into the editor's (maturity-ordered) percent form. */
+function editablePillarsFromSet(set: RatesCurveSet): readonly EditablePillar[] {
+  return sortByMaturity(
+    set.pillars.map((p) => ({
+      id: nextPillarId(),
+      tenor: p.tenor,
+      parRatePct: p.parRate * 100,
+    })),
+    set.referenceDate,
+  );
+}
+
+/** Assemble the wire curve set the bootstrap consumes from the editor's pillars. */
+function curveSetFromEditable(
+  pillars: readonly EditablePillar[],
+  refDate: BrokenDate,
+  currency: string,
+): RatesCurveSet {
+  return {
+    currency,
+    referenceDate: refDate,
+    pillars: pillars.map((p) => ({
+      tenor: p.tenor,
+      parRate: p.parRatePct / 100,
+    })),
+  };
+}
 
 /** One row of the pillar ladder: the quote and its bootstrapped curve readings. */
 interface LadderRow {
@@ -187,17 +207,18 @@ function inputToBroken(value: string): BrokenDate | null {
 }
 
 /** A representative whole-year value for a tenor, for seeding an arm switch. */
-function representativeYears(tenor: PillarTenor): number {
-  return Math.max(1, Math.round(pillarMaturityYears(tenor, REFERENCE_DATE)));
+function representativeYears(tenor: PillarTenor, refDate: BrokenDate): number {
+  return Math.max(1, Math.round(pillarMaturityYears(tenor, refDate)));
 }
 
 /** Convert a tenor to a different arm, preserving an approximate maturity. */
 function switchKind(
   tenor: PillarTenor,
   kind: PillarTenor["kind"],
+  refDate: BrokenDate,
 ): PillarTenor {
   if (tenor.kind === kind) return tenor;
-  const years = representativeYears(tenor);
+  const years = representativeYears(tenor, refDate);
   switch (kind) {
     case "years":
       return { kind: "years", years };
@@ -207,9 +228,9 @@ function switchKind(
       return {
         kind: "date",
         maturityDate: {
-          year: REFERENCE_DATE.year + years,
-          month: REFERENCE_DATE.month,
-          day: REFERENCE_DATE.day,
+          year: refDate.year + years,
+          month: refDate.month,
+          day: refDate.day,
         },
       };
   }
@@ -264,88 +285,284 @@ const LADDER_COLUMNS: readonly ColumnDef<LadderRow>[] = [
 ];
 
 /**
- * The rates CURVE surface. Two coherent authoring modes share the same bootstrap
- * and the same discount/zero readout: the slice-A **pillar editor** (author the
- * par-OIS pillars directly across the years / months / broken-date arms) and the
- * **build-by-instrument-reference** mode (pick reference-data registry instruments
- * and supply a calibrating quote each — the SERVER resolves every id, bootstraps,
- * and returns the calibrated points). A tab switches between them.
+ * The Curves multi-curve manager. Owns the definition registry (via
+ * {@link useCurveDefinitions}), the selected curve, and the active lens; each lens is
+ * a focused child operating on the selected {@link CurveDefinition}.
  */
 export function CurveWorkspace(): React.ReactElement {
-  const [mode, setMode] = useState<AuthoringMode>("pillars");
+  const app = useApp();
+  const isAuthed = app.auth.user !== null;
+  const curves = useCurveDefinitions(app.transport, isAuthed);
+  const canEdit = app.auth.can("refdata", "fixed_income");
+
+  const [mode, setMode] = useState<ManagerMode>("dashboard");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The definition being edited: null ⇒ create a new curve; a string ⇒ edit that id.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [busyCurveId, setBusyCurveId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // The active curve is derived (no effect): the explicit selection if it still
+  // exists, else the currency primary, else the first — so a fresh load, a delete, or
+  // a create always resolves to a live curve.
+  const selected = useMemo<CurveDefinition | null>(() => {
+    const list = curves.definitions;
+    return (
+      list.find((d) => d.curveId === selectedId) ??
+      list.find((d) => d.primary) ??
+      list[0] ??
+      null
+    );
+  }, [curves.definitions, selectedId]);
+
+  const openDashboard = useCallback(() => setMode("dashboard"), []);
+
+  const openEdit = useCallback((curveId: string) => {
+    setSelectedId(curveId);
+    setEditingId(curveId);
+    setMode("definition");
+  }, []);
+
+  const openNew = useCallback(() => {
+    setEditingId(null);
+    setMode("definition");
+  }, []);
+
+  const openPillars = useCallback((curveId: string) => {
+    setSelectedId(curveId);
+    setMode("pillars");
+  }, []);
+
+  const onSaved = useCallback((curveId: string) => {
+    setSelectedId(curveId);
+    setActionError(null);
+    setMode("dashboard");
+  }, []);
+
+  const handleDelete = useCallback(
+    async (curveId: string): Promise<void> => {
+      setBusyCurveId(curveId);
+      setActionError(null);
+      try {
+        await curves.deleteCurve(curveId);
+      } catch (e: unknown) {
+        setActionError(e instanceof Error ? e.message : "delete failed");
+      } finally {
+        setBusyCurveId(null);
+      }
+    },
+    [curves],
+  );
+
+  // The definition open in the editor (null ⇒ create).
+  const editing = useMemo<CurveDefinition | null>(
+    () =>
+      editingId === null
+        ? null
+        : (curves.definitions.find((d) => d.curveId === editingId) ?? null),
+    [editingId, curves.definitions],
+  );
+
+  const TABS: readonly { id: ManagerMode; label: string }[] = [
+    { id: "dashboard", label: "Dashboard" },
+    { id: "definition", label: "Definition" },
+    { id: "pillars", label: "Pillars" },
+    { id: "instruments", label: "By instrument reference" },
+    { id: "query", label: "Query · mark · scenario" },
+  ];
+
+  const onTab = (id: ManagerMode): void => {
+    if (id === "definition") {
+      // The Definition tab edits the SELECTED curve (or a new one if none exists).
+      setEditingId(selected?.curveId ?? null);
+    }
+    setActionError(null);
+    setMode(id);
+  };
+
+  const showPicker = mode === "pillars" || mode === "query";
 
   return (
-    <div className={styles.page}>
-      <div
-        className={styles.modeTabs}
-        role="tablist"
-        aria-label="curve authoring mode"
-      >
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "pillars"}
-          className={`${styles.modeTab} ${mode === "pillars" ? styles.modeTabActive : ""}`}
-          onClick={() => setMode("pillars")}
+    <div className={styles.page} data-testid="curves-manager">
+      <div className={styles.managerBar}>
+        <div
+          className={styles.modeTabs}
+          role="tablist"
+          aria-label="curves manager lens"
         >
-          Pillar editor
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "instruments"}
-          className={`${styles.modeTab} ${mode === "instruments" ? styles.modeTabActive : ""}`}
-          onClick={() => setMode("instruments")}
-        >
-          By instrument reference
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "query"}
-          className={`${styles.modeTab} ${mode === "query" ? styles.modeTabActive : ""}`}
-          onClick={() => setMode("query")}
-        >
-          Query · mark · scenario
-        </button>
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={mode === t.id}
+              className={`${styles.modeTab} ${mode === t.id ? styles.modeTabActive : ""}`}
+              onClick={() => onTab(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {showPicker && (
+          <div className={styles.curvePickRow}>
+            <label className={styles.pickerLabel} htmlFor="curve-picker">
+              Curve
+            </label>
+            <select
+              id="curve-picker"
+              className={styles.pickerSelect}
+              value={selected?.curveId ?? ""}
+              disabled={curves.definitions.length === 0}
+              aria-label="active curve"
+              onChange={(e) => setSelectedId(e.target.value)}
+            >
+              {curves.definitions.length === 0 && (
+                <option value="">No curves defined</option>
+              )}
+              {curves.definitions.map((d) => (
+                <option key={d.curveId} value={d.curveId}>
+                  {d.displayName}
+                  {d.primary ? " (primary)" : ""}
+                </option>
+              ))}
+            </select>
+            {selected?.primary && (
+              <span className={styles.pickerBadge}>Primary</span>
+            )}
+          </div>
+        )}
       </div>
-      {mode === "pillars" && <PillarEditorMode />}
+
+      {mode === "dashboard" && (
+        <CurveDashboard
+          definitions={curves.definitions}
+          isLoading={curves.isLoading}
+          error={curves.error}
+          actionError={actionError}
+          canEdit={canEdit}
+          busyCurveId={busyCurveId}
+          onEdit={openEdit}
+          onEditPillars={openPillars}
+          onNew={openNew}
+          onDelete={(id) => void handleDelete(id)}
+        />
+      )}
+
+      {mode === "definition" && (
+        <CurveDefinitionEditor
+          key={editing?.curveId ?? "new"}
+          existing={editing}
+          canEdit={canEdit}
+          onCreate={curves.createCurve}
+          onUpdate={curves.updateCurve}
+          onSaved={onSaved}
+          onCancel={openDashboard}
+        />
+      )}
+
+      {mode === "pillars" &&
+        (selected ? (
+          <PillarEditorMode
+            key={selected.curveId}
+            definition={selected}
+            canEdit={canEdit}
+            onSave={async (updated) => {
+              await curves.updateCurve(selected.curveId, {
+                ...selected,
+                pillars: updated,
+              });
+            }}
+          />
+        ) : (
+          <NoCurveEmpty onNew={openNew} canEdit={canEdit} />
+        ))}
+
       {mode === "instruments" && <InstrumentReferenceMode />}
-      {mode === "query" && <CurveQueryMode />}
+
+      {mode === "query" &&
+        (selected ? (
+          <CurveQueryMode key={selected.curveId} definition={selected} />
+        ) : (
+          <NoCurveEmpty onNew={openNew} canEdit={canEdit} />
+        ))}
     </div>
   );
 }
 
-function PillarEditorMode(): React.ReactElement {
-  const [pillars, setPillars] =
-    useState<readonly EditablePillar[]>(INITIAL_PILLARS);
-  const [horizonYears, setHorizonYears] = useState(5);
+/** The honest empty-state for the per-curve lenses when no curve is defined yet. */
+function NoCurveEmpty({
+  onNew,
+  canEdit,
+}: {
+  onNew: () => void;
+  canEdit: boolean;
+}): React.ReactElement {
+  return (
+    <div className={styles.wrap}>
+      <Panel className={styles.builder} title="No curve selected">
+        <p className={styles.empty}>
+          No curves are defined yet.
+          {canEdit
+            ? " Create one to edit its pillars and query it."
+            : " Ask a reference-data steward to define one."}
+        </p>
+        {canEdit && (
+          <div className={styles.buildRow}>
+            <Button variant="primary" onClick={onNew}>
+              + New curve
+            </Button>
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
 
-  // Each pillar's maturity in year-fraction from spot — the curve-time coordinate
-  // the bootstrap places it at, uniform across the three arms.
+/**
+ * The per-curve PILLAR editor: edit the SELECTED curve's par-OIS pillars across the
+ * years / months / broken-date arms, with the live in-browser bootstrap reprice, and
+ * Save the ladder back to the definition (`update_curve_definition`). The curve math
+ * is REAL — a malformed edit surfaces the actual `RatesPricingError`, never a
+ * fabricated curve. The in-browser preview is log-linear-on-log-DF; the persisted
+ * curve is bootstrapped server-side with the definition's own interpolation.
+ */
+function PillarEditorMode({
+  definition,
+  canEdit,
+  onSave,
+}: {
+  definition: CurveDefinition;
+  canEdit: boolean;
+  onSave: (updated: RatesCurveSet) => Promise<void>;
+}): React.ReactElement {
+  const refDate = definition.pillars.referenceDate;
+  const currency = definition.pillars.currency;
+  const initialPillars = useMemo(
+    () => editablePillarsFromSet(definition.pillars),
+    [definition.pillars],
+  );
+
+  const [pillars, setPillars] =
+    useState<readonly EditablePillar[]>(initialPillars);
+  const [horizonYears, setHorizonYears] = useState(5);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
   const pillarTimes = useMemo(
-    () => pillars.map((p) => pillarMaturityYears(p.tenor, REFERENCE_DATE)),
-    [pillars],
+    () => pillars.map((p) => pillarMaturityYears(p.tenor, refDate)),
+    [pillars, refDate],
   );
   const span = pillarTimes.length ? pillarTimes[pillarTimes.length - 1]! : 0;
   const horizon = Math.min(Math.max(horizonYears, 0), span);
 
-  // The curve set under inspection, assembled from the (editable) pillars over the
-  // DEFAULT reference date + currency — the single contract the bootstrap consumes.
   const curveSet = useMemo<RatesCurveSet>(
-    () => ({
-      currency: DEFAULT_USD_SOFR_CURVE.currency,
-      referenceDate: REFERENCE_DATE,
-      pillars: pillars.map((p) => ({
-        tenor: p.tenor,
-        parRate: p.parRatePct / 100,
-      })),
-    }),
-    [pillars],
+    () => curveSetFromEditable(pillars, refDate, currency),
+    [pillars, refDate, currency],
   );
 
-  // Bootstrap once + sample the span. A malformed edit (e.g. a negative par rate the
-  // root-find cannot bracket, or out-of-order maturities) throws a real
+  // Bootstrap once + sample the span; a malformed edit throws a real
   // RatesPricingError we surface, never a fabricated curve.
   const built = useMemo(() => {
     try {
@@ -363,12 +580,10 @@ function PillarEditorMode(): React.ReactElement {
 
   const { discount, samples, error } = built;
 
-  // Compact echoes for the headline cards (reuses the shared Sparkline primitive).
   const dfTrace = useMemo(() => samples.map((s) => s.df), [samples]);
   const zeroTrace = useMemo(() => samples.map((s) => s.zero), [samples]);
   const forwardTrace = useMemo(() => samples.map((s) => s.forward), [samples]);
 
-  // The inspected-horizon readout, read from the very curve the plots sample.
   const horizonReadout = useMemo(() => {
     if (!discount) return null;
     return {
@@ -388,10 +603,6 @@ function PillarEditorMode(): React.ReactElement {
     }));
   }, [discount, pillars, pillarTimes]);
 
-  // The YieldCurve pillar nodes, mapped off the SAME bootstrapped ladder: each
-  // pillar's curve-time (year-fraction from spot) carries the bootstrapped zero
-  // rate, so the drawn zero / forward / DF overlays reproduce the workspace's real
-  // curve under the identical log-linear-in-ln(DF) scheme.
   const curveNodes = useMemo<CurveNode[]>(
     () =>
       curvePillarNodes(
@@ -411,106 +622,116 @@ function PillarEditorMode(): React.ReactElement {
     [ladder],
   );
 
-  const setPillarRate = useCallback((index: number, pct: number) => {
-    setPillars((prev) =>
-      prev.map((p, j) => (j === index ? { ...p, parRatePct: pct } : p)),
-    );
-  }, []);
+  const markDirty = useCallback(() => setSaved(false), []);
 
-  const setPillarTenor = useCallback((index: number, tenor: PillarTenor) => {
-    // Re-sort after the tenor changes so the ladder stays in maturity order
-    // (a `1M` edit floats to the top); the stable `id` key keeps the edited
-    // row's input attached to it as it moves.
-    setPillars((prev) =>
-      sortByMaturity(prev.map((p, j) => (j === index ? { ...p, tenor } : p))),
-    );
-  }, []);
+  const setPillarRate = useCallback(
+    (index: number, pct: number) => {
+      setPillars((prev) =>
+        prev.map((p, j) => (j === index ? { ...p, parRatePct: pct } : p)),
+      );
+      markDirty();
+    },
+    [markDirty],
+  );
 
-  const removePillar = useCallback((index: number) => {
-    setPillars((prev) => prev.filter((_, j) => j !== index));
-  }, []);
+  const setPillarTenor = useCallback(
+    (index: number, tenor: PillarTenor) => {
+      setPillars((prev) =>
+        sortByMaturity(
+          prev.map((p, j) => (j === index ? { ...p, tenor } : p)),
+          refDate,
+        ),
+      );
+      markDirty();
+    },
+    [refDate, markDirty],
+  );
+
+  const removePillar = useCallback(
+    (index: number) => {
+      setPillars((prev) => prev.filter((_, j) => j !== index));
+      markDirty();
+    },
+    [markDirty],
+  );
 
   const addPillar = useCallback(() => {
     setPillars((prev) => {
       const last = prev[prev.length - 1];
-      const nextYears = last ? representativeYears(last.tenor) + 1 : 1;
+      const nextYears = last ? representativeYears(last.tenor, refDate) + 1 : 1;
       const parRatePct = last ? last.parRatePct : 4;
-      return sortByMaturity([
-        ...prev,
-        {
-          id: nextPillarId(),
-          tenor: { kind: "years", years: nextYears },
-          parRatePct,
-        },
-      ]);
+      return sortByMaturity(
+        [
+          ...prev,
+          {
+            id: nextPillarId(),
+            tenor: { kind: "years", years: nextYears },
+            parRatePct,
+          },
+        ],
+        refDate,
+      );
     });
-  }, []);
+    markDirty();
+  }, [refDate, markDirty]);
 
-  const resetPillars = useCallback(() => setPillars(INITIAL_PILLARS), []);
+  const resetPillars = useCallback(() => {
+    setPillars(initialPillars);
+    setSaved(false);
+    setSaveError(null);
+  }, [initialPillars]);
 
   const isDirty = useMemo(
     () =>
-      pillars.length !== INITIAL_PILLARS.length ||
+      pillars.length !== initialPillars.length ||
       pillars.some(
         (p, i) =>
-          p.parRatePct !== INITIAL_PILLARS[i]?.parRatePct ||
+          p.parRatePct !== initialPillars[i]?.parRatePct ||
           pillarTenorLabel(p.tenor) !==
-            pillarTenorLabel(INITIAL_PILLARS[i]!.tenor),
+            pillarTenorLabel(initialPillars[i]!.tenor),
       ),
-    [pillars],
+    [pillars, initialPillars],
   );
+
+  const save = useCallback(async (): Promise<void> => {
+    setSaving(true);
+    setSaveError(null);
+    setSaved(false);
+    try {
+      await onSave(curveSet);
+      setSaved(true);
+    } catch (e: unknown) {
+      setSaveError(e instanceof Error ? e.message : "curve save failed");
+    } finally {
+      setSaving(false);
+    }
+  }, [onSave, curveSet]);
+
+  const isMonotone = definition.interpolation === "monotone-convex-forward";
 
   return (
     <div className={styles.wrap}>
       <Panel material="float" className={styles.builder} title="Curve set">
         <div className={styles.curveRow}>
           <span className={styles.curveLabel}>Curve</span>
-          <span className={styles.curveName}>{curveSet.currency}-SOFR</span>
+          <span className={styles.curveName}>{definition.displayName}</span>
           <span className={styles.curveMeta}>
-            {pillars.length} pillars · ref {curveSet.referenceDate.year}-
-            {String(curveSet.referenceDate.month).padStart(2, "0")}-
-            {String(curveSet.referenceDate.day).padStart(2, "0")} ·
-            log-linear-on-log-DF
+            {pillars.length} pillars · {currency} · {definition.indexLabel} · ref{" "}
+            {refDate.year}-{String(refDate.month).padStart(2, "0")}-
+            {String(refDate.day).padStart(2, "0")}
           </span>
+          {definition.primary && (
+            <span className={styles.pickerBadge}>Primary</span>
+          )}
         </div>
 
-        {/*
-         * Curve model — the ONLY interpolation this workspace's in-browser
-         * bootstrap implements is log-linear-on-log-DF (`src/data/ratesPricing.ts`),
-         * the server's shipping default. Monotone-convex and turn/meeting jumps are
-         * real server-engine capabilities not yet reachable from here, so they
-         * render disabled + Target-tagged — honest, not faked.
-         */}
-        <fieldset className={styles.modelField}>
-          <legend className={styles.fieldLabel}>Curve model</legend>
-          <div className={styles.modelChoices}>
-            <label className={styles.modelChoice}>
-              <input type="radio" name="curve-interpolation" defaultChecked />
-              <span>Log-linear DF</span>
-              <span className={styles.tagLive}>Live</span>
-            </label>
-            <label className={`${styles.modelChoice} ${styles.modelOff}`}>
-              <input
-                type="radio"
-                name="curve-interpolation"
-                disabled
-                aria-describedby="curve-model-note"
-              />
-              <span>Monotone convex</span>
-              <span className={styles.tagTarget}>Target</span>
-            </label>
-            <label className={`${styles.modelChoice} ${styles.modelOff}`}>
-              <input type="checkbox" disabled aria-describedby="curve-model-note" />
-              <span>Turn / meeting jumps</span>
-              <span className={styles.tagTarget}>Target</span>
-            </label>
-          </div>
-          <p id="curve-model-note" className={styles.modelNote}>
-            Monotone-convex interpolation and turn / meeting-date jumps exist in the
-            server engine (celnet-rates) but are not yet on the wire CurveSet or in
-            this in-browser bootstrap — shown disabled, never approximated.
-          </p>
-        </fieldset>
+        <p className={styles.hint}>
+          Interpolation: <strong>{curveInterpolationLabel(definition.interpolation)}</strong>
+          {isMonotone
+            ? " — the persisted curve bootstraps monotone-convex server-side; the preview below is the log-linear-DF approximation of the pillar shape."
+            : " — the shipping default; the preview below is the same log-linear-DF bootstrap."}{" "}
+          Change it in the Definition tab.
+        </p>
 
         <div className={styles.pillarHead}>
           <span className={styles.fieldLabel}>Par-OIS pillars</span>
@@ -526,7 +747,7 @@ function PillarEditorMode(): React.ReactElement {
               <Button
                 variant="ghost"
                 onClick={resetPillars}
-                title="restore the calibrated pillar set"
+                title="restore the saved pillar set"
               >
                 Reset
               </Button>
@@ -544,7 +765,11 @@ function PillarEditorMode(): React.ReactElement {
                 onChange={(e) =>
                   setPillarTenor(
                     i,
-                    switchKind(p.tenor, e.target.value as PillarTenor["kind"]),
+                    switchKind(
+                      p.tenor,
+                      e.target.value as PillarTenor["kind"],
+                      refDate,
+                    ),
                   )
                 }
               >
@@ -623,17 +848,36 @@ function PillarEditorMode(): React.ReactElement {
             {error}
           </p>
         )}
+        {saveError && (
+          <p className={styles.error} role="alert">
+            {saveError}
+          </p>
+        )}
 
-        {/*
-         * Scope honesty: this editor's curve set is a request-scoped payload
-         * (PriceRates / AggregateRatesRisk). Server-side curve publish + versioning
-         * DOES now exist (SurfaceService MarkCurve / GetCurve, ADR-0021) — it lives in
-         * the Query · mark · scenario lens; this editor stays request-scoped.
-         */}
+        <div className={styles.buildRow}>
+          {saved && (
+            <span className={styles.savedNote} role="status">
+              Saved
+            </span>
+          )}
+          <Button
+            variant="primary"
+            onClick={() => void save()}
+            disabled={!canEdit || saving || !!error}
+            title={
+              canEdit
+                ? "persist these pillars to the curve (update_curve_definition)"
+                : capabilityDenialTitle("refdata", "fixed_income")
+            }
+          >
+            {saving ? "Saving…" : "Save pillars"}
+          </Button>
+        </div>
+
         <p className={styles.scopeNote}>
-          Request-scoped curve set: pillar edits reprice this workspace and ride each
-          pricing request. To pin a curve under a server version and read it back, use
-          the Query · mark · scenario lens (SurfaceService MarkCurve / GetCurve).
+          Saving updates the persisted curve. To read it back under a server version,
+          or bump-and-reprice it, use the Query · mark · scenario lens (SurfaceService
+          MarkCurve / GetCurve).
         </p>
       </Panel>
 
@@ -761,7 +1005,7 @@ function InstrumentReferenceMode(): React.ReactElement {
   const refData = useReferenceData(app.transport, isAuthed);
 
   const [currency, setCurrency] = useState("USD");
-  const [refInput, setRefInput] = useState(brokenToInput(REFERENCE_DATE));
+  const [refInput, setRefInput] = useState(brokenToInput(DEFAULT_REFERENCE_DATE));
   const [picks, setPicks] = useState<readonly InstrumentPick[]>([]);
   const [addId, setAddId] = useState("");
   const [datePicks, setDatePicks] = useState<readonly DatePick[]>([]);
@@ -823,7 +1067,7 @@ function InstrumentReferenceMode(): React.ReactElement {
       ...prev,
       {
         key: (dateKey.current += 1),
-        dateInput: brokenToInput(REFERENCE_DATE),
+        dateInput: brokenToInput(DEFAULT_REFERENCE_DATE),
         quotePct: 4,
       },
     ]);
@@ -891,8 +1135,6 @@ function InstrumentReferenceMode(): React.ReactElement {
 
   const pointRows = useMemo<PointRow[]>(() => {
     if (!result) return [];
-    // Instrument pillars carry an id the registry resolves to a name; date-anchored
-    // pillars carry an empty id and a server-supplied `Date YYYY-MM-DD` label.
     return result.points.map((p) => ({
       label: p.instrumentId ? instrumentLabel(p.instrumentId) : p.label,
       timeYears: p.timeYears,
@@ -1190,9 +1432,7 @@ function InstrumentReferenceMode(): React.ReactElement {
 
 // ---------------------------------------------------------------------------
 // Query · mark · scenario — the FI market-data query lens (SurfaceService
-// GetCurve / MarkCurve / CurveScenario, ADR-0021). The discount-curve analogue of
-// the FX vol surface's GetSmile / MarkSurface / Scenario, driven through the ONE
-// contract (`app.transport`) so live and offline `?mock` are byte-identical.
+// GetCurve / MarkCurve / CurveScenario, ADR-0021), seeded from the SELECTED curve.
 // ---------------------------------------------------------------------------
 
 /** The standard query tenor grid (year fractions), clamped to the curve span. */
@@ -1248,45 +1488,36 @@ function fmtCcy(v: number): string {
 }
 
 /**
- * The Query · mark · scenario lens. A trader edits a par-OIS curve set, then drives
- * the three FI market-data query verbs against it through the one contract:
- *   • GetCurve  — read the bootstrapped curve on a tenor axis (live, or pinned to a
- *                 marked version so a later read reproduces the exact marked curve);
- *   • MarkCurve — bootstrap + pin the curve under a fresh server-assigned version;
- *   • CurveScenario — parallel (+ optional per-pillar key-rate) bump-and-reprice,
- *                 with an optional repriced OIS leg (PV impact + base-curve DV01).
- * License-gated on `fixed_income` (disabled + tooltip, never hidden; the server
- * still enforces). The queried / shifted curves reuse the `YieldCurve` chart and the
- * repriced leg's key-rate DV01 reuses the `KeyRateLadder`.
+ * The Query · mark · scenario lens, seeded from the SELECTED curve. A trader edits the
+ * curve's par-OIS pillars, then drives the three FI market-data query verbs against
+ * it through the one contract: GetCurve (live or pinned), MarkCurve (pin under a
+ * version), CurveScenario (parallel + optional key-rate bump-and-reprice with an
+ * optional repriced OIS leg). Gated on `fixed_income` (disabled + tooltip, never
+ * hidden; the server still enforces).
  */
-function CurveQueryMode(): React.ReactElement {
+function CurveQueryMode({
+  definition,
+}: {
+  definition: CurveDefinition;
+}): React.ReactElement {
   const app = useApp();
 
-  // Capability gating (never hidden — disabled + denial tooltip, server-enforced;
-  // anonymous ⇒ permissive, exactly as the rates booking / risk lenses gate).
   const canView = app.auth.can("view", "fixed_income");
   const canMark = app.auth.can("price", "fixed_income");
   const canSimulate = app.auth.can("simulate", "fixed_income");
 
-  // The editable base curve set (par rates in percent), seeded from the default
-  // USD-SOFR ladder — the single contract the query / mark / scenario verbs consume.
-  const [pillars, setPillars] =
-    useState<readonly EditablePillar[]>(INITIAL_PILLARS);
+  const refDate = definition.pillars.referenceDate;
+  const currency = definition.pillars.currency;
 
-  const curveSet = useMemo<RatesCurveSet>(
-    () => ({
-      currency: DEFAULT_USD_SOFR_CURVE.currency,
-      referenceDate: REFERENCE_DATE,
-      pillars: pillars.map((p) => ({
-        tenor: p.tenor,
-        parRate: p.parRatePct / 100,
-      })),
-    }),
-    [pillars],
+  const [pillars, setPillars] = useState<readonly EditablePillar[]>(() =>
+    editablePillarsFromSet(definition.pillars),
   );
 
-  // A local bootstrap probe: a malformed edit disables the verbs + surfaces the real
-  // RatesPricingError, never a fabricated curve (mirrors the pillar editor).
+  const curveSet = useMemo<RatesCurveSet>(
+    () => curveSetFromEditable(pillars, refDate, currency),
+    [pillars, refDate, currency],
+  );
+
   const curveError = useMemo<string | null>(() => {
     try {
       bootstrapCurveFromSet(curveSet);
@@ -1308,7 +1539,6 @@ function CurveQueryMode(): React.ReactElement {
     [span],
   );
 
-  // Query / mark / scenario async state.
   const [queryResult, setQueryResult] = useState<GetCurveResult | null>(null);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [querying, setQuerying] = useState(false);
@@ -1337,7 +1567,6 @@ function CurveQueryMode(): React.ReactElement {
     setPillars((prev) =>
       prev.map((p, j) => (j === index ? { ...p, parRatePct: pct } : p)),
     );
-    // A curve edit invalidates the pinned/queried/scenario reads off the old curve.
     setQueryResult(null);
     setScenario(null);
   }, []);
@@ -1415,8 +1644,6 @@ function CurveQueryMode(): React.ReactElement {
         instrument,
       );
       setScenario(result);
-      // The repriced leg's key-rate DV01 ladder (base curve) — a second read through
-      // the SAME `price_rates` seam, reconciling Σ key-rate DV01 ≈ scenario DV01.
       if (instrument) {
         const priced = await app.transport.priceRates(curveSet, instrument);
         setLegLadder(
@@ -1490,11 +1717,11 @@ function CurveQueryMode(): React.ReactElement {
 
         <div className={styles.curveRow}>
           <span className={styles.curveLabel}>Curve</span>
-          <span className={styles.curveName}>{curveSet.currency}-SOFR</span>
+          <span className={styles.curveName}>{definition.displayName}</span>
           <span className={styles.curveMeta}>
-            {pillars.length} pillars · ref {curveSet.referenceDate.year}-
-            {String(curveSet.referenceDate.month).padStart(2, "0")}-
-            {String(curveSet.referenceDate.day).padStart(2, "0")}
+            {pillars.length} pillars · {currency} · ref {refDate.year}-
+            {String(refDate.month).padStart(2, "0")}-
+            {String(refDate.day).padStart(2, "0")}
           </span>
         </div>
 
@@ -1520,7 +1747,7 @@ function CurveQueryMode(): React.ReactElement {
 
         <ul className={styles.pillarList}>
           {pillars.map((p, i) => (
-            <li key={i} className={styles.pillarItem}>
+            <li key={p.id} className={styles.pillarItem}>
               <span className={styles.pickLabel}>{pillarTenorLabel(p.tenor)}</span>
               <label className={styles.inlineInput}>
                 <input
@@ -1808,7 +2035,7 @@ function CurveQueryMode(): React.ReactElement {
                     <KeyRateLadder
                       data={legLadder}
                       parallelDv01={scenario.reprice.dv01}
-                      unit={`${curveSet.currency}/bp`}
+                      unit={`${currency}/bp`}
                     />
                   </div>
                 )}

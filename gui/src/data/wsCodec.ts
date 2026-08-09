@@ -236,6 +236,7 @@ import type {
   CurveScenarioResult,
   GetCurveResult,
   MarkedCurve,
+  CurveDefinition,
   ReportingNumeraire,
   RiskBucketRequest,
   RiskNode,
@@ -268,6 +269,7 @@ import type {
   XvaResult,
   XvaSurvivalCurve,
 } from "./contract";
+import { curveInterpolationCode, curveInterpolationFromCode } from "./contract";
 import * as e from "./enums";
 
 /** A decoded server frame is a JSON object with a `type` discriminator. */
@@ -1713,6 +1715,86 @@ function ratesCurveSetFromWire(o: WireObject): RatesCurveSet {
       parRate: num(p, "par_rate"),
     })),
   };
+}
+
+// ---------------------------------------------------------------------------
+// curve DEFINITIONS — the multi-curve manager reference-data record (38bcff9a).
+// A `CurveDefinition` is the named/persisted curve: its metadata (index /
+// day-count / calendar / interpolation) + the calibrating `CurveSet` pillars +
+// the server-maintained `primary` flag. The pillars REUSE `ratesCurveSetToWire` /
+// `ratesCurveSetFromWire` verbatim (one curve-set encoding, no duplication).
+// ---------------------------------------------------------------------------
+
+/** Encode a {@link CurveDefinition} to the wire `CurveDefinition` object. */
+export function curveDefinitionToWire(def: CurveDefinition): WireObject {
+  return {
+    curve_id: def.curveId,
+    display_name: def.displayName,
+    index_label: def.indexLabel,
+    day_count: def.dayCount,
+    calendar: def.calendar,
+    interpolation: curveInterpolationCode(def.interpolation),
+    pillars: ratesCurveSetToWire(def.pillars),
+    primary: def.primary,
+  };
+}
+
+/** Decode a wire `CurveDefinition` into a {@link CurveDefinition}. */
+export function curveDefinitionFromWire(o: WireObject): CurveDefinition {
+  return {
+    curveId: str(o, "curve_id"),
+    displayName: str(o, "display_name"),
+    indexLabel: str(o, "index_label"),
+    dayCount: str(o, "day_count"),
+    calendar: str(o, "calendar"),
+    interpolation: curveInterpolationFromCode(num(o, "interpolation")),
+    pillars: ratesCurveSetFromWire(child(o, "pillars")),
+    primary: o["primary"] === true,
+  };
+}
+
+/** Encode the `list_curve_definitions` request body (needs only a valid session). */
+export function listCurveDefinitionsRequestToWire(): WireObject {
+  return {};
+}
+
+/** Decode a `curve_definitions` reply frame into the definition list. */
+export function curveDefinitionsFromWire(o: WireObject): CurveDefinition[] {
+  return array(o, "curve_definitions").map(curveDefinitionFromWire);
+}
+
+/** Encode the `create_curve_definition` request body (`{ definition }`). */
+export function createCurveDefinitionRequestToWire(
+  def: CurveDefinition,
+): WireObject {
+  return { definition: curveDefinitionToWire(def) };
+}
+
+/** Decode a `curve_definition_created` reply frame into the created definition. */
+export function curveDefinitionCreatedFromWire(o: WireObject): CurveDefinition {
+  return curveDefinitionFromWire(child(o, "curve_definition_created"));
+}
+
+/**
+ * Encode the `update_curve_definition` request body (`{ curve_id, definition }`).
+ * The request `curve_id` is authoritative — the server retargets `definition` onto
+ * it (the id is immutable, so a rename of the definition never re-keys the record).
+ */
+export function updateCurveDefinitionRequestToWire(
+  curveId: string,
+  def: CurveDefinition,
+): WireObject {
+  return { curve_id: curveId, definition: curveDefinitionToWire(def) };
+}
+
+/** Decode a `curve_definition_updated` reply frame into the updated definition. */
+export function curveDefinitionUpdatedFromWire(o: WireObject): CurveDefinition {
+  return curveDefinitionFromWire(child(o, "curve_definition_updated"));
+}
+
+/** Encode the `delete_curve_definition` request body (`{ curve_id }`). */
+export function deleteCurveDefinitionRequestToWire(curveId: string): WireObject {
+  return { curve_id: curveId };
 }
 
 /**

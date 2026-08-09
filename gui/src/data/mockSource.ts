@@ -131,6 +131,7 @@ import type {
   CurveParPillar,
   GetCurveResult,
   MarkedCurve,
+  CurveDefinition,
   CurveScenarioResult,
   CurveScenarioReprice,
   DatePillar,
@@ -1600,6 +1601,42 @@ export class MockTransport implements CelnetTransport {
    * mirror of the server's version-pinned read).
    */
   private readonly markedCurves = new Map<bigint, RatesCurveSet>();
+  /**
+   * The offline curve-DEFINITION registry (multi-curve manager, 38bcff9a): the
+   * named/persisted curves the Curves surface lists / creates / edits / deletes.
+   * Seeded with the primary `usd-sofr` (the P0 static curve) plus one non-primary
+   * `usd-sofr-street` sibling so `?mock` exercises list / select / dashboard / the
+   * primary invariant for real. `primary` is maintained here (one per currency),
+   * mirroring the server.
+   */
+  private curveDefinitions: CurveDefinition[] = [
+    {
+      curveId: "usd-sofr",
+      displayName: "USD SOFR",
+      indexLabel: "USD-SOFR",
+      dayCount: "ACT/360",
+      calendar: "USD",
+      interpolation: "log-linear-df",
+      pillars: structuredClone(DEFAULT_USD_SOFR_CURVE),
+      primary: true,
+    },
+    {
+      curveId: "usd-sofr-street",
+      displayName: "USD SOFR (street)",
+      indexLabel: "USD-SOFR",
+      dayCount: "ACT/360",
+      calendar: "USD",
+      interpolation: "monotone-convex-forward",
+      pillars: {
+        ...structuredClone(DEFAULT_USD_SOFR_CURVE),
+        pillars: DEFAULT_USD_SOFR_CURVE.pillars.map((p) => ({
+          ...p,
+          parRate: p.parRate + 0.0005,
+        })),
+      },
+      primary: false,
+    },
+  ];
   private quoteSeq = 1n;
   /** Stored quotes; `dealers` is pinned by a multi-dealer request so an accept naming an `lpId` books exactly the line shown. */
   private readonly quotes = new Map<
@@ -4712,6 +4749,130 @@ export class MockTransport implements CelnetTransport {
       };
     }
     return { currency: curveSet.currency, points, reprice };
+  }
+
+  // --- curve definitions (multi-curve manager reference data, 38bcff9a) ------
+  //
+  // The offline mirror of the server's `CurveDefinition` registry. Enforces the
+  // same invariants the server does: an immutable unique `curveId`; ≥1 calibrating
+  // pillar (a malformed set is `invalid_argument`); and EXACTLY ONE `primary`
+  // curve per currency (server-maintained). Error messages carry the server's
+  // status-code token (`already_exists` / `not_found` / `failed_precondition` /
+  // `invalid_argument`) so the surface renders the same guidance as the live wire.
+
+  async listCurveDefinitions(): Promise<CurveDefinition[]> {
+    return this.curveDefinitions.map((d) => structuredClone(d));
+  }
+
+  async createCurveDefinition(
+    definition: CurveDefinition,
+  ): Promise<CurveDefinition> {
+    const def = MockTransport.validatedCurveDefinition(definition);
+    if (this.curveDefinitions.some((d) => d.curveId === def.curveId)) {
+      throw new Error(
+        `already_exists: a curve with id \`${def.curveId}\` already exists`,
+      );
+    }
+    const stored = this.resolvePrimaryOnUpsert(def, null);
+    this.curveDefinitions.push(stored);
+    return structuredClone(stored);
+  }
+
+  async updateCurveDefinition(
+    curveId: string,
+    definition: CurveDefinition,
+  ): Promise<CurveDefinition> {
+    const idx = this.curveDefinitions.findIndex((d) => d.curveId === curveId);
+    if (idx < 0) {
+      throw new Error(`not_found: no curve with id \`${curveId}\``);
+    }
+    // The request `curve_id` is authoritative — the slug is immutable, so the
+    // stored record always keeps the original id regardless of the payload.
+    const def = MockTransport.validatedCurveDefinition({
+      ...definition,
+      curveId,
+    });
+    const stored = this.resolvePrimaryOnUpsert(def, curveId);
+    this.curveDefinitions[idx] = stored;
+    return structuredClone(stored);
+  }
+
+  async deleteCurveDefinition(curveId: string): Promise<void> {
+    const target = this.curveDefinitions.find((d) => d.curveId === curveId);
+    if (!target) {
+      throw new Error(`not_found: no curve with id \`${curveId}\``);
+    }
+    // A currency must always retain exactly one primary while it has any curve, so
+    // the primary can never be deleted directly (promote a sibling first). This
+    // subsumes both blocked cases: primary-with-siblings and primary-as-last.
+    if (target.primary) {
+      throw new Error(
+        `failed_precondition: \`${curveId}\` is the primary curve for ${target.pillars.currency} — make another curve primary before deleting it`,
+      );
+    }
+    this.curveDefinitions = this.curveDefinitions.filter(
+      (d) => d.curveId !== curveId,
+    );
+  }
+
+  /**
+   * Validate a curve definition the way the server does before it is stored: a
+   * non-empty slug, ≥1 calibrating pillar, and a set that actually bootstraps.
+   * Throws an `invalid_argument`-tokened error on any violation.
+   */
+  private static validatedCurveDefinition(
+    def: CurveDefinition,
+  ): CurveDefinition {
+    if (def.curveId.trim().length === 0) {
+      throw new Error("invalid_argument: curve id is required");
+    }
+    if (def.displayName.trim().length === 0) {
+      throw new Error("invalid_argument: display name is required");
+    }
+    if (def.pillars.pillars.length === 0) {
+      throw new Error(
+        "invalid_argument: a curve needs at least one calibrating pillar",
+      );
+    }
+    // A malformed pillar set (e.g. non-monotone maturities) fails the bootstrap —
+    // surface it as `invalid_argument`, mirroring the server's validation refusal.
+    try {
+      bootstrapCurveFromSet(def.pillars);
+    } catch (err) {
+      throw new Error(
+        `invalid_argument: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return structuredClone(def);
+  }
+
+  /**
+   * Resolve the server-maintained one-primary-per-currency invariant for an
+   * upsert. The first curve of a currency is forced primary; requesting primary
+   * demotes the incumbent; a non-primary request that would orphan the currency
+   * (no other primary remains) is promoted so the currency always keeps exactly
+   * one default. `selfId` excludes the record being updated from the sibling scan.
+   */
+  private resolvePrimaryOnUpsert(
+    def: CurveDefinition,
+    selfId: string | null,
+  ): CurveDefinition {
+    const currency = def.pillars.currency;
+    const siblings = this.curveDefinitions.filter(
+      (d) => d.pillars.currency === currency && d.curveId !== selfId,
+    );
+    const otherPrimaryExists = siblings.some((d) => d.primary);
+    // First curve of the currency, or a currency with no primary ⇒ this is primary.
+    const primary = def.primary || !otherPrimaryExists;
+    if (primary && otherPrimaryExists) {
+      // Demote the incumbent primary so exactly one remains.
+      this.curveDefinitions = this.curveDefinitions.map((d) =>
+        d.pillars.currency === currency && d.curveId !== selfId && d.primary
+          ? { ...d, primary: false }
+          : d,
+      );
+    }
+    return { ...structuredClone(def), primary };
   }
 
   /** Resolve a curve set's calibrating par pillars to `{ tenorYears, parRate }`. */

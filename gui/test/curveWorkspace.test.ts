@@ -1,8 +1,8 @@
 import { createElement } from "react";
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
-import type { RatesCurveSet } from "../src/data/contract";
+import type { CurveDefinition, RatesCurveSet } from "../src/data/contract";
 import { yearsPillarTenor } from "../src/data/contract";
 import {
   bootstrapCurveFromSet,
@@ -14,7 +14,61 @@ import {
   sampleCurve,
   zeroRateAt,
 } from "../src/data/ratesPricing";
+
+// The manager is now app-driven (it lists / mutates curve definitions through the one
+// contract), so the UI-render blocks below mock `useApp` with a fixture transport +
+// auth, exactly as the other workspace suites do. The pure-math blocks import the
+// same module but never touch the mock.
+const state: { app: unknown } = { app: null };
+vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
+
 import { CurveWorkspace, curvePillarNodes } from "../src/workspaces/CurveWorkspace";
+
+/** The two seeded curve definitions the fixture transport lists (usd-sofr primary). */
+function seededDefs(): CurveDefinition[] {
+  const base = {
+    indexLabel: "USD-SOFR",
+    dayCount: "ACT/360",
+    calendar: "USD",
+    pillars: structuredClone(DEFAULT_USD_SOFR_CURVE),
+  };
+  return [
+    { ...base, curveId: "usd-sofr", displayName: "USD SOFR", interpolation: "log-linear-df", primary: true, pillars: structuredClone(DEFAULT_USD_SOFR_CURVE) },
+    { ...base, curveId: "usd-sofr-street", displayName: "USD SOFR (street)", interpolation: "monotone-convex-forward", primary: false, pillars: structuredClone(DEFAULT_USD_SOFR_CURVE) },
+  ];
+}
+
+/** A mock app whose transport lists the seeded curves; `canEdit` gates the `refdata` cap. */
+function makeApp(opts: { canEdit?: boolean } = {}) {
+  const defs = seededDefs();
+  const updateCurveDefinition = vi.fn(async (_id: string, d: CurveDefinition) => d);
+  const transport = {
+    listCurveDefinitions: vi.fn(async () => defs.map((d) => structuredClone(d))),
+    createCurveDefinition: vi.fn(async (d: CurveDefinition) => d),
+    updateCurveDefinition,
+    deleteCurveDefinition: vi.fn(async () => {}),
+  };
+  const canEdit = opts.canEdit ?? true;
+  return {
+    app: {
+      transport,
+      auth: {
+        user: { id: "u", email: "admin@celnet.com" },
+        isAdmin: true,
+        can: (action: string) => (action === "refdata" ? canEdit : true),
+      },
+    },
+    transport,
+    updateCurveDefinition,
+  };
+}
+
+/** Render the manager and wait for the seeded list to resolve into the dashboard. */
+async function renderManager(app: unknown): Promise<void> {
+  state.app = app;
+  render(createElement(CurveWorkspace));
+  await screen.findByText("USD SOFR");
+}
 
 /** The reference (spot) date the DEFAULT curve's pillar schedules roll from. */
 const REF = DEFAULT_USD_SOFR_CURVE.referenceDate;
@@ -177,60 +231,89 @@ describe("curvePillarNodes — the YieldCurve wiring off the real bootstrap", ()
   });
 });
 
-describe("CurveWorkspace — model honesty: affordances match the shipped math", () => {
-  // Grounded (celnet graph, 2026-07-01): the in-browser bootstrap implements ONLY
-  // log-linear-on-log-DF; monotone-convex + turn jumps exist server-engine-side
-  // (celnet-rates curve.rs / turns.rs) but are absent from the wire `CurveSet`. The
-  // workspace must say exactly that. Curve publish/versioning DOES now exist
-  // (SurfaceService MarkCurve / GetCurve, ADR-0021) — it lives in the dedicated
-  // Query · mark · scenario lens; the request-scoped pillar editor routes to it.
-
-  it("offers log-linear DF as the only enabled, selected interpolation — the real bootstrap", () => {
-    render(createElement(CurveWorkspace));
-    const logLinear = screen.getByRole("radio", { name: /log-linear df/i });
-    expect(logLinear).toBeChecked();
-    expect(logLinear).toBeEnabled();
+describe("CurveWorkspace — the multi-curve manager dashboard", () => {
+  it("lists every persisted curve with its per-currency primary badge", async () => {
+    await renderManager(makeApp().app);
+    // Both seeded curves are listed by display name…
+    expect(screen.getByText("USD SOFR")).toBeInTheDocument();
+    expect(screen.getByText("USD SOFR (street)")).toBeInTheDocument();
+    // …and exactly one carries the Primary badge (usd-sofr).
+    const badges = screen.getAllByText("Primary");
+    expect(badges.length).toBe(1);
+    // The interpolation of each curve is shown (log-linear + monotone-convex).
+    expect(screen.getByText(/Log-linear \(DF\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Monotone convex \(forward\)/)).toBeInTheDocument();
   });
 
-  it("renders monotone-convex and turn/meeting jumps DISABLED and Target-tagged — never fabricated", () => {
-    render(createElement(CurveWorkspace));
-    const monotone = screen.getByRole("radio", { name: /monotone convex/i });
-    expect(monotone).toBeDisabled();
-    expect(monotone).not.toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /turn \/ meeting jumps/i })).toBeDisabled();
-    // The note carries the WHY: real server-engine capability, wire + browser pending.
-    expect(screen.getByText(/not yet on the wire CurveSet/i)).toBeInTheDocument();
-  });
+  it("exposes New curve + Delete only to a Refdata·FI editor (read-only viewer sees neither)", async () => {
+    await renderManager(makeApp({ canEdit: true }).app);
+    expect(screen.getByRole("button", { name: /new curve/i })).toBeInTheDocument();
+    // The non-primary curve's Delete is offered to an editor.
+    expect(screen.getAllByRole("button", { name: /^Delete$/ }).length).toBeGreaterThan(0);
 
-  it("keeps the pillar editor request-scoped and routes versioning to the Query · mark · scenario lens (ADR-0021)", () => {
-    render(createElement(CurveWorkspace));
-    // The pillar editor itself pins nothing: no publish button, no version badge —
-    // Mockup 14's honesty inversion (draft-v207 / live-v206) must NOT leak here.
-    expect(screen.queryByRole("button", { name: /publish/i })).toBeNull();
-    expect(screen.queryByText(/(draft|live)\s*v\d+/i)).toBeNull();
-    // But server-side curve versioning DOES now exist (SurfaceService MarkCurve /
-    // GetCurve): the request-scoped note routes the trader to the query lens, whose
-    // tab is present alongside the two authoring modes.
-    expect(
-      screen.getByText(/pin a curve under a server version/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("tab", { name: /query.*mark.*scenario/i }),
-    ).toBeInTheDocument();
+    cleanup();
+    await renderManager(makeApp({ canEdit: false }).app);
+    // A read-only viewer still SEES the dashboard, but no write affordances.
+    expect(screen.getByText("USD SOFR")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /new curve/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Delete$/ })).toBeNull();
   });
 });
 
-describe("CurveWorkspace — renders the YieldCurve term structure", () => {
-  it("mounts the YieldCurve chart with its zero / forward / DF overlay legend", () => {
-    render(createElement(CurveWorkspace));
-    // The three per-overlay legend toggles are the YieldCurve's own controls —
-    // their presence proves the workspace wired real (≥2-pillar) nodes into it,
-    // since the chart renders an explicit empty state otherwise.
+describe("CurveWorkspace — interpolation is now wire-real + selectable", () => {
+  it("offers BOTH schemes enabled in the definition editor; the selected curve's is checked", async () => {
+    await renderManager(makeApp().app);
+    // Open the Definition tab — it edits the selected (primary) curve, whose scheme
+    // is log-linear DF.
+    fireEvent.click(screen.getByRole("tab", { name: /^Definition$/ }));
+
+    const logLinear = screen.getByRole("radio", { name: /log-linear \(df\)/i });
+    const monotone = screen.getByRole("radio", { name: /monotone convex/i });
+    // Neither is disabled any more — the interpolation rides the wire (38bcff9a).
+    expect(logLinear).toBeEnabled();
+    expect(monotone).toBeEnabled();
+    expect(logLinear).toBeChecked();
+    expect(monotone).not.toBeChecked();
+
+    // Selecting monotone-convex is honoured (no fabricated "Target" affordance).
+    fireEvent.click(monotone);
+    expect(monotone).toBeChecked();
+    expect(logLinear).not.toBeChecked();
+  });
+});
+
+describe("CurveWorkspace — the per-curve pillar lens off the selected curve", () => {
+  it("selects the active curve and renders the YieldCurve term structure", async () => {
+    await renderManager(makeApp().app);
+    fireEvent.click(screen.getByRole("tab", { name: /^Pillars$/ }));
+
+    // The active-curve picker drives the lens (the seeded curves are its options).
+    expect(screen.getByRole("combobox", { name: /active curve/i })).toBeInTheDocument();
+
+    // The YieldCurve's own overlay toggles prove real (≥2-pillar) nodes were wired in.
     expect(screen.getByRole("button", { name: /^Zero/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: /^Fwd/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: /^DF/ })).toHaveAttribute("aria-pressed", "true");
     expect(
       screen.queryByRole("img", { name: /yield curve unavailable/i }),
     ).toBeNull();
+  });
+
+  it("saves edited pillars back to the selected curve via update_curve_definition", async () => {
+    const h = makeApp();
+    await renderManager(h.app);
+    fireEvent.click(screen.getByRole("tab", { name: /^Pillars$/ }));
+
+    // Edit the first pillar's par rate, then Save.
+    const firstRate = screen.getAllByRole("spinbutton", { name: /par rate in percent/i })[0]!;
+    fireEvent.change(firstRate, { target: { value: "4.5" } });
+    fireEvent.click(screen.getByRole("button", { name: /save pillars/i }));
+
+    await screen.findByText(/^Saved$/);
+    // The update rode the one contract, keyed by the selected (primary) curve id.
+    expect(h.updateCurveDefinition).toHaveBeenCalledWith(
+      "usd-sofr",
+      expect.objectContaining({ curveId: "usd-sofr" }),
+    );
   });
 });

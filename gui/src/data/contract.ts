@@ -2562,6 +2562,67 @@ export interface RatesCurveSet {
 }
 
 /**
+ * The discount-curve interpolation scheme (`celnet.wire.CurveInterpolation`). Two
+ * server-backed schemes: LOG-LINEAR on the discount factor (the shipping default —
+ * arbitrage-free in DF space, piecewise-constant instantaneous forwards) and
+ * MONOTONE-CONVEX on the instantaneous forward (Hagan–West), selectable per
+ * {@link CurveDefinition}. The wire carries the int code (0 = log-linear-df,
+ * 1 = monotone-convex-forward); the string union is the ergonomic in-app form.
+ */
+export type CurveInterpolation = "log-linear-df" | "monotone-convex-forward";
+
+/** Every curve interpolation scheme, in wire-code order (index === wire int). */
+export const CURVE_INTERPOLATIONS: readonly CurveInterpolation[] = [
+  "log-linear-df",
+  "monotone-convex-forward",
+] as const;
+
+/** The wire int code for a {@link CurveInterpolation} (0 = log-linear-df, 1 = monotone-convex-forward). */
+export function curveInterpolationCode(x: CurveInterpolation): number {
+  return x === "monotone-convex-forward" ? 1 : 0;
+}
+
+/** Decode a wire interpolation int code to a {@link CurveInterpolation} (unknown ⇒ the default). */
+export function curveInterpolationFromCode(code: number): CurveInterpolation {
+  return code === 1 ? "monotone-convex-forward" : "log-linear-df";
+}
+
+/** A short human label for a curve interpolation scheme. */
+export function curveInterpolationLabel(x: CurveInterpolation): string {
+  return x === "monotone-convex-forward"
+    ? "Monotone convex (forward)"
+    : "Log-linear (DF)";
+}
+
+/**
+ * A named, persisted interest-rate curve DEFINITION (`celnet.wire.CurveDefinition`)
+ * — the reference-data record the multi-curve manager creates / edits / deletes.
+ * `curveId` is an IMMUTABLE unique slug; `pillars` is the calibrating {@link
+ * RatesCurveSet} (currency + reference date + ≥1 pillar); `primary` is
+ * SERVER-MAINTAINED (exactly one per currency is the default curve). The metadata
+ * (index / day-count / calendar / interpolation) describes how the engine
+ * bootstraps the pillars.
+ */
+export interface CurveDefinition {
+  /** Immutable unique slug identifying the curve (e.g. `usd-sofr`). */
+  curveId: string;
+  /** Human display name (e.g. "USD SOFR"). */
+  displayName: string;
+  /** The rate index the curve projects / discounts (e.g. "USD-SOFR"). */
+  indexLabel: string;
+  /** The day-count convention label (e.g. "ACT/360"). */
+  dayCount: string;
+  /** The holiday-calendar label (e.g. "USD"). */
+  calendar: string;
+  /** The bootstrap interpolation scheme. */
+  interpolation: CurveInterpolation;
+  /** The calibrating par-OIS pillar set (currency + reference date + ≥1 pillar). */
+  pillars: RatesCurveSet;
+  /** Server-maintained: the primary (default) curve for its currency — one per ccy. */
+  primary: boolean;
+}
+
+/**
  * The fixed-leg direction of an OIS from the client's perspective. The wire
  * `Side` carries this: SIDE_BUY pays fixed (payer), SIDE_SELL receives fixed.
  */

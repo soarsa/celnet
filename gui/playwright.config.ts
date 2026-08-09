@@ -64,6 +64,9 @@ const FIDELITY_SPECS = [
   /riskSetupWizard\.e2e\.ts/,
   // Deploy auto-refresh: version bump → cache-busting reload + loop-guard — offline (mock).
   /versionUpdate\.e2e\.ts/,
+  // Curves multi-curve manager (dashboard / definition editor / pillars / delete-guard)
+  // — offline (mock transport), no cargo edge.
+  /curvesManager\.e2e\.ts/,
 ];
 
 /**

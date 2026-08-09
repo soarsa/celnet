@@ -438,6 +438,65 @@ const ENTRY_LIST: readonly HelpEntry[] = [
     keywords: ["provenance", "execution", "markout", "raw", "margin", "audit", "analytics", "waterfall", "attribution"],
     tourId: "build-pricing-group",
   },
+
+  // ============================== CURVES ====================================
+  {
+    id: "concept.curve-definitions",
+    category: "concept",
+    title: "Curve definitions",
+    purpose: "Name, persist, and manage the discount curves the desk prices and risks off.",
+    howItWorks:
+      "A curve definition is a reference-data record: an immutable slug id, a display name, the projected/discount index, its day-count and holiday calendar, an interpolation scheme, and the calibrating par-OIS pillar set (currency + reference date + ≥1 pillar). The engine bootstraps a discount curve from the pillars; the metadata says how. Exactly ONE curve per currency is the PRIMARY (default) — the server maintains that invariant, promoting/demoting as you create, edit, or delete.",
+    example: {
+      scenario: "A USD desk runs two curves off SOFR.",
+      rows: [
+        { label: "usd-sofr", value: "USD-SOFR · ACT/360 · USD cal · log-linear DF · PRIMARY" },
+        { label: "usd-sofr-street", value: "a street/mark variant · monotone-convex forward · non-primary" },
+        { label: "Slug", value: "immutable — renaming the display name never re-keys the record" },
+        { label: "Pillars", value: "each carries a tenor (years / months / date) and a par rate" },
+      ],
+      takeaway: "One currency, many named curves; the primary is the default the pricer reaches for.",
+    },
+    howToConfigure: [
+      "Open Fixed Income → Curves → Dashboard to see every persisted curve.",
+      "Click New curve, then fill display name, currency, index, day-count, calendar and pick an interpolation scheme.",
+      "A slug id is generated from the display name on create; it is immutable thereafter.",
+      "Select a curve and open the Pillars tab to edit its calibrating par-OIS ladder, then Save.",
+      "Editing / creating / deleting needs the Refdata·Fixed-Income capability; viewers see the dashboard read-only.",
+    ],
+    whenToUse:
+      "Whenever the desk needs more than one discount curve — a primary plus street/mark or scenario variants — each named and persisted rather than hand-built per request.",
+    risks:
+      "The slug is immutable — pick it deliberately. You cannot delete a currency's primary while siblings remain (make another primary first); malformed pillars (non-increasing maturities, an unbootstrappable set) are rejected as invalid.",
+    keywords: ["curve", "definition", "discount", "reference data", "slug", "primary", "pillars", "index", "day count", "calendar", "manage"],
+  },
+  {
+    id: "concept.curve-interpolation",
+    category: "concept",
+    title: "Curve interpolation",
+    purpose: "How the bootstrap connects the pillars between quotes — the two supported schemes.",
+    howItWorks:
+      "Interpolation is the rule the bootstrap uses BETWEEN calibrating pillars. LOG-LINEAR ON THE DISCOUNT FACTOR (the shipping default) is linear in ln DF, so instantaneous forwards are piecewise-constant — arbitrage-free in DF space, simple and robust. MONOTONE-CONVEX ON THE FORWARD (Hagan–West) interpolates the instantaneous forward with a shape-preserving monotone-convex spline — smoother forwards, no spurious oscillation. It is a per-curve choice on the definition, carried on the wire as an int code (0 = log-linear-df, 1 = monotone-convex-forward).",
+    example: {
+      scenario: "Same pillar quotes, two schemes.",
+      rows: [
+        { label: "Log-linear DF (0)", value: "ln DF linear between pillars ⇒ step forwards" },
+        { label: "Monotone-convex fwd (1)", value: "shape-preserving spline on f(t) ⇒ smooth forwards" },
+        { label: "Both", value: "reprice the calibrating pillars exactly; they differ only between them" },
+      ],
+      takeaway: "Pick log-linear for robustness and speed; monotone-convex when smooth forwards matter.",
+    },
+    howToConfigure: [
+      "Open a curve's definition editor (New curve, or edit an existing one).",
+      "Under Interpolation, choose Log-linear (DF) or Monotone convex (forward).",
+      "Save — the choice is persisted on the definition and used by the engine's bootstrap.",
+    ],
+    whenToUse:
+      "Log-linear DF as the default for OIS discounting; monotone-convex forward when a smooth forward curve is needed (e.g. forward-rate-sensitive analytics) and you accept the extra shaping.",
+    risks:
+      "Monotone-convex is more sensitive to noisy / crossed pillar quotes than log-linear. Both are only as good as the pillar set — a sparse ladder leaves large gaps the scheme must span.",
+    keywords: ["interpolation", "log-linear", "discount factor", "monotone convex", "forward", "hagan", "west", "scheme", "bootstrap", "smooth"],
+  },
 ];
 
 /** The registry keyed by id (built once from the ordered list). */

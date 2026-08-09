@@ -67,6 +67,7 @@ import type {
   CalibratedCurve,
   GetCurveResult,
   MarkedCurve,
+  CurveDefinition,
   CurveScenarioResult,
   DrillRiskRequest,
   DrillRiskResponse,
@@ -208,6 +209,13 @@ import {
   markedCurveFromWire,
   curveScenarioRequestToWire,
   curveScenarioResultFromWire,
+  listCurveDefinitionsRequestToWire,
+  curveDefinitionsFromWire,
+  createCurveDefinitionRequestToWire,
+  curveDefinitionCreatedFromWire,
+  updateCurveDefinitionRequestToWire,
+  curveDefinitionUpdatedFromWire,
+  deleteCurveDefinitionRequestToWire,
   deleteUserRequestToWire,
   deskResponseFromWire,
   listDesksRequestToWire,
@@ -2672,6 +2680,48 @@ export class WsTransport implements CelnetTransport {
       PRICING_REQUEST_TIMEOUT_MS,
     );
     return curveScenarioResultFromWire(reply);
+  }
+
+  // --- curve definitions (multi-curve manager reference data, 38bcff9a) ------
+
+  async listCurveDefinitions(): Promise<CurveDefinition[]> {
+    const reply = await this.conn.request(
+      "list_curve_definitions",
+      listCurveDefinitionsRequestToWire(),
+      "curve_definitions",
+    );
+    return curveDefinitionsFromWire(reply);
+  }
+
+  async createCurveDefinition(
+    definition: CurveDefinition,
+  ): Promise<CurveDefinition> {
+    const reply = await this.conn.request(
+      "create_curve_definition",
+      createCurveDefinitionRequestToWire(definition),
+      "curve_definition_created",
+    );
+    return curveDefinitionCreatedFromWire(reply);
+  }
+
+  async updateCurveDefinition(
+    curveId: string,
+    definition: CurveDefinition,
+  ): Promise<CurveDefinition> {
+    const reply = await this.conn.request(
+      "update_curve_definition",
+      updateCurveDefinitionRequestToWire(curveId, definition),
+      "curve_definition_updated",
+    );
+    return curveDefinitionUpdatedFromWire(reply);
+  }
+
+  async deleteCurveDefinition(curveId: string): Promise<void> {
+    await this.conn.request(
+      "delete_curve_definition",
+      deleteCurveDefinitionRequestToWire(curveId),
+      "curve_definition_deleted",
+    );
   }
 
   /** Permanently close the underlying connection (call on app teardown). */

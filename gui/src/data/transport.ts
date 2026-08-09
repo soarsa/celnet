@@ -53,6 +53,7 @@ import type {
   CalibratedCurve,
   GetCurveResult,
   MarkedCurve,
+  CurveDefinition,
   CurveScenarioResult,
   UserCapabilities,
   RoleCapabilities,
@@ -1019,4 +1020,40 @@ export interface CelnetTransport {
     queryTenorYears: readonly number[],
     instrument?: RatesInstrument,
   ): Promise<CurveScenarioResult>;
+
+  // --- curve definitions (multi-curve manager reference data, 38bcff9a) ------
+  //
+  // The named/persisted interest-rate curves the Curves surface manages. `list`
+  // needs only a valid session; `create` / `update` / `delete` require the
+  // Refdata·FixedIncome capability (the server enforces). `primary` is
+  // server-maintained (one per currency); the request `curveId` is authoritative
+  // on update (the slug is immutable).
+
+  /** SurfaceService.ListCurveDefinitions — every persisted curve definition. */
+  listCurveDefinitions(): Promise<CurveDefinition[]>;
+
+  /**
+   * SurfaceService.CreateCurveDefinition (Refdata·FixedIncome) — persist a new
+   * curve. A duplicate `curveId` is `already_exists`; malformed pillars are
+   * `invalid_argument`. Returns the server's canonical stored definition (with the
+   * server-maintained `primary` resolved).
+   */
+  createCurveDefinition(definition: CurveDefinition): Promise<CurveDefinition>;
+
+  /**
+   * SurfaceService.UpdateCurveDefinition (Refdata·FixedIncome) — replace the
+   * definition identified by `curveId` (authoritative; the slug is immutable). An
+   * unknown id is `not_found`; malformed pillars are `invalid_argument`.
+   */
+  updateCurveDefinition(
+    curveId: string,
+    definition: CurveDefinition,
+  ): Promise<CurveDefinition>;
+
+  /**
+   * SurfaceService.DeleteCurveDefinition (Refdata·FixedIncome) — remove a curve.
+   * An unknown id is `not_found`; deleting the primary while same-currency siblings
+   * remain (or deleting the last curve) is `failed_precondition`.
+   */
+  deleteCurveDefinition(curveId: string): Promise<void>;
 }

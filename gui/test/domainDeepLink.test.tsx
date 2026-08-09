@@ -105,7 +105,7 @@ describe("domain deep-link seeds activeDomain + the shared screen's single asset
     await renderAt("/?mock&dom=fixed_income&view=surface");
 
     expect(
-      await screen.findByRole("tablist", { name: "curve authoring mode" }),
+      await screen.findByRole("tablist", { name: "curves manager lens" }),
     ).toBeInTheDocument();
     noAssetLensToggle();
     expect(screen.queryByRole("group", { name: "surface view" })).toBeNull();
@@ -116,6 +116,6 @@ describe("domain deep-link seeds activeDomain + the shared screen's single asset
 
     expect(await screen.findByRole("group", { name: "surface view" })).toBeInTheDocument();
     noAssetLensToggle();
-    expect(screen.queryByRole("tablist", { name: "curve authoring mode" })).toBeNull();
+    expect(screen.queryByRole("tablist", { name: "curves manager lens" })).toBeNull();
   });
 });

@@ -18,7 +18,7 @@
  */
 import { test, expect } from "@playwright/test";
 
-import { openLive, gotoWorkspace, expectNoSeriousA11y } from "./helpers";
+import { openLive, expectNoSeriousA11y } from "./helpers";
 
 /** Seeded USD pillars to calibrate against, with a calibrating quote (percent). */
 const PILLARS: readonly { id: string; quotePct: string }[] = [
@@ -31,22 +31,25 @@ test("Curve workspace builds a discount curve from registry instruments", async 
   page,
 }) => {
   await openLive(page);
-  // W1 hard vertical separation: the curve is the Fixed Income lens of the single
-  // Market Data workspace, and there is NO in-screen asset-class toggle — the lens
-  // is derived strictly from the active domain. Select the Fixed Income domain tab,
-  // then open Market Data to reach the rates-curve builder directly.
+  // W1 hard vertical separation: the curve surface is the Fixed Income lens of the
+  // single Market Data workspace — under Fixed Income that shared row is relabelled
+  // "Curves" (the multi-curve manager). Select the Fixed Income domain tab, then open
+  // the Curves manager. Its landing lens is the multi-curve dashboard.
   await page
     .getByRole("tablist", { name: "product domains" })
     .getByRole("tab", { name: "Fixed Income", exact: true })
     .click();
-  const pane = await gotoWorkspace(page, "surface");
+  await page
+    .getByRole("complementary", { name: "workspaces" })
+    .getByRole("button", { name: /Curves/ })
+    .click();
+  // The active pane is the canvas child that is NOT inert (hidden panes carry it).
+  const pane = page.locator('[aria-hidden="false"]:not([inert])').last();
+  await expect(pane).toBeVisible();
 
-  // Slice-A pillar editor is the default mode and still renders its ladder.
+  // The dashboard lists the server-seeded usd-sofr curve.
   await expect(
-    pane.getByRole("tab", { name: "Pillar editor" }),
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(
-    pane.getByRole("grid", { name: "curve pillar ladder" }),
+    pane.getByRole("heading", { name: "Curve definitions" }),
   ).toBeVisible();
 
   // Switch to the build-by-instrument-reference mode.
@@ -84,8 +87,8 @@ test("Curve workspace builds a discount curve from registry instruments", async 
     fullPage: true,
   });
 
-  // No regression: switching back to the pillar editor still shows its ladder.
-  await pane.getByRole("tab", { name: "Pillar editor" }).click();
+  // No regression: the per-curve Pillars lens renders the selected curve's ladder.
+  await pane.getByRole("tab", { name: "Pillars", exact: true }).click();
   await expect(
     pane.getByRole("grid", { name: "curve pillar ladder" }),
   ).toBeVisible();

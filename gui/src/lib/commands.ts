@@ -265,7 +265,12 @@ export const RAIL: readonly {
   // `transferaudit` ids stay valid deep-links resolving to this host (see {@link
   // CONSOLIDATED_WORKSPACE_ALIAS}) — they no longer carry a rail row of their own.
   { id: "risktransfer", glyph: "⇆", label: "Risk Transfer", subtitle: "Move risk · approve · audit trail", section: "transfers", assets: ["fixed_income"] },
-  { id: "surface", glyph: "◷", label: "Market Data", subtitle: "Curves & vol surface", section: "markets", assets: CAPABILITY_ASSETS },
+  // ONE cross-asset Market-Data row serving BOTH the FX vol surface and the FI rates
+  // curves (the two lenses of {@link MarketDataWorkspace}). Its label/subtitle are
+  // relabelled PER ACTIVE DOMAIN by {@link railRowPresentation} — "Curves" (the
+  // multi-curve manager) under Fixed Income, the vol-surface label under FX — so the
+  // static values here are the FX (default) form and never mislabel FX as "Curves".
+  { id: "surface", glyph: "◷", label: "Market Data", subtitle: "Volatility surface", section: "markets", assets: CAPABILITY_ASSETS },
   // The class-parametric SCENARIO risk grid (spot×vol P&L / rates netted risk) — an
   // analytics view, NOT the routed-risk roll-up (the "Risk" Dashboard tab) nor the
   // ledger. Cross-asset, so it STAYS a standalone row on the FX rail; it is dropped
@@ -338,6 +343,29 @@ export const RAIL: readonly {
   // deny-by-default gate as the other three admin surfaces).
   { id: "refdata", glyph: "❏", label: "Reference Data", section: "admin", assets: [], viewCap: { action: "refdata", asset: "fixed_income" } },
 ] as const;
+
+/**
+ * The per-active-domain presentation (label + subtitle) for a rail row. Almost every
+ * row is domain-invariant and returns its static `label` / `subtitle` unchanged. The
+ * ONE exception is the shared Market-Data row (`surface`): under Fixed Income its
+ * rates lens IS the multi-curve manager, so it reads "Curves"; under FX it is the
+ * volatility surface, so it keeps a vol-surface label and NEVER reads "Curves". The
+ * rail renders each row through this so the same row is context-correct under both
+ * trading tabs without a second rail entry or a global mislabel.
+ */
+export function railRowPresentation(
+  row: { id: WorkspaceId; label: string; subtitle?: string },
+  domain: Domain,
+): { label: string; subtitle?: string } {
+  if (row.id === "surface") {
+    return domain === "fixed_income"
+      ? { label: "Curves", subtitle: "Multi-curve manager · discount curves" }
+      : { label: "Market Data", subtitle: "Volatility surface" };
+  }
+  return row.subtitle === undefined
+    ? { label: row.label }
+    : { label: row.label, subtitle: row.subtitle };
+}
 
 /**
  * Workspace ids that have NO rail row of their own yet remain valid navigable ids —

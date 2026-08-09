@@ -197,11 +197,11 @@ test("single-rail per-workspace gating: FX-only rows hide, cross-asset rows stay
   await railClick(page, "Market Data");
   await expect(page.getByRole("group", { name: "surface view" })).toBeVisible();
   await expect(page.getByRole("group", { name: "market data asset class" })).toHaveCount(0);
-  await expect(page.getByRole("tablist", { name: "curve authoring mode" })).toHaveCount(0);
+  await expect(page.getByRole("tablist", { name: "curves manager lens" })).toHaveCount(0);
 
   await selectDomain(page, "Fixed Income");
   await expect(rail(page).locator('button[title^="Market Data ("]')).toBeVisible(); // kept
-  await expect(page.getByRole("tablist", { name: "curve authoring mode" })).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "curves manager lens" })).toBeVisible();
   await expect(page.getByRole("group", { name: "market data asset class" })).toHaveCount(0);
   await expect(page.getByRole("group", { name: "surface view" })).toHaveCount(0);
 
@@ -242,7 +242,7 @@ test("deep-link ?dom=… drives the active tab AND renders ONLY that domain's si
   //    (the curve-authoring tablist), no cross-asset toggle, no FX vol surface.
   await openLiveAt(page, "dom=fixed_income&view=surface");
   await expect(domainTab(page, "Fixed Income")).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("tablist", { name: "curve authoring mode" })).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "curves manager lens" })).toBeVisible();
   await expect(page.getByRole("group", { name: "market data asset class" })).toHaveCount(0);
   await expect(page.getByRole("group", { name: "surface view" })).toHaveCount(0);
 
@@ -253,5 +253,5 @@ test("deep-link ?dom=… drives the active tab AND renders ONLY that domain's si
   await expect(domainTab(page, "FX Options")).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("group", { name: "surface view" })).toBeVisible();
   await expect(page.getByRole("group", { name: "market data asset class" })).toHaveCount(0);
-  await expect(page.getByRole("tablist", { name: "curve authoring mode" })).toHaveCount(0);
+  await expect(page.getByRole("tablist", { name: "curves manager lens" })).toHaveCount(0);
 });

@@ -66,6 +66,7 @@ import {
   RAIL,
   railChord,
   railForDomain,
+  railRowPresentation,
   railSections,
   railState,
   resolveChord,
@@ -295,6 +296,10 @@ export function Shell(): React.ReactElement {
     // digits against the full, admin-filtered RAIL globally, independent of the
     // grouped visual order).
     const kbd = railChord(RAIL.indexOf(r)).join("");
+    // Context-correct label/subtitle for the ACTIVE domain — the shared Market Data
+    // row reads "Curves" under Fixed Income (its rates lens is the curve manager) and
+    // keeps its vol-surface label under FX; every other row is unchanged.
+    const { label, subtitle } = railRowPresentation(r, app.activeDomain);
     if (stateOfWs(r) === "gated-upsell") {
       return (
         <button
@@ -303,12 +308,12 @@ export function Shell(): React.ReactElement {
           className={`${styles.railBtn} ${styles.railLocked}`}
           aria-disabled="true"
           title={LICENSE_UPSELL_TITLE}
-          aria-label={`${r.label} — ${LICENSE_UPSELL_TITLE}`}
+          aria-label={`${label} — ${LICENSE_UPSELL_TITLE}`}
         >
           <span className={styles.railGlyph} aria-hidden>
             {r.glyph}
           </span>
-          <span className={styles.railLabel}>{r.label}</span>
+          <span className={styles.railLabel}>{label}</span>
           <span className={styles.lockBadge} aria-hidden>
             {"🔒︎"}
           </span>
@@ -320,12 +325,12 @@ export function Shell(): React.ReactElement {
         key={r.id}
         className={`${styles.railBtn} ${app.workspace === r.id ? styles.railActive : ""}`}
         onClick={() => app.setWorkspace(r.id)}
-        title={r.subtitle ? `${r.label} — ${r.subtitle} (${kbd})` : `${r.label} (${kbd})`}
-        aria-label={r.subtitle ? `${r.label} — ${r.subtitle}` : undefined}
+        title={subtitle ? `${label} — ${subtitle} (${kbd})` : `${label} (${kbd})`}
+        aria-label={subtitle ? `${label} — ${subtitle}` : undefined}
         aria-current={app.workspace === r.id}
       >
         <span className={styles.railGlyph}>{r.glyph}</span>
-        <span className={styles.railLabel}>{r.label}</span>
+        <span className={styles.railLabel}>{label}</span>
       </button>
     );
   };

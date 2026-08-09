@@ -147,9 +147,11 @@ describe("product-domain tab bar (fe-fi-migration re-add — Model A)", () => {
         }),
       );
     });
+    // The shared Market-Data row is context-relabelled per domain — "Market Data"
+    // under FX, "Curves" under Fixed Income — so match either.
     const mdBtn = (): HTMLElement =>
       within(screen.getByRole("complementary", { name: "workspaces" })).getByRole("button", {
-        name: /Market Data/i,
+        name: /Market Data|Curves/i,
       });
     // Hard vertical asset separation: on the FX tab the shared Market Data screen
     // renders ONLY the FX (vol-surface) lens — its own "surface view" sub-control
@@ -158,7 +160,7 @@ describe("product-domain tab bar (fe-fi-migration re-add — Model A)", () => {
     expect(await screen.findByRole("group", { name: "surface view" })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "market data asset class" })).toBeNull();
     // The FI (curve) lens is not rendered under the FX domain — no FI tab/content.
-    expect(screen.queryByRole("tablist", { name: "curve authoring mode" })).toBeNull();
+    expect(screen.queryByRole("tablist", { name: "curves manager lens" })).toBeNull();
 
     // Flip to the Fixed Income tab: the SHARED Market Data screen is KEPT…
     act(() => {
@@ -172,7 +174,7 @@ describe("product-domain tab bar (fe-fi-migration re-add — Model A)", () => {
     // …and it now renders ONLY the FI (rates curve) lens, derived from the domain —
     // still no cross-asset toggle, and the FX surface lens is gone.
     expect(
-      await screen.findByRole("tablist", { name: "curve authoring mode" }),
+      await screen.findByRole("tablist", { name: "curves manager lens" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "market data asset class" })).toBeNull();
     expect(screen.queryByRole("group", { name: "surface view" })).toBeNull();
