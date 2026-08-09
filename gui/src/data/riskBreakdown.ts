@@ -173,6 +173,64 @@ export function groupByProduct(items: readonly BreakdownItem[]): BreakdownRow[] 
 }
 
 /**
+ * Normalize a risk-book id to the canonical key the deal→portfolio join matches on.
+ * Mirrors the SERVER's `slugify` (`crates/celnet-server/src/config/identity.rs`):
+ * lowercase, every run of non-alphanumeric characters collapses to a single `-`,
+ * and leading/trailing `-` are trimmed.
+ *
+ * WHY normalize both sides: a routed {@link Deal.riskBookId} and the risk roster's
+ * `RiskBookRisk.bookId` are BOTH the server-minted slug, so for a matched pair this
+ * is the identity (a slug of a slug is itself — the roster ids are already unique
+ * slugs, so normalizing keeps them distinct). Keying the bucket AND the lookup on
+ * the normalized id makes the join resilient to any casing/format drift between the
+ * two seams (e.g. a `WASH_BOOK` roster id joining a `wash-book` deal stamp) instead
+ * of silently returning zero deals — the observed "breakdown blank on live" failure
+ * mode. A blank/whitespace id normalizes to `""`.
+ */
+export function normalizeBookKey(id: string): string {
+  let out = "";
+  let lastDash = false;
+  for (const ch of id.trim()) {
+    if (/[a-z0-9]/i.test(ch)) {
+      out += ch.toLowerCase();
+      lastDash = false;
+    } else if (!lastDash) {
+      out += "-";
+      lastDash = true;
+    }
+  }
+  return out.replace(/^-+|-+$/g, "");
+}
+
+/**
+ * Bucket routed deals by the NORMALIZED id of the portfolio their risk routed into
+ * ({@link Deal.riskBookId}), so a portfolio's drill-down is an O(1) lookup. Unrouted
+ * fills (no `riskBookId`) and pathological blank ids are skipped. Pure; the input is
+ * never mutated. Pair with {@link dealsForBook} to look up by a roster book id.
+ */
+export function bucketDealsByBook(deals: readonly Deal[]): Map<string, Deal[]> {
+  const map = new Map<string, Deal[]>();
+  for (const d of deals) {
+    if (d.riskBookId === undefined) continue;
+    const key = normalizeBookKey(d.riskBookId);
+    if (key === "") continue;
+    const list = map.get(key);
+    if (list) list.push(d);
+    else map.set(key, [d]);
+  }
+  return map;
+}
+
+/**
+ * The routed deals attributed to one risk portfolio, matched on the NORMALIZED book
+ * key so a case/format difference between the roster `bookId` and the deals'
+ * `riskBookId` still resolves. Returns `[]` when the portfolio has no mapped fills.
+ */
+export function dealsForBook(byBook: ReadonlyMap<string, Deal[]>, bookId: string): Deal[] {
+  return byBook.get(normalizeBookKey(bookId)) ?? [];
+}
+
+/**
  * The full tenor + instrument breakdown of a portfolio's routed deals — the
  * honest client-side fold the Risk Dashboard drill-down renders. Pass the deals
  * already filtered to the portfolio (`deal.riskBookId === bookId`).

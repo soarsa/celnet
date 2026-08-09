@@ -55,6 +55,7 @@ import type {
   RiskBookRisk,
 } from "../data/contract";
 import { fmtCompact } from "../lib/format";
+import { bucketDealsByBook, dealsForBook } from "../data/riskBreakdown";
 import { RiskBreakdownGrid } from "./RiskBreakdownGrid";
 import { RiskBooksWorkspace } from "./RiskBooksWorkspace";
 import { RiskRoutingWorkspace } from "./riskrouting/RiskRoutingWorkspace";
@@ -452,17 +453,12 @@ export function DashboardPanel({
   );
 
   // Routed deals bucketed by the portfolio their risk routed into (`riskBookId`),
-  // so the drill-down for a book is an O(1) lookup rather than a per-row filter.
-  const dealsByBook = useMemo(() => {
-    const map = new Map<string, Deal[]>();
-    for (const d of deals) {
-      if (d.riskBookId === undefined) continue;
-      const list = map.get(d.riskBookId);
-      if (list) list.push(d);
-      else map.set(d.riskBookId, [d]);
-    }
-    return map;
-  }, [deals]);
+  // so the drill-down for a book is an O(1) lookup rather than a per-row filter. The
+  // bucket keys AND the per-book lookup normalize the id (see
+  // `data/riskBreakdown.normalizeBookKey`) so a routed `Deal.riskBookId` still joins
+  // its `RiskBookRisk.bookId` even under casing/format drift between the two seams —
+  // the failure mode where the breakdown came back blank on live.
+  const dealsByBook = useMemo(() => bucketDealsByBook(deals), [deals]);
 
   const toggleExpanded = useCallback((bookId: string): void => {
     setExpanded((prev) => {
@@ -658,7 +654,7 @@ export function DashboardPanel({
                     <tr className={styles.breakdownRow}>
                       <td colSpan={7} id={panelId} className={styles.breakdownCell}>
                         <RiskBreakdownGrid
-                          deals={dealsByBook.get(r.bookId) ?? []}
+                          deals={dealsForBook(dealsByBook, r.bookId)}
                           bookName={r.name}
                         />
                       </td>
@@ -700,6 +696,20 @@ export function DashboardPanel({
             ) : (
               selected.limits.map((u) => <UtilizationBar key={u.metric} util={u} />)
             )}
+          </div>
+
+          {/* The per-product / per-tenor / per-instrument deal-level breakdown for the
+              SELECTED book — the same fold the row's expand-caret shows, surfaced here
+              so a trader who selects a portfolio reads its composition without also
+              having to expand the row. Fed by the SAME normalized deal→book join, so
+              it populates on live; the grid renders its own honest empty note when the
+              book has no mapped deal-level detail (never a silently omitted section). */}
+          <div className={styles.breakdown}>
+            <h3 className={styles.utilsTitle}>Risk breakdown</h3>
+            <RiskBreakdownGrid
+              deals={dealsForBook(dealsByBook, selected.bookId)}
+              bookName={selected.name}
+            />
           </div>
         </section>
       )}

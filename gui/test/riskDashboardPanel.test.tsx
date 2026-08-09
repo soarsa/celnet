@@ -104,6 +104,15 @@ describe("DashboardPanel — numeric alignment (Change 1)", () => {
 });
 
 describe("DashboardPanel — tenor/instrument drill-down (Change 2)", () => {
+  /** The expanded drill-down row's panel (`<td id="risk-breakdown-<bookId>">`) — the
+   * scope that disambiguates the row-level breakdown from the detail-card one, which
+   * now shares the same aria-label. */
+  function expandedPanel(bookId: string): HTMLElement {
+    const panel = document.getElementById(`risk-breakdown-${bookId}`);
+    if (panel === null) throw new Error(`expanded panel for ${bookId} not found`);
+    return panel;
+  }
+
   it("expands a portfolio to reveal the By-tenor + By-instrument breakdown", async () => {
     state.app = makeApp({
       riskRows: [risk("bk-1", "Alpha")],
@@ -119,8 +128,10 @@ describe("DashboardPanel — tenor/instrument drill-down (Change 2)", () => {
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
 
-    // Both lenses render, summed from the routed deals.
-    const grid = await screen.findByLabelText("Risk breakdown for Alpha");
+    // Both lenses render, summed from the routed deals. Scope to the EXPANDED ROW's
+    // panel (id `risk-breakdown-bk-1`) — the same breakdown also renders in the
+    // selected-book detail card, so a global label query would match both.
+    const grid = within(expandedPanel("bk-1")).getByLabelText("Risk breakdown for Alpha");
     expect(within(grid).getByText("By tenor")).toBeInTheDocument();
     expect(within(grid).getByText("By instrument")).toBeInTheDocument();
     // 2–5y bucket (30m) + 5–10y bucket (70m); 10y OIS instrument sums to 70m.
@@ -136,7 +147,9 @@ describe("DashboardPanel — tenor/instrument drill-down (Change 2)", () => {
     const toggle = await screen.findByTestId("risk-expand-bk-1");
     fireEvent.click(toggle);
     await waitFor(() =>
-      expect(screen.getByText(/No routed fills to break down/i)).toBeInTheDocument(),
+      expect(
+        within(expandedPanel("bk-1")).getByText(/No routed fills to break down/i),
+      ).toBeInTheDocument(),
     );
   });
 
@@ -152,7 +165,7 @@ describe("DashboardPanel — tenor/instrument drill-down (Change 2)", () => {
     render(<DashboardPanel onGoToPortfolios={vi.fn()} />);
     fireEvent.click(await screen.findByTestId("risk-expand-bk-1"));
 
-    const grid = await screen.findByLabelText("Risk breakdown for Alpha");
+    const grid = within(expandedPanel("bk-1")).getByLabelText("Risk breakdown for Alpha");
     // The third lens renders, with a bucket per family (multiple product buckets).
     expect(within(grid).getByText("By product type")).toBeInTheDocument();
     expect(within(grid).getByText("BOND")).toBeInTheDocument();
@@ -161,6 +174,57 @@ describe("DashboardPanel — tenor/instrument drill-down (Change 2)", () => {
     // Reconciliation: the note reports the 110m book gross the product rows sum to.
     expect(within(grid).getByText(/110m gross notional/)).toBeInTheDocument();
     expect(within(grid).getAllByText("60m").length).toBeGreaterThanOrEqual(1); // BOND bucket
+  });
+});
+
+describe("DashboardPanel — selected-book detail breakdown", () => {
+  it("renders the By-product/tenor/instrument breakdown in the selected-book detail card", async () => {
+    state.app = makeApp({
+      riskRows: [risk("bk-1", "Alpha")],
+      deals: [
+        deal("bk-1", 5, 30_000_000, "OIS"),
+        deal("bk-1", 10, 50_000_000, "OIS"),
+        deal("bk-1", 10, 60_000_000, "BOND"),
+      ],
+    });
+    render(<DashboardPanel onGoToPortfolios={vi.fn()} />);
+
+    // The detail card (not the expand-row) carries the breakdown for the selected book.
+    const detail = await screen.findByLabelText("Risk detail for Alpha");
+    const grid = await within(detail).findByLabelText("Risk breakdown for Alpha");
+    expect(within(grid).getByText("By tenor")).toBeInTheDocument();
+    expect(within(grid).getByText("By product type")).toBeInTheDocument();
+    expect(within(grid).getByText("By instrument")).toBeInTheDocument();
+    // Reconciliation: the three lenses fold the SAME 140m item set.
+    expect(within(grid).getByText(/140m gross notional/)).toBeInTheDocument();
+  });
+
+  it("reconciles a slug-drifted deal stamp to the roster book id (the live failure mode)", async () => {
+    // The roster row id is `WASH_BOOK`; the routed deals carry the server slug
+    // `wash-book`. The normalized join must still populate the breakdown — this is the
+    // exact case/format mismatch that left the live breakdown blank.
+    state.app = makeApp({
+      riskRows: [risk("WASH_BOOK", "Wash")],
+      deals: [deal("wash-book", 5, 30_000_000, "OIS"), deal("wash-book", 10, 50_000_000, "OIS")],
+    });
+    render(<DashboardPanel onGoToPortfolios={vi.fn()} />);
+
+    const detail = await screen.findByLabelText("Risk detail for Wash");
+    const grid = await within(detail).findByLabelText("Risk breakdown for Wash");
+    expect(within(grid).getByText(/2 routed fills/)).toBeInTheDocument();
+    expect(within(grid).getByText(/80m gross notional/)).toBeInTheDocument();
+  });
+
+  it("shows an honest empty note in the detail card when no deals map to the book", async () => {
+    state.app = makeApp({ riskRows: [risk("bk-1", "Alpha")], deals: [] });
+    render(<DashboardPanel onGoToPortfolios={vi.fn()} />);
+
+    const detail = await screen.findByLabelText("Risk detail for Alpha");
+    await waitFor(() =>
+      expect(
+        within(detail).getByText(/No routed fills to break down for Alpha/i),
+      ).toBeInTheDocument(),
+    );
   });
 });
 

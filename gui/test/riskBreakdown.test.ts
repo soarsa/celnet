@@ -8,10 +8,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  bucketDealsByBook,
   dealToBreakdownItem,
+  dealsForBook,
   groupByInstrument,
   groupByProduct,
   groupByTenor,
+  normalizeBookKey,
   riskBreakdownFor,
   tenorBucketLabel,
   type BreakdownItem,
@@ -139,6 +142,61 @@ describe("groupByProduct", () => {
   it("collapses a single-family book to one honest row", () => {
     const rows = groupByProduct([item(5, 30, null), item(10, 40, null)]);
     expect(rows).toEqual([{ key: "OIS", notional: 70, count: 2, dv01: null }]);
+  });
+});
+
+describe("normalizeBookKey", () => {
+  it("mirrors the server slugify: lowercase, non-alphanumeric runs → single dash, trimmed", () => {
+    expect(normalizeBookKey("wash-book")).toBe("wash-book");
+    expect(normalizeBookKey("WASH_BOOK")).toBe("wash-book");
+    expect(normalizeBookKey("Wash Book")).toBe("wash-book");
+    expect(normalizeBookKey("  Default Book  ")).toBe("default-book");
+    expect(normalizeBookKey("FI::Rates//EMEA")).toBe("fi-rates-emea");
+  });
+
+  it("is idempotent on an already-minted slug (slug of a slug is itself)", () => {
+    for (const slug of ["warehouse", "fi-marex", "fi-rates-emea", "book-2"]) {
+      expect(normalizeBookKey(slug)).toBe(slug);
+    }
+  });
+
+  it("collapses a pathological all-separator id to the empty key", () => {
+    expect(normalizeBookKey("---")).toBe("");
+    expect(normalizeBookKey("   ")).toBe("");
+  });
+});
+
+describe("bucketDealsByBook / dealsForBook — the deal→portfolio join", () => {
+  it("buckets routed deals under their normalized book key", () => {
+    const byBook = bucketDealsByBook([
+      deal(5, 30_000_000, "wash-book"),
+      deal(10, 50_000_000, "wash-book"),
+      deal(2, 20_000_000, "default-book"),
+    ]);
+    expect(byBook.get("wash-book")).toHaveLength(2);
+    expect(byBook.get("default-book")).toHaveLength(1);
+  });
+
+  it("RECONCILES a case/format-drifted roster id to slug-stamped deals (the live failure mode)", () => {
+    // Deals stamped with the server slug `wash-book`; the roster row id arrives in a
+    // divergent form. The normalized join must still resolve — this is exactly what
+    // made the breakdown blank on live before the fix.
+    const byBook = bucketDealsByBook([
+      deal(5, 30_000_000, "wash-book"),
+      deal(10, 50_000_000, "wash-book"),
+    ]);
+    expect(dealsForBook(byBook, "WASH_BOOK")).toHaveLength(2);
+    expect(dealsForBook(byBook, "Wash Book")).toHaveLength(2);
+    // And the breakdown folded from the reconciled deals sums to the book total.
+    expect(riskBreakdownFor(dealsForBook(byBook, "WASH_BOOK")).totalNotional).toBe(80_000_000);
+  });
+
+  it("skips unrouted fills (no riskBookId) and returns [] for a book with no mapped deals", () => {
+    const unrouted = deal(5, 10_000_000, "wash-book");
+    delete unrouted.riskBookId;
+    const byBook = bucketDealsByBook([unrouted, deal(10, 50_000_000, "wash-book")]);
+    expect(byBook.get("wash-book")).toHaveLength(1); // only the routed one
+    expect(dealsForBook(byBook, "empty-book")).toEqual([]);
   });
 });
 

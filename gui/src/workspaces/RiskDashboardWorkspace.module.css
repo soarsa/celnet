@@ -540,6 +540,16 @@
   color: var(--text-secondary);
 }
 
+/* The selected-book deal-level breakdown, sitting under the limit strip in the detail
+   card: a titled section separated by a hairline so it reads as its own block. */
+.breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: var(--hairline);
+}
+
 .util {
   display: flex;
   flex-direction: column;
