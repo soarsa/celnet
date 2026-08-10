@@ -1,3 +1,16 @@
 ---
 # Seconds to wait for a graceful drain on stop before SIGKILL.
 celnet_stop_drain_seconds: 35
+
+# --- Swap file (absorb release-build memory peaks on the small UAT box) --------
+# The box builds the release ON the host: celnet-server compiles at opt-level=3 +
+# linker-plugin-lto + codegen-units=1, so a single rustc peaks ~1.7 GiB, and the
+# concurrent npm ci / Vite build spikes again. On a ~4 GiB box with ZERO swap those
+# transient peaks exceed physical RAM → the kernel OOM-killer fires and takes the
+# box down (it is then recreated by the cloud health check, which is why the OOM
+# logs never survive). A swap file absorbs the peaks at a speed cost instead of a
+# death. Set celnet_swap_enabled=false to skip; size/swappiness are tunable.
+celnet_swap_enabled: true
+celnet_swap_path: /swapfile
+celnet_swap_size_mb: 4096          # 4 GiB — covers the celnet-server LTO + Vite peaks
+celnet_swappiness: 10              # prefer RAM; spill to swap only under genuine pressure
