@@ -1,6 +1,11 @@
 /**
- * HedgeMonitor — the live hedge-ops dashboard (docs/AUTO-HEDGING §8.1). Rebuilt from a
- * flat dump into four answer-first sections a desk actually reads:
+ * HedgeMonitor — the live hedge-ops dashboard (docs/AUTO-HEDGING §8.1). SELF-CONTAINED:
+ * it fetches its own engine {@link HedgeConfig}, subscribes to the live advisory-intent
+ * stream, and refetches the fired provenance on each tick — so it drops into the Risk
+ * surface's "Hedge flows" tab with NO parent state (the same data the Hedging Rules
+ * surface used to thread in from its removed Monitor tab). The presentational body
+ * ({@link HedgeMonitorView}) is unchanged. Rebuilt from a flat dump into four
+ * answer-first sections a desk actually reads:
  *
  *   1. Engine status strip  — mode / kill-switch / per-desk enable, today's external
  *      hedged notional vs the daily cap (progress bar), max-clip, composite spread.
@@ -14,8 +19,9 @@
  * Purely presentational — the container streams the intents + provenance and passes the
  * engine {@link HedgeConfig} for the status strip + cap gauge.
  */
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { useApp } from "../../app/AppContext";
 import type { HedgeConfig, HedgeExecutionMode, HedgeIntent, HedgeProvenance } from "../../data/contract";
 import { describeExitAction } from "../../lib/hedgeExit";
 import styles from "./HedgingWorkspace.module.css";
@@ -339,9 +345,9 @@ function NeedsAttention({ items }: { items: readonly AttnItem[] }): React.ReactE
   );
 }
 
-// --- host ------------------------------------------------------------------
+// --- presentational view ----------------------------------------------------
 
-export function HedgeMonitor({ intents, provenance, config }: HedgeMonitorProps): React.ReactElement {
+function HedgeMonitorView({ intents, provenance, config }: HedgeMonitorProps): React.ReactElement {
   // Latest intent per book (newest wins) → the RAG board + attention derivations.
   const latestByBook = useMemo(() => {
     const m = new Map<string, HedgeIntent>();
@@ -377,4 +383,58 @@ export function HedgeMonitor({ intents, provenance, config }: HedgeMonitorProps)
       <LiveHedges provenance={provenance} />
     </section>
   );
+}
+
+// --- self-fetching container ------------------------------------------------
+
+/**
+ * HedgeMonitor — the SELF-CONTAINED live monitor mounted standalone in the Risk
+ * surface's "Hedge flows" tab. Owns its own data exactly as the removed Hedging Rules
+ * "Monitor" tab did: it loads the engine config once, subscribes to the live
+ * advisory-intent stream (retaining the last 40), and refetches the fired provenance on
+ * each tick so the audit rows track fires without a poll of its own. Purely a data
+ * shell around {@link HedgeMonitorView}; it carries NO execution-mode config (that now
+ * lives on Hedging Rules → Execution mode).
+ */
+export function HedgeMonitor(): React.ReactElement {
+  const app = useApp();
+  const [intents, setIntents] = useState<HedgeIntent[]>([]);
+  const [provenance, setProvenance] = useState<HedgeProvenance[]>([]);
+  const [config, setConfig] = useState<HedgeConfig | null>(null);
+
+  // Load the engine config once (feeds the status strip + cap gauge).
+  useEffect(() => {
+    let cancelled = false;
+    void app.transport
+      .getHedgeConfig()
+      .then((c) => !cancelled && setConfig(c))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [app.transport]);
+
+  // Subscribe to the live advisory-intent stream; refetch provenance on each tick so
+  // the audit rows track the fired hedges (the engine appends provenance as it fires).
+  useEffect(() => {
+    let cancelled = false;
+    const refetch = (): void => {
+      void app.transport
+        .listHedgeProvenance()
+        .then((p) => !cancelled && setProvenance(p))
+        .catch(() => undefined);
+    };
+    refetch();
+    const dispose = app.transport.streamHedgeIntents((intent) => {
+      if (cancelled) return;
+      setIntents((cur) => [...cur, intent].slice(-40));
+      refetch();
+    });
+    return () => {
+      cancelled = true;
+      dispose();
+    };
+  }, [app.transport]);
+
+  return <HedgeMonitorView intents={intents} provenance={provenance} config={config} />;
 }

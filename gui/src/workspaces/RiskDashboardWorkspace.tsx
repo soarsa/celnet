@@ -1,6 +1,6 @@
 /**
  * RiskDashboardWorkspace — the consolidated fixed-income RISK surface: ONE rail entry,
- * "Risk", whose tabbed shell spans SEVEN sibling views that were previously separate
+ * "Risk", whose tabbed shell spans NINE sibling views that were previously separate
  * rail destinations (mirroring the Pricing and Transfers→Risk Transfer merges):
  *   • **Dashboard** (default) — the per-portfolio rolled-up risk view ({@link
  *     DashboardPanel}); the routed-risk roll-up (docs/FI-RISK-ROUTING-REQUIREMENTS.md
@@ -16,9 +16,16 @@
  *     RatesBookWorkspace}, composed VERBATIM), folded in from the old FI "Book".
  *   • **Quotes** — the shown-quotes blotter ({@link QuotesBlotterWorkspace}); what was
  *     SHOWN (quoted), the non-redundant sibling of Deals.
- *   • **Deals** — the executed-deals blotter ({@link DealsBlotterWorkspace}) incl. the
- *     routed Risk-Portfolio column + a BUY/SELL indicator per row.
- * The Positions/Quotes/Deals ledger views were previously nested one level deeper
+ *   • **Client blotter** — the executed CLIENT-deals blotter ({@link
+ *     DealsBlotterWorkspace}, forced to its client lens) incl. the routed
+ *     Risk-Portfolio column + a BUY/SELL indicator per row.
+ *   • **Hedge blotter** — the executed-HEDGE ledger ({@link HedgeDealsView}): who we
+ *     hedged with, at what price, for how much — the sibling of the client blotter.
+ *   • **Hedge flows** — the live hedge-engine monitor ({@link HedgeMonitor},
+ *     self-fetching): engine status, per-book RAG, live hedges, needs-attention.
+ *     Gated on `hedge·FI` (the hedge-engine view); moved here from the Hedging Rules
+ *     surface's removed Monitor tab.
+ * The Positions/Quotes/Client-blotter ledger views were previously nested one level deeper
  * inside a "Scenario" tab (which composed `RiskWorkspace` at its FI rates lens); that
  * tab AND its netted rates scenario-risk surface are REMOVED, and the three ledger
  * views are promoted to top-level siblings here — the existing table components are
@@ -69,6 +76,8 @@ import { AcceptanceWorkspace } from "./acceptance/AcceptanceWorkspace";
 import { RatesBookWorkspace } from "./RatesBookWorkspace";
 import { QuotesBlotterWorkspace } from "./QuotesBlotterWorkspace";
 import { DealsBlotterWorkspace } from "./DealsBlotterWorkspace";
+import { HedgeDealsView } from "./HedgeDealsView";
+import { HedgeMonitor } from "./hedging/HedgeMonitor";
 import { RiskSetupWizard } from "./risksetup/RiskSetupWizard";
 import styles from "./RiskDashboardWorkspace.module.css";
 
@@ -76,9 +85,10 @@ import styles from "./RiskDashboardWorkspace.module.css";
  * management tabs are the deep-link targets for the retired standalone rail entries —
  * `portfolios` (old "Risk Portfolios"), `routing` (old "Risk Routing") and `acceptance`
  * (old "Acceptance"). The FI position-ledger views folded in from the old "Book" —
- * `positions`, `quotes` and `deals` — are now TOP-LEVEL siblings (previously nested a
- * level deeper inside a "Scenario" tab, which is removed along with the FI
- * scenario-risk surface). */
+ * `positions`, `quotes` and `clientblotter` (the client-deals blotter) — are TOP-LEVEL
+ * siblings (previously nested a level deeper inside a removed "Scenario" tab). The
+ * `hedgeblotter` (executed-hedge ledger) and `hedgeflows` (live hedge-engine monitor,
+ * moved from the Hedging Rules surface) round out the hedge side of the surface. */
 export type RiskDashboardTab =
   | "dashboard"
   | "portfolios"
@@ -86,16 +96,19 @@ export type RiskDashboardTab =
   | "acceptance"
   | "positions"
   | "quotes"
-  | "deals";
+  | "clientblotter"
+  | "hedgeblotter"
+  | "hedgeflows";
 
 /**
  * One row per tab the consolidated Risk surface spans: its id, toggle label, and the
  * capability ACTION that gates it × fixed_income (each tab keeps its ORIGINAL gate —
  * Dashboard/Portfolios/Routing on `risk_manage`, Acceptance on `manage_acceptance`,
- * and the folded-in ledger views (Positions/Quotes/Deals) on the `view` floor, so a
- * booking-only FI trader still reaches them exactly as under the former Scenario
- * fold). A tab the identity cannot view is hidden and the active tab clamps to the
- * first visible one (never shown empty).
+ * the folded-in ledger views (Positions/Quotes/Client blotter/Hedge blotter) on the
+ * `view` floor, and Hedge flows on `hedge` (the hedge-engine monitor), so a
+ * booking-only FI trader still reaches the ledgers but the live hedge monitor stays
+ * hedge-gated). A tab the identity cannot view is hidden and the active tab clamps to
+ * the first visible one (never shown empty).
  */
 const RISK_TABS: readonly { tab: RiskDashboardTab; label: string; cap: CapabilityAction }[] = [
   { tab: "dashboard", label: "Dashboard", cap: "risk_manage" },
@@ -104,7 +117,9 @@ const RISK_TABS: readonly { tab: RiskDashboardTab; label: string; cap: Capabilit
   { tab: "acceptance", label: "Acceptance", cap: "manage_acceptance" },
   { tab: "positions", label: "Positions", cap: "view" },
   { tab: "quotes", label: "Quotes", cap: "view" },
-  { tab: "deals", label: "Deals", cap: "view" },
+  { tab: "clientblotter", label: "Client blotter", cap: "view" },
+  { tab: "hedgeblotter", label: "Hedge blotter", cap: "view" },
+  { tab: "hedgeflows", label: "Hedge flows", cap: "hedge" },
 ];
 
 /**
@@ -733,21 +748,24 @@ export function DashboardPanel({
 }
 
 /**
- * RiskDashboardWorkspace — the tabbed shell composing the SEVEN consolidated FI-risk
+ * RiskDashboardWorkspace — the tabbed shell composing the NINE consolidated FI-risk
  * views as sibling tabs (see the file header): the rolled-up {@link DashboardPanel},
  * the {@link RiskBooksWorkspace} portfolio editor, the {@link RiskRoutingWorkspace}
- * fill-routing builder, the {@link AcceptanceWorkspace} accept/reject builder, and the
- * three folded-in FI position-ledger views — {@link RatesBookWorkspace} (Positions),
- * {@link QuotesBlotterWorkspace} (Quotes) and {@link DealsBlotterWorkspace} (Deals),
- * composed VERBATIM. Mirrors the Risk Transfer / Pricing tab primitive VERBATIM: a
+ * fill-routing builder, the {@link AcceptanceWorkspace} accept/reject builder, the
+ * folded-in FI position-ledger views — {@link RatesBookWorkspace} (Positions),
+ * {@link QuotesBlotterWorkspace} (Quotes) and {@link DealsBlotterWorkspace} (Client
+ * blotter, forced to its client lens) — and the hedge side: {@link HedgeDealsView}
+ * (Hedge blotter) + the self-fetching {@link HedgeMonitor} (Hedge flows), composed
+ * VERBATIM. Mirrors the Risk Transfer / Pricing tab primitive VERBATIM: a
  * slim segmented bar above the active panel, which fills the remaining pane height and
  * scrolls its OWN content (the Shell pane is overflow:hidden with a definite height).
  * Only the active tab's body mounts, so each panel's effects fire only while it is on
  * screen.
  *
  * Each tab keeps its ORIGINAL capability gate: Dashboard/Portfolios/Routing on
- * `risk_manage·FI`, Acceptance on `manage_acceptance·FI`, and Positions/Quotes/Deals
- * on the `view·FI` floor (the same floor they had under the removed Scenario fold). A
+ * `risk_manage·FI`, Acceptance on `manage_acceptance·FI`, Positions/Quotes/Client
+ * blotter/Hedge blotter on the `view·FI` floor, and Hedge flows on `hedge·FI` (the
+ * hedge-engine monitor). A
  * tab the identity cannot view is HIDDEN and the active tab clamps to the first
  * visible one, so a hidden tab is never shown empty (`can` is permissive signed-out,
  * so pre-login every tab renders). Reaching the host ROW itself follows the rail's
@@ -860,10 +878,20 @@ export function RiskDashboardWorkspace({
         ) : activeTab === "quotes" ? (
           // The shown-quotes blotter — what was quoted (non-redundant with Deals).
           <QuotesBlotterWorkspace />
+        ) : activeTab === "clientblotter" ? (
+          // The executed CLIENT-deals blotter incl. the routed Risk-Portfolio column and
+          // the per-row BUY/SELL indicator. Forced to the client lens (its own dedicated
+          // tab), so the redundant client/hedge toggle is hidden — the hedge ledger is
+          // the sibling "Hedge blotter" tab.
+          <DealsBlotterWorkspace lens="client" />
+        ) : activeTab === "hedgeblotter" ? (
+          // The executed-HEDGE ledger (who we hedged with, at what price, for how much) —
+          // its own Risk tab, distinct from the client blotter.
+          <HedgeDealsView />
         ) : (
-          // The executed-deals blotter incl. the routed Risk-Portfolio column and the
-          // per-row BUY/SELL indicator.
-          <DealsBlotterWorkspace />
+          // The live hedge-engine flow monitor (engine status, per-book RAG, live hedges,
+          // needs-attention) — self-fetching, moved here from the Hedging Rules surface.
+          <HedgeMonitor />
         )}
       </div>
     </div>

@@ -213,7 +213,7 @@ export function HedgingStep({
         </div>
         <p className={styles.hint} data-testid="wiz-exec-mode-note">
           The rules below decide <em>what to do</em>; how a live hedge externalises (Advisory dry-run,
-          LP panel, Composite) is the <strong>execution mode</strong> set on Hedging → Monitor → Engine controls.
+          LP panel, Composite) is the <strong>execution mode</strong> set on Hedging Rules → Execution mode.
           <HelpButton helpId="concept.hedge-execution-mode" subject="the hedge execution mode" />
         </p>
       </div>

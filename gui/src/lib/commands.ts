@@ -246,7 +246,7 @@ export const RAIL: readonly {
   // HOISTED out of the FI rail into its OWN top-level "Hedging" domain tab (a
   // {@link HEDGING_WORKSPACES} membership override), next to Analytics — cross-cutting,
   // not FI-nested.
-  { id: "hedging", glyph: "◈", label: "Hedging", subtitle: "Exit policy · thresholds · monitor", section: "risk", assets: ["fixed_income"], viewCap: { action: "hedge", asset: "fixed_income" } },
+  { id: "hedging", glyph: "◈", label: "Hedging Rules", subtitle: "Exit policy · thresholds · execution", section: "risk", assets: ["fixed_income"], viewCap: { action: "hedge", asset: "fixed_income" } },
   // Incoming-quote Acceptance (docs — celnet-acceptance): the trader-composed
   // first-match ACCEPTANCE rule graph is CONSOLIDATED into the "Risk" host as its
   // "Acceptance" tab (no standalone rail row). The `acceptance` id stays a valid
@@ -669,7 +669,7 @@ export type Domain = CapabilityAsset | "hedging" | "analytics" | "admin";
 export const DOMAINS: readonly { id: Domain; label: string }[] = [
   { id: "fx_options", label: "FX Options" },
   { id: "fixed_income", label: "Fixed Income" },
-  { id: "hedging", label: "Hedging" },
+  { id: "hedging", label: "Hedging Rules" },
   { id: "analytics", label: "Analytics" },
   { id: "admin", label: "Administration" },
 ] as const;

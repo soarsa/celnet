@@ -1,6 +1,6 @@
 /**
  * HedgeSeedContext — the one-shot HAND-OFF store that carries a "seed a hedge exit-policy
- * rule for THIS source" request into the Hedging → Exit Policy rule builder, WITHOUT
+ * rule for THIS source" request into the Hedging Rules → Exit Policy rule builder, WITHOUT
  * encoding the rule in the URL. The direct analogue of {@link AcceptanceSeedContext}: a
  * small, app-level shared store (mirroring `AppContext`) holding a single pending
  * {@link HedgeSeed} with a monotonic `nonce` so a consumer can tell a fresh request from

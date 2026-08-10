@@ -243,7 +243,7 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
     expect(DOMAINS.map((d) => d.label)).toEqual([
       "FX Options",
       "Fixed Income",
-      "Hedging",
+      "Hedging Rules",
       "Analytics",
       "Administration",
     ]);

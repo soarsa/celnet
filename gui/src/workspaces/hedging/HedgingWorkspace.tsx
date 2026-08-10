@@ -1,13 +1,20 @@
 /**
- * HedgingWorkspace — the trader-facing AUTO-HEDGE surface
- * (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md §5, §8). Three tabs:
+ * HedgingWorkspace — the trader-facing AUTO-HEDGE RULES / CONFIG surface
+ * (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md §5, §8). Authoring-only —
+ * four tabs:
  *
  *   • Exit Policy — the drag-and-drop exit-policy graph editor (the SAME risk-routing
  *     decision-graph building blocks, with an {@link ExitActionEditor} leaf instead of
  *     a book target) + a live "what would fire" trace.
  *   • Thresholds — the per-scope warehouse-threshold ("the 100") config.
- *   • Monitor — the live advisory intents + fired provenance + per-book RAG, and the
- *     engine kill-switch / advisory-only / rate-guard controls.
+ *   • LP Panels — the standing hedge LP-panel roster ({@link LpPanelConfig}).
+ *   • Execution mode — the engine kill-switch / advisory-vs-live execution-mode /
+ *     rate-guard controls ({@link HedgeConfigControl}).
+ *
+ * The LIVE hedge MONITOR (advisory intents + fired provenance + per-book RAG) is NOT
+ * here — it lives in the Risk surface as the "Hedge flows" tab ({@link HedgeMonitor},
+ * self-fetching), so authoring the rules and watching them fire are separated. This
+ * is the "Hedging Rules" top-level domain tab.
  *
  * The wire model is the shipped {@link HedgeGraph}: the ordered rules table compiles to
  * a deterministic first-match-wins graph ({@link compileRulesToHedgeGraph}) and loads
@@ -29,9 +36,7 @@ import {
 import type {
   HedgeConfig,
   HedgeGraph,
-  HedgeIntent,
   HedgePolicyScopeKind,
-  HedgeProvenance,
   RiskBook,
   WarehouseThreshold,
 } from "../../data/contract";
@@ -49,7 +54,6 @@ import { defaultExitAction } from "../../lib/hedgeExit";
 import { validateHedgeGraph } from "../../lib/hedgeTrace";
 import { HedgeConfigControl } from "./HedgeConfigControl";
 import { HedgeConflictPanel } from "./HedgeConflictPanel";
-import { HedgeMonitor } from "./HedgeMonitor";
 import { HedgeRuleEditor } from "./HedgeRuleEditor";
 import { HedgeRulesTable } from "./HedgeRulesTable";
 import { HedgeTracePanel } from "./HedgeTracePanel";
@@ -59,7 +63,7 @@ import { ThresholdConfig } from "./ThresholdConfig";
 import styles from "./HedgingWorkspace.module.css";
 import type { HedgeLpPanel } from "../../data/contract";
 
-type Tab = "policy" | "thresholds" | "lp-panels" | "monitor";
+type Tab = "policy" | "thresholds" | "lp-panels" | "execution";
 type Mode = { kind: "list" } | { kind: "editor"; index: number | null; draft: HedgeRule };
 type SaveState =
   | { kind: "idle" }
@@ -108,7 +112,7 @@ export function HedgingWorkspace(): React.ReactElement {
     <div className={styles.wrap}>
       <header className={styles.head}>
         <div className={styles.headMain}>
-          <h1 className={styles.title}>Hedging</h1>
+          <h1 className={styles.title}>Hedging Rules</h1>
           <p className={styles.note}>
             Internalise warehoused risk up to the threshold, then hedge the overflow — via a
             trader-composed exit policy. Scope rules by <strong>book</strong> or by{" "}
@@ -156,12 +160,12 @@ export function HedgingWorkspace(): React.ReactElement {
           </button>
           <button
             type="button"
-            className={tab === "monitor" ? styles.tabActive : styles.tab}
-            aria-pressed={tab === "monitor"}
-            data-testid="tab-monitor"
-            onClick={() => setTab("monitor")}
+            className={tab === "execution" ? styles.tabActive : styles.tab}
+            aria-pressed={tab === "execution"}
+            data-testid="tab-execution"
+            onClick={() => setTab("execution")}
           >
-            Monitor
+            Execution mode
           </button>
         </nav>
       </header>
@@ -169,7 +173,7 @@ export function HedgingWorkspace(): React.ReactElement {
       {tab === "policy" && <PolicyTab app={app} readOnly={readOnly} />}
       {tab === "thresholds" && <ThresholdsTab app={app} readOnly={readOnly} />}
       {tab === "lp-panels" && <LpPanelsTab app={app} readOnly={readOnly} />}
-      {tab === "monitor" && <MonitorTab app={app} readOnly={readOnly} />}
+      {tab === "execution" && <ExecutionTab app={app} readOnly={readOnly} />}
 
       {wizardOpen && <SetupWizard onClose={() => setWizardOpen(false)} />}
     </div>
@@ -707,19 +711,26 @@ function LpPanelsTab({
   );
 }
 
-// --- Monitor tab ------------------------------------------------------------
+// --- Execution mode tab -----------------------------------------------------
 
-function MonitorTab({
+/**
+ * ExecutionTab — the engine EXECUTION-MODE config (the top half of what used to be the
+ * "Monitor" tab): the kill-switch, the Advisory / LP-panel / Composite / LP-panel→
+ * Composite execution mode, MAX CLIP / MAX HEDGES / DAILY external CAP / COMPOSITE
+ * SPREAD guard-rails ({@link HedgeConfigControl}). The LIVE flow monitor moved to the
+ * Risk surface's "Hedge flows" tab, so this tab is pure config — matching the other
+ * Hedging Rules tabs.
+ */
+function ExecutionTab({
   app,
   readOnly,
 }: {
   app: ReturnType<typeof useApp>;
   readOnly: boolean;
 }): React.ReactElement {
-  const [intents, setIntents] = useState<HedgeIntent[]>([]);
-  const [provenance, setProvenance] = useState<HedgeProvenance[]>([]);
   const [config, setConfig] = useState<HedgeConfig | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Load config once.
   useEffect(() => {
@@ -727,31 +738,9 @@ function MonitorTab({
     void app.transport
       .getHedgeConfig()
       .then((c) => !cancelled && setConfig(c))
-      .catch(() => undefined);
+      .catch((e: unknown) => !cancelled && setLoadError(e instanceof Error ? e.message : "load failed"));
     return () => {
       cancelled = true;
-    };
-  }, [app.transport]);
-
-  // Subscribe to the live advisory-intent stream; refetch provenance on each tick so
-  // the audit rows track the fired hedges (the mock appends provenance as it fires).
-  useEffect(() => {
-    let cancelled = false;
-    const refetch = (): void => {
-      void app.transport
-        .listHedgeProvenance()
-        .then((p) => !cancelled && setProvenance(p))
-        .catch(() => undefined);
-    };
-    refetch();
-    const dispose = app.transport.streamHedgeIntents((intent) => {
-      if (cancelled) return;
-      setIntents((cur) => [...cur, intent].slice(-40));
-      refetch();
-    });
-    return () => {
-      cancelled = true;
-      dispose();
     };
   }, [app.transport]);
 
@@ -769,11 +758,25 @@ function MonitorTab({
   );
 
   return (
-    <div className={styles.monitorTab}>
+    <div className={styles.singleTab}>
+      <div className={styles.scopeBar}>
+        <p className={styles.note}>
+          How the engine ACTS on the policy: the kill-switch, the execution mode (Advisory dry-run vs
+          LP&nbsp;panel / Composite / LP&nbsp;panel&nbsp;→&nbsp;Composite), and the max-clip / max-hedges /
+          daily-cap guard-rails. Run Advisory while you calibrate, then arm a live mode. Watch the fired
+          hedges under <strong>Risk → Hedge flows</strong>.{" "}
+          {readOnly ? "Read-only view." : "hedge · FI edit."}
+        </p>
+        <HelpButton helpId="concept.hedge-execution-mode" subject="the hedge execution mode" />
+      </div>
+      {loadError !== null && (
+        <p className={styles.errorText} role="alert">
+          {loadError}
+        </p>
+      )}
       {config !== null && (
         <HedgeConfigControl config={config} readOnly={readOnly} busy={busy} onChange={onConfigChange} />
       )}
-      <HedgeMonitor intents={intents} provenance={provenance} config={config} />
     </div>
   );
 }

@@ -57,7 +57,7 @@ interface FlowRowContextMenuProps {
   canManageAcceptance: boolean;
   /**
    * Invoke "Change hedging strategy" for the row's deal — seed a new hedge rule scoped to
-   * the flow, then deep-link to the Hedging → Exit Policy builder. Omitted on surfaces
+   * the flow, then deep-link to the Hedging Rules → Exit Policy builder. Omitted on surfaces
    * whose rows carry no deal (the item then never renders).
    */
   onChangeHedgingStrategy?: (seed: HedgeSeedDeal) => void;

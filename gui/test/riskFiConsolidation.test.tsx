@@ -2,16 +2,17 @@
  * FI "Book" → "Risk" consolidation (docs/FI-BOOK-CONCEPTS.md), post-flatten.
  *
  * The redundant Fixed-Income "Book" rail entry is removed; its position-ledger
- * surfaces (Positions · Quotes · Deals) are now TOP-LEVEL tabs of the consolidated
- * "Risk" panel ({@link RiskDashboardWorkspace}) — previously they were nested a level
- * deeper inside a "Scenario" tab that composed the cross-asset `RiskWorkspace` at its
- * FI rates lens. That "Scenario" tab AND its netted rates scenario-risk surface are
- * dropped; the three ledger views are promoted to siblings of Dashboard / Portfolios /
- * Routing / Acceptance and composed verbatim.
+ * surfaces (Positions · Quotes · Client blotter) are now TOP-LEVEL tabs of the
+ * consolidated "Risk" panel ({@link RiskDashboardWorkspace}) — previously they were
+ * nested a level deeper inside a "Scenario" tab that composed the cross-asset
+ * `RiskWorkspace` at its FI rates lens. That "Scenario" tab AND its netted rates
+ * scenario-risk surface are dropped; the ledger views are promoted to siblings of
+ * Dashboard / Portfolios / Routing / Acceptance (the executed-hedge ledger split into
+ * its own "Hedge blotter" sibling) and composed verbatim.
  *
  * These render the REAL workspaces inside the REAL `AppProvider` driving the REAL
  * offline `MockTransport`, seeded via the genuine submit→quote→accept desk flow (no
- * stubs). The moved lens bodies (Deals blotter, Positions ledger, Quotes blotter) are
+ * stubs). The moved lens bodies (Client-deals blotter, Positions ledger, Quotes blotter) are
  * exercised through their real top-level tab buttons on the Risk panel — proving
  * nothing was lost by dropping the Book rail entry and flattening the nesting.
  *
@@ -118,23 +119,30 @@ describe("FI Risk consolidation — the Risk panel carries the folded-in ledger 
     transport = await seededDeskTransport();
   });
 
-  it("promotes Positions · Quotes · Deals to top-level tabs (no 'Scenario Risk' sub-view)", async () => {
+  it("promotes Positions · Quotes · Client blotter to top-level tabs (no 'Scenario Risk' sub-view)", async () => {
     await renderRiskPanel(transport);
     const bar = screen.getByRole("group", { name: "risk view" });
     const labels = within(bar)
       .getAllByRole("button")
       .map((b) => b.textContent);
-    // The three ledger views are now siblings of the management tabs …
-    expect(labels).toEqual(expect.arrayContaining(["Positions", "Quotes", "Deals"]));
+    // The ledger views are now siblings of the management tabs — the client-deals
+    // blotter surfaces as "Client blotter", with the executed-hedge ledger split into
+    // its own "Hedge blotter" sibling …
+    expect(labels).toEqual(
+      expect.arrayContaining(["Positions", "Quotes", "Client blotter", "Hedge blotter"]),
+    );
+    // … the old single "Deals" tab is gone (split into Client/Hedge blotters) …
+    expect(labels).not.toContain("Deals");
     // … and the old nested "Scenario Risk" sub-view is gone.
     expect(labels).not.toContain("Scenario Risk");
     expect(within(bar).queryByRole("button", { name: "Scenario" })).toBeNull();
   });
 
-  it("the Deals tab renders the deals blotter incl. the routed Risk Portfolio column, the booked deal, and a BUY/SELL badge", async () => {
+  it("the Client blotter tab renders the deals blotter incl. the routed Risk Portfolio column, the booked deal, and a BUY/SELL badge", async () => {
     await renderRiskPanel(transport);
-    await openTab("Deals");
-    // The blotter (former Book "Deals" lens) renders verbatim — its panel, the routed
+    await openTab("Client blotter");
+    // The blotter (former Book "Deals" lens, forced to the client lens) renders verbatim
+    // — its panel, the routed
     // Risk-Portfolio column header, and the booked Jane Street OIS deal.
     expect(await screen.findByText("Received deals")).toBeInTheDocument();
     const dealsTable = screen.getByRole("region", { name: "Deals table" });

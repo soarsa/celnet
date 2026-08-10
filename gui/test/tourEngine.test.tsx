@@ -140,21 +140,27 @@ describe("authored tours", () => {
     const t = TOUR_INDEX.find((x) => x.id === "configure-hedging");
     expect(t, "configure-hedging tour is registered").toBeDefined();
     expect(t!.workspace).toBe("hedging");
-    // Six guide-mirroring steps + a centred intro.
+    // Five guide-mirroring anchored steps + a centred intro + a centred pointer to
+    // Risk → Hedge flows (the live monitor moved out of the Hedging Rules surface).
     expect(t!.steps.length).toBe(7);
     const selectors = t!.steps.map((s) => s.targetSelector).filter(Boolean);
-    // Each anchor is a real, present data-testid on the HedgingWorkspace surface
-    // (the three tab buttons + threshold/policy/trace/monitor controls).
+    // Each anchor is a real, present data-testid on the HedgingWorkspace (Hedging Rules)
+    // surface (the tab buttons + threshold/policy/trace/execution-mode controls). The
+    // live monitor is no longer here — it lives under Risk → Hedge flows, so the final
+    // step is a centred pointer with no anchor.
     for (const sel of [
       '[data-testid="tab-thresholds"]',
       '[data-testid="threshold-cap"]',
       '[data-testid="hedge-create-rule"]',
       '[data-testid="hedge-trace"]',
-      '[data-testid="tab-monitor"]',
-      '[data-testid="hedge-monitor"]',
+      '[data-testid="tab-execution"]',
     ]) {
       expect(selectors, `missing anchor ${sel}`).toContain(sel);
     }
+    // The monitor anchor was removed with the tab — assert it's gone so the tour can't
+    // regress to targeting a control that no longer exists on this surface.
+    expect(selectors).not.toContain('[data-testid="tab-monitor"]');
+    expect(selectors).not.toContain('[data-testid="hedge-monitor"]');
     // Every non-intro (targeted) step off the default Policy tab carries an
     // off-screen hint so it degrades gracefully when its tab isn't active.
     for (const s of t!.steps) {

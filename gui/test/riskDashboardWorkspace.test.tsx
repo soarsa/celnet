@@ -53,7 +53,9 @@ function makeApp(opts: {
       //   • Routing → getRiskRoutingGraph, Acceptance → getAcceptanceGraph
       //   • Positions (RatesBookWorkspace) → listRatesPositions / listEntities / listBooks
       //   • Quotes (QuotesBlotterWorkspace) → listDeskRequests + streamNotifications
-      //   • Deals (DealsBlotterWorkspace) → listDeals + listRiskBooks + streamNotifications
+      //   • Client blotter (DealsBlotterWorkspace, client lens) → listDeals + listRiskBooks + streamNotifications
+      //   • Hedge blotter (HedgeDealsView) → listHedgeProvenance + streamHedgeIntents
+      //   • Hedge flows (HedgeMonitor) → getHedgeConfig + listHedgeProvenance + streamHedgeIntents
       listDesks: vi.fn(async () => []),
       listFixConnections: vi.fn(async () => []),
       getRiskRoutingGraph: vi.fn(async () => null),
@@ -65,6 +67,18 @@ function makeApp(opts: {
       listDeskRequests: vi.fn(async () => ({ requests: [] })),
       listDeals: vi.fn(async () => ({ deals: [] })),
       streamNotifications: vi.fn(() => () => {}),
+      listHedgeProvenance: vi.fn(async () => []),
+      streamHedgeIntents: vi.fn(() => () => {}),
+      getHedgeConfig: vi.fn(async () => ({
+        killSwitch: false,
+        execution: "advisory",
+        deskEnabled: [],
+        maxClip: 1_000_000,
+        maxHedgesPerInterval: 20,
+        dailyExternalNotionalCap: 1_000_000_000,
+        lpPanels: [],
+        compositeSpreadBp: 0.5,
+      })),
     },
     conventions: {},
     scope: undefined,
@@ -272,16 +286,18 @@ describe("RiskDashboardWorkspace", () => {
   });
 });
 
-describe("RiskDashboardWorkspace — the consolidated 7-way Risk host", () => {
+describe("RiskDashboardWorkspace — the consolidated 9-way Risk host", () => {
   const emptyBooks = { risk: [] as RiskBookRisk[], books: [] as RiskBook[] };
 
-  it("renders all seven tab toggles for an admin, defaulting to Dashboard", async () => {
+  it("renders all nine tab toggles for an admin, defaulting to Dashboard", async () => {
     state.app = makeApp(emptyBooks); // admin can() => true ⇒ every tab visible
     await act(async () => {
       render(<RiskDashboardWorkspace />);
     });
-    // The FI position-ledger views (Positions/Quotes/Deals) are now TOP-LEVEL tabs;
-    // the old "Scenario" tab (and its FI netted rates scenario-risk surface) is gone.
+    // The FI position-ledger views (Positions/Quotes/Client blotter) are TOP-LEVEL
+    // tabs; the old "Scenario" tab (and its FI netted rates scenario-risk surface) is
+    // gone. The hedge side — Hedge blotter (executed hedges) + Hedge flows (the live
+    // monitor moved from the Hedging Rules surface) — are the last two tabs.
     for (const tab of [
       "dashboard",
       "portfolios",
@@ -289,13 +305,46 @@ describe("RiskDashboardWorkspace — the consolidated 7-way Risk host", () => {
       "acceptance",
       "positions",
       "quotes",
-      "deals",
+      "clientblotter",
+      "hedgeblotter",
+      "hedgeflows",
     ] as const) {
       expect(screen.getByTestId(`risk-tab-${tab}`)).toBeInTheDocument();
     }
     expect(screen.queryByTestId("risk-tab-scenario")).not.toBeInTheDocument();
+    // The old single "Deals" tab is replaced by the split Client/Hedge blotters.
+    expect(screen.queryByTestId("risk-tab-deals")).not.toBeInTheDocument();
     // Default lands on Dashboard (the routed-risk roll-up).
     expect(screen.getByTestId("risk-tab-dashboard")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("mounts the split blotters + the self-fetching monitor on their tabs", async () => {
+    state.app = makeApp(emptyBooks);
+    await act(async () => {
+      render(<RiskDashboardWorkspace />);
+    });
+
+    // Client blotter → the received (client) deals blotter, WITHOUT the client/hedge
+    // lens toggle (it is a dedicated tab, so the toggle bar is hidden entirely).
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("risk-tab-clientblotter"));
+    });
+    expect(await screen.findByText("Received deals")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "deals lens" })).toBeNull();
+    expect(screen.queryByTestId("deals-lens-hedge")).toBeNull();
+    expect(screen.queryByTestId("deals-lens-client")).toBeNull();
+
+    // Hedge blotter → the executed-hedge ledger.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("risk-tab-hedgeblotter"));
+    });
+    expect(await screen.findByText("Hedge deals")).toBeInTheDocument();
+
+    // Hedge flows → the self-fetching live monitor (no props from a parent).
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("risk-tab-hedgeflows"));
+    });
+    expect(await screen.findByTestId("hedge-monitor")).toBeInTheDocument();
   });
 
   it("switches to Routing then Acceptance — only the active tab's body mounts", async () => {
@@ -323,8 +372,9 @@ describe("RiskDashboardWorkspace — the consolidated 7-way Risk host", () => {
 
   it("hides the Acceptance tab from a risk_manage holder lacking manage_acceptance", async () => {
     // risk_manage·FI (reaches the host + Dashboard/Portfolios/Routing) but NOT
-    // manage_acceptance ⇒ the Acceptance tab is hidden; the ledger tabs
-    // (Positions/Quotes/Deals) stay (view floor).
+    // manage_acceptance and NOT hedge ⇒ the Acceptance tab AND the Hedge flows tab are
+    // hidden; the ledger tabs (Positions/Quotes/Client blotter/Hedge blotter) stay
+    // (view floor).
     state.app = makeApp({
       ...emptyBooks,
       auth: {
@@ -343,11 +393,14 @@ describe("RiskDashboardWorkspace — the consolidated 7-way Risk host", () => {
       "routing",
       "positions",
       "quotes",
-      "deals",
+      "clientblotter",
+      "hedgeblotter",
     ] as const) {
       expect(screen.getByTestId(`risk-tab-${tab}`)).toBeInTheDocument();
     }
     expect(screen.queryByTestId("risk-tab-acceptance")).not.toBeInTheDocument();
+    // Hedge flows is hedge-gated (the hedge-engine monitor) — hidden without `hedge`.
+    expect(screen.queryByTestId("risk-tab-hedgeflows")).not.toBeInTheDocument();
     // Default Dashboard still active (it is visible for this identity).
     expect(screen.getByTestId("risk-tab-dashboard")).toHaveAttribute("aria-pressed", "true");
   });
@@ -371,10 +424,10 @@ describe("RiskDashboardWorkspace — the consolidated 7-way Risk host", () => {
     expect(screen.getByTestId("risk-tab-dashboard")).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("shows a view-only FI trader ONLY the ledger tabs (Positions/Quotes/Deals — the view floor)", async () => {
-    // A booking-only FI trader (view·FI, no risk_manage / manage_acceptance) sees only
-    // the three ledger tabs and clamps onto the first (Positions) — the rates position
-    // ledger mounts.
+  it("shows a view-only FI trader ONLY the ledger tabs (Positions/Quotes/Client blotter/Hedge blotter — the view floor)", async () => {
+    // A booking-only FI trader (view·FI, no risk_manage / manage_acceptance / hedge)
+    // sees only the four view-floor ledger tabs and clamps onto the first (Positions) —
+    // the rates position ledger mounts.
     state.app = makeApp({
       ...emptyBooks,
       auth: {
@@ -386,12 +439,13 @@ describe("RiskDashboardWorkspace — the consolidated 7-way Risk host", () => {
     await act(async () => {
       render(<RiskDashboardWorkspace />);
     });
-    for (const tab of ["positions", "quotes", "deals"] as const) {
+    for (const tab of ["positions", "quotes", "clientblotter", "hedgeblotter"] as const) {
       expect(screen.getByTestId(`risk-tab-${tab}`)).toBeInTheDocument();
     }
     // Clamps onto the first visible tab (Positions), never an empty pane.
     expect(screen.getByTestId("risk-tab-positions")).toHaveAttribute("aria-pressed", "true");
-    for (const tab of ["dashboard", "portfolios", "routing", "acceptance"] as const) {
+    // Hedge flows needs `hedge`; the management tabs need their own caps — all hidden.
+    for (const tab of ["dashboard", "portfolios", "routing", "acceptance", "hedgeflows"] as const) {
       expect(screen.queryByTestId(`risk-tab-${tab}`)).not.toBeInTheDocument();
     }
   });

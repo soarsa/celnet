@@ -2,9 +2,9 @@
  * HedgingWorkspace — the auto-hedge surface driven with `useApp` mocked (no server).
  * Covers: the Exit-Policy tab loads a policy into the rules table and opens the
  * per-rule editor with the exit-action leaf; the Thresholds tab renders the roster +
- * form; the Monitor tab renders a streamed advisory intent (with its ADVISORY badge +
- * RAG chip) and a fired provenance row; and the whole surface is read-only without the
- * `hedge` capability.
+ * form; the Execution mode tab renders the engine kill-switch + execution-mode config
+ * (the live flow monitor moved to Risk → Hedge flows, asserted absent here); and the
+ * whole surface is read-only without the `hedge` capability.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -187,27 +187,31 @@ describe("HedgingWorkspace — thresholds", () => {
   });
 });
 
-describe("HedgingWorkspace — monitor", () => {
-  it("renders the ops dashboard: engine strip, per-book RAG, live hedges + provenance", async () => {
+describe("HedgingWorkspace — execution mode", () => {
+  it("renders the engine execution-mode config (kill-switch + mode) on the Execution mode tab", async () => {
     state.app = makeApp();
     render(<HedgingWorkspace />);
-    fireEvent.click(screen.getByTestId("tab-monitor"));
+    fireEvent.click(screen.getByTestId("tab-execution"));
 
-    // The kill-switch / execution-mode controls.
+    // The kill-switch / execution-mode controls (HedgeConfigControl) live here now.
     expect(await screen.findByTestId("kill-switch")).toBeInTheDocument();
     expect(screen.getByTestId("hedge-execution-mode")).toBeInTheDocument();
     expect(screen.getByTestId("exec-mode-advisory")).toBeInTheDocument();
+  });
 
-    // The engine status strip + per-book RAG board render from the streamed intents.
-    expect(await screen.findByTestId("engine-strip")).toBeInTheDocument();
-    expect(screen.getByTestId("engine-state")).toBeInTheDocument();
-    expect(screen.getByTestId("engine-cap")).toBeInTheDocument();
-    expect(await screen.findByTestId("rag-book-fi-rates-emea")).toBeInTheDocument();
+  it("does NOT mount the live monitor on the Hedging Rules surface (it moved to Risk → Hedge flows)", async () => {
+    state.app = makeApp();
+    render(<HedgingWorkspace />);
+    fireEvent.click(screen.getByTestId("tab-execution"));
+    // Wait for the config to settle so a late-mounting monitor would have appeared.
+    expect(await screen.findByTestId("kill-switch")).toBeInTheDocument();
 
-    // The live-hedges section: running summary (with venue mix) + the fired provenance row.
-    expect(screen.getByTestId("live-hedges")).toBeInTheDocument();
-    expect(screen.getByTestId("venue-mix")).toBeInTheDocument();
-    expect(await screen.findByTestId("provenance-row-H-0001")).toBeInTheDocument();
+    // The flow-monitor sections are gone from this surface entirely.
+    expect(screen.queryByTestId("hedge-monitor")).toBeNull();
+    expect(screen.queryByTestId("engine-strip")).toBeNull();
+    expect(screen.queryByTestId("live-hedges")).toBeNull();
+    // And the old Monitor tab no longer exists.
+    expect(screen.queryByTestId("tab-monitor")).toBeNull();
   });
 });
 

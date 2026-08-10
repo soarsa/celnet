@@ -180,12 +180,12 @@ const TOUR_LIST: readonly Tour[] = [
     id: "configure-hedging",
     title: "Configure auto-hedging",
     summary:
-      "Warehouse risk to a threshold, then hedge the overflow: scope + metric, bands, the exit policy, where to hedge, advisory-vs-live, and the monitor.",
+      "Warehouse risk to a threshold, then hedge the overflow: scope + metric, bands, the exit policy, where to hedge, advisory-vs-live execution, and where to watch it fire.",
     workspace: "hedging",
     steps: [
       {
         title: "Configure auto-hedging",
-        body: "The idea in one line: internalise the risk you capture up to a threshold, then hedge the overflow above it. We'll walk the three Hedging tabs — Thresholds (the budget), Exit Policy (the rules), and Monitor (arming + watching). Authoring needs the hedge · FI capability; without it every tab is read-only.",
+        body: "The idea in one line: internalise the risk you capture up to a threshold, then hedge the overflow above it. We'll walk the Hedging Rules tabs — Thresholds (the budget), Exit Policy (the rules), and Execution mode (arming). The LIVE monitor lives under Risk → Hedge flows (the last step points you there). Authoring needs the hedge · FI capability; without it every tab is read-only.",
         placement: "center",
       },
       {
@@ -218,17 +218,15 @@ const TOUR_LIST: readonly Tour[] = [
           "Open the Exit Policy tab — the “What would fire?” trace sits below the rules table.",
       },
       {
-        targetSelector: '[data-testid="tab-monitor"]',
+        targetSelector: '[data-testid="tab-execution"]',
         title: "Step 5 — advisory vs live, and the kill switch",
-        body: "Open the Monitor tab → Engine controls. Auto-hedging is Advisory only (dry-run) by default — it computes and emits every intent with real provenance but trades nothing. That's the mandatory shadow-run: watch it for a session, then turn Advisory off to let hedges act (internal crosses book through the cap-gated ledger; external legs stay advisory until the street-order wiring is enabled). Keep the Kill switch, Max clip, Max hedges / interval and Daily external cap as your guardrails.",
+        body: "Open the Execution mode tab. Auto-hedging is Advisory only (dry-run) by default — it computes and emits every intent with real provenance but trades nothing. That's the mandatory shadow-run: watch it for a session, then turn Advisory off to let hedges act (internal crosses book through the cap-gated ledger; external legs stay advisory until the street-order wiring is enabled). Keep the Kill switch, Max clip, Max hedges / interval and Daily external cap as your guardrails.",
         placement: "bottom",
       },
       {
-        targetSelector: '[data-testid="hedge-monitor"]',
-        title: "Step 6 — the monitor",
-        body: "The monitor shows the per-book RAG strip (latest band + utilisation %), the live advisory-intent stream (each row badged ADVISORY when armed dry-run), and the fired-provenance audit trail (When · Book · instrument · Band · Action · Internal · External · LP · Mode) — the immutable answer to “why did the system hedge this book, at what price, on whose policy?”. Confirm the bands and intents here before you arm live.",
-        placement: "top",
-        offScreenHint: "Open the Monitor tab to see the RAG strip, advisory intents, and the fired-hedge audit.",
+        title: "Step 6 — watch it fire under Risk → Hedge flows",
+        body: "The live monitor is no longer part of Hedging Rules — it moved to the Risk surface's “Hedge flows” tab (open Fixed Income → Risk → Hedge flows). It shows the engine-status strip, the per-book RAG strip (latest band + utilisation %), the live advisory-intent stream (each row badged ADVISORY when armed dry-run), and the fired-provenance audit trail (When · Book · instrument · Band · Action · Internal · External · LP · Mode) — the immutable answer to “why did the system hedge this book, at what price, on whose policy?”. The executed-hedge ledger sits alongside it as “Hedge blotter”. Confirm the bands and intents there before you arm live.",
+        placement: "center",
       },
     ],
   },

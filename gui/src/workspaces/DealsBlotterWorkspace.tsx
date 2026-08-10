@@ -38,6 +38,15 @@ import styles from "./DealsBlotterWorkspace.module.css";
 type DealsLens = "client" | "hedge";
 
 /**
+ * How the blotter exposes its two lenses. `"both"` (the default — the Book's Deals
+ * lens) shows the Client-deals / Hedge-deals TOGGLE and remembers the last-used lens.
+ * `"client"` / `"hedge"` FORCE that one lens and hide the toggle — used to surface the
+ * blotter as a DEDICATED Risk tab (a standalone Client blotter), where the hedge
+ * ledger is its own separate tab so a lens toggle would be redundant.
+ */
+type DealsLensMode = DealsLens | "both";
+
+/**
  * The rates pay/receive-fixed reading of a `Side` — the SECONDARY detail kept
  * alongside the primary BUY/SELL badge. The wire `Side` already IS the buy/sell
  * axis (contract: `SIDE_BUY` pays fixed / is long the swap, `SIDE_SELL` receives
@@ -263,7 +272,12 @@ function dealSearchText(d: Deal, names: ReadonlyMap<string, string>): string {
   ].join(" ");
 }
 
-export function DealsBlotterWorkspace(): React.ReactElement {
+export function DealsBlotterWorkspace({
+  lens: lensMode = "both",
+}: {
+  /** Toggle both lenses (default), or force one and hide the toggle. */
+  lens?: DealsLensMode;
+} = {}): React.ReactElement {
   const app = useApp();
   const principal = useMemo(() => principalForScope(app.scope), [app.scope]);
   // Hard asset separation: the Book's Deals lens shows ONLY the active domain's
@@ -284,7 +298,9 @@ export function DealsBlotterWorkspace(): React.ReactElement {
     "fi-deals-blotter",
     { lens: "client", query: "" },
   );
-  const lens = ui.lens;
+  // In "both" mode the active lens is the persisted, toggle-driven one; a forced mode
+  // ("client"/"hedge") pins the lens and the toggle is hidden.
+  const lens: DealsLens = lensMode === "both" ? ui.lens : lensMode;
   const setLens = useCallback((l: DealsLens) => setUi({ lens: l }), [setUi]);
   const [selected, setSelected] = useState<Deal | null>(null);
   // The row context menu (right-click / context-menu key): the counterparty + anchor
@@ -356,26 +372,28 @@ export function DealsBlotterWorkspace(): React.ReactElement {
 
   return (
     <div className={styles.shell}>
-      <div className={styles.lensBar} role="group" aria-label="deals lens">
-        <button
-          type="button"
-          className={`${styles.lensBtn} ${lens === "client" ? styles.lensBtnActive : ""}`}
-          aria-pressed={lens === "client"}
-          data-testid="deals-lens-client"
-          onClick={() => setLens("client")}
-        >
-          Client deals
-        </button>
-        <button
-          type="button"
-          className={`${styles.lensBtn} ${lens === "hedge" ? styles.lensBtnActive : ""}`}
-          aria-pressed={lens === "hedge"}
-          data-testid="deals-lens-hedge"
-          onClick={() => setLens("hedge")}
-        >
-          Hedge deals
-        </button>
-      </div>
+      {lensMode === "both" && (
+        <div className={styles.lensBar} role="group" aria-label="deals lens">
+          <button
+            type="button"
+            className={`${styles.lensBtn} ${lens === "client" ? styles.lensBtnActive : ""}`}
+            aria-pressed={lens === "client"}
+            data-testid="deals-lens-client"
+            onClick={() => setLens("client")}
+          >
+            Client deals
+          </button>
+          <button
+            type="button"
+            className={`${styles.lensBtn} ${lens === "hedge" ? styles.lensBtnActive : ""}`}
+            aria-pressed={lens === "hedge"}
+            data-testid="deals-lens-hedge"
+            onClick={() => setLens("hedge")}
+          >
+            Hedge deals
+          </button>
+        </div>
+      )}
       {lens === "hedge" ? (
         <HedgeDealsView />
       ) : (

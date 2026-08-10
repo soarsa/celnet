@@ -517,7 +517,7 @@ const ENTRY_LIST: readonly HelpEntry[] = [
       takeaway: "Advisory is the safe shadow; the three live modes differ only in where the external leg fills.",
     },
     howToConfigure: [
-      "Open Hedging → Monitor → Engine controls.",
+      "Open Hedging Rules → Execution mode.",
       "Pick an execution mode: Advisory (dry-run), LP panel, Composite, or LP panel → Composite.",
       "For a composite-touching mode, set the Composite spread (bp) — the half-spread around the consolidated mid (default 0.5).",
       "Keep the kill switch for a hard, firm-wide halt (all risk warehouses) independent of the mode.",
@@ -546,7 +546,7 @@ const ENTRY_LIST: readonly HelpEntry[] = [
       takeaway: "Firm sets the baseline; Book/Bucket refine it; Bucket reads the whole portfolio aggregate.",
     },
     howToConfigure: [
-      "Open Hedging → Exit Policy and pick the Policy scope: Firm, Book, or Bucket.",
+      "Open Hedging Rules → Exit Policy and pick the Policy scope: Firm, Book, or Bucket.",
       "For Book/Bucket, choose the risk book (a Bucket is a subtree-root portfolio) from the picker.",
       "Author the rules table (IF <conditions> THEN <exit action>) exactly as for the Firm policy, then Save.",
       "Add Clear risk as the exit action to flatten the book's whole net to zero (no parameters).",
@@ -564,7 +564,7 @@ const ENTRY_LIST: readonly HelpEntry[] = [
     title: "Create a hedging rule from a pricing group",
     purpose: "Seed a hedge exit-policy rule pre-scoped to a pricing group, then finish it in the Hedging builder.",
     howItWorks:
-      "From a pricing group's editor (the “Create hedging rule” button) or its roster row (right-click / the context-menu key) you hand off a NEW draft rule to Hedging → Exit Policy. Only ONE fact carries across: the group's DESK membership. A pricing group has no currency, product or counterparty and no book/bucket scope, and a hedge rule is a flat AND of conditions (it cannot OR several desks), so the seed is honest about the gap. Exactly one member desk seeds a `desk = <desk>` condition; zero or many desks seed a NO-condition draft (identical to the manual “+ Create hedge rule”) and the hint tells you what to add. The scope stays FIRM and the exit action defaults to Warehouse — you complete the conditions, pick the real exit action, and Save.",
+      "From a pricing group's editor (the “Create hedging rule” button) or its roster row (right-click / the context-menu key) you hand off a NEW draft rule to Hedging Rules → Exit Policy. Only ONE fact carries across: the group's DESK membership. A pricing group has no currency, product or counterparty and no book/bucket scope, and a hedge rule is a flat AND of conditions (it cannot OR several desks), so the seed is honest about the gap. Exactly one member desk seeds a `desk = <desk>` condition; zero or many desks seed a NO-condition draft (identical to the manual “+ Create hedge rule”) and the hint tells you what to add. The scope stays FIRM and the exit action defaults to Warehouse — you complete the conditions, pick the real exit action, and Save.",
     example: {
       scenario: "Three pricing groups handed off to the Hedging builder.",
       rows: [
@@ -578,7 +578,7 @@ const ENTRY_LIST: readonly HelpEntry[] = [
     howToConfigure: [
       "Open Fixed Income → Pricing → Pricing Groups.",
       "Either open a group and click “Create hedging rule”, or right-click the group in the roster (or press the context-menu key) and choose “Create hedging rule”.",
-      "You land in Hedging → Exit Policy with a new draft: a single-desk group is pre-scoped Desk = <desk>; otherwise add the conditions the hint asks for.",
+      "You land in Hedging Rules → Exit Policy with a new draft: a single-desk group is pre-scoped Desk = <desk>; otherwise add the conditions the hint asks for.",
       "Pick the exit action (Warehouse is the safe default), review the preview, and Save — nothing auto-saves.",
       "Seeding needs the Hedge · Fixed-Income capability — you can seed from a group you can only view.",
     ],

@@ -1,7 +1,7 @@
 /**
  * hedgeSeed — the PURE bridge from a received DEAL (the risk a fill just added to the
  * book) to a seeded hedge {@link HedgeRule}, so a trader can right-click a deal on the
- * Deals blotter ("Change hedging strategy") and land in the Hedging → Exit Policy
+ * Deals blotter ("Change hedging strategy") and land in the Hedging Rules → Exit Policy
  * builder with a NEW rule pre-scoped to that flow, instead of hand-composing the
  * conditions. The direct analogue of `lib/acceptanceSeed`.
  *
@@ -149,7 +149,7 @@ export function hedgeSeedGapNote(): string {
 // --- pricing-group seed -----------------------------------------------------
 //
 // The SECOND seed source: a "Create hedging rule" hand-off from a PRICING GROUP (its
-// editor button / roster right-click) into the SAME Hedging → Exit Policy builder. A
+// editor button / roster right-click) into the SAME Hedging Rules → Exit Policy builder. A
 // structural clone of the deal path above, but with ONE honest asymmetry that this
 // section makes explicit:
 //
