@@ -8,6 +8,7 @@
 import { useMemo, useState } from "react";
 
 import type { HedgeGraph } from "../../data/contract";
+import { fmtCompact } from "../../lib/format";
 import { describeExitAction } from "../../lib/hedgeExit";
 import { blankHedgeState, traceHedgeGraph, type HedgeSampleState } from "../../lib/hedgeTrace";
 import styles from "./HedgingWorkspace.module.css";
@@ -25,18 +26,28 @@ function bandFor(utilization: number): string {
   return "green";
 }
 
+/**
+ * The numeric risk-state inputs. `unit` labels the field's units so the trader never
+ * conflates the two SIZE metrics — Net DV01 is a RISK ($/bp) and Net notional is a FACE
+ * amount ($); `compact` echoes a big money figure as k/m/b. Net DV01 and Net notional
+ * are SEPARATE inputs (the historical bug was one magnitude driving both), so a trader
+ * can dial e.g. net notional 250m + net DV01 5k and watch a NetNotional rule fire.
+ */
 const NUMERIC_FIELDS: readonly {
   key: keyof HedgeSampleState;
   label: string;
   step?: number;
+  unit?: string;
+  compact?: boolean;
 }[] = [
-  { key: "utilization", label: "Utilization", step: 0.05 },
-  { key: "overflow", label: "Overflow" },
-  { key: "threshold", label: "Threshold" },
-  { key: "netDv01", label: "Net DV01" },
-  { key: "counterpartyToxicity", label: "Counterparty toxicity", step: 0.05 },
-  { key: "internalOffsetAvailable", label: "Internal offset avail." },
-  { key: "hedgeCostBp", label: "Hedge cost (bp)", step: 0.1 },
+  { key: "netNotional", label: "Net notional", unit: "$ face", compact: true },
+  { key: "netDv01", label: "Net DV01", unit: "$/bp risk", compact: true },
+  { key: "utilization", label: "Utilization", step: 0.05, unit: "|risk| / threshold" },
+  { key: "overflow", label: "Overflow", unit: "$", compact: true },
+  { key: "threshold", label: "Threshold", unit: "the cap", compact: true },
+  { key: "counterpartyToxicity", label: "Counterparty toxicity", step: 0.05, unit: "0–1" },
+  { key: "internalOffsetAvailable", label: "Internal offset avail.", unit: "$", compact: true },
+  { key: "hedgeCostBp", label: "Hedge cost (bp)", step: 0.1, unit: "bp" },
 ];
 
 export function HedgeTracePanel({ graph }: HedgeTracePanelProps): React.ReactElement {
@@ -47,6 +58,8 @@ export function HedgeTracePanel({ graph }: HedgeTracePanelProps): React.ReactEle
     utilization: 1.15,
     threshold: 250000,
     overflow: 75000,
+    netDv01: 5000,
+    netNotional: 250000000,
     breached: true,
     counterpartyToxicity: 0.2,
     internalOffsetAvailable: 60000,
@@ -99,19 +112,30 @@ export function HedgeTracePanel({ graph }: HedgeTracePanelProps): React.ReactEle
             <option value="false">false</option>
           </select>
         </label>
-        {NUMERIC_FIELDS.map((f) => (
-          <label key={f.key} className={styles.traceField}>
-            <span className={styles.traceFieldLabel}>{f.label}</span>
-            <input
-              className={styles.input}
-              type="number"
-              step={f.step ?? 1}
-              value={state[f.key] as number}
-              data-testid={`trace-${f.key}`}
-              onChange={(e) => setNum(f.key, Number(e.target.value))}
-            />
-          </label>
-        ))}
+        {NUMERIC_FIELDS.map((f) => {
+          const value = state[f.key] as number;
+          return (
+            <label key={f.key} className={styles.traceField}>
+              <span className={styles.traceFieldLabel}>
+                {f.label}
+                {f.unit ? <span className={styles.traceUnit}> · {f.unit}</span> : null}
+              </span>
+              <input
+                className={styles.input}
+                type="number"
+                step={f.step ?? 1}
+                value={value}
+                data-testid={`trace-${f.key}`}
+                onChange={(e) => setNum(f.key, Number(e.target.value))}
+              />
+              {f.compact && value !== 0 ? (
+                <span className={styles.traceUnit} data-testid={`trace-${f.key}-compact`}>
+                  = {fmtCompact(value)}
+                </span>
+              ) : null}
+            </label>
+          );
+        })}
       </div>
 
       <div className={styles.traceResult} data-testid="trace-result">

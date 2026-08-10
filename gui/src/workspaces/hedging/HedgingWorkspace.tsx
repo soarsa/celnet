@@ -52,6 +52,7 @@ import {
 } from "../../lib/hedgeRules";
 import { defaultExitAction } from "../../lib/hedgeExit";
 import { validateHedgeGraph } from "../../lib/hedgeTrace";
+import { ExitPolicyWizard } from "./ExitPolicyWizard";
 import { HedgeConfigControl } from "./HedgeConfigControl";
 import { HedgeConflictPanel } from "./HedgeConflictPanel";
 import { HedgeRuleEditor } from "./HedgeRuleEditor";
@@ -202,6 +203,7 @@ function PolicyTab({
   const [scopeId, setScopeId] = useState<string>("");
   const [books, setBooks] = useState<RiskBook[]>([]);
   const [hasScopedPolicy, setHasScopedPolicy] = useState(false);
+  const [ruleWizardOpen, setRuleWizardOpen] = useState(false);
   const scopeReady = scopeKind === "firm" || scopeId !== "";
   // A hedge-rule seed hand-off from a Deals-blotter row ("Change hedging strategy") OR a
   // pricing group ("Create hedging rule"): the SOURCE-AGNOSTIC hint + gap note + the id of
@@ -316,6 +318,16 @@ function PolicyTab({
       index: null,
       draft: { id: newHedgeRuleId(), conditions: [], action: defaultExitAction("warehouse"), enabled: true },
     });
+  }, []);
+
+  // Insert a wizard-generated rule set: REPLACE the current scope's draft rules with the
+  // complete, valid scenario policy, then drop back to the list so the trader reviews it
+  // in the live validity/conflict panel and Saves through the normal path (nothing auto-saves).
+  const onInsertGeneratedRules = useCallback((generated: HedgeRule[]): void => {
+    setSeed(null);
+    setRules(generated);
+    setMode({ kind: "list" });
+    setSaveState({ kind: "idle" });
   }, []);
 
   const onEditRow = useCallback(
@@ -495,6 +507,14 @@ function PolicyTab({
                 <button type="button" className={styles.saveBtn} onClick={onCreate} data-testid="hedge-create-rule">
                   + Create hedge rule
                 </button>
+                <button
+                  type="button"
+                  className={styles.ghostBtn}
+                  onClick={() => setRuleWizardOpen(true)}
+                  data-testid="open-rule-wizard"
+                >
+                  🪄 Rule wizard
+                </button>
                 <button type="button" className={styles.ghostBtn} onClick={resetRules} disabled={!dirty}>
                   Reset
                 </button>
@@ -572,6 +592,15 @@ function PolicyTab({
           />
 
           <HedgeTracePanel graph={compiled} />
+
+          {ruleWizardOpen && (
+            <ExitPolicyWizard
+              scopeBookId={scopeKind === "firm" ? undefined : scopeId}
+              readOnly={readOnly}
+              onInsert={onInsertGeneratedRules}
+              onClose={() => setRuleWizardOpen(false)}
+            />
+          )}
         </>
       )}
     </div>

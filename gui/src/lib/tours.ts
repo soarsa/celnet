@@ -20,7 +20,8 @@ export type TourId =
   | "bid-offer-tiering"
   | "build-pricing-group"
   | "configure-tiering-feature"
-  | "configure-hedging";
+  | "configure-hedging"
+  | "hedge-rule-wizard";
 
 /** Where the tooltip sits relative to its target. */
 export type TourPlacement = "top" | "bottom" | "left" | "right" | "center";
@@ -227,6 +228,46 @@ const TOUR_LIST: readonly Tour[] = [
         title: "Step 6 — watch it fire under Risk → Hedge flows",
         body: "The live monitor is no longer part of Hedging Rules — it moved to the Risk surface's “Hedge flows” tab (open Fixed Income → Risk → Hedge flows). It shows the engine-status strip, the per-book RAG strip (latest band + utilisation %), the live advisory-intent stream (each row badged ADVISORY when armed dry-run), and the fired-provenance audit trail (When · Book · instrument · Band · Action · Internal · External · LP · Mode) — the immutable answer to “why did the system hedge this book, at what price, on whose policy?”. The executed-hedge ledger sits alongside it as “Hedge blotter”. Confirm the bands and intents there before you arm live.",
         placement: "center",
+      },
+    ],
+  },
+  {
+    id: "hedge-rule-wizard",
+    title: "Generate an exit policy with the rule wizard",
+    summary:
+      "Analyse a book's flow, pick a hedge intent, and let the wizard generate a valid exit policy you review and save.",
+    workspace: "hedging",
+    steps: [
+      {
+        title: "The exit-policy rule wizard",
+        body: "Instead of hand-composing conditions, the wizard turns a plain-English hedge intent into a complete, valid exit policy. It runs in two woven modes: ANALYSE a book's real flow to derive sensible thresholds, then pick a SCENARIO preset that generates the rules. We'll open it from the Exit Policy tab.",
+        placement: "center",
+      },
+      {
+        targetSelector: '[data-testid="open-rule-wizard"]',
+        title: "Open the wizard",
+        body: "On the Exit Policy tab, next to “+ Create hedge rule”, click “🪄 Rule wizard”. It opens a guided modal: Analyse → Scenario → Review.",
+        placement: "bottom",
+        offScreenHint:
+          "Open Hedging Rules → Exit Policy (and pick a scope) so the “Rule wizard” button appears next to “+ Create hedge rule”.",
+      },
+      {
+        title: "Step 1 — analyse my flow",
+        body: "Pick a book and the wizard reads its rolled-up risk (from the risk-dashboard store) plus its recent client-blotter deals. It shows Net DV01 (a $/bp RISK) and Net notional (a $ FACE amount) kept honestly distinct, the position/deal counts and peak utilisation, and suggests a rounded warehouse cap + a flatten trigger at 0.8× the cap. No flow ⇒ it says so rather than inventing a number. Apply a suggestion to pre-fill the scenario, or skip.",
+        placement: "center",
+        offScreenHint: "Open the wizard (🪄 Rule wizard) to reach the Analyse step.",
+      },
+      {
+        title: "Step 2 — choose a scenario",
+        body: "Each card is a real intent: “Warehouse until a size limit, then flatten”, “Hold small, escalate large (tiered)”, “Back-to-back a specific counterparty”, or “Pure internalisation”. Set its inputs — the METRIC (Net DV01 vs Net notional, with the correct unit) and threshold(s), or the counterparty — and watch the live preview of the exact rules it will create.",
+        placement: "center",
+        offScreenHint: "In the wizard, advance to the Scenario step to see the preset cards.",
+      },
+      {
+        title: "Step 3 — review, insert, and save",
+        body: "The Review step shows the generated rules in priority order and confirms they are valid and conflict-free. Insert rules REPLACES the current scope's draft; nothing is written until you press Save policy on the Exit Policy screen — where you can still tweak them and watch the validity/conflict panel and the “What would fire?” trace.",
+        placement: "center",
+        offScreenHint: "The Review step is the wizard's last step; Insert rules hands them to the Exit Policy list.",
       },
     ],
   },

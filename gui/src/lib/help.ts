@@ -588,6 +588,37 @@ const ENTRY_LIST: readonly HelpEntry[] = [
       "A group's desk is its ONLY testable overlap — the seed never invents a currency/product/counterparty condition a group can't substantiate. A multi-desk or user/session group seeds no condition on purpose; author one rule per desk. The rule is Firm-scoped — narrow it to a Book/Bucket in the builder if you need per-book handling.",
     keywords: ["hedging", "rule", "pricing group", "seed", "desk", "exit policy", "create", "right-click", "context menu", "firm", "warehouse"],
   },
+  {
+    id: "concept.hedge-rule-wizard",
+    category: "concept",
+    title: "Exit-policy rule wizard",
+    purpose: "Turn a plain-English hedge intent into a complete, valid exit policy — with flow-driven suggested thresholds.",
+    howItWorks:
+      "The rule wizard (Hedging Rules → Exit Policy → “🪄 Rule wizard”, next to “+ Create hedge rule”) runs in two woven modes. ANALYSE MY FLOW reads the data the GUI already holds — the selected book's rolled-up risk from the risk-dashboard store and its recent client-blotter deals — and surfaces the book's Net DV01 (a $/bp RISK) and Net notional (a $ FACE amount) kept honestly DISTINCT, the position/deal counts, and peak utilisation. From that it suggests a rounded warehouse cap (≈ 1.25× the current |exposure|) and a flatten trigger at 0.8× the cap; with no flow it says so rather than inventing a number. SCENARIO PRESETS then generate the rules: each card is a real intent with a live preview of the exact rules. The generated rules are the SAME first-match-wins graphs the manual builder emits, so they pass the validity/conflict checks; Insert REPLACES the current scope's draft and hands to the normal list + Save path — nothing auto-saves.",
+    example: {
+      scenario: "DEFAULT_BOOK: net notional ≈ $250m over 6 positions; you want to warehouse then flatten.",
+      rows: [
+        { label: "Analyse", value: "net DV01 $5k/bp · net notional $250m · peak util 80%" },
+        { label: "Suggested cap", value: "$250m × 1.25 → $500m (rounded)" },
+        { label: "Flatten trigger", value: "0.8 × $500m = $200m" },
+        { label: "Scenario “warehouse then flatten”", value: "Net notional > $200m → Submit market order (flatten); Otherwise → Warehouse" },
+      ],
+      takeaway: "The wizard writes the two rules; you review them in the validity panel and press Save policy.",
+    },
+    howToConfigure: [
+      "Open Hedging Rules → Exit Policy and pick a scope (Firm, Book or Bucket).",
+      "Click “🪄 Rule wizard” next to “+ Create hedge rule”.",
+      "Step 1 — pick a book to Analyse; apply a Net DV01 or Net notional suggestion (or skip).",
+      "Step 2 — choose a scenario card and set its metric + threshold(s) or counterparty; watch the live rule preview.",
+      "Step 3 — review the generated rules (valid + conflict-free), press Insert rules, then Save policy on the Exit Policy screen.",
+    ],
+    whenToUse:
+      "When you want a correct starter exit policy fast — especially to size a “warehouse then flatten” threshold off the book's real exposure rather than guessing, or to stand up a back-to-back / tiered / pure-internalise policy in a few clicks.",
+    risks:
+      "Insert REPLACES the current scope's draft rules — review before Save. Suggested thresholds are heuristics off current exposure, not a risk mandate; tune them. Net DV01 ($/bp) and Net notional ($) are different metrics — pick the one your appetite is expressed in. A live execution mode still governs whether the policy trades (see Hedge execution mode).",
+    keywords: ["wizard", "exit policy", "rule", "scenario", "analyse", "flow", "suggest", "threshold", "net notional", "net dv01", "warehouse", "flatten", "back-to-back", "tiered", "internalise", "guided"],
+    tourId: "hedge-rule-wizard",
+  },
 ];
 
 /** The registry keyed by id (built once from the ordered list). */

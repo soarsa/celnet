@@ -94,7 +94,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     group: "Risk state",
     kind: "numeric",
     validOps: NUMERIC_OPS,
-    hint: "Signed net DV01 (PV per +1bp) — the FI first-order rate risk.",
+    hint: "Signed net DV01 — the FI first-order rate RISK, in $/bp (PV per +1bp). NOT a face amount.",
   },
   {
     field: "net_notional",
@@ -102,7 +102,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     group: "Risk state",
     kind: "numeric",
     validOps: NUMERIC_OPS,
-    hint: "Signed net base-currency notional / delta (FX).",
+    hint: "Signed net base-currency FACE notional, in $ (the delta for FX). NOT a $/bp risk.",
   },
   {
     field: "net_vega",
