@@ -35,11 +35,13 @@ import {
   enabledBookKeys,
   hedgingErrors,
   newBookKey,
+  policyScopeErrors,
   portfolioErrors,
   routingErrors,
   thresholdErrors,
   type WizardBook,
   type WizardDraft,
+  type WizardPolicyScope,
 } from "./wizardModel";
 import { HedgingStep, PortfoliosStep, ReviewStep, RoutingStep } from "./WizardSteps";
 
@@ -71,6 +73,10 @@ export function SetupWizard({ onClose }: SetupWizardProps): React.ReactElement {
   const [includeThreshold, setIncludeThreshold] = useState(true);
   const [threshold, setThreshold] = useState<WarehouseThreshold>(() => defaultWizardThreshold(""));
   const [hedgeRules, setHedgeRules] = useState<HedgeRule[]>(() => [newDefaultHedgeRule()]);
+  const [policyScope, setPolicyScope] = useState<WizardPolicyScope>(() => ({
+    scopeKind: "firm",
+    scopeId: "",
+  }));
   const [desks, setDesks] = useState<DeskDesc[]>([]);
   const [connections, setConnections] = useState<FixConnection[]>([]);
   const [phase, setPhase] = useState<ApplyPhase>({ kind: "idle" });
@@ -100,10 +106,16 @@ export function SetupWizard({ onClose }: SetupWizardProps): React.ReactElement {
     return [
       canRisk ? portfolioErrors(books) : [],
       canRisk ? routingErrors(routingRules, enabledKeys) : [],
-      canHedge ? [...(includeThreshold ? thresholdErrors(threshold) : []), ...hedgingErrors(hedgeRules)] : [],
+      canHedge
+        ? [
+            ...(includeThreshold ? thresholdErrors(threshold) : []),
+            ...hedgingErrors(hedgeRules),
+            ...policyScopeErrors(policyScope, books),
+          ]
+        : [],
       [],
     ];
-  }, [canRisk, canHedge, books, routingRules, enabledKeys, includeThreshold, threshold, hedgeRules]);
+  }, [canRisk, canHedge, books, routingRules, enabledKeys, includeThreshold, threshold, hedgeRules, policyScope]);
 
   const currentErrors = stepErrors[step] ?? [];
   const stepLocked = (i: number): boolean => (i <= 1 ? !canRisk : i === 2 ? !canHedge : false);
@@ -115,8 +127,8 @@ export function SetupWizard({ onClose }: SetupWizardProps): React.ReactElement {
   const goBack = useCallback((): void => setStep((s) => Math.max(0, s - 1)), []);
 
   const draft: WizardDraft = useMemo(
-    () => ({ books, routingRules, includeThreshold, threshold, hedgeRules }),
-    [books, routingRules, includeThreshold, threshold, hedgeRules],
+    () => ({ books, routingRules, includeThreshold, threshold, hedgeRules, policyScope }),
+    [books, routingRules, includeThreshold, threshold, hedgeRules, policyScope],
   );
 
   const onApply = useCallback(async (): Promise<void> => {
@@ -183,10 +195,12 @@ export function SetupWizard({ onClose }: SetupWizardProps): React.ReactElement {
           threshold={threshold}
           hedgeRules={hedgeRules}
           books={books}
+          policyScope={policyScope}
           readOnly={!canHedge}
           onToggleThreshold={setIncludeThreshold}
           onChangeThreshold={setThreshold}
           onChangeHedgeRules={setHedgeRules}
+          onChangePolicyScope={setPolicyScope}
         />
       )}
       {step === 3 && <ReviewStep draft={draft} canRisk={canRisk} canHedge={canHedge} />}

@@ -188,7 +188,7 @@ describe("HedgingWorkspace — thresholds", () => {
 });
 
 describe("HedgingWorkspace — monitor", () => {
-  it("shows the streamed advisory intent with its badge + RAG, and a provenance row", async () => {
+  it("renders the ops dashboard: engine strip, per-book RAG, live hedges + provenance", async () => {
     state.app = makeApp();
     render(<HedgingWorkspace />);
     fireEvent.click(screen.getByTestId("tab-monitor"));
@@ -198,16 +198,16 @@ describe("HedgingWorkspace — monitor", () => {
     expect(screen.getByTestId("hedge-execution-mode")).toBeInTheDocument();
     expect(screen.getByTestId("exec-mode-advisory")).toBeInTheDocument();
 
-    // The streamed advisory intent renders with its ADVISORY badge + a RAG chip.
-    expect(await screen.findByTestId("intent-row")).toBeInTheDocument();
-    expect(screen.getAllByTestId("advisory-badge").length).toBeGreaterThan(0);
-    expect(screen.getByTestId("rag-book-fi-rates-emea")).toBeInTheDocument();
+    // The engine status strip + per-book RAG board render from the streamed intents.
+    expect(await screen.findByTestId("engine-strip")).toBeInTheDocument();
+    expect(screen.getByTestId("engine-state")).toBeInTheDocument();
+    expect(screen.getByTestId("engine-cap")).toBeInTheDocument();
+    expect(await screen.findByTestId("rag-book-fi-rates-emea")).toBeInTheDocument();
 
-    // The fired provenance appears in the audit table.
+    // The live-hedges section: running summary (with venue mix) + the fired provenance row.
+    expect(screen.getByTestId("live-hedges")).toBeInTheDocument();
+    expect(screen.getByTestId("venue-mix")).toBeInTheDocument();
     expect(await screen.findByTestId("provenance-row-H-0001")).toBeInTheDocument();
-    // The resolved targeted LP set is surfaced on the advisory intent end-to-end.
-    expect(await screen.findByTestId("intent-lps")).toHaveTextContent("LP-1");
-    expect(screen.getByTestId("intent-lps")).toHaveTextContent("LP-3");
   });
 });
 

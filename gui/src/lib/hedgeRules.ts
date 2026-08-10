@@ -56,10 +56,15 @@ export interface HedgeRule {
 export interface HedgeRuleConflict {
   /** The offending rule's {@link HedgeRule.id}. */
   ruleId: string;
-  /** `error` blocks Save; `warn` is advisory. */
+  /** `error` is a genuine unreachable/duplicate; `warn` is advisory. */
   severity: "error" | "warn";
-  /** A trader-readable description. */
+  /** A trader-readable description (rule NUMBERS are injected by the renderer). */
   message: string;
+  /**
+   * The other rule(s) this conflict references — e.g. the earlier, more-general rule
+   * that shadows the offending one. Lets the summary panel cite "shadowed by Rule N".
+   */
+  relatedRuleIds?: string[];
 }
 
 let RULE_SEQ = 0;
@@ -277,52 +282,123 @@ function isSubset(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   return true;
 }
 
+/** Whether two rules fire the byte-identical exit action (canonicalised via JSON). */
+function sameAction(a: HedgeRule, b: HedgeRule): boolean {
+  return JSON.stringify(a.action) === JSON.stringify(b.action);
+}
+
+/** A single-sided numeric bound on a condition, or `null` if the op/value is not numeric. */
+interface NumericBound {
+  side: "lower" | "upper";
+  value: number;
+  strict: boolean;
+}
+function numericBound(c: HedgeRuleCondition): NumericBound | null {
+  if (c.value.kind !== "num") return null;
+  const v = c.value.num;
+  switch (c.op) {
+    case "ge":
+      return { side: "lower", value: v, strict: false };
+    case "gt":
+      return { side: "lower", value: v, strict: true };
+    case "le":
+      return { side: "upper", value: v, strict: false };
+    case "lt":
+      return { side: "upper", value: v, strict: true };
+    default:
+      return null;
+  }
+}
+
 /**
- * The structural-conflict checks the table surfaces, over the ENABLED rules:
- *   1. Exact duplicate — two rules with an identical condition SET ⇒ ERROR.
- *   2. Shadowed / unreachable — an earlier rule whose conditions are a SUBSET of a
- *      later rule's (the earlier, more-general rule always wins first) ⇒ ERROR.
- *   3. Exactly one default — zero or more-than-one catch-all rule ⇒ ERROR.
+ * Whether `earlier` matches a strict SUPERSET of the value set `later` matches, when both
+ * are single-condition rules on the SAME numeric field with a one-sided comparison — e.g.
+ * `Utilization ≥ 1` dominates `Utilization ≥ 1.2` (everything the tighter later rule
+ * matches, the wider earlier rule matched first ⇒ the later rule is unreachable). This is
+ * the overlapping-numeric-range gap that the exact-signature subset check cannot see.
+ */
+function numericDominates(earlier: HedgeRule, later: HedgeRule): boolean {
+  if (earlier.conditions.length !== 1 || later.conditions.length !== 1) return false;
+  const ce = earlier.conditions[0] as HedgeRuleCondition;
+  const cl = later.conditions[0] as HedgeRuleCondition;
+  if (ce.field !== cl.field) return false;
+  const be = numericBound(ce);
+  const bl = numericBound(cl);
+  if (be === null || bl === null || be.side !== bl.side) return false;
+  // Lower-bound (x ≥ / >): the earlier set is a superset when its threshold is weaker
+  // (smaller), or equal but non-strict where the later is strict. Upper-bound mirrors it.
+  if (be.side === "lower") {
+    if (be.value < bl.value) return true;
+    return be.value === bl.value && !be.strict && bl.strict;
+  }
+  if (be.value > bl.value) return true;
+  return be.value === bl.value && !be.strict && bl.strict;
+}
+
+/**
+ * The structural-conflict checks the table surfaces, over the ENABLED rules (first-match
+ * wins, so a rule is unreachable when an EARLIER rule always matches first):
+ *   1. Duplicate — identical condition set AND identical action to an earlier rule.
+ *   2. Contradiction — identical condition set but a DIFFERENT action to an earlier rule
+ *      (the later rule can never fire; likely a mistake).
+ *   3. Shadowed / unreachable — an earlier rule whose condition set is a SUBSET of a
+ *      later rule's (incl. an earlier DEFAULT that matches everything first).
+ *   4. Numeric domination — a single numeric condition already matched by an earlier
+ *      rule's WIDER threshold (overlapping ranges the exact-signature check can't see).
+ *   5. Exactly one default — zero or more-than-one catch-all rule.
+ * Scope-agnostic: it operates purely on the ordered rule list, so a Firm, Book or Bucket
+ * policy is checked identically.
  */
 export function detectHedgeRuleConflicts(rules: readonly HedgeRule[]): HedgeRuleConflict[] {
   const conflicts: HedgeRuleConflict[] = [];
   const active = rules.filter((r) => r.enabled);
   const sets = active.map(conditionSet);
 
-  // 1 — exact duplicates.
-  const seenSetSig = new Map<string, string>();
-  for (let i = 0; i < active.length; i += 1) {
-    const rule = active[i] as HedgeRule;
-    const sig = [...(sets[i] as Set<string>)].sort().join("&&");
-    if (seenSetSig.has(sig)) {
-      conflicts.push({
-        ruleId: rule.id,
-        severity: "error",
-        message: "Duplicate rule — identical conditions to an earlier rule.",
-      });
-    } else {
-      seenSetSig.set(sig, rule.id);
-    }
-  }
-
-  // 2 — shadowed / unreachable.
+  // 1–4 — attribute at most one "unreachable" conflict per later rule j, citing the
+  // earliest rule i that already claims its risk states.
   for (let j = 0; j < active.length; j += 1) {
+    const rj = active[j] as HedgeRule;
+    const sj = sets[j] as Set<string>;
     for (let i = 0; i < j; i += 1) {
-      if (isSubset(sets[i] as Set<string>, sets[j] as Set<string>)) {
-        const byDefault = (active[i] as HedgeRule).conditions.length === 0;
+      const ri = active[i] as HedgeRule;
+      const si = sets[i] as Set<string>;
+      const equal = si.size === sj.size && isSubset(si, sj) && isSubset(sj, si);
+      if (equal) {
         conflicts.push({
-          ruleId: (active[j] as HedgeRule).id,
+          ruleId: rj.id,
           severity: "error",
-          message: byDefault
-            ? "Unreachable — an earlier default (catch-all) rule matches everything first."
-            : "Unreachable — shadowed by an earlier, more general rule.",
+          relatedRuleIds: [ri.id],
+          message: sameAction(ri, rj)
+            ? "Duplicate — identical conditions and action to an earlier rule (redundant)."
+            : "Contradiction — same conditions as an earlier rule but a different action; this rule never fires.",
+        });
+        break;
+      }
+      if (isSubset(si, sj)) {
+        conflicts.push({
+          ruleId: rj.id,
+          severity: "error",
+          relatedRuleIds: [ri.id],
+          message:
+            ri.conditions.length === 0
+              ? "Unreachable — it is after the DEFAULT (catch-all) rule, which matches everything first."
+              : "Unreachable — shadowed by an earlier, more general rule.",
+        });
+        break;
+      }
+      if (numericDominates(ri, rj)) {
+        conflicts.push({
+          ruleId: rj.id,
+          severity: "error",
+          relatedRuleIds: [ri.id],
+          message: "Unreachable — an earlier rule's wider numeric threshold already matches these values.",
         });
         break;
       }
     }
   }
 
-  // 3 — exactly one default.
+  // 5 — exactly one default.
   const defaults = active.filter((r) => r.conditions.length === 0);
   if (defaults.length === 0) {
     const last = active[active.length - 1];

@@ -41,6 +41,7 @@ import {
 import { defaultExitAction } from "../../lib/hedgeExit";
 import { validateHedgeGraph } from "../../lib/hedgeTrace";
 import { HedgeConfigControl } from "./HedgeConfigControl";
+import { HedgeConflictPanel } from "./HedgeConflictPanel";
 import { HedgeMonitor } from "./HedgeMonitor";
 import { HedgeRuleEditor } from "./HedgeRuleEditor";
 import { HedgeRulesTable } from "./HedgeRulesTable";
@@ -56,6 +57,7 @@ type Mode = { kind: "list" } | { kind: "editor"; index: number | null; draft: He
 type SaveState =
   | { kind: "idle" }
   | { kind: "saving" }
+  | { kind: "confirm"; message: string }
   | { kind: "ok"; message: string }
   | { kind: "error"; message: string };
 
@@ -275,7 +277,12 @@ function PolicyTab({
   );
   const graphIssues = useMemo(() => validateHedgeGraph(compiled), [compiled]);
   const dirty = JSON.stringify(rules) !== baseline;
-  const blockSave = errorCount > 0 || graphIssues.length > 0;
+  // A genuine graph-validation defect (unset value / dangling target / cycle) CANNOT
+  // compile a valid policy — it hard-blocks Save. Rule-table CONFLICTS (duplicate /
+  // shadowed / missing-default) are logic warnings a trader may intend as an override,
+  // so they don't block: Save requires an explicit confirm rather than being silent.
+  const structuralBlock = graphIssues.length > 0;
+  const hasConflicts = errorCount > 0;
 
   const applyRules = useCallback((next: HedgeRule[]): void => {
     setRules(next);
@@ -323,8 +330,20 @@ function PolicyTab({
   );
 
   const saveGraph = useCallback(async (): Promise<void> => {
-    if (blockSave) {
-      setSaveState({ kind: "error", message: "Resolve the highlighted conflicts before saving." });
+    if (structuralBlock) {
+      setSaveState({
+        kind: "error",
+        message: "Resolve the structural graph issue(s) — the policy can't compile until they're fixed.",
+      });
+      return;
+    }
+    // First click WITH conflicts arms a confirm rather than saving silently; the second
+    // click (saveState already "confirm") lets the trader override intentionally.
+    if (hasConflicts && saveState.kind !== "confirm") {
+      setSaveState({
+        kind: "confirm",
+        message: `This policy has ${errorCount} conflict${errorCount === 1 ? "" : "s"} (see the panel above). Save anyway?`,
+      });
       return;
     }
     setSaveState({ kind: "saving" });
@@ -343,7 +362,7 @@ function PolicyTab({
     } catch (e: unknown) {
       setSaveState({ kind: "error", message: e instanceof Error ? e.message : "failed to save the policy" });
     }
-  }, [blockSave, rules, app.transport, scopeKind, scopeId]);
+  }, [structuralBlock, hasConflicts, errorCount, saveState.kind, rules, app.transport, scopeKind, scopeId]);
 
   // Remove a Book/Bucket override: saving an EMPTY policy for the scope deletes it,
   // and the scope falls back to the Firm policy. Firm has no Remove (it is the
@@ -460,12 +479,16 @@ function PolicyTab({
                 </button>
                 <button
                   type="button"
-                  className={styles.saveBtn}
+                  className={saveState.kind === "confirm" ? styles.dangerBtn : styles.saveBtn}
                   onClick={() => void saveGraph()}
-                  disabled={saveState.kind === "saving" || blockSave || !dirty}
+                  disabled={saveState.kind === "saving" || structuralBlock || !dirty}
                   data-testid="hedge-save-policy"
                 >
-                  {saveState.kind === "saving" ? "Saving…" : "Save policy"}
+                  {saveState.kind === "saving"
+                    ? "Saving…"
+                    : saveState.kind === "confirm"
+                      ? `Save anyway (${errorCount} conflict${errorCount === 1 ? "" : "s"})`
+                      : "Save policy"}
                 </button>
                 {scopeKind !== "firm" && hasScopedPolicy && (
                   <button
@@ -489,14 +512,22 @@ function PolicyTab({
           )}
 
           <div className={styles.statusRow}>
-            {blockSave ? (
+            {structuralBlock ? (
               <span className={styles.statusBad} data-testid="hedge-validation-status">
-                ⚠ {errorCount + graphIssues.length} issue
-                {errorCount + graphIssues.length === 1 ? "" : "s"} to resolve before saving
+                ⚠ {graphIssues.length} structural issue{graphIssues.length === 1 ? "" : "s"} — can&rsquo;t compile a valid policy
+              </span>
+            ) : hasConflicts ? (
+              <span className={styles.statusWarn} data-testid="hedge-validation-status">
+                ⚠ {errorCount} conflict{errorCount === 1 ? "" : "s"} — review below (Save asks to confirm)
               </span>
             ) : (
               <span className={styles.statusOk} data-testid="hedge-validation-status">
                 ✓ Valid — {rules.length} rule{rules.length === 1 ? "" : "s"}
+              </span>
+            )}
+            {saveState.kind === "confirm" && (
+              <span className={styles.statusWarn} role="alert" data-testid="hedge-confirm-note">
+                {saveState.message}
               </span>
             )}
             {saveState.kind === "ok" && <span className={styles.statusOk}>{saveState.message}</span>}
@@ -507,24 +538,7 @@ function PolicyTab({
             )}
           </div>
 
-          {(conflicts.length > 0 || graphIssues.length > 0) && (
-            <ul className={styles.conflictList} data-testid="hedge-conflict-details">
-              {conflicts.map((c, i) => {
-                const idx = rules.findIndex((r) => r.id === c.ruleId);
-                return (
-                  <li key={`c-${i}`} className={c.severity === "error" ? styles.conflictError : styles.conflictWarn}>
-                    <strong>{c.severity === "error" ? "Error" : "Warning"}</strong>
-                    {idx >= 0 ? ` · Rule ${idx + 1}` : ""} — {c.message}
-                  </li>
-                );
-              })}
-              {graphIssues.map((g, i) => (
-                <li key={`g-${i}`} className={styles.conflictError}>
-                  <strong>Error</strong> — {g.message}
-                </li>
-              ))}
-            </ul>
-          )}
+          <HedgeConflictPanel rules={rules} conflicts={conflicts} graphIssues={graphIssues} />
 
           <HedgeRulesTable
             rules={rules}
@@ -742,7 +756,7 @@ function MonitorTab({
       {config !== null && (
         <HedgeConfigControl config={config} readOnly={readOnly} busy={busy} onChange={onConfigChange} />
       )}
-      <HedgeMonitor intents={intents} provenance={provenance} />
+      <HedgeMonitor intents={intents} provenance={provenance} config={config} />
     </div>
   );
 }

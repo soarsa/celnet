@@ -18,7 +18,7 @@
  * is re-exported from the shared module so the step surfaces + tests keep importing it
  * from here unchanged.
  */
-import type { HedgeGraph, WarehouseThreshold } from "../../../data/contract";
+import type { HedgeGraph, HedgePolicyScopeKind, WarehouseThreshold } from "../../../data/contract";
 import { compileRulesToHedgeGraph, detectHedgeRuleConflicts, type HedgeRule } from "../../../lib/hedgeRules";
 import type { RiskRule } from "../../../lib/riskRules";
 import {
@@ -29,6 +29,18 @@ import {
   type WizardApplyCoreTransport,
   type WizardBook,
 } from "../../setupWizard/wizardModel";
+
+/**
+ * The SCOPE a wizard-authored hedge policy binds to (mirrors the Exit Policy tab's
+ * Firm / Book / Bucket selector). For a Book/Bucket scope, {@link scopeId} is the staged
+ * {@link WizardBook.key} — Apply re-points it to the real minted book id, exactly as the
+ * warehouse-threshold step already does.
+ */
+export interface WizardPolicyScope {
+  scopeKind: HedgePolicyScopeKind;
+  /** The staged book KEY for a Book/Bucket scope; empty for Firm. */
+  scopeId: string;
+}
 
 // Re-export the shared portfolio/routing model so the step surfaces + tests keep
 // importing these from the hedging wizardModel unchanged.
@@ -58,12 +70,18 @@ export interface WizardDraft {
   threshold: WarehouseThreshold;
   /** Step 3 — the ordered exit-policy rules (always at least the warehouse catch-all). */
   hedgeRules: HedgeRule[];
+  /** Step 3 — the scope the exit policy is saved to (Firm / Book / Bucket). */
+  policyScope: WizardPolicyScope;
 }
 
 /** The exact (minimal) transport surface {@link applyWizard} needs — the existing RPCs. */
 export interface WizardApplyTransport extends WizardApplyCoreTransport {
   updateHedgeThreshold(threshold: WarehouseThreshold): Promise<WarehouseThreshold[]>;
-  updateHedgePolicyGraph(graph: HedgeGraph): Promise<HedgeGraph>;
+  updateHedgePolicyGraph(
+    graph: HedgeGraph,
+    scopeKind?: HedgePolicyScopeKind,
+    scopeId?: string,
+  ): Promise<HedgeGraph>;
 }
 
 /** Which capability-gated halves of the wizard the caller is entitled to apply. */
@@ -112,6 +130,23 @@ export function hedgingErrors(rules: readonly HedgeRule[]): string[] {
 }
 
 /**
+ * Blocking errors for the step-3 policy SCOPE: a Book/Bucket scope must name a staged
+ * portfolio (so Apply can re-point it to the real minted id). Firm never blocks.
+ */
+export function policyScopeErrors(
+  scope: WizardPolicyScope,
+  books: readonly WizardBook[],
+): string[] {
+  if (scope.scopeKind === "firm") return [];
+  const named = books.some((b) => b.key === scope.scopeId && b.name.trim().length > 0);
+  if (!named) {
+    const noun = scope.scopeKind === "bucket" ? "portfolio" : "book";
+    return [`Select a ${noun} for the ${scope.scopeKind}-scoped hedge policy.`];
+  }
+  return [];
+}
+
+/**
  * Commit the staged Hedging wizard through the existing RPCs in dependency order,
  * delegating the books+routing spine to {@link applyWizardCore} and supplying the two
  * hedge-specific final steps (threshold, policy). Preserves the wizard's legacy
@@ -144,10 +179,17 @@ export async function applyWizard(
       label: "Save hedge policy",
       willRun: entitle.hedge && draft.hedgeRules.some((r) => r.enabled),
       entitled: entitle.hedge,
-      run: async () => {
+      run: async (idByKey) => {
         const enabled = draft.hedgeRules.filter((r) => r.enabled);
-        await tx.updateHedgePolicyGraph(compileRulesToHedgeGraph(enabled));
-        return `saved ${enabled.length} rule${enabled.length === 1 ? "" : "s"}`;
+        const { scopeKind } = draft.policyScope;
+        // Re-point a Book/Bucket scope's staged book KEY to the real minted id (Firm ⇒ "").
+        const scopeId =
+          scopeKind === "firm"
+            ? ""
+            : (idByKey.get(draft.policyScope.scopeId) ?? draft.policyScope.scopeId);
+        await tx.updateHedgePolicyGraph(compileRulesToHedgeGraph(enabled), scopeKind, scopeId);
+        const scopeLabel = scopeKind === "firm" ? "firm" : `${scopeKind} scope`;
+        return `saved ${enabled.length} rule${enabled.length === 1 ? "" : "s"} · ${scopeLabel}`;
       },
     },
   ];

@@ -37,6 +37,7 @@ function draftWith(overrides: Partial<WizardDraft> = {}): WizardDraft {
     includeThreshold: true,
     threshold,
     hedgeRules: [newDefaultHedgeRule()],
+    policyScope: { scopeKind: "firm", scopeId: "" },
     ...overrides,
   };
 }
@@ -96,6 +97,19 @@ describe("applyWizard — dependency-ordered apply", () => {
     // The book-scoped threshold is likewise re-pointed at the real id.
     const t = updateHedgeThreshold.mock.calls[0]![0] as WarehouseThreshold;
     expect(t.scopeId).toBe("emea");
+  });
+
+  it("re-points a Book-scoped hedge policy at the real minted book id", async () => {
+    const { tx } = recordingTx();
+    const draft = draftWith({ policyScope: { scopeKind: "book", scopeId: "k1" } });
+
+    const result = await applyWizard(tx, draft, { risk: true, hedge: true }, () => {});
+
+    expect(result.ok).toBe(true);
+    const call = (tx.updateHedgePolicyGraph as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    // (graph, scopeKind, scopeId) — the wizard book key "k1" resolves to the slug "emea".
+    expect(call[1]).toBe("book");
+    expect(call[2]).toBe("emea");
   });
 
   it("stops on the first failure and never half-applies the later steps", async () => {

@@ -287,6 +287,96 @@
 .conflictWarn {
   color: var(--warn, var(--warning, #d97706));
 }
+.statusWarn {
+  color: var(--rag-amber, #d97706);
+  font-weight: var(--weight-emphasis);
+}
+
+/* --- conflict summary panel ----------------------------------------------- */
+
+.conflictAffirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill, 999px);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-emphasis);
+  color: var(--success, var(--accent-positive, #16a34a));
+  background: color-mix(in oklab, var(--success, #16a34a) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--success, #16a34a) 30%, transparent);
+}
+
+.conflictPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md, 12px);
+  border: 1px solid color-mix(in oklab, var(--rag-red, #dc2626) 45%, var(--border));
+  border-left: 3px solid var(--rag-red, #dc2626);
+  background: color-mix(in oklab, var(--rag-red, #dc2626) 7%, var(--bg-raised, var(--bg-surface)));
+}
+.conflictPanelHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin: 0;
+  font-size: var(--type-callout, var(--type-body));
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+.conflictPanelSub {
+  font-size: var(--type-micro);
+  font-weight: var(--weight-regular);
+  color: var(--text-secondary);
+}
+.conflictItems {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.conflictItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+.conflictItemBody {
+  color: var(--text-secondary);
+}
+.conflictItemBody strong {
+  color: var(--text-primary);
+}
+.conflictSevError,
+.conflictSevWarn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-width: 52px;
+  justify-content: center;
+  font-size: var(--type-micro);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill, 999px);
+  margin-top: 1px;
+}
+.conflictSevError {
+  color: #fff;
+  background: var(--rag-red, #dc2626);
+}
+.conflictSevWarn {
+  color: var(--rag-amber, #d97706);
+  border: 1px solid var(--rag-amber, #d97706);
+}
 
 /* --- panels (trace / thresholds / config / monitor) ----------------------- */
 
@@ -591,40 +681,259 @@
   font-size: var(--type-caption);
 }
 
-/* --- monitor -------------------------------------------------------------- */
+/* --- monitor dashboard ---------------------------------------------------- */
 
-.ragStrip {
+.monitorGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: var(--space-4);
+}
+.subPanel {
   display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid var(--border-subtle, var(--border));
+  background: var(--bg-inset, var(--bg-surface));
+  min-width: 0;
+}
+
+/* engine status strip */
+.engineStrip {
+  display: flex;
+  align-items: stretch;
   gap: var(--space-3);
   flex-wrap: wrap;
-}
-.ragCard {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  padding: var(--space-3);
   border-radius: var(--radius-md, 10px);
   border: 1px solid var(--border-subtle, var(--border));
   background: var(--bg-inset, var(--bg-surface));
 }
-.ragBook {
-  font-family: var(--font-mono);
+.engineState {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm, 8px);
+  font-weight: var(--weight-header);
   font-size: var(--type-caption);
-  color: var(--text-primary);
+  white-space: nowrap;
 }
-.ragUtil {
-  font-variant-numeric: tabular-nums;
-  font-size: var(--type-caption);
+.engineState_green {
+  color: var(--rag-green, #16a34a);
+  background: color-mix(in oklab, var(--rag-green, #16a34a) 14%, transparent);
+  border: 1px solid color-mix(in oklab, var(--rag-green, #16a34a) 40%, transparent);
+}
+.engineState_amber {
+  color: var(--rag-amber, #d97706);
+  background: color-mix(in oklab, var(--rag-amber, #d97706) 14%, transparent);
+  border: 1px solid color-mix(in oklab, var(--rag-amber, #d97706) 40%, transparent);
+}
+.engineState_red {
+  color: #fff;
+  background: var(--rag-red, #dc2626);
+  border: 1px solid var(--rag-red, #dc2626);
+}
+.engineDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+.engineStateLabel {
+  letter-spacing: 0.02em;
+}
+.engineStats {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  align-items: center;
+  flex: 1;
+}
+.engineStat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.engineStatLabel {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--text-tertiary);
 }
-
-.monitorCols {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: var(--space-4);
+.engineStatValue {
+  font-size: var(--type-callout, var(--type-body));
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.engineCap {
+  min-width: 180px;
+  flex: 1;
+}
+.engineCapPct {
+  color: var(--text-tertiary);
+  font-weight: var(--weight-regular);
+  font-size: var(--type-micro);
+}
+.capBar {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle, var(--border));
+  overflow: hidden;
+  margin-top: 3px;
+}
+.capFill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 300ms var(--ease-out, ease);
+}
+.capFill_green {
+  background: var(--rag-green, #16a34a);
+}
+.capFill_amber {
+  background: var(--rag-amber, #d97706);
+}
+.capFill_red {
+  background: var(--rag-red, #dc2626);
 }
 
-.intentList {
+/* per-book RAG board */
+.ragBoardList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+.ragBoardRow {
+  display: grid;
+  grid-template-columns: minmax(70px, 1fr) 2fr auto auto auto;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--type-caption);
+}
+.ragBoardBook {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ragBoardBar {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle, var(--border));
+  overflow: hidden;
+}
+.ragBoardFill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  transition: width 300ms var(--ease-out, ease);
+}
+.ragBoardThreshold {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  background: var(--text-secondary);
+  opacity: 0.55;
+  z-index: 1;
+}
+.ragFill_green {
+  background: var(--rag-green, #16a34a);
+}
+.ragFill_amber {
+  background: var(--rag-amber, #d97706);
+}
+.ragFill_red {
+  background: var(--rag-red, #dc2626);
+}
+.ragFill_breach {
+  background: var(--rag-breach, #7c3aed);
+}
+.ragBoardUtil {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  min-width: 40px;
+  text-align: right;
+}
+.ragBoardNet {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  font-size: var(--type-micro);
+  white-space: nowrap;
+}
+
+/* live hedges summary */
+.sumRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sumChip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--border-subtle, var(--border));
+  background: var(--bg-surface);
+  font-size: var(--type-micro);
+  color: var(--text-secondary);
+}
+.sumChip strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.venueComposite,
+.venueLp {
+  display: inline-flex;
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  font-weight: var(--weight-emphasis);
+  padding: 1px 7px;
+  border-radius: var(--radius-pill, 999px);
+  white-space: nowrap;
+}
+.venueComposite {
+  color: var(--text-accent, var(--accent));
+  border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+  background: var(--bg-accent-soft, rgba(37, 99, 235, 0.08));
+}
+.venueLp {
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle, var(--border));
+  background: var(--bg-inset, var(--bg-surface));
+}
+
+/* needs attention */
+.attnCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  padding: 0 6px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: var(--rag-red, #dc2626);
+  color: #fff;
+  font-size: var(--type-micro);
+  font-weight: var(--weight-header);
+}
+.attnList {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -634,34 +943,36 @@
   max-height: 340px;
   overflow-y: auto;
 }
-.intentRow {
+.attnRow {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 7px 10px;
+  gap: 8px;
+  padding: 6px 8px;
   border-radius: var(--radius-sm, 8px);
-  border: 1px solid var(--border-subtle, var(--border));
   background: var(--bg-surface);
+  border: 1px solid var(--border-subtle, var(--border));
   font-size: var(--type-caption);
 }
-.intentBook {
+.attnDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.attnDot_red {
+  background: var(--rag-red, #dc2626);
+}
+.attnDot_amber {
+  background: var(--rag-amber, #d97706);
+}
+.attnBook {
   font-family: var(--font-mono);
   color: var(--text-primary);
+  flex: none;
 }
-.intentAction {
+.attnText {
   color: var(--text-secondary);
-}
-.intentNums {
-  font-variant-numeric: tabular-nums;
-  color: var(--text-tertiary);
-  font-size: var(--type-micro);
-}
-.intentTime {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: var(--type-micro);
-  color: var(--text-tertiary);
+  min-width: 0;
 }
 
 .advisoryBadge,

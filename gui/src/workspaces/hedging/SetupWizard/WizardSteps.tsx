@@ -14,8 +14,10 @@ import type {
   ExitAction,
   HedgeField,
   HedgeMetric,
+  HedgePolicyScopeKind,
   WarehouseThreshold,
 } from "../../../data/contract";
+import { HelpButton } from "../../../components/HelpButton";
 import {
   BREACHED_VALUES,
   HEDGE_CCY_VALUES,
@@ -43,7 +45,12 @@ import {
   type CondDraft,
   type FieldOpt,
 } from "../../setupWizard/PortfolioRoutingSteps";
-import { enabledBookKeys, type WizardBook, type WizardDraft } from "./wizardModel";
+import {
+  enabledBookKeys,
+  type WizardBook,
+  type WizardDraft,
+  type WizardPolicyScope,
+} from "./wizardModel";
 import styles from "../../setupWizard/setupWizard.module.css";
 
 // Re-export the shared steps so the wizard host imports all four step surfaces from here.
@@ -95,21 +102,26 @@ export function HedgingStep({
   threshold,
   hedgeRules,
   books,
+  policyScope,
   readOnly,
   onToggleThreshold,
   onChangeThreshold,
   onChangeHedgeRules,
+  onChangePolicyScope,
 }: {
   includeThreshold: boolean;
   threshold: WarehouseThreshold;
   hedgeRules: HedgeRule[];
   books: readonly WizardBook[];
+  policyScope: WizardPolicyScope;
   readOnly: boolean;
   onToggleThreshold: (on: boolean) => void;
   onChangeThreshold: (next: WarehouseThreshold) => void;
   onChangeHedgeRules: (next: HedgeRule[]) => void;
+  onChangePolicyScope: (next: WizardPolicyScope) => void;
 }): React.ReactElement {
   const bookTargets = useMemo(() => books.filter((b) => b.name.trim().length > 0), [books]);
+  const scopeNoun = policyScope.scopeKind === "bucket" ? "portfolio" : "book";
   const patchT = (p: Partial<WarehouseThreshold>): void => onChangeThreshold({ ...threshold, ...p });
   const num = (key: keyof WarehouseThreshold) => (e: React.ChangeEvent<HTMLInputElement>) =>
     patchT({ [key]: Number(e.target.value) } as Partial<WarehouseThreshold>);
@@ -145,6 +157,66 @@ export function HedgingStep({
         back-to-back with the street. Set the cap and warning bands below, then a starter exit policy:
         <strong> hold by default</strong>, with an optional rule to actively hedge specific flow.
       </Explainer>
+
+      <div className={styles.subCard} data-testid="wiz-policy-scope-card">
+        <h4 className={styles.subHeading}>
+          Policy scope
+          <HelpButton helpId="concept.hedge-policy-scope" subject="the hedge policy scope" />
+        </h4>
+        <p className={styles.hint}>
+          Save this exit policy firm-wide, or as an override for one <strong>book</strong> or a whole{" "}
+          <strong>bucket</strong> (portfolio subtree). A Book/Bucket override falls back to the Firm policy when empty.
+        </p>
+        <div className={styles.entryGrid}>
+          <label className={styles.field}>
+            <span className={styles.miniLabel}>Scope</span>
+            <select
+              className={styles.select}
+              value={policyScope.scopeKind}
+              disabled={readOnly}
+              data-testid="wiz-policy-scope-kind"
+              onChange={(e) =>
+                onChangePolicyScope({
+                  scopeKind: e.target.value as HedgePolicyScopeKind,
+                  scopeId: "",
+                })
+              }
+            >
+              <option value="firm">Firm (default)</option>
+              <option value="book">Book</option>
+              <option value="bucket">Bucket (portfolio)</option>
+            </select>
+          </label>
+          {policyScope.scopeKind !== "firm" && (
+            <label className={styles.field}>
+              <span className={styles.miniLabel}>
+                {policyScope.scopeKind === "bucket" ? "Portfolio (subtree root)" : "Risk book"}
+              </span>
+              <select
+                className={styles.select}
+                value={policyScope.scopeId}
+                disabled={readOnly}
+                data-testid="wiz-policy-scope-id"
+                onChange={(e) =>
+                  onChangePolicyScope({ ...policyScope, scopeId: e.target.value })
+                }
+              >
+                <option value="">(select a {scopeNoun})</option>
+                {bookTargets.map((b) => (
+                  <option key={b.key} value={b.key}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+        <p className={styles.hint} data-testid="wiz-exec-mode-note">
+          The rules below decide <em>what to do</em>; how a live hedge externalises (Advisory dry-run,
+          LP panel, Composite) is the <strong>execution mode</strong> set on Hedging → Monitor → Engine controls.
+          <HelpButton helpId="concept.hedge-execution-mode" subject="the hedge execution mode" />
+        </p>
+      </div>
 
       <div className={styles.subCard}>
         <label className={styles.checkField}>
@@ -401,6 +473,12 @@ export function ReviewStep({
           <h4 className={styles.reviewHeading}>Internalise &amp; hedge</h4>
           {!canHedge && <p className={styles.skipNote}>Skipped — you lack the Hedge capability.</p>}
           <ul className={styles.reviewList}>
+            <li data-testid="wiz-review-scope">
+              Policy scope:{" "}
+              {draft.policyScope.scopeKind === "firm"
+                ? "Firm-wide (default)"
+                : `${draft.policyScope.scopeKind === "bucket" ? "Bucket" : "Book"} · ${bookLabel(draft.policyScope.scopeId)}`}
+            </li>
             <li>
               Threshold:{" "}
               {draft.includeThreshold

@@ -84,10 +84,40 @@ describe("detectHedgeRuleConflicts", () => {
     expect(conflicts).toHaveLength(0);
   });
 
-  it("flags an exact duplicate", () => {
+  it("flags an exact duplicate (same conditions AND action) and cites the earlier rule", () => {
     const c = cond("breached", "eq", { kind: "text", text: "true" });
-    const conflicts = detectHedgeRuleConflicts([rule([c], marketOrder), rule([c], warehouse), rule([], warehouse)]);
-    expect(conflicts.some((x) => x.message.includes("Duplicate"))).toBe(true);
+    const first = rule([c], marketOrder);
+    const dup = rule([c], marketOrder);
+    const conflicts = detectHedgeRuleConflicts([first, dup, rule([], warehouse)]);
+    const found = conflicts.find((x) => x.ruleId === dup.id);
+    expect(found?.message).toContain("Duplicate");
+    expect(found?.relatedRuleIds).toEqual([first.id]);
+  });
+
+  it("flags a contradiction (same conditions, DIFFERENT action) distinctly from a duplicate", () => {
+    const c = cond("breached", "eq", { kind: "text", text: "true" });
+    const first = rule([c], marketOrder);
+    const other = rule([c], warehouse);
+    const conflicts = detectHedgeRuleConflicts([first, other, rule([], warehouse)]);
+    const found = conflicts.find((x) => x.ruleId === other.id);
+    expect(found?.message).toContain("Contradiction");
+    expect(found?.relatedRuleIds).toEqual([first.id]);
+  });
+
+  it("flags overlapping numeric ranges — a wider earlier threshold dominates a tighter later one", () => {
+    const wide = rule([cond("utilization", "ge", { kind: "num", num: 1 })], marketOrder);
+    const tight = rule([cond("utilization", "ge", { kind: "num", num: 1.2 })], warehouse);
+    const conflicts = detectHedgeRuleConflicts([wide, tight, rule([], warehouse)]);
+    const found = conflicts.find((x) => x.ruleId === tight.id);
+    expect(found?.message).toContain("wider numeric threshold");
+    expect(found?.relatedRuleIds).toEqual([wide.id]);
+  });
+
+  it("does NOT flag a tighter-then-wider numeric ordering (both reachable)", () => {
+    const tight = rule([cond("utilization", "ge", { kind: "num", num: 1.2 })], warehouse);
+    const wide = rule([cond("utilization", "ge", { kind: "num", num: 1 })], marketOrder);
+    const conflicts = detectHedgeRuleConflicts([tight, wide, rule([], warehouse)]);
+    expect(conflicts.filter((x) => x.message.includes("Unreachable"))).toHaveLength(0);
   });
 
   it("flags a missing default", () => {
@@ -97,11 +127,24 @@ describe("detectHedgeRuleConflicts", () => {
     expect(conflicts.some((x) => x.message.includes("No default"))).toBe(true);
   });
 
-  it("flags a rule shadowed by an earlier default", () => {
-    const conflicts = detectHedgeRuleConflicts([
-      rule([], warehouse), // default first — shadows everything after
-      rule([cond("breached", "eq", { kind: "text", text: "true" })], marketOrder),
-    ]);
-    expect(conflicts.some((x) => x.message.includes("Unreachable"))).toBe(true);
+  it("flags multiple defaults, one per catch-all", () => {
+    const conflicts = detectHedgeRuleConflicts([rule([], warehouse), rule([], warehouse)]);
+    expect(conflicts.filter((x) => x.message.includes("Multiple default"))).toHaveLength(2);
+  });
+
+  it("flags a rule after the DEFAULT as unreachable and cites the default", () => {
+    const def = rule([], warehouse);
+    const after = rule([cond("breached", "eq", { kind: "text", text: "true" })], marketOrder);
+    const conflicts = detectHedgeRuleConflicts([def, after]);
+    const found = conflicts.find((x) => x.ruleId === after.id);
+    expect(found?.message).toContain("after the DEFAULT");
+    expect(found?.relatedRuleIds).toEqual([def.id]);
+  });
+
+  it("ignores disabled rules", () => {
+    const c = cond("breached", "eq", { kind: "text", text: "true" });
+    const a = rule([c], marketOrder);
+    const disabledDup: HedgeRule = { ...rule([c], marketOrder), enabled: false };
+    expect(detectHedgeRuleConflicts([a, disabledDup, rule([], warehouse)])).toHaveLength(0);
   });
 });
