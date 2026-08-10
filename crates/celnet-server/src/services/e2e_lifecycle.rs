@@ -433,14 +433,20 @@ fn s02_accept_then_back_to_back_thin_edge() {
         (prov.external_dv01 - 5000.0).abs() < 1e-6,
         "the whole fill goes to an advisory external back-to-back"
     );
-    // The external leg is advisory only — the risk STILL lands in the book.
+    // Live execution (the default LP-then-composite mode): the thin fill's full back-to-back
+    // executes on the composite venue and books an OFFSETTING leg into the same book, so the
+    // warehoused net reduces to ~0 — the risk is genuinely shed, not merely flagged. The
+    // original fill's risk-book stamp is unchanged.
     assert_eq!(
         store.risk_book_of(booked.position_id).as_deref(),
         Some(wh.as_str())
     );
     let agg = aggregate(&store, &identity, &wh);
-    assert_eq!(agg.position_count, 1);
-    assert!((agg.dv01.expect("dv01") - 5000.0).abs() < 1e-6);
+    assert_eq!(agg.position_count, 2, "the fill + its offsetting hedge leg");
+    assert!(
+        agg.dv01.expect("dv01").abs() < 1e-6,
+        "the back-to-back hedges the net flat"
+    );
 }
 
 // ---------------------------------------------------------------------------------------
@@ -819,7 +825,12 @@ fn s11_hedge_band_transitions() {
     // cap 25_000 DV01, within-tolerance fills of +5000 DV01 each. util = |net|/25000:
     //   amber ≥ 0.8 (net ≥ 20000), red ≥ 0.9 (net ≥ 22500), breach > 1.0 (net > 25000);
     //   at net == 25000 (util 1.0) the band is Red, not Breach.
-    store.set_hedge_policy(Some(hedge_policy(&wh, 25_000.0, 0.5)));
+    // Pin ADVISORY execution so this band-classification walk is not perturbed by live hedging
+    // shedding the accumulating net at the edge (the live-execution path is covered by s02 + the
+    // rates unit tests); here we assert the RAG band each fill stamps as the net climbs.
+    let mut band_policy = hedge_policy(&wh, 25_000.0, 0.5);
+    band_policy.config.execution = crate::config::hedge_policy::HedgeExecutionMode::Advisory;
+    store.set_hedge_policy(Some(band_policy));
 
     // Book one +5000-DV01 pay-fixed fill (+5bp edge, within tolerance) and read the band it
     // stamped against the post-fill net.

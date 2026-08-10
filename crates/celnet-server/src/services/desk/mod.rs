@@ -2764,6 +2764,9 @@ pub(crate) mod tests {
             }],
             config: HedgeConfigDef::default(),
             known_lps: BTreeSet::new(),
+            scoped_graphs: Vec::new(),
+            book_ancestors: std::collections::HashMap::new(),
+            book_descendants: std::collections::HashMap::new(),
         }));
 
         let edge = edge_with_rates(Arc::clone(&rates));
@@ -2865,6 +2868,9 @@ pub(crate) mod tests {
             }],
             config: HedgeConfigDef::default(),
             known_lps: BTreeSet::new(),
+            scoped_graphs: Vec::new(),
+            book_ancestors: std::collections::HashMap::new(),
+            book_descendants: std::collections::HashMap::new(),
         }));
 
         let edge = edge_with_rates(Arc::clone(&rates));

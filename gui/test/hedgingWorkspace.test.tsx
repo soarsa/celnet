@@ -53,7 +53,7 @@ const threshold: WarehouseThreshold = {
 
 const config: HedgeConfig = {
   killSwitch: false,
-  advisoryOnly: true,
+  execution: "advisory",
   deskEnabled: [{ desk: "emea", enabled: true }],
   maxClip: 1_000_000,
   maxHedgesPerInterval: 20,
@@ -61,6 +61,7 @@ const config: HedgeConfig = {
   lpPanels: [
     { scopeKind: "book", scopeId: "fi-rates-emea", include: ["LP-1", "LP-2", "LP-3"], exclude: ["LP-2"] },
   ],
+  compositeSpreadBp: 0.5,
 };
 
 const advisoryIntent: HedgeIntent = {
@@ -110,6 +111,9 @@ function makeApp(opts: { canEdit?: boolean } = {}) {
     transport: {
       getHedgePolicyGraph: vi.fn(async () => policyGraph()),
       updateHedgePolicyGraph: vi.fn(async (g: HedgeGraph) => g),
+      listRiskBooks: vi.fn(async () => [
+        { id: "fi-rates-emea", name: "EMEA Rates", parentId: null, deskId: "emea", description: "", limits: null, enabled: true },
+      ]),
       listHedgeThresholds: vi.fn(async () => [threshold]),
       updateHedgeThreshold: vi.fn(async () => [threshold]),
       listHedgeProvenance: vi.fn(async () => [provenanceRow]),
@@ -189,9 +193,10 @@ describe("HedgingWorkspace — monitor", () => {
     render(<HedgingWorkspace />);
     fireEvent.click(screen.getByTestId("tab-monitor"));
 
-    // The kill-switch / advisory-only controls.
+    // The kill-switch / execution-mode controls.
     expect(await screen.findByTestId("kill-switch")).toBeInTheDocument();
-    expect(screen.getByTestId("advisory-only")).toBeInTheDocument();
+    expect(screen.getByTestId("hedge-execution-mode")).toBeInTheDocument();
+    expect(screen.getByTestId("exec-mode-advisory")).toBeInTheDocument();
 
     // The streamed advisory intent renders with its ADVISORY badge + a RAG chip.
     expect(await screen.findByTestId("intent-row")).toBeInTheDocument();

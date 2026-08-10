@@ -46,6 +46,7 @@ import type {
   RiskBookRisk,
   RiskRoutingGraph,
   HedgeGraph,
+  HedgePolicyScopeKind,
   AcceptanceGraph,
   WarehouseThreshold,
   HedgeProvenance,
@@ -2085,6 +2086,14 @@ export class MockTransport implements CelnetTransport {
    *   ELSE IF internal_offset > 0 → CROSS_INTERNAL (overflow)
    *   ELSE                        → SPLIT (net internal first, worked)
    */
+  /**
+   * Per-BOOK / per-BUCKET hedge-policy overrides, keyed `"<scopeKind>:<scopeId>"`
+   * (e.g. `"book:fi-rates-emea"`, `"bucket:fi-emea"`). The FIRM singleton lives in
+   * {@link mockHedgeGraph}. A BOOK/BUCKET update with an empty node set deletes its
+   * entry (mirrors the server "empty ⇒ remove that scope's policy" semantic).
+   */
+  private readonly mockScopedHedgeGraphs = new Map<string, HedgeGraph>();
+
   private mockHedgeGraph: HedgeGraph | null = {
     entry: 0,
     nodes: [
@@ -2238,10 +2247,16 @@ export class MockTransport implements CelnetTransport {
     },
   ];
 
-  /** The auto-hedge engine config — advisory-only by default (the mandatory shadow run). */
+  /**
+   * The auto-hedge engine config. LIVE by default (execution = lp_panel_then_composite):
+   * the engine routes external legs to the LP panel and falls back to the consolidated
+   * composite mid — so offline mode demonstrates real live composite hedging, not a
+   * dry-run. `compositeSpreadBp` is the half-spread charged around the composite mid.
+   */
   private mockHedgeConfig: HedgeConfig = {
     killSwitch: false,
-    advisoryOnly: true,
+    execution: "lp_panel_then_composite",
+    compositeSpreadBp: 0.5,
     deskEnabled: [
       { desk: "emea", enabled: true },
       { desk: "marex", enabled: true },
@@ -3953,13 +3968,34 @@ export class MockTransport implements CelnetTransport {
 
   // --- Auto-hedge (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md) -----
 
-  async getHedgePolicyGraph(): Promise<HedgeGraph | null> {
-    return this.mockHedgeGraph === null ? null : cloneJson(this.mockHedgeGraph);
+  async getHedgePolicyGraph(
+    scopeKind: HedgePolicyScopeKind = "firm",
+    scopeId = "",
+  ): Promise<HedgeGraph | null> {
+    if (scopeKind === "firm") {
+      return this.mockHedgeGraph === null ? null : cloneJson(this.mockHedgeGraph);
+    }
+    const g = this.mockScopedHedgeGraphs.get(`${scopeKind}:${scopeId}`);
+    return g === undefined ? null : cloneJson(g);
   }
 
-  async updateHedgePolicyGraph(graph: HedgeGraph): Promise<HedgeGraph> {
-    this.mockHedgeGraph = cloneJson(graph);
-    return cloneJson(this.mockHedgeGraph);
+  async updateHedgePolicyGraph(
+    graph: HedgeGraph,
+    scopeKind: HedgePolicyScopeKind = "firm",
+    scopeId = "",
+  ): Promise<HedgeGraph> {
+    if (scopeKind === "firm") {
+      this.mockHedgeGraph = cloneJson(graph);
+      return cloneJson(this.mockHedgeGraph);
+    }
+    // A BOOK/BUCKET graph with an empty node set REMOVES that scope's policy.
+    const key = `${scopeKind}:${scopeId}`;
+    if (graph.nodes.length === 0) {
+      this.mockScopedHedgeGraphs.delete(key);
+      return cloneJson(graph);
+    }
+    this.mockScopedHedgeGraphs.set(key, cloneJson(graph));
+    return cloneJson(graph);
   }
 
   // --- Incoming-quote acceptance (celnet-acceptance) -------------------------
@@ -4028,7 +4064,10 @@ export class MockTransport implements CelnetTransport {
    * editor's trace panel uses). Returns the advisory intent + the fired provenance,
    * or `null` when the engine is disarmed for the scope's desk.
    */
-  private synthHedgeDecision(): { intent: HedgeIntent; provenance: HedgeProvenance } | null {
+  private synthHedgeDecision(): {
+    intent: HedgeIntent;
+    provenance: HedgeProvenance | null;
+  } | null {
     const thresholds = this.mockHedgeThresholds;
     if (thresholds.length === 0 || this.mockHedgeGraph === null) return null;
     const seq = (this.hedgeIntentSeq += 1);
@@ -4073,12 +4112,18 @@ export class MockTransport implements CelnetTransport {
       internalCrossed = Math.min(sizeMag, internalOffset > 0 ? internalOffset : sizeMag);
     } else if (kind === "submit_market_order" || kind === "rfq_out") {
       externalHedged = sizeMag;
+    } else if (kind === "clear_risk") {
+      // ClearRisk flattens the book's entire net to zero via the live composite.
+      externalHedged = Math.abs(netRisk);
     } else if (kind === "split") {
       internalCrossed = Math.min(sizeMag, internalOffset);
       externalHedged = Math.max(0, sizeMag - internalCrossed);
     }
     const residual = Math.max(0, overflow - (internalCrossed + externalHedged));
-    const advisory = this.mockHedgeConfig.advisoryOnly;
+    // The per-policy execution mode (replaces advisory-only): `advisory` is the
+    // dry-run shadow; every other mode trades live.
+    const exec = this.mockHedgeConfig.execution;
+    const advisory = exec === "advisory";
     const firedAt = Date.now();
     const band = "breach";
     const external = externalHedged > 0;
@@ -4093,6 +4138,23 @@ export class MockTransport implements CelnetTransport {
       else if (kind === "rfq_out" && action !== null && action.lps.length > 0) targetedLps = [...action.lps];
       else targetedLps = [...KNOWN_LPS];
     }
+
+    // A LIVE external hedge books real offsetting legs and stamps real provenance: the
+    // realised price is the consolidated composite mid ± the composite half-spread, the
+    // slippage is signed, and the winner is "COMPOSITE" (the consolidated Agg-Book) for
+    // the composite modes — or the touched LP under a pure LP-panel policy. A dry-run
+    // (advisory) hedge computes but trades nothing, so it carries no price.
+    const midAtFire = external && !advisory ? 100.25 : 0;
+    const spreadBp = this.mockHedgeConfig.compositeSpreadBp;
+    const priceOffset = (midAtFire * spreadBp) / 10_000;
+    const hedgePrice = external && !advisory ? midAtFire + sign * priceOffset : 0;
+    const slippageBp = external && !advisory ? sign * spreadBp : 0;
+    const lpWon =
+      external && !advisory
+        ? exec === "lp_panel"
+          ? (targetedLps[0] ?? "LP-1")
+          : "COMPOSITE"
+        : null;
 
     const intent: HedgeIntent = {
       book,
@@ -4112,31 +4174,33 @@ export class MockTransport implements CelnetTransport {
       reason: `${band} · ${kind}`,
       lps: targetedLps,
     };
-    const provenance: HedgeProvenance = {
-      hedgeId: `H-${seq.toString().padStart(4, "0")}`,
-      book,
-      instrument,
-      firedAt,
-      metric: threshold.metric,
-      threshold: threshold.cap,
-      netRisk,
-      utilization,
-      band,
-      policyPath: trace.path,
-      action,
-      internalCrossed,
-      externalHedged,
-      residual,
-      hedgePrice: external ? 100.25 + (sign > 0 ? 0.012 : -0.012) : 0,
-      midAtFire: external ? 100.25 : 0,
-      slippageBp: external ? 1.2 : 0,
-      lpWon:
-        kind === "submit_market_order" || kind === "rfq_out"
-          ? (targetedLps[0] ?? "LP-1")
-          : null,
-      advisory,
-      lps: targetedLps,
-    };
+    // Mirror the server invariant: a WAREHOUSE (hold) decision books nothing and
+    // stamps NO provenance row — only a real (internal-cross / external) hedge does.
+    const provenance: HedgeProvenance | null =
+      kind === "warehouse"
+        ? null
+        : {
+            hedgeId: `H-${seq.toString().padStart(4, "0")}`,
+            book,
+            instrument,
+            firedAt,
+            metric: threshold.metric,
+            threshold: threshold.cap,
+            netRisk,
+            utilization,
+            band,
+            policyPath: trace.path,
+            action,
+            internalCrossed,
+            externalHedged,
+            residual,
+            hedgePrice,
+            midAtFire,
+            slippageBp,
+            lpWon,
+            advisory,
+            lps: targetedLps,
+          };
     return { intent, provenance };
   }
 
@@ -4155,7 +4219,9 @@ export class MockTransport implements CelnetTransport {
     // Fire one baseline decision immediately so the monitor is populated at once.
     const baseline = this.synthHedgeDecision();
     if (baseline !== null) {
-      this.pushHedgeProvenance(baseline.provenance);
+      // A warehouse (hold) decision emits an advisory intent but books no hedge, so it
+      // stamps no provenance row (mirrors the server invariant).
+      if (baseline.provenance !== null) this.pushHedgeProvenance(baseline.provenance);
       onIntent(cloneJson(baseline.intent));
     }
     // Then tick: synth a fresh crossing decision and broadcast to every subscriber.
@@ -4163,7 +4229,7 @@ export class MockTransport implements CelnetTransport {
       this.hedgeIntentTimer = setInterval(() => {
         const decision = this.synthHedgeDecision();
         if (decision === null) return;
-        this.pushHedgeProvenance(decision.provenance);
+        if (decision.provenance !== null) this.pushHedgeProvenance(decision.provenance);
         for (const s of this.hedgeIntentSubs) s.onIntent(cloneJson(decision.intent));
       }, 2500);
     }

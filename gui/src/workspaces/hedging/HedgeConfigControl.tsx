@@ -1,11 +1,13 @@
 /**
  * HedgeConfigControl — the engine safety controls (docs/AUTO-HEDGING §8.4): the global
- * KILL-SWITCH (halts all auto-hedging → positions warehouse), the ADVISORY-ONLY flag
- * (compute + emit intents but never trade), per-desk toggles, and the rate/size guards.
- * Reads/writes `get_hedge_config` / `set_hedge_config`. Edits gate on the `hedge`
- * capability; everyone else sees the state read-only.
+ * KILL-SWITCH (halts all auto-hedging → positions warehouse), the per-policy EXECUTION
+ * MODE (Advisory / LP panel / Composite / LP panel → Composite — replaces the old
+ * advisory-only boolean), the composite half-spread, per-desk toggles, and the
+ * rate/size guards. Reads/writes `get_hedge_config` / `set_hedge_config`. Edits gate on
+ * the `hedge` capability; everyone else sees the state read-only.
  */
-import type { HedgeConfig } from "../../data/contract";
+import type { HedgeConfig, HedgeExecutionMode } from "../../data/contract";
+import { HelpButton } from "../../components/HelpButton";
 import styles from "./HedgingWorkspace.module.css";
 
 interface HedgeConfigControlProps {
@@ -13,6 +15,23 @@ interface HedgeConfigControlProps {
   readOnly: boolean;
   busy: boolean;
   onChange: (next: HedgeConfig) => void;
+}
+
+/** The four execution modes, in wire-ordinal order, each with a clear label + hint. */
+const EXEC_MODES: readonly { mode: HedgeExecutionMode; label: string; hint: string }[] = [
+  { mode: "advisory", label: "Advisory", hint: "Dry-run — intents emitted, nothing traded" },
+  { mode: "lp_panel", label: "LP panel", hint: "Route external legs to the standing LP panel" },
+  { mode: "composite", label: "Composite", hint: "Cross the live consolidated Agg-Book mid" },
+  {
+    mode: "lp_panel_then_composite",
+    label: "LP panel → Composite",
+    hint: "Route to LPs, fall back to composite mid",
+  },
+];
+
+/** Whether a mode crosses the composite (so the composite half-spread applies). */
+function modeUsesComposite(mode: HedgeExecutionMode): boolean {
+  return mode === "composite" || mode === "lp_panel_then_composite";
 }
 
 export function HedgeConfigControl({
@@ -25,6 +44,7 @@ export function HedgeConfigControl({
   const setDesk = (desk: string, enabled: boolean): void =>
     patch({ deskEnabled: config.deskEnabled.map((d) => (d.desk === desk ? { ...d, enabled } : d)) });
   const disabled = readOnly || busy;
+  const showComposite = modeUsesComposite(config.execution);
 
   return (
     <section className={styles.configPanel} aria-labelledby="hedge-config-heading" data-testid="hedge-config">
@@ -48,23 +68,42 @@ export function HedgeConfigControl({
             </span>
           </span>
         </label>
-
-        <label className={`${styles.bigSwitch} ${config.advisoryOnly ? styles.switchAmber : ""}`}>
-          <input
-            type="checkbox"
-            checked={config.advisoryOnly}
-            disabled={disabled}
-            data-testid="advisory-only"
-            onChange={(e) => patch({ advisoryOnly: e.target.checked })}
-          />
-          <span className={styles.switchMain}>
-            <span className={styles.switchLabel}>Advisory only</span>
-            <span className={styles.switchHint}>
-              {config.advisoryOnly ? "Dry-run — intents emitted, nothing traded" : "Live — hedges trade"}
-            </span>
-          </span>
-        </label>
       </div>
+
+      <fieldset
+        className={`${styles.deskFieldset} ${config.execution === "advisory" ? styles.switchAmber : ""}`}
+        data-testid="hedge-execution-mode"
+      >
+        <legend className={styles.execLegend}>
+          Execution mode
+          <HelpButton helpId="concept.hedge-execution-mode" subject="the hedge execution mode" />
+        </legend>
+        <div className={styles.execModes} role="radiogroup" aria-label="Execution mode">
+          {EXEC_MODES.map(({ mode, label, hint }) => {
+            const selected = config.execution === mode;
+            return (
+              <label
+                key={mode}
+                className={`${styles.execOption} ${selected ? styles.execOptionActive : ""}`}
+                data-testid={`exec-mode-${mode}`}
+              >
+                <input
+                  type="radio"
+                  name="hedge-execution-mode"
+                  value={mode}
+                  checked={selected}
+                  disabled={disabled}
+                  onChange={() => patch({ execution: mode })}
+                />
+                <span className={styles.switchMain}>
+                  <span className={styles.switchLabel}>{label}</span>
+                  <span className={styles.switchHint}>{hint}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
 
       {config.deskEnabled.length > 0 && (
         <fieldset className={styles.deskFieldset}>
@@ -117,6 +156,21 @@ export function HedgeConfigControl({
             onChange={(e) => patch({ dailyExternalNotionalCap: Number(e.target.value) })}
           />
         </label>
+        {showComposite && (
+          <label className={styles.formField} data-testid="composite-spread-field">
+            <span className={styles.fieldLabel}>Composite spread (bp)</span>
+            <input
+              className={styles.input}
+              type="number"
+              step="0.1"
+              min="0"
+              value={config.compositeSpreadBp}
+              disabled={disabled}
+              data-testid="composite-spread-bp"
+              onChange={(e) => patch({ compositeSpreadBp: Math.max(0, Number(e.target.value)) })}
+            />
+          </label>
+        )}
       </div>
     </section>
   );

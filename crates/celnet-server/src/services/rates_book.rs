@@ -46,10 +46,11 @@ use celnet_risk_cube::{BookId, EntityId, NetGreeks, NodeAggregate, VegaPillar};
 use celnet_risk_routing::{RiskRouter, RiskRoutingGraph, RoutingContext};
 
 use crate::config::hedge_policy::{
-    HedgeConfigDef, HedgeScopeKind, HedgeThresholdDef, ScopedThreshold,
+    HedgeConfigDef, HedgePolicyScope, HedgeScopeKind, HedgeThresholdDef, ScopedHedgeGraph,
+    ScopedThreshold,
 };
 use crate::config::identity::{
-    RiskLimits, default_hedge_policy_graph, default_warehouse_threshold_def,
+    IdentityStore, RiskLimits, default_hedge_policy_graph, default_warehouse_threshold_def,
 };
 use crate::services::auto_hedge::AutoHedgeEngine;
 use crate::services::auto_hedge::wire::band_label;
@@ -106,25 +107,111 @@ pub struct RatesHedgePolicy {
     /// The shared off-core decision + provenance engine (the SAME `Arc` the
     /// `ListHedgeProvenance` RPC reads), so a stamped decision also lands in the audit ring.
     pub engine: Arc<AutoHedgeEngine>,
-    /// The firm-wide hedge-policy exit graph. `None` ⇒ no policy resolves ⇒ no internalise
-    /// decision (the deal books plainly).
+    /// The firm-wide (`Firm`-scope) hedge-policy exit graph. `None` ⇒ no firm policy; a
+    /// fill may still resolve a `Book` / `Bucket` scoped graph (`scoped_graphs`).
     pub graph: Option<HedgeGraph>,
+    /// The scope-bound (`Book` / `Bucket`) hedge policy graphs (§5). A fill resolves the
+    /// most-specific: its own `Book` graph, else the nearest ancestor `Bucket` graph, else
+    /// the firm `graph`.
+    pub scoped_graphs: Vec<ScopedHedgeGraph>,
     /// The configured warehouse thresholds (the "100" per desk / book / instrument), resolved
     /// most-specific-wins per fill.
     pub thresholds: Vec<ScopedThreshold>,
-    /// The engine config (kill-switch / advisory / rate guards / `min_edge_bps` tolerance floor).
+    /// The engine config (kill-switch / execution mode / rate guards / `min_edge_bps` floor).
     pub config: HedgeConfigDef,
     /// The live known-LP registry the engine resolves an external action's target panel against.
     pub known_lps: BTreeSet<String>,
+    /// Each risk book's ancestor ids (nearest first) — the parent-chain snapshot used to
+    /// resolve a `Bucket` policy governing a fill's book (§5). Primed from the identity tree.
+    pub book_ancestors: HashMap<String, Vec<String>>,
+    /// Each risk book's descendant ids — the subtree snapshot used to roll up a `Bucket`
+    /// policy's risk state (the "PORTFOLIO notional" the decision measures). Primed from the
+    /// identity tree.
+    pub book_descendants: HashMap<String, Vec<String>>,
 }
 
 impl std::fmt::Debug for RatesHedgePolicy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RatesHedgePolicy")
             .field("has_graph", &self.graph.is_some())
+            .field("scoped_graphs", &self.scoped_graphs.len())
             .field("thresholds", &self.thresholds.len())
             .field("known_lps", &self.known_lps.len())
             .finish()
+    }
+}
+
+impl RatesHedgePolicy {
+    /// Build the hedge-policy snapshot from the persisted [`IdentityStore`] — the single
+    /// source of truth both prime sites (boot in `lib.rs` and `AuthEdge::reconcile_hedge_policy`)
+    /// share, so the firm + scoped graphs, thresholds, config, known-LP set, and the risk-book
+    /// tree snapshot (ancestor + descendant maps, for `Bucket`-scope selection + subtree
+    /// roll-up) are primed consistently.
+    #[must_use]
+    pub fn from_identity(engine: Arc<AutoHedgeEngine>, store: &IdentityStore) -> Self {
+        let mut book_ancestors = HashMap::new();
+        let mut book_descendants = HashMap::new();
+        for b in &store.risk_books {
+            book_ancestors.insert(
+                b.id.clone(),
+                store
+                    .risk_book_ancestors(&b.id)
+                    .iter()
+                    .map(|a| a.id.clone())
+                    .collect(),
+            );
+            book_descendants.insert(
+                b.id.clone(),
+                store
+                    .risk_book_descendants(&b.id)
+                    .iter()
+                    .map(|d| d.id.clone())
+                    .collect(),
+            );
+        }
+        Self {
+            engine,
+            graph: store.hedge_policy_graph().cloned(),
+            scoped_graphs: store.scoped_hedge_policy_graphs().to_vec(),
+            thresholds: store.hedge_thresholds().to_vec(),
+            config: store.hedge_config().clone(),
+            known_lps: store.known_hedge_lps(),
+            book_ancestors,
+            book_descendants,
+        }
+    }
+
+    /// Resolve the **most-specific** hedge policy graph governing a fill in `book` (§5),
+    /// mirroring [`IdentityStore::select_hedge_policy_graph`] off the primed snapshot: the
+    /// book's own `Book` graph, else the nearest ancestor `Bucket` graph (with its subtree
+    /// root id), else the firm `graph`. `None` ⇒ no policy at any scope (the caller falls
+    /// back to the default warehouse graph).
+    #[must_use]
+    fn select_scoped_graph(&self, book: &str) -> Option<(&HedgeGraph, Option<String>)> {
+        // 1. the book's own Book-scope policy.
+        if let Some(sg) = self
+            .scoped_graphs
+            .iter()
+            .find(|s| s.scope == HedgePolicyScope::Book(book.to_owned()))
+        {
+            return Some((&sg.graph, None));
+        }
+        // 2. the nearest ancestor Bucket policy (self as a bucket root first, then upward).
+        let mut chain = vec![book.to_owned()];
+        if let Some(anc) = self.book_ancestors.get(book) {
+            chain.extend(anc.iter().cloned());
+        }
+        for id in chain {
+            if let Some(sg) = self
+                .scoped_graphs
+                .iter()
+                .find(|s| s.scope == HedgePolicyScope::Bucket(id.clone()))
+            {
+                return Some((&sg.graph, Some(id)));
+            }
+        }
+        // 3. the firm default.
+        self.graph.as_ref().map(|g| (g, None))
     }
 }
 
@@ -1087,12 +1174,16 @@ impl RatesPositionStore {
         // skipped because the operator's routing book is not the default warehouse book) still
         // gets a decision: fall back to the default warehouse-hold-vs-advisory-shed graph, so
         // every booked fill stamps an internalise decision + RAG band rather than an empty `—`.
+        // Select the MOST-SPECIFIC hedge policy governing this fill's book (§5): its own
+        // `Book` graph, else the nearest ancestor `Bucket` graph (whose subtree the decision
+        // measures), else the firm graph. No policy at any scope ⇒ the default
+        // warehouse-hold-vs-advisory-shed graph, so every booked fill stamps a decision.
         let fallback_graph;
-        let graph = match policy.graph.as_ref() {
-            Some(g) => g,
+        let (graph, bucket_root) = match policy.select_scoped_graph(book) {
+            Some((g, root)) => (g, root),
             None => {
                 fallback_graph = default_hedge_policy_graph();
-                &fallback_graph
+                (&fallback_graph, None)
             }
         };
         // The fill's side + whether its dealt level is a rate or a clean price.
@@ -1105,13 +1196,24 @@ impl RatesPositionStore {
         // operator-defined risk book the firm never bound a warehouse cap to — falls back to
         // the default firm warehouse budget, so the fill is still measured against a real cap
         // and stamps a decision, never silently carrying none.
-        let thr_def = resolve_hedge_threshold(&policy.thresholds, "", book, &instrument)
+        // For a `Bucket` policy the "100" is the bucket root's threshold and the risk state is
+        // the subtree roll-up; otherwise it is the fill's own book.
+        let scope_book: &str = bucket_root.as_deref().unwrap_or(book);
+        let thr_def = resolve_hedge_threshold(&policy.thresholds, "", scope_book, &instrument)
             .unwrap_or_else(default_warehouse_threshold_def);
         let wh = thr_def.to_threshold();
 
-        // The routed book's post-fill net DV01 (signed linear PV01 proxy) — the risk state the
-        // warehouse cap is measured against — plus this fill's own DV01 magnitude.
-        let book_net_dv01 = self.book_net_dv01(book);
+        // The risk state the warehouse cap is measured against (signed linear PV01 proxy): the
+        // fill's own book, or — under a `Bucket` policy — the whole subtree roll-up (the
+        // "PORTFOLIO notional" the bucket decision governs, §5). Plus this fill's own DV01.
+        let book_net_dv01 = match &bucket_root {
+            Some(root) => {
+                let empty = Vec::new();
+                let desc = policy.book_descendants.get(root).unwrap_or(&empty);
+                self.subtree_net_dv01(root, desc)
+            }
+            None => self.book_net_dv01(book),
+        };
         let fill_dv01 = rates_linear_exposure(fill).abs();
 
         // The price-tolerance verdict: did the desk capture enough edge to warehouse this fill?
@@ -1295,44 +1397,70 @@ impl RatesPositionStore {
             }
         }
 
-        // Hedge Desk population (§6/§8.4): when THIS fill sheds risk externally (an over-cap
-        // overflow OR a below-min-edge back-to-back) but the policy engine did NOT itself stamp
-        // a book-level advisory-intent record (a green/amber-band `Warehouse` action stamps
-        // none — yet a below-tolerance fill is still backed-to-back), emit a **per-fill
-        // hedge-execution record** into the same ring the `ListHedgeProvenance` RPC serves, so
-        // the LIVE HEDGE DESK populates and reconciles to the originating B2B deal (keyed by the
-        // fill's `position_id`, which the `Deal` also carries). The shed amount is the fill's
-        // external DV01; the reference price is the engine mid the composite/curve produced — an
-        // ADVISORY record (nothing is submitted to a live venue at this shadow-run seam, §8.4),
-        // never a fabricated fill. When the engine already recorded a book-level intent (a
-        // threshold breach) the desk is populated from that, so we do not double-record.
-        if external_dv01 > 0.0 && outcome.provenance.is_none() {
-            let execution = HedgeProvenance {
-                hedge_id: String::new(), // minted by `record_execution`
-                book: book.to_owned(),
-                instrument: ctx.instrument_id.clone(),
-                fired_at: now,
-                metric: thr_def.metric.as_i32(),
-                threshold: wh.cap,
-                net_risk: book_net_dv01,
-                utilization,
-                band: prov.hedge_band.clone(),
-                policy_path: outcome.intent.policy_path.clone(),
-                action: outcome.intent.action.clone(),
-                internal_crossed: internal_dv01,
-                external_hedged: external_dv01,
-                residual: 0.0,
-                // The advisory shed level is the engine reference mid the composite/curve
-                // produced for this fill (§8.4 — nothing is executed on a venue at this seam).
-                hedge_price: mid,
-                mid_at_fire: mid,
-                slippage_bp: 0.0,
-                lp_won: None,
-                advisory: true,
-                lps: outcome.intent.lps.clone(),
-                parent_position_id: Some(fill.position_id),
-            };
-            policy.engine.record_execution(execution);
+        // LIVE EXECUTION (§6.2): when THIS fill sheds risk externally (an over-cap overflow OR a
+        // below-min-edge back-to-back), execute the shed on the policy's configured venue off
+        // the reference composite mid — the LP-sim panel, the Agg Book COMPOSITE mid, or
+        // LP-first-then-composite — then BOOK the offsetting leg so the warehoused net actually
+        // reduces, and stamp a **per-fill hedge-execution record** with the REAL economics
+        // (advisory=false, realised price / mid / signed slippage / winning venue). Keyed by
+        // the fill's `position_id`, so the LIVE HEDGE DESK reconciles to the originating B2B
+        // deal (which carries the same id). An `Advisory` mode (or a pure `LpPanel` miss) books
+        // nothing and stamps an honest advisory record — never a fabricated fill (guardrail 2).
+        // When the engine already stamped a book-level breach record we do not double-record.
+        if external_dv01 > 0.0 {
+            let exec = crate::services::auto_hedge::execute_external(
+                &crate::services::auto_hedge::ExternalHedgeRequest {
+                    instrument: &ctx.instrument_id,
+                    net_risk: book_net_dv01,
+                    size: external_dv01,
+                    mid,
+                    bp_scale: kind.bp_scale(),
+                    mode: policy.config.execution,
+                    composite_spread_bp: policy.config.composite_spread_bp,
+                },
+                // No live outbound RFQ/FIX panel is wired into the rates store, so the honest
+                // default LP source never fills: `LpPanelThenComposite` reaches the composite
+                // backstop and pure `LpPanel` records an honest miss (never a fabricated fill).
+                &crate::services::auto_hedge::NoLpSource,
+            );
+            // Book the offsetting leg into the same book so the warehoused net reduces by the
+            // filled amount. `book_into_risk_book` re-runs the hard-cap gate (a reducing leg
+            // never breaches, §8.3) and does NOT recurse into `stamp_internalise`. Best-effort:
+            // a leg we cannot construct (e.g. a bond's coarse linear proxy) is skipped, never
+            // faked — the record below is still stamped with the real executed economics.
+            if exec.is_filled()
+                && fill_dv01 > 0.0
+                && let Some(leg) = offsetting_rates_leg(fill, exec.filled / fill_dv01)
+            {
+                let _ = self.book_into_risk_book(leg, book);
+            }
+            if outcome.provenance.is_none() {
+                let execution = HedgeProvenance {
+                    hedge_id: String::new(), // minted by `record_execution`
+                    book: book.to_owned(),
+                    instrument: ctx.instrument_id.clone(),
+                    fired_at: now,
+                    metric: thr_def.metric.as_i32(),
+                    threshold: wh.cap,
+                    net_risk: book_net_dv01,
+                    utilization,
+                    band: prov.hedge_band.clone(),
+                    policy_path: outcome.intent.policy_path.clone(),
+                    action: outcome.intent.action.clone(),
+                    internal_crossed: internal_dv01,
+                    external_hedged: exec.filled,
+                    residual: exec.residual,
+                    hedge_price: exec.hedge_price,
+                    mid_at_fire: exec.mid_at_fire,
+                    slippage_bp: exec.slippage_bp,
+                    lp_won: exec.lp_won.clone(),
+                    // A real venue fill is NOT advisory; a miss / advisory-mode is.
+                    advisory: !exec.is_filled(),
+                    lps: outcome.intent.lps.clone(),
+                    parent_position_id: Some(fill.position_id),
+                };
+                policy.engine.record_execution(execution);
+            }
         }
     }
 
@@ -1346,6 +1474,20 @@ impl RatesPositionStore {
             .iter()
             .map(rates_linear_exposure)
             .sum()
+    }
+
+    /// The **subtree** net DV01 of a `Bucket` policy: the bucket root's own net DV01 plus
+    /// every descendant book's, summed (the "PORTFOLIO notional" a bucket-scoped hedge
+    /// decision measures — §5). `descendants` is the primed subtree id set for `root`
+    /// ([`RatesHedgePolicy::book_descendants`]). Mirrors the FX `aggregate_risk_book`
+    /// subtree roll-up (`services/risk/book_risk.rs`), book-local per node.
+    #[must_use]
+    fn subtree_net_dv01(&self, root: &str, descendants: &[String]) -> f64 {
+        let mut sum = self.book_net_dv01(root);
+        for d in descendants {
+            sum += self.book_net_dv01(d);
+        }
+        sum
     }
 
     /// Project this fill's post-book risk-book aggregate over the resolved book **and each
@@ -1556,6 +1698,51 @@ fn resolve_hedge_threshold(
 /// the tenor-bucketed IR limit (`LimitScope::Tenor` / a dedicated `LimitMetric::Dv01`)
 /// are the ADR-0016 **A3** breadth wave (P2); this A1 gate consults the linear delta at
 /// the `book → entity → firm` scopes, which is the reachability A3 depends on.
+/// Construct the **offsetting hedge leg** for a shed of `factor · |fill exposure|` (§6.2):
+/// a copy of `fill`'s instrument with its side FLIPPED and its notional scaled by `factor`
+/// (`= hedged_dv01 / fill_dv01`, in `(0, 1]`), so its signed linear exposure is exactly the
+/// negation of the shed portion — booking it reduces the book's net by the hedged amount.
+/// `position_id` is zeroed so [`RatesPositionStore::book_into_risk_book`] assigns a fresh id.
+///
+/// Returns `None` for a non-positive factor or a bond leg (whose curve-DV01 scaling is not
+/// modelled by this linear proxy) — the caller then skips booking rather than fabricating a
+/// leg (guardrail 2).
+fn offsetting_rates_leg(fill: &RatesPosition, factor: f64) -> Option<RatesPosition> {
+    // Reject a non-finite (NaN/∞) or non-positive factor — both mean "no valid leg".
+    // Written as a positive guard so it also rejects NaN without a negated PartialOrd compare.
+    if !(factor.is_finite() && factor > 0.0) {
+        return None;
+    }
+    /// Flip a trade side: pay-fixed (Buy) ⇄ receive-fixed (Sell), so the leg nets the fill.
+    fn flip(side: i32) -> i32 {
+        match Side::try_from(side) {
+            Ok(Side::Sell) => Side::Buy as i32,
+            _ => Side::Sell as i32,
+        }
+    }
+    let mut leg = fill.clone();
+    leg.position_id = 0;
+    let instr = leg.instrument.as_mut()?.instrument.as_mut()?;
+    match instr {
+        rates_instrument::Instrument::Ois(o) => {
+            o.notional = o.notional.abs() * factor;
+            o.side = flip(o.side);
+        }
+        rates_instrument::Instrument::Irs(i) => {
+            i.notional = i.notional.abs() * factor;
+            i.side = flip(i.side);
+        }
+        rates_instrument::Instrument::Fra(f) => {
+            f.notional = f.notional.abs() * factor;
+            f.side = flip(f.side);
+        }
+        // A cash bond's linear-proxy exposure is not side/notional-scaled here — skip the
+        // physical leg (the executed economics are still stamped on the provenance record).
+        _ => return None,
+    }
+    Some(leg)
+}
+
 #[must_use]
 pub(crate) fn rates_linear_exposure(position: &RatesPosition) -> f64 {
     let Some(instr) = position
@@ -1960,6 +2147,28 @@ pub(crate) mod tests {
                 })),
             }),
         }
+    }
+
+    /// The `Bucket`-scope subtree roll-up (§5): a bucket's net DV01 is its root book's
+    /// plus every descendant's — the "PORTFOLIO notional" a bucket hedge decision measures.
+    #[test]
+    fn subtree_net_dv01_rolls_up_the_descendants() {
+        let store = RatesPositionStore::new();
+        // A +5000-DV01 OIS into the bucket root, and another into a child book.
+        store
+            .book_into_risk_book(position(0, 1, 10), "RATES")
+            .expect("root leg books");
+        store
+            .book_into_risk_book(position(0, 1, 10), "RATES-EUR")
+            .expect("child leg books");
+        let own = store.book_net_dv01("RATES");
+        assert!(own.abs() > 0.0, "the root book holds its own risk");
+        // The root alone sees only its own leg; the subtree rolls up the child too.
+        let sub = store.subtree_net_dv01("RATES", &["RATES-EUR".to_owned()]);
+        assert!(
+            (sub - 2.0 * own).abs() < 1e-6,
+            "subtree net = root + child (parent sees the child's net)"
+        );
     }
 
     /// A zero-id booking is assigned a fresh monotonic id; a snapshot reports the
@@ -2407,6 +2616,9 @@ pub(crate) mod tests {
             }],
             config,
             known_lps: BTreeSet::new(),
+            scoped_graphs: Vec::new(),
+            book_ancestors: HashMap::new(),
+            book_descendants: HashMap::new(),
         }
     }
 
@@ -2494,14 +2706,27 @@ pub(crate) mod tests {
             (exec.external_hedged - prov.external_dv01).abs() < 1e-6,
             "the shed amount is the fill's external DV01"
         );
-        assert!(exec.advisory, "the shadow-run shed is advisory");
+        // The default execution mode is LIVE (LP-then-composite): with no LP source wired the
+        // shed fills on the composite venue, so the record is NON-advisory and carries the real
+        // executed economics (mid worsened by the composite spread, a signed slippage, and the
+        // COMPOSITE venue label) — not the reference mid.
+        assert!(!exec.advisory, "a live composite shed is not advisory");
+        assert_eq!(
+            exec.lp_won.as_deref(),
+            Some("COMPOSITE"),
+            "the live shed filled on the composite venue"
+        );
         assert!(
             exec.mid_at_fire > 0.0,
-            "the record carries the reference mid"
+            "the record carries the reference composite mid"
         );
-        assert_eq!(
-            exec.mid_at_fire, exec.hedge_price,
-            "the advisory shed level is the engine reference mid"
+        assert!(
+            (exec.hedge_price - exec.mid_at_fire).abs() > 0.0,
+            "the composite fill is worsened off mid by the spread"
+        );
+        assert!(
+            exec.slippage_bp.abs() > 0.0,
+            "a composite fill records a signed slippage vs mid"
         );
     }
 
@@ -2528,6 +2753,9 @@ pub(crate) mod tests {
             thresholds: Vec::new(),
             config: HedgeConfigDef::default(),
             known_lps: BTreeSet::new(),
+            scoped_graphs: Vec::new(),
+            book_ancestors: HashMap::new(),
+            book_descendants: HashMap::new(),
         }));
         // Pay-fixed 4.00% vs a 4.05% fair mid → +5bp dealer edge; the 5000-DV01 fill sits deep
         // under the default 1mm-DV01 warehouse cap.

@@ -800,13 +800,10 @@ impl Edge {
         // RFQ-desk / FIX-lift fill carrying a priced reference mid resolves its warehouse-vs-
         // external decision + tolerance verdict from first boot (§6). Re-primed on every admin
         // hedge write via `AuthEdge::reconcile_hedge_policy`. `None`/no threshold ⇒ no decision.
-        rates_store.set_hedge_policy(Some(services::rates_book::RatesHedgePolicy {
-            engine: Arc::clone(&auto_hedge_engine),
-            graph: identity_store.hedge_policy_graph().cloned(),
-            thresholds: identity_store.hedge_thresholds().to_vec(),
-            config: identity_store.hedge_config().clone(),
-            known_lps: identity_store.known_hedge_lps(),
-        }));
+        rates_store.set_hedge_policy(Some(services::rates_book::RatesHedgePolicy::from_identity(
+            Arc::clone(&auto_hedge_engine),
+            &identity_store,
+        )));
         // Prime the rates store's incoming-quote-acceptance graph from the persisted store
         // (seeded ACCEPT-ALL on a pristine store), so the FIX acceptance point gates inbound
         // lifts from first boot. Re-primed on every admin acceptance write via

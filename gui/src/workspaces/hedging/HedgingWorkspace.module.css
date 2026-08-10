@@ -148,6 +148,17 @@
   flex-wrap: wrap;
 }
 
+.scopeBar {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle, var(--border));
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg-inset, var(--bg-surface));
+}
+
 .saveBtn,
 .ghostBtn,
 .dangerBtn {
@@ -504,6 +515,47 @@
   display: flex;
   gap: var(--space-4);
   flex-wrap: wrap;
+}
+
+/* --- execution-mode selector --------------------------------------------- */
+
+.execLegend {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  color: var(--text-secondary);
+  padding: 0 var(--space-1);
+}
+.execModes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.execOption {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid var(--border);
+  background: var(--bg-inset, var(--bg-surface));
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+.execOption:hover {
+  border-color: var(--text-tertiary);
+}
+.execOption input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.execOptionActive {
+  border-color: var(--accent);
+  background: var(--bg-accent-soft, rgba(37, 99, 235, 0.08));
 }
 
 /* --- LP panels (include/exclude chips) ------------------------------------ */

@@ -16,7 +16,23 @@ export const EXIT_ACTION_KINDS: readonly ExitActionKind[] = [
   "rfq_out",
   "split",
   "escalate",
+  "clear_risk",
 ];
+
+/**
+ * Whether an exit-action kind trades AWAY (leaves the firm) — the EXTERNAL set
+ * (mirrors the server `ExitAction::is_external`): submit_market_order / rfq_out /
+ * split / clear_risk. The internal set (warehouse / cross_internal / skew / escalate)
+ * never externalises. Used to show the hedge desk hedging-only by default.
+ */
+export function isExternalExitAction(kind: ExitActionKind): boolean {
+  return (
+    kind === "submit_market_order" ||
+    kind === "rfq_out" ||
+    kind === "split" ||
+    kind === "clear_risk"
+  );
+}
 
 /** A short human label for an exit-action kind. */
 export function exitActionLabel(kind: ExitActionKind): string {
@@ -35,6 +51,8 @@ export function exitActionLabel(kind: ExitActionKind): string {
       return "Split (net then hedge)";
     case "escalate":
       return "Escalate to desk";
+    case "clear_risk":
+      return "Clear risk";
   }
 }
 
@@ -55,6 +73,8 @@ export function exitActionHint(kind: ExitActionKind): string {
       return "Net internally up to the offset, externalise the residual.";
     case "escalate":
       return "Fire an alert / hand to a human desk instead of auto-acting.";
+    case "clear_risk":
+      return "Flatten the book's entire net to zero via the live composite.";
   }
 }
 
@@ -151,5 +171,7 @@ export function describeExitAction(action: ExitAction | null): string {
       return `${label} · ${action.internalFirst ? "internal first" : "external first"} · ${action.style}`;
     case "escalate":
       return `${label}${action.reason.length > 0 ? ` · ${action.reason}` : ""}`;
+    case "clear_risk":
+      return `${label} · flatten to zero`;
   }
 }

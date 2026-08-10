@@ -4838,7 +4838,7 @@ fn hedge_lp_panel_desc_from_json(v: &Value) -> Result<HedgeLpPanelDesc> {
 fn hedge_config_desc_to_json(c: &HedgeConfigDesc) -> Value {
     json!({
         "kill_switch": c.kill_switch,
-        "advisory_only": c.advisory_only,
+        "execution": c.execution,
         "desk_enabled": Value::Array(
             c.desk_enabled.iter().map(hedge_desk_toggle_to_json).collect(),
         ),
@@ -4848,6 +4848,7 @@ fn hedge_config_desc_to_json(c: &HedgeConfigDesc) -> Value {
         "lp_panels": Value::Array(
             c.lp_panels.iter().map(hedge_lp_panel_desc_to_json).collect(),
         ),
+        "composite_spread_bp": c.composite_spread_bp,
     })
 }
 
@@ -4875,12 +4876,13 @@ fn hedge_config_desc_from_json(v: &Value) -> Result<HedgeConfigDesc> {
     )?;
     Ok(HedgeConfigDesc {
         kill_switch: bool_or_false(o, "kill_switch"),
-        advisory_only: bool_or_false(o, "advisory_only"),
+        execution: enum_or_zero(o, "execution"),
         desk_enabled,
         max_clip: f64_or_zero(o, "max_clip"),
         max_hedges_per_interval: u32_or_zero(o, "max_hedges_per_interval"),
         daily_external_notional_cap: f64_or_zero(o, "daily_external_notional_cap"),
         lp_panels,
+        composite_spread_bp: f64_or_zero(o, "composite_spread_bp"),
     })
 }
 
@@ -4890,6 +4892,8 @@ pub(super) fn get_hedge_policy_graph_request_from_json(
     Ok(GetHedgePolicyGraphRequest {
         session_token: string_field(o, "session_token")?,
         correlation_id: opt_u64(o, "correlation_id"),
+        scope_kind: enum_or_zero(o, "scope_kind"),
+        scope_id: string_or_empty(o, "scope_id"),
     })
 }
 
@@ -4897,6 +4901,8 @@ pub(super) fn get_hedge_policy_graph_response_to_json(r: &GetHedgePolicyGraphRes
     json!({
         "graph": r.graph.as_ref().map(hedge_graph_desc_to_json),
         "correlation_id": r.correlation_id,
+        "scope_kind": r.scope_kind,
+        "scope_id": r.scope_id,
     })
 }
 
@@ -4907,6 +4913,8 @@ pub(super) fn update_hedge_policy_graph_request_from_json(
         session_token: string_field(o, "session_token")?,
         graph: Some(nested(o, "graph", hedge_graph_desc_from_json)?),
         correlation_id: opt_u64(o, "correlation_id"),
+        scope_kind: enum_or_zero(o, "scope_kind"),
+        scope_id: string_or_empty(o, "scope_id"),
     })
 }
 
@@ -4916,6 +4924,8 @@ pub(super) fn update_hedge_policy_graph_response_to_json(
     json!({
         "graph": r.graph.as_ref().map(hedge_graph_desc_to_json),
         "correlation_id": r.correlation_id,
+        "scope_kind": r.scope_kind,
+        "scope_id": r.scope_id,
     })
 }
 

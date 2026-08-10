@@ -121,6 +121,7 @@ import type {
   RiskBookRisk,
   RiskRoutingGraph,
   HedgeGraph,
+  HedgePolicyScopeKind,
   AcceptanceGraph,
   WarehouseThreshold,
   HedgeProvenance,
@@ -823,11 +824,26 @@ export interface CelnetTransport {
   // EXIT-POLICY decision graph (reusing the routing graph engine, leaves = exit
   // actions). Every RPC gates server-side on the narrow `hedge` capability × asset.
 
-  /** AuthService.GetHedgePolicyGraph (`hedge`) — the firm-wide exit policy, or `null` until first defined. */
-  getHedgePolicyGraph(): Promise<HedgeGraph | null>;
+  /**
+   * AuthService.GetHedgePolicyGraph (`hedge`) — the exit policy for a scope
+   * (FIRM singleton, or a per-BOOK / per-BUCKET override), or `null` until first
+   * defined for that scope. `scopeKind`/`scopeId` default to the FIRM singleton.
+   */
+  getHedgePolicyGraph(
+    scopeKind?: HedgePolicyScopeKind,
+    scopeId?: string,
+  ): Promise<HedgeGraph | null>;
 
-  /** AuthService.UpdateHedgePolicyGraph (`hedge`) — replace the firm-wide policy; resolves to the committed graph. */
-  updateHedgePolicyGraph(graph: HedgeGraph): Promise<HedgeGraph>;
+  /**
+   * AuthService.UpdateHedgePolicyGraph (`hedge`) — replace the policy for a scope;
+   * resolves to the committed graph. FIRM writes the singleton; a BOOK/BUCKET graph
+   * with an EMPTY node set REMOVES that scope's policy. Scope defaults to FIRM.
+   */
+  updateHedgePolicyGraph(
+    graph: HedgeGraph,
+    scopeKind?: HedgePolicyScopeKind,
+    scopeId?: string,
+  ): Promise<HedgeGraph>;
 
   // --- Incoming-quote acceptance (celnet-acceptance) -------------------------
   //

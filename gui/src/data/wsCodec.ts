@@ -127,6 +127,8 @@ import type {
   HedgeField,
   HedgeMetric,
   HedgeScopeKind,
+  HedgePolicyScopeKind,
+  HedgeExecutionMode,
   HedgeSizeKind,
   ExecStyle,
   ExitActionKind,
@@ -4512,7 +4514,7 @@ export function riskRoutingGraphFromWire(o: WireObject): RiskRoutingGraph {
 // singular messages render as JSON `null`; proto3-`optional` `skew_bp`/`lp_won` are
 // OMITTED when absent). Enum ordinals verified vs the proto (`HedgeFieldEnum` 0..18,
 // `ExecStyleEnum` 0..1, `HedgeMetricEnum` 0..3, `HedgeScopeKindEnum` 0..2,
-// `HedgeSizeKind` 0..2, `ExitActionKind` 0..6); `RouteOpEnum` is reused via
+// `HedgeSizeKind` 0..2, `ExitActionKind` 0..7); `RouteOpEnum` is reused via
 // {@link routeOpToWire}/{@link routeOpFromWire}.
 
 const HEDGE_FIELD_WIRE: Record<HedgeField, number> = {
@@ -4623,6 +4625,7 @@ const EXIT_ACTION_WIRE: Record<ExitActionKind, number> = {
   rfq_out: 4,
   split: 5,
   escalate: 6,
+  clear_risk: 7,
 };
 const EXIT_ACTION_FROM: readonly ExitActionKind[] = [
   "warehouse",
@@ -4632,6 +4635,7 @@ const EXIT_ACTION_FROM: readonly ExitActionKind[] = [
   "rfq_out",
   "split",
   "escalate",
+  "clear_risk",
 ];
 /** The wire `ExitActionKind` i32 tag. */
 export function exitActionKindToWire(k: ExitActionKind): number {
@@ -4640,6 +4644,42 @@ export function exitActionKindToWire(k: ExitActionKind): number {
 /** A GUI exit-action kind from the wire i32 tag. */
 export function exitActionKindFromWire(n: number): ExitActionKind {
   return EXIT_ACTION_FROM[n] ?? "warehouse";
+}
+
+const HEDGE_EXEC_WIRE: Record<HedgeExecutionMode, number> = {
+  advisory: 0,
+  lp_panel: 1,
+  composite: 2,
+  lp_panel_then_composite: 3,
+};
+const HEDGE_EXEC_FROM: readonly HedgeExecutionMode[] = [
+  "advisory",
+  "lp_panel",
+  "composite",
+  "lp_panel_then_composite",
+];
+/** The wire `HedgeExecutionModeEnum` i32 tag. */
+export function hedgeExecutionToWire(m: HedgeExecutionMode): number {
+  return HEDGE_EXEC_WIRE[m];
+}
+/** A GUI execution mode from the wire i32 tag (out of range ⇒ the proto3 default). */
+export function hedgeExecutionFromWire(n: number): HedgeExecutionMode {
+  return HEDGE_EXEC_FROM[n] ?? "lp_panel_then_composite";
+}
+
+const HEDGE_POLICY_SCOPE_WIRE: Record<HedgePolicyScopeKind, number> = {
+  firm: 0,
+  book: 1,
+  bucket: 2,
+};
+const HEDGE_POLICY_SCOPE_FROM: readonly HedgePolicyScopeKind[] = ["firm", "book", "bucket"];
+/** The wire `HedgePolicyScopeKindEnum` i32 tag. */
+export function hedgePolicyScopeToWire(s: HedgePolicyScopeKind): number {
+  return HEDGE_POLICY_SCOPE_WIRE[s];
+}
+/** A GUI hedge-policy scope kind from the wire i32 tag (out of range ⇒ `firm`). */
+export function hedgePolicyScopeFromWire(n: number): HedgePolicyScopeKind {
+  return HEDGE_POLICY_SCOPE_FROM[n] ?? "firm";
 }
 
 /** A presence-tracked boolean (absent ⇒ false, matching proto3). */
@@ -4924,41 +4964,66 @@ export function hedgeDeskToggleFromWire(o: WireObject): HedgeDeskToggle {
 export function hedgeConfigToWire(c: HedgeConfig): WireObject {
   return {
     kill_switch: c.killSwitch,
-    advisory_only: c.advisoryOnly,
+    execution: hedgeExecutionToWire(c.execution),
     desk_enabled: c.deskEnabled.map(hedgeDeskToggleToWire),
     max_clip: c.maxClip,
     max_hedges_per_interval: c.maxHedgesPerInterval,
     daily_external_notional_cap: c.dailyExternalNotionalCap,
     lp_panels: c.lpPanels.map(hedgeLpPanelToWire),
+    composite_spread_bp: c.compositeSpreadBp,
   };
 }
 /** Decode a `HedgeConfigDesc`. */
 export function hedgeConfigFromWire(o: WireObject): HedgeConfig {
   return {
     killSwitch: boolOf(o, "kill_switch"),
-    advisoryOnly: boolOf(o, "advisory_only"),
+    execution: hedgeExecutionFromWire(enumNum(o, "execution")),
     deskEnabled: array(o, "desk_enabled").map(hedgeDeskToggleFromWire),
     maxClip: num(o, "max_clip"),
     maxHedgesPerInterval: num(o, "max_hedges_per_interval"),
     dailyExternalNotionalCap: num(o, "daily_external_notional_cap"),
     lpPanels: array(o, "lp_panels").map(hedgeLpPanelFromWire),
+    compositeSpreadBp: num(o, "composite_spread_bp"),
   };
 }
 
 // --- hedge request framing + response decoders (the 7 hedge RPCs) ------------
 
-/** `get_hedge_policy_graph` request body (session/correlation added by the framing). */
-export function getHedgePolicyGraphRequestToWire(): WireObject {
-  return {};
+/**
+ * `get_hedge_policy_graph` request body — scope-aware (`scope_kind` field 3,
+ * `scope_id` field 4). FIRM carries an empty `scope_id`; BOOK/BUCKET name the
+ * (subtree-root) risk book.
+ */
+export function getHedgePolicyGraphRequestToWire(
+  scopeKind: HedgePolicyScopeKind,
+  scopeId: string,
+): WireObject {
+  return { scope_kind: hedgePolicyScopeToWire(scopeKind), scope_id: scopeId };
 }
-/** Decode `{ graph: {...} | null }` — the policy is absent until first defined. */
+/**
+ * Decode `{ graph: {...} | null, scope_kind, scope_id }` — the policy is absent
+ * until first defined for that scope. The echoed scope keys are ignored (the caller
+ * already knows the scope it requested); only the graph is projected.
+ */
 export function hedgePolicyGraphResponseFromWire(o: WireObject): HedgeGraph | null {
   const raw = o["graph"];
   return raw && typeof raw === "object" ? hedgeGraphFromWire(raw as WireObject) : null;
 }
-/** `update_hedge_policy_graph` request body. */
-export function updateHedgePolicyGraphRequestToWire(graph: HedgeGraph): WireObject {
-  return { graph: hedgeGraphToWire(graph) };
+/**
+ * `update_hedge_policy_graph` request body — scope-aware (`scope_kind` field 4,
+ * `scope_id` field 5). FIRM writes the singleton; a BOOK/BUCKET graph with an EMPTY
+ * node set REMOVES that scope's policy.
+ */
+export function updateHedgePolicyGraphRequestToWire(
+  graph: HedgeGraph,
+  scopeKind: HedgePolicyScopeKind,
+  scopeId: string,
+): WireObject {
+  return {
+    graph: hedgeGraphToWire(graph),
+    scope_kind: hedgePolicyScopeToWire(scopeKind),
+    scope_id: scopeId,
+  };
 }
 /** Decode `{ graph: {...} }` from the update reply (always present). */
 export function updateHedgePolicyGraphResponseFromWire(o: WireObject): HedgeGraph {

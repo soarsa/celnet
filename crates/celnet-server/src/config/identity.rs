@@ -37,7 +37,8 @@ use celnet_risk_routing::{RiskRoutingGraph, RoutingNode};
 use serde::{Deserialize, Serialize};
 
 use super::hedge_policy::{
-    HedgeConfigDef, HedgeMetric, HedgeScopeKind, HedgeThresholdDef, ScopedThreshold,
+    HedgeConfigDef, HedgeMetric, HedgePolicyScope, HedgeScopeKind, HedgeThresholdDef,
+    ScopedHedgeGraph, ScopedThreshold,
 };
 
 use super::reference_data::{
@@ -1128,6 +1129,13 @@ pub struct IdentityStore {
     /// serde-default field, so an existing `identity.json` loads unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hedge_policy_graph: Option<HedgeGraph>,
+    /// The **scope-bound** hedge policy graphs (`Book` / `Bucket` scopes — §4/§5). The
+    /// [`hedge_policy_graph`](Self::hedge_policy_graph) above is the `Firm` singleton; these
+    /// are the more-specific overrides a fill resolves against most-specific-wins (its own
+    /// `Book` graph, else the nearest ancestor `Bucket` graph, else the firm graph). An
+    /// additive serde-default list, so an existing `identity.json` loads unchanged as empty.
+    #[serde(default)]
+    pub hedge_policy_graphs: Vec<ScopedHedgeGraph>,
     /// The firm-wide **incoming-quote-acceptance decision graph** (the third
     /// trader-configurable rule engine — `celnet-acceptance`). Gates whether an inbound
     /// counterparty lift is ACCEPTED, REJECTED, or HELD for manual review at the
@@ -2364,6 +2372,81 @@ impl IdentityStore {
         self.check_hedge_policy_graph(&graph)?;
         self.hedge_policy_graph = Some(graph);
         Ok(())
+    }
+
+    /// The scope-bound hedge policy graphs (`Book` / `Bucket`), in insertion order.
+    #[must_use]
+    pub fn scoped_hedge_policy_graphs(&self) -> &[ScopedHedgeGraph] {
+        &self.hedge_policy_graphs
+    }
+
+    /// The hedge policy graph bound to `scope`: the `Firm` singleton for
+    /// [`HedgePolicyScope::Firm`], else the matching `Book` / `Bucket` entry (or `None`).
+    #[must_use]
+    pub fn hedge_policy_graph_for_scope(&self, scope: &HedgePolicyScope) -> Option<&HedgeGraph> {
+        match scope {
+            HedgePolicyScope::Firm => self.hedge_policy_graph.as_ref(),
+            _ => self
+                .hedge_policy_graphs
+                .iter()
+                .find(|s| &s.scope == scope)
+                .map(|s| &s.graph),
+        }
+    }
+
+    /// Install (or replace / remove) a scope-bound hedge policy graph after validating it
+    /// against the live registries. `Firm` writes the singleton; a `Book` / `Bucket` graph
+    /// with an EMPTY node set REMOVES that scope's policy (the operator's clear gesture),
+    /// otherwise it upserts the same-scope entry. On any defect the store is unchanged.
+    ///
+    /// # Errors
+    /// The graph is malformed, or an action leaf names an unknown instrument / LP.
+    pub fn set_hedge_policy_graph_for_scope(
+        &mut self,
+        scope: HedgePolicyScope,
+        graph: HedgeGraph,
+    ) -> Result<(), String> {
+        match scope {
+            HedgePolicyScope::Firm => self.set_hedge_policy_graph(graph),
+            _ => {
+                if graph.nodes.is_empty() {
+                    // An empty graph clears the scope's policy (no validation needed).
+                    self.hedge_policy_graphs.retain(|s| s.scope != scope);
+                    return Ok(());
+                }
+                self.check_hedge_policy_graph(&graph)?;
+                self.hedge_policy_graphs.retain(|s| s.scope != scope);
+                self.hedge_policy_graphs
+                    .push(ScopedHedgeGraph { scope, graph });
+                Ok(())
+            }
+        }
+    }
+
+    /// Resolve the **most-specific** hedge policy graph governing a fill in `book` (§5):
+    /// `book`'s own `Book` graph, else the nearest ancestor `Bucket` graph (a subtree root),
+    /// else the `Firm` singleton. Returns the graph plus, for a `Bucket` match, the bucket
+    /// root id — so the caller measures the decision against the subtree roll-up rather than
+    /// the single book. `None` when no policy is defined at any scope.
+    #[must_use]
+    pub fn select_hedge_policy_graph(&self, book: &str) -> Option<(&HedgeGraph, Option<String>)> {
+        // 1. the book's own Book-scope policy (most specific).
+        if let Some(g) = self.hedge_policy_graph_for_scope(&HedgePolicyScope::Book(book.to_owned()))
+        {
+            return Some((g, None));
+        }
+        // 2. the nearest ancestor Bucket policy (self as a bucket root first, then upward).
+        let mut chain = vec![book.to_owned()];
+        chain.extend(self.risk_book_ancestors(book).iter().map(|b| b.id.clone()));
+        for id in chain {
+            if let Some(g) =
+                self.hedge_policy_graph_for_scope(&HedgePolicyScope::Bucket(id.clone()))
+            {
+                return Some((g, Some(id)));
+            }
+        }
+        // 3. the firm default.
+        self.hedge_policy_graph.as_ref().map(|g| (g, None))
     }
 
     /// The set of instrument ids a `CrossInternal` leaf may target — the canonical
@@ -3759,6 +3842,85 @@ mod tests {
             !store2.risk_book(&beta.id).unwrap().enabled,
             "the disabled book stays disabled",
         );
+    }
+
+    #[test]
+    fn select_hedge_policy_graph_resolves_most_specific() {
+        use celnet_hedge_routing::{ExitAction, HedgeGraph, HedgeNode};
+        use std::collections::BTreeMap;
+
+        // A distinguishable single-leaf policy (Escalate carries no external target ⇒ valid).
+        fn leaf(reason: &str) -> HedgeGraph {
+            let mut nodes = BTreeMap::new();
+            nodes.insert(
+                0u32,
+                HedgeNode::Action {
+                    exit: ExitAction::Escalate {
+                        reason: reason.to_owned(),
+                    },
+                },
+            );
+            HedgeGraph { entry: 0, nodes }
+        }
+        fn book(id: &str, parent: Option<&str>) -> RiskBookDef {
+            RiskBookDef {
+                id: id.to_owned(),
+                name: id.to_owned(),
+                parent_id: parent.map(str::to_owned),
+                desk_id: None,
+                description: String::new(),
+                limits: None,
+                enabled: true,
+            }
+        }
+
+        let mut store = IdentityStore::default();
+        // Tree: RATES (root) → RATES-EUR (child).
+        store.risk_books.push(book("RATES", None));
+        store.risk_books.push(book("RATES-EUR", Some("RATES")));
+
+        // Firm-only: the child resolves the firm graph, no bucket root.
+        store.set_hedge_policy_graph(leaf("firm")).unwrap();
+        let (g, root) = store.select_hedge_policy_graph("RATES-EUR").unwrap();
+        assert_eq!(g, &leaf("firm"));
+        assert!(root.is_none());
+
+        // Add a Bucket(RATES) policy: the child resolves it (nearest ancestor bucket), and the
+        // bucket root is surfaced so the decision measures the subtree.
+        store
+            .set_hedge_policy_graph_for_scope(
+                HedgePolicyScope::Bucket("RATES".into()),
+                leaf("bucket"),
+            )
+            .unwrap();
+        let (g, root) = store.select_hedge_policy_graph("RATES-EUR").unwrap();
+        assert_eq!(g, &leaf("bucket"));
+        assert_eq!(root.as_deref(), Some("RATES"));
+
+        // The child's own Book policy wins over the ancestor bucket (most-specific), no root.
+        store
+            .set_hedge_policy_graph_for_scope(
+                HedgePolicyScope::Book("RATES-EUR".into()),
+                leaf("book"),
+            )
+            .unwrap();
+        let (g, root) = store.select_hedge_policy_graph("RATES-EUR").unwrap();
+        assert_eq!(g, &leaf("book"));
+        assert!(root.is_none());
+
+        // An empty Book graph clears that scope → the child falls back to the bucket again.
+        store
+            .set_hedge_policy_graph_for_scope(
+                HedgePolicyScope::Book("RATES-EUR".into()),
+                HedgeGraph {
+                    entry: 0,
+                    nodes: BTreeMap::new(),
+                },
+            )
+            .unwrap();
+        let (g, root) = store.select_hedge_policy_graph("RATES-EUR").unwrap();
+        assert_eq!(g, &leaf("bucket"));
+        assert_eq!(root.as_deref(), Some("RATES"));
     }
 
     #[test]

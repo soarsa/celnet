@@ -450,13 +450,12 @@ impl AuthEdge {
     /// The boot path runs the equivalent prime once (`celnet-server/src/lib.rs`).
     fn reconcile_hedge_policy(&self, store: &IdentityStore) {
         if let Some(rates_store) = &self.rates_store {
-            rates_store.set_hedge_policy(Some(crate::services::rates_book::RatesHedgePolicy {
-                engine: Arc::clone(&self.auto_hedge),
-                graph: store.hedge_policy_graph().cloned(),
-                thresholds: store.hedge_thresholds().to_vec(),
-                config: store.hedge_config().clone(),
-                known_lps: store.known_hedge_lps(),
-            }));
+            rates_store.set_hedge_policy(Some(
+                crate::services::rates_book::RatesHedgePolicy::from_identity(
+                    Arc::clone(&self.auto_hedge),
+                    store,
+                ),
+            ));
         }
     }
 
@@ -2100,10 +2099,19 @@ impl AuthService for AuthEdge {
             &req.session_token,
             Capability::new(Action::Hedge, AssetClass::FixedIncome),
         )?;
-        let graph = self.lock().hedge_policy_graph().map(hedge_graph_to_wire);
+        let scope = crate::config::hedge_policy::HedgePolicyScope::from_wire(
+            req.scope_kind,
+            req.scope_id.clone(),
+        );
+        let graph = self
+            .lock()
+            .hedge_policy_graph_for_scope(&scope)
+            .map(hedge_graph_to_wire);
         Ok(Response::new(GetHedgePolicyGraphResponse {
             graph,
             correlation_id: req.correlation_id,
+            scope_kind: scope.kind_as_i32(),
+            scope_id: scope.id().to_owned(),
         }))
     }
 
@@ -2123,19 +2131,26 @@ impl AuthService for AuthEdge {
             .graph
             .ok_or_else(|| Status::invalid_argument("hedge policy graph is required"))?;
         let graph = hedge_graph_from_wire(wire)?;
+        let scope = crate::config::hedge_policy::HedgePolicyScope::from_wire(
+            req.scope_kind,
+            req.scope_id.clone(),
+        );
 
         let mut guard = self.lock();
         let mut next = guard.clone();
         // The store re-validates the graph against the live aggregation-instrument + FIX-LP
         // registries (acyclic, type-consistent conditions, every action leaf's targets
         // exist), so a malformed graph fails loudly at the write and never reaches the engine.
-        next.set_hedge_policy_graph(graph.clone())
+        // A BOOK/BUCKET graph with an empty node set removes that scope's policy.
+        next.set_hedge_policy_graph_for_scope(scope.clone(), graph.clone())
             .map_err(Status::invalid_argument)?;
         self.persist_and_commit(&mut guard, next)?;
         self.reconcile_hedge_policy(&guard);
         Ok(Response::new(UpdateHedgePolicyGraphResponse {
             graph: Some(hedge_graph_to_wire(&graph)),
             correlation_id: req.correlation_id,
+            scope_kind: scope.kind_as_i32(),
+            scope_id: scope.id().to_owned(),
         }))
     }
 

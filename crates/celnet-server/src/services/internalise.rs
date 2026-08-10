@@ -69,7 +69,7 @@ pub enum QuoteKind {
 impl QuoteKind {
     /// The basis-point scale (native units per bp) for this quote kind.
     #[must_use]
-    const fn bp_scale(self) -> f64 {
+    pub(crate) const fn bp_scale(self) -> f64 {
         match self {
             QuoteKind::Rate => RATE_BP,
             QuoteKind::Price => PRICE_BP,

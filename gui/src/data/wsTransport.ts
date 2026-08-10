@@ -48,6 +48,7 @@ import type {
   RiskBookRisk,
   RiskRoutingGraph,
   HedgeGraph,
+  HedgePolicyScopeKind,
   AcceptanceGraph,
   WarehouseThreshold,
   HedgeProvenance,
@@ -2363,19 +2364,26 @@ export class WsTransport implements CelnetTransport {
 
   // --- Auto-hedging / risk internalisation -----------------------------------
 
-  async getHedgePolicyGraph(): Promise<HedgeGraph | null> {
+  async getHedgePolicyGraph(
+    scopeKind: HedgePolicyScopeKind = "firm",
+    scopeId = "",
+  ): Promise<HedgeGraph | null> {
     const reply = await this.conn.request(
       "get_hedge_policy_graph",
-      getHedgePolicyGraphRequestToWire(),
+      getHedgePolicyGraphRequestToWire(scopeKind, scopeId),
       "hedge_policy_graph",
     );
     return hedgePolicyGraphResponseFromWire(reply);
   }
 
-  async updateHedgePolicyGraph(graph: HedgeGraph): Promise<HedgeGraph> {
+  async updateHedgePolicyGraph(
+    graph: HedgeGraph,
+    scopeKind: HedgePolicyScopeKind = "firm",
+    scopeId = "",
+  ): Promise<HedgeGraph> {
     const reply = await this.conn.request(
       "update_hedge_policy_graph",
-      updateHedgePolicyGraphRequestToWire(graph),
+      updateHedgePolicyGraphRequestToWire(graph, scopeKind, scopeId),
       "hedge_policy_graph_updated",
     );
     return updateHedgePolicyGraphResponseFromWire(reply);

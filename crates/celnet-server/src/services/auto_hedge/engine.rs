@@ -248,10 +248,12 @@ impl AutoHedgeEngine {
             Vec::new()
         };
 
-        // Advisory gate: external actions are advisory unless the desk has disarmed it
-        // (advisory_only == false) with the kill-switch off; internal actions execute.
+        // Advisory gate: the whole decision is a shadow run when the execution mode is
+        // `Advisory` (nothing books — internal OR external); the three live modes execute.
+        // A live external fire may still be DOWNGRADED to advisory by the rate/size guards
+        // below (kill-switch is handled earlier via `desk_active`).
         let is_external = action.is_external();
-        let mut advisory = is_external && config.advisory_only;
+        let mut advisory = config.execution.is_advisory();
         let mut guard_reason: Option<&str> = None;
 
         // Rate / size guards apply only to a live (non-advisory) external fire.
@@ -402,6 +404,8 @@ fn requested_size(action: &ExitAction) -> Option<HedgeSize> {
     match action {
         ExitAction::CrossInternal { max_size, .. } => Some(*max_size),
         ExitAction::SubmitMarketOrder { size, .. } | ExitAction::RfqOut { size, .. } => Some(*size),
+        // ClearRisk flattens the whole net position — a full-size external market order.
+        ExitAction::ClearRisk => Some(HedgeSize::Full),
         // Split sheds the overflow to the edge; Warehouse/Skew/Escalate shed nothing.
         ExitAction::Split { .. } => Some(HedgeSize::Overflow),
         ExitAction::Warehouse | ExitAction::Skew { .. } | ExitAction::Escalate { .. } => None,
@@ -430,8 +434,11 @@ fn decompose(action: &ExitAction, sized: f64, internal_offset: f64) -> Split {
                 residual: 0.0,
             }
         }
-        // Straight externalisation — all to the street.
-        ExitAction::SubmitMarketOrder { .. } | ExitAction::RfqOut { .. } => Split {
+        // Straight externalisation — all to the street. `ClearRisk` sizes to `Full`
+        // (the whole net), so it flattens the book to zero.
+        ExitAction::SubmitMarketOrder { .. }
+        | ExitAction::RfqOut { .. }
+        | ExitAction::ClearRisk => Split {
             internal: 0.0,
             external: sized,
             residual: 0.0,
@@ -614,23 +621,28 @@ mod tests {
     }
 
     #[test]
-    fn external_action_is_advisory_by_default_and_records_provenance() {
+    fn advisory_mode_shadow_runs_and_records_provenance() {
+        use crate::config::hedge_policy::HedgeExecutionMode;
         let e = AutoHedgeEngine::default();
         let g = graph(ExitAction::SubmitMarketOrder {
             size: HedgeSize::Overflow,
             style: ExecStyle::Immediate,
         });
+        let cfg = HedgeConfigDef {
+            execution: HedgeExecutionMode::Advisory,
+            ..HedgeConfigDef::default()
+        };
         // net 95k DV01, breached, threshold edge 80k → overflow 15k.
         let out = e.evaluate(
             &g,
             &thr(),
-            &HedgeConfigDef::default(),
+            &cfg,
             &ctx(95_000.0, true, 0.0, "RATES"),
             &known(),
             42,
         );
         let prov = out.provenance.expect("an action stamps provenance");
-        assert!(out.intent.advisory, "external default is advisory-only");
+        assert!(out.intent.advisory, "Advisory mode never trades");
         assert!(prov.advisory);
         assert_eq!(out.intent.external_hedged, 15_000.0);
         assert_eq!(prov.internal_crossed, 0.0);
@@ -768,7 +780,7 @@ mod tests {
             style: ExecStyle::Immediate,
         });
         let cfg = HedgeConfigDef {
-            advisory_only: false, // disarmed → live
+            // Default execution is already a live mode; the rate cap gates the second fire.
             max_hedges_per_interval: 1,
             ..HedgeConfigDef::default()
         };
@@ -816,7 +828,7 @@ mod tests {
             style: ExecStyle::Immediate,
         });
         let cfg = HedgeConfigDef {
-            advisory_only: false,
+            // Default execution is live; the daily cap downgrades the fire to advisory.
             daily_external_notional_cap: 10_000.0,
             ..HedgeConfigDef::default()
         };
@@ -831,6 +843,33 @@ mod tests {
         );
         assert!(out.intent.advisory);
         assert!(out.intent.reason.contains("daily external"));
+    }
+
+    #[test]
+    fn clear_risk_flattens_the_whole_net_externally() {
+        // ClearRisk sizes to Full (the whole net), not the overflow-to-edge — a full
+        // external flatten. net 95k → external 95k (not the 15k overflow).
+        let e = AutoHedgeEngine::default();
+        let g = graph(ExitAction::ClearRisk);
+        let out = e.evaluate(
+            &g,
+            &thr(),
+            &HedgeConfigDef::default(),
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            1,
+        );
+        assert_eq!(
+            out.intent.action.as_ref().unwrap().kind,
+            ExitActionKind::ExitActionClearRisk as i32
+        );
+        assert_eq!(
+            out.intent.external_hedged, 95_000.0,
+            "ClearRisk flattens the whole net, not just the overflow"
+        );
+        assert_eq!(out.intent.internal_crossed, 0.0);
+        let prov = out.provenance.expect("a fired flatten stamps provenance");
+        assert_eq!(prov.residual, 0.0, "nothing is warehoused after a flatten");
     }
 
     #[test]

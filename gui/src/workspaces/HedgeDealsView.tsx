@@ -22,7 +22,7 @@ import { Panel } from "../components/Panel";
 import { TableSearch } from "../components/TableSearch";
 import { useTableFilter } from "../hooks/useTableFilter";
 import { fmtCompact, fmtRate } from "../lib/format";
-import { describeExitAction } from "../lib/hedgeExit";
+import { describeExitAction, isExternalExitAction } from "../lib/hedgeExit";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import type { HedgeProvenance } from "../data/contract";
 import styles from "./HedgeDealsView.module.css";
@@ -45,6 +45,15 @@ function slippageLabel(bp: number): string {
   if (bp === 0) return "—";
   const s = Math.abs(bp).toFixed(1);
   return bp < 0 ? `−${s}bp` : `+${s}bp`;
+}
+
+/**
+ * Whether a hedge row is an EXTERNAL hedge (trades away — the desk's job) vs an
+ * internalised decision (warehouse / cross-internal / skew / escalate). The hedge desk
+ * shows external-only by default; the "Show internalised" toggle reveals the rest.
+ */
+function isExternalHedge(p: HedgeProvenance): boolean {
+  return p.action !== null && isExternalExitAction(p.action.kind);
 }
 
 /**
@@ -81,6 +90,9 @@ export function HedgeDealsView(): React.ReactElement {
 
   const [rows, setRows] = useState<HedgeProvenance[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // The hedge desk is hedging-only by default: internalised (warehouse / cross-internal
+  // / skew / escalate) decisions are hidden unless the trader opts to audit them.
+  const [showInternalised, setShowInternalised] = useState(false);
 
   const refetch = useCallback(() => {
     void app.transport
@@ -110,12 +122,19 @@ export function HedgeDealsView(): React.ReactElement {
     return () => dispose?.();
   }, [app.transport, canView]);
 
-  // Newest first, mirroring the client-deals blotter.
+  // Newest first, mirroring the client-deals blotter; then apply the hedging-only
+  // desk filter (external-only unless "Show internalised" is on) BEFORE search.
   const sorted = useMemo(() => [...rows].sort((a, b) => b.firedAt - a.firedAt), [rows]);
-  const { query, setQuery, filtered, shown, total } = useTableFilter(sorted, hedgeSearchText);
+  const visible = useMemo(
+    () => (showInternalised ? sorted : sorted.filter(isExternalHedge)),
+    [sorted, showInternalised],
+  );
+  const { query, setQuery, filtered, shown, total } = useTableFilter(visible, hedgeSearchText);
 
   const isOffline = !app.transport.label.startsWith("live");
-  const externalTotal = rows.reduce((acc, p) => acc + p.externalHedged, 0);
+  // The "external" total reflects the CURRENTLY-VISIBLE set (the filtered desk view).
+  const externalTotal = visible.reduce((acc, p) => acc + p.externalHedged, 0);
+  const internalisedCount = sorted.length - sorted.filter(isExternalHedge).length;
 
   if (!canView) {
     return (
@@ -136,8 +155,20 @@ export function HedgeDealsView(): React.ReactElement {
       <Panel className={styles.panel} title="Hedge deals">
         <div className={styles.head}>
           <span className={styles.engine}>{isOffline ? "in-app hedge desk" : "live hedge desk"}</span>
-          <span className={styles.summary}>
-            {rows.length} hedge{rows.length === 1 ? "" : "s"} · {fmtCompact(externalTotal)} external
+          <label className={styles.internalisedToggle}>
+            <input
+              type="checkbox"
+              checked={showInternalised}
+              data-testid="hedge-show-internalised"
+              onChange={(e) => setShowInternalised(e.target.checked)}
+            />
+            <span>
+              Show internalised{internalisedCount > 0 ? ` (${internalisedCount})` : ""}
+            </span>
+          </label>
+          <span className={styles.summary} data-testid="hedge-deals-summary">
+            {visible.length} {showInternalised ? "hedge decision" : "external hedge"}
+            {visible.length === 1 ? "" : "s"} · {fmtCompact(externalTotal)} external
           </span>
         </div>
         {error && (
@@ -145,10 +176,11 @@ export function HedgeDealsView(): React.ReactElement {
             {error}
           </p>
         )}
-        {rows.length === 0 ? (
+        {visible.length === 0 ? (
           <p className={styles.empty}>
-            No fired hedges yet — as the auto-hedge engine sheds warehoused risk, each external
-            execution (the LP we hit, its price, the amount) appears here.
+            {rows.length === 0
+              ? "No fired hedges yet — as the auto-hedge engine sheds warehoused risk, each external execution (the LP/composite we hit, its price, the amount) appears here."
+              : `No external hedges yet — ${internalisedCount} internalised decision${internalisedCount === 1 ? "" : "s"} ${internalisedCount === 1 ? "is" : "are"} hidden. Toggle “Show internalised” to audit ${internalisedCount === 1 ? "it" : "them"}.`}
           </p>
         ) : (
           <>

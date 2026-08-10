@@ -23,9 +23,12 @@ import type {
   HedgeConfig,
   HedgeGraph,
   HedgeIntent,
+  HedgePolicyScopeKind,
   HedgeProvenance,
+  RiskBook,
   WarehouseThreshold,
 } from "../../data/contract";
+import { HelpButton } from "../../components/HelpButton";
 import {
   compileRulesToHedgeGraph,
   decompileHedgeGraphToRules,
@@ -178,6 +181,15 @@ function PolicyTab({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>({ kind: "list" });
   const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
+  // The policy SCOPE: the Firm-wide singleton (default), or a per-Book / per-Bucket
+  // (portfolio subtree-root) override. `scopeId` is empty for Firm; the book/bucket id
+  // otherwise. `hasScopedPolicy` tracks whether an override already exists for the scope
+  // (so we can offer Remove and explain the fall-back to Firm).
+  const [scopeKind, setScopeKind] = useState<HedgePolicyScopeKind>("firm");
+  const [scopeId, setScopeId] = useState<string>("");
+  const [books, setBooks] = useState<RiskBook[]>([]);
+  const [hasScopedPolicy, setHasScopedPolicy] = useState(false);
+  const scopeReady = scopeKind === "firm" || scopeId !== "";
   // A "Change hedging strategy" hand-off from a Deals-blotter row: the originating deal +
   // the id of the draft rule it seeded, so the editor shows the hint ONLY for that draft
   // (a subsequent hand-built rule has a different id ⇒ no stale hint).
@@ -185,19 +197,43 @@ function PolicyTab({
   const [seed, setSeed] = useState<{ deal: HedgeSeedDeal; ruleId: string } | null>(null);
   const appliedSeedNonce = useRef(0);
 
+  // The risk-book roster backs the Book / Bucket scope picker (a Bucket is a
+  // subtree-root book whose policy reads the whole portfolio aggregate).
   useEffect(() => {
     let cancelled = false;
+    void app.transport
+      .listRiskBooks()
+      .then((b) => !cancelled && setBooks(b))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [app.transport]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!scopeReady) {
+      // A Book/Bucket scope with no book chosen yet: nothing to load.
+      setRules([]);
+      setBaseline("[]");
+      setHasScopedPolicy(false);
+      setMode({ kind: "list" });
+      return;
+    }
     void (async () => {
       try {
-        const g = await app.transport.getHedgePolicyGraph();
+        const g = await app.transport.getHedgePolicyGraph(scopeKind, scopeId);
         if (cancelled) return;
+        setHasScopedPolicy(scopeKind !== "firm" && g !== null && g.nodes.length > 0);
         const loaded = decompileHedgeGraphToRules(g ?? EMPTY_GRAPH);
-        // A fresh install with no policy seeds a single warehouse catch-all so the
-        // table is never empty / invalid on first open.
+        // A scope with no policy seeds a single warehouse catch-all so the table is
+        // never empty / invalid on first open (Save then creates the override).
         const seeded = loaded.length > 0 ? loaded : [newDefaultHedgeRule()];
         setRules(seeded);
         setBaseline(JSON.stringify(seeded));
         setLoadError(null);
+        setSaveState({ kind: "idle" });
+        setMode({ kind: "list" });
       } catch (e: unknown) {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : "failed to load the hedge policy");
       }
@@ -205,7 +241,7 @@ function PolicyTab({
     return () => {
       cancelled = true;
     };
-  }, [app.transport]);
+  }, [app.transport, scopeKind, scopeId, scopeReady]);
 
   // Consume a pending "Change hedging strategy" seed exactly once (de-duped by nonce):
   // open a NEW draft rule pre-scoped to the deal's flow, and remember which draft it is so
@@ -293,13 +329,40 @@ function PolicyTab({
     }
     setSaveState({ kind: "saving" });
     try {
-      await app.transport.updateHedgePolicyGraph(compileRulesToHedgeGraph(rules.filter((r) => r.enabled)));
+      await app.transport.updateHedgePolicyGraph(
+        compileRulesToHedgeGraph(rules.filter((r) => r.enabled)),
+        scopeKind,
+        scopeId,
+      );
       setBaseline(JSON.stringify(rules));
-      setSaveState({ kind: "ok", message: "Hedge policy saved." });
+      setHasScopedPolicy(scopeKind !== "firm");
+      setSaveState({
+        kind: "ok",
+        message: scopeKind === "firm" ? "Firm hedge policy saved." : "Scoped hedge policy saved.",
+      });
     } catch (e: unknown) {
       setSaveState({ kind: "error", message: e instanceof Error ? e.message : "failed to save the policy" });
     }
-  }, [blockSave, rules, app.transport]);
+  }, [blockSave, rules, app.transport, scopeKind, scopeId]);
+
+  // Remove a Book/Bucket override: saving an EMPTY policy for the scope deletes it,
+  // and the scope falls back to the Firm policy. Firm has no Remove (it is the
+  // singleton). Resets the table to the safe warehouse catch-all afterwards.
+  const removeScopedPolicy = useCallback(async (): Promise<void> => {
+    if (scopeKind === "firm" || scopeId === "") return;
+    setSaveState({ kind: "saving" });
+    try {
+      await app.transport.updateHedgePolicyGraph(EMPTY_GRAPH, scopeKind, scopeId);
+      const seeded = [newDefaultHedgeRule()];
+      setRules(seeded);
+      setBaseline(JSON.stringify(seeded));
+      setHasScopedPolicy(false);
+      setMode({ kind: "list" });
+      setSaveState({ kind: "ok", message: "Override removed — this scope falls back to the Firm policy." });
+    } catch (e: unknown) {
+      setSaveState({ kind: "error", message: e instanceof Error ? e.message : "failed to remove the policy" });
+    }
+  }, [app.transport, scopeKind, scopeId]);
 
   const resetRules = useCallback((): void => {
     setRules(JSON.parse(baseline) as HedgeRule[]);
@@ -325,85 +388,157 @@ function PolicyTab({
     );
   }
 
+  const scopeNoun = scopeKind === "bucket" ? "portfolio" : "book";
+  const scopeNote =
+    scopeKind === "firm"
+      ? "The firm-wide default policy — evaluated for every book that has no override."
+      : scopeKind === "bucket"
+        ? "A Bucket policy reads the WHOLE portfolio's rolled-up aggregate (net notional / DV01 / …) — enabling e.g. “if PORTFOLIO notional > n → market order / clear risk”. An empty policy falls back to the Firm policy."
+        : "A Book policy reads that one book's own net risk. An empty policy falls back to the Firm policy.";
+
   return (
     <div className={styles.policyTab}>
-      <div className={styles.policyActions}>
-        {!readOnly && (
-          <>
-            <button type="button" className={styles.saveBtn} onClick={onCreate} data-testid="hedge-create-rule">
-              + Create hedge rule
-            </button>
-            <button type="button" className={styles.ghostBtn} onClick={resetRules} disabled={!dirty}>
-              Reset
-            </button>
-            <button
-              type="button"
-              className={styles.saveBtn}
-              onClick={() => void saveGraph()}
-              disabled={saveState.kind === "saving" || blockSave || !dirty}
-              data-testid="hedge-save-policy"
+      <div className={styles.scopeBar} data-testid="hedge-scope-bar">
+        <label className={styles.formField}>
+          <span className={styles.fieldLabel}>Policy scope</span>
+          <select
+            className={styles.input}
+            value={scopeKind}
+            disabled={readOnly}
+            data-testid="hedge-scope-kind"
+            onChange={(e) => {
+              setScopeKind(e.target.value as HedgePolicyScopeKind);
+              setScopeId("");
+            }}
+          >
+            <option value="firm">Firm (default)</option>
+            <option value="book">Book</option>
+            <option value="bucket">Bucket (portfolio)</option>
+          </select>
+        </label>
+        {scopeKind !== "firm" && (
+          <label className={styles.formField}>
+            <span className={styles.fieldLabel}>
+              {scopeKind === "bucket" ? "Portfolio (subtree root)" : "Risk book"}
+            </span>
+            <select
+              className={styles.input}
+              value={scopeId}
+              disabled={readOnly}
+              data-testid="hedge-scope-id"
+              onChange={(e) => setScopeId(e.target.value)}
             >
-              {saveState.kind === "saving" ? "Saving…" : "Save policy"}
-            </button>
-          </>
+              <option value="">Select a {scopeNoun}…</option>
+              {books.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
+        <HelpButton helpId="concept.hedge-policy-scope" subject="the hedge policy scope" />
       </div>
+      <p className={styles.note} data-testid="hedge-scope-note">
+        {scopeNote}
+      </p>
 
-      {loadError && (
-        <p className={styles.errorText} role="alert">
-          {loadError}
+      {!scopeReady ? (
+        <p className={styles.centerEmpty} data-testid="hedge-scope-prompt">
+          Select a {scopeNoun} to view or author its hedge policy.
         </p>
+      ) : (
+        <>
+          <div className={styles.policyActions}>
+            {!readOnly && (
+              <>
+                <button type="button" className={styles.saveBtn} onClick={onCreate} data-testid="hedge-create-rule">
+                  + Create hedge rule
+                </button>
+                <button type="button" className={styles.ghostBtn} onClick={resetRules} disabled={!dirty}>
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  className={styles.saveBtn}
+                  onClick={() => void saveGraph()}
+                  disabled={saveState.kind === "saving" || blockSave || !dirty}
+                  data-testid="hedge-save-policy"
+                >
+                  {saveState.kind === "saving" ? "Saving…" : "Save policy"}
+                </button>
+                {scopeKind !== "firm" && hasScopedPolicy && (
+                  <button
+                    type="button"
+                    className={styles.ghostBtn}
+                    onClick={() => void removeScopedPolicy()}
+                    disabled={saveState.kind === "saving"}
+                    data-testid="hedge-remove-scoped-policy"
+                  >
+                    Remove override
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+
+          {loadError && (
+            <p className={styles.errorText} role="alert">
+              {loadError}
+            </p>
+          )}
+
+          <div className={styles.statusRow}>
+            {blockSave ? (
+              <span className={styles.statusBad} data-testid="hedge-validation-status">
+                ⚠ {errorCount + graphIssues.length} issue
+                {errorCount + graphIssues.length === 1 ? "" : "s"} to resolve before saving
+              </span>
+            ) : (
+              <span className={styles.statusOk} data-testid="hedge-validation-status">
+                ✓ Valid — {rules.length} rule{rules.length === 1 ? "" : "s"}
+              </span>
+            )}
+            {saveState.kind === "ok" && <span className={styles.statusOk}>{saveState.message}</span>}
+            {saveState.kind === "error" && (
+              <span className={styles.statusBad} role="alert">
+                {saveState.message}
+              </span>
+            )}
+          </div>
+
+          {(conflicts.length > 0 || graphIssues.length > 0) && (
+            <ul className={styles.conflictList} data-testid="hedge-conflict-details">
+              {conflicts.map((c, i) => {
+                const idx = rules.findIndex((r) => r.id === c.ruleId);
+                return (
+                  <li key={`c-${i}`} className={c.severity === "error" ? styles.conflictError : styles.conflictWarn}>
+                    <strong>{c.severity === "error" ? "Error" : "Warning"}</strong>
+                    {idx >= 0 ? ` · Rule ${idx + 1}` : ""} — {c.message}
+                  </li>
+                );
+              })}
+              {graphIssues.map((g, i) => (
+                <li key={`g-${i}`} className={styles.conflictError}>
+                  <strong>Error</strong> — {g.message}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <HedgeRulesTable
+            rules={rules}
+            conflictsByRule={conflictsByRule}
+            readOnly={readOnly}
+            onEdit={onEditRow}
+            onDelete={(i) => applyRules(rules.filter((_, j) => j !== i))}
+            onToggle={(i) => applyRules(rules.map((r, j) => (j === i ? { ...r, enabled: !r.enabled } : r)))}
+            onReorder={(from, to) => applyRules(reorder(rules, from, to))}
+          />
+
+          <HedgeTracePanel graph={compiled} />
+        </>
       )}
-
-      <div className={styles.statusRow}>
-        {blockSave ? (
-          <span className={styles.statusBad} data-testid="hedge-validation-status">
-            ⚠ {errorCount + graphIssues.length} issue
-            {errorCount + graphIssues.length === 1 ? "" : "s"} to resolve before saving
-          </span>
-        ) : (
-          <span className={styles.statusOk} data-testid="hedge-validation-status">
-            ✓ Valid — {rules.length} rule{rules.length === 1 ? "" : "s"}
-          </span>
-        )}
-        {saveState.kind === "ok" && <span className={styles.statusOk}>{saveState.message}</span>}
-        {saveState.kind === "error" && (
-          <span className={styles.statusBad} role="alert">
-            {saveState.message}
-          </span>
-        )}
-      </div>
-
-      {(conflicts.length > 0 || graphIssues.length > 0) && (
-        <ul className={styles.conflictList} data-testid="hedge-conflict-details">
-          {conflicts.map((c, i) => {
-            const idx = rules.findIndex((r) => r.id === c.ruleId);
-            return (
-              <li key={`c-${i}`} className={c.severity === "error" ? styles.conflictError : styles.conflictWarn}>
-                <strong>{c.severity === "error" ? "Error" : "Warning"}</strong>
-                {idx >= 0 ? ` · Rule ${idx + 1}` : ""} — {c.message}
-              </li>
-            );
-          })}
-          {graphIssues.map((g, i) => (
-            <li key={`g-${i}`} className={styles.conflictError}>
-              <strong>Error</strong> — {g.message}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <HedgeRulesTable
-        rules={rules}
-        conflictsByRule={conflictsByRule}
-        readOnly={readOnly}
-        onEdit={onEditRow}
-        onDelete={(i) => applyRules(rules.filter((_, j) => j !== i))}
-        onToggle={(i) => applyRules(rules.map((r, j) => (j === i ? { ...r, enabled: !r.enabled } : r)))}
-        onReorder={(from, to) => applyRules(reorder(rules, from, to))}
-      />
-
-      <HedgeTracePanel graph={compiled} />
     </div>
   );
 }

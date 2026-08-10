@@ -6721,7 +6721,7 @@ impl WireBuilder for HedgeConfigDesc {
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
         match field.proto_name {
             "kill_switch" => self.kill_switch = bool_or_false(value),
-            "advisory_only" => self.advisory_only = bool_or_false(value),
+            "execution" => self.execution = enum_or_zero(value),
             "desk_enabled" => {
                 self.desk_enabled = opt_repeated::<HedgeDeskToggle>(value, "desk_enabled")?;
             }
@@ -6733,6 +6733,7 @@ impl WireBuilder for HedgeConfigDesc {
             "lp_panels" => {
                 self.lp_panels = opt_repeated::<HedgeLpPanelDesc>(value, "lp_panels")?;
             }
+            "composite_spread_bp" => self.composite_spread_bp = f64_or_zero(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -6745,6 +6746,8 @@ impl WireBuilder for GetHedgePolicyGraphRequest {
         match field.proto_name {
             "session_token" => self.session_token = req_string(value, "session_token")?,
             "correlation_id" => self.correlation_id = opt_u64(value),
+            "scope_kind" => self.scope_kind = enum_or_zero(value),
+            "scope_id" => self.scope_id = string_or_empty(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -6758,6 +6761,8 @@ impl WireBuilder for UpdateHedgePolicyGraphRequest {
             "session_token" => self.session_token = req_string(value, "session_token")?,
             "graph" => self.graph = Some(req_msg::<HedgeGraphDesc>(value, "graph")?),
             "correlation_id" => self.correlation_id = opt_u64(value),
+            "scope_kind" => self.scope_kind = enum_or_zero(value),
+            "scope_id" => self.scope_id = string_or_empty(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -9141,7 +9146,7 @@ impl WireAdapter for HedgeConfigDesc {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
             "kill_switch" => Some(WireVal::Bool(self.kill_switch)),
-            "advisory_only" => Some(WireVal::Bool(self.advisory_only)),
+            "execution" => Some(WireVal::Enum(self.execution)),
             "desk_enabled" => Some(WireVal::RepeatedMsg(
                 self.desk_enabled
                     .iter()
@@ -9159,6 +9164,7 @@ impl WireAdapter for HedgeConfigDesc {
                     .map(|p| p as &dyn WireAdapter)
                     .collect(),
             )),
+            "composite_spread_bp" => Some(WireVal::F64(self.composite_spread_bp)),
             _ => None,
         }
     }
@@ -9169,6 +9175,8 @@ impl WireAdapter for GetHedgePolicyGraphResponse {
         match proto_name {
             "graph" => self.graph.as_ref().map(|g| WireVal::Msg(g)),
             "correlation_id" => self.correlation_id.map(WireVal::U64),
+            "scope_kind" => Some(WireVal::Enum(self.scope_kind)),
+            "scope_id" => Some(WireVal::Str(&self.scope_id)),
             _ => None,
         }
     }
@@ -9179,6 +9187,8 @@ impl WireAdapter for UpdateHedgePolicyGraphResponse {
         match proto_name {
             "graph" => self.graph.as_ref().map(|g| WireVal::Msg(g)),
             "correlation_id" => self.correlation_id.map(WireVal::U64),
+            "scope_kind" => Some(WireVal::Enum(self.scope_kind)),
+            "scope_id" => Some(WireVal::Str(&self.scope_id)),
             _ => None,
         }
     }

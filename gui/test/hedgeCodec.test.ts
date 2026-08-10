@@ -36,6 +36,12 @@ import {
   hedgeConfigFromWire,
   hedgeLpPanelToWire,
   hedgeLpPanelFromWire,
+  hedgeExecutionToWire,
+  hedgeExecutionFromWire,
+  hedgePolicyScopeToWire,
+  hedgePolicyScopeFromWire,
+  getHedgePolicyGraphRequestToWire,
+  updateHedgePolicyGraphRequestToWire,
 } from "../src/data/wsCodec";
 import type {
   ExitAction,
@@ -76,6 +82,23 @@ describe("hedge enum ordinals (byte-parity with the proto)", () => {
     expect(hedgeSizeKindToWire("fixed")).toBe(2);
     expect(exitActionKindToWire("split")).toBe(5);
     expect(exitActionKindToWire("escalate")).toBe(6);
+    expect(exitActionKindToWire("clear_risk")).toBe(7); // NEW leaf, wire tag 7
+  });
+  it("HedgeExecutionModeEnum maps in ordinal order 0..3 (default lp_panel_then_composite)", () => {
+    expect(hedgeExecutionToWire("advisory")).toBe(0);
+    expect(hedgeExecutionToWire("lp_panel")).toBe(1);
+    expect(hedgeExecutionToWire("composite")).toBe(2);
+    expect(hedgeExecutionToWire("lp_panel_then_composite")).toBe(3);
+    expect(hedgeExecutionFromWire(0)).toBe("advisory");
+    expect(hedgeExecutionFromWire(3)).toBe("lp_panel_then_composite");
+    expect(hedgeExecutionFromWire(99)).toBe("lp_panel_then_composite"); // out-of-range ⇒ default
+  });
+  it("HedgePolicyScopeKindEnum maps firm=0 / book=1 / bucket=2 (distinct from HedgeScopeKind)", () => {
+    expect(hedgePolicyScopeToWire("firm")).toBe(0);
+    expect(hedgePolicyScopeToWire("book")).toBe(1);
+    expect(hedgePolicyScopeToWire("bucket")).toBe(2);
+    expect(hedgePolicyScopeFromWire(2)).toBe("bucket");
+    expect(hedgePolicyScopeFromWire(99)).toBe("firm"); // out-of-range ⇒ firm
   });
 });
 
@@ -93,6 +116,7 @@ describe("hedge size + exit action round-trip", () => {
       "rfq_out",
       "split",
       "escalate",
+      "clear_risk",
     ];
     for (const kind of kinds) {
       const a: ExitAction = { ...fullAction, kind };
@@ -332,10 +356,10 @@ describe("hedging LP panel round-trip", () => {
 });
 
 describe("engine config round-trip", () => {
-  it("round-trips config with per-desk toggles", () => {
+  it("round-trips config with per-desk toggles (execution mode + composite spread)", () => {
     const c: HedgeConfig = {
       killSwitch: false,
-      advisoryOnly: true,
+      execution: "advisory",
       deskEnabled: [
         { desk: "emea", enabled: true },
         { desk: "marex", enabled: false },
@@ -344,16 +368,20 @@ describe("engine config round-trip", () => {
       maxHedgesPerInterval: 20,
       dailyExternalNotionalCap: 2_000_000_000,
       lpPanels: [],
+      compositeSpreadBp: 0.5,
     };
     const wire = hedgeConfigToWire(c);
     expect(wire["kill_switch"]).toBe(false);
+    expect(wire["execution"]).toBe(0); // advisory, as an i32 tag (NOT advisory_only bool)
+    expect("advisory_only" in wire).toBe(false); // the old boolean is gone
+    expect(wire["composite_spread_bp"]).toBe(0.5);
     expect(wire["max_hedges_per_interval"]).toBe(20);
     expect(hedgeConfigFromWire(wire)).toEqual(c);
   });
   it("round-trips config carrying standing lp_panels", () => {
     const c: HedgeConfig = {
       killSwitch: false,
-      advisoryOnly: true,
+      execution: "lp_panel_then_composite",
       deskEnabled: [{ desk: "emea", enabled: true }],
       maxClip: 150_000_000,
       maxHedgesPerInterval: 20,
@@ -362,10 +390,36 @@ describe("engine config round-trip", () => {
         { scopeKind: "book", scopeId: "fi-rates-emea", include: ["LP-1", "LP-2", "LP-3"], exclude: ["LP-2"] },
         { scopeKind: "desk", scopeId: "emea", include: [], exclude: ["LP-4"] },
       ],
+      compositeSpreadBp: 1.25,
     };
     const wire = hedgeConfigToWire(c);
     expect(Array.isArray(wire["lp_panels"])).toBe(true);
     expect((wire["lp_panels"] as unknown[]).length).toBe(2);
+    expect(wire["execution"]).toBe(3);
     expect(hedgeConfigFromWire(wire)).toEqual(c);
+  });
+});
+
+describe("scope-aware hedge policy graph request framing", () => {
+  it("GetHedgePolicyGraphRequest carries scope_kind (field 3) + scope_id (field 4)", () => {
+    const firm = getHedgePolicyGraphRequestToWire("firm", "");
+    expect(firm["scope_kind"]).toBe(0);
+    expect(firm["scope_id"]).toBe("");
+    const bucket = getHedgePolicyGraphRequestToWire("bucket", "fi-emea");
+    expect(bucket["scope_kind"]).toBe(2);
+    expect(bucket["scope_id"]).toBe("fi-emea");
+  });
+  it("UpdateHedgePolicyGraphRequest carries the graph + scope_kind (field 4) + scope_id (field 5)", () => {
+    const graph: HedgeGraph = { entry: 0, nodes: [{ kind: "action", id: 0, action: fullAction }] };
+    const wire = updateHedgePolicyGraphRequestToWire(graph, "book", "fi-rates-emea");
+    expect(typeof wire["graph"]).toBe("object");
+    expect(wire["scope_kind"]).toBe(1);
+    expect(wire["scope_id"]).toBe("fi-rates-emea");
+  });
+  it("an empty-node graph for a BOOK/BUCKET is the REMOVE signal (encodes an empty node array)", () => {
+    const empty: HedgeGraph = { entry: 0, nodes: [] };
+    const wire = updateHedgePolicyGraphRequestToWire(empty, "bucket", "fi-emea");
+    expect((wire["graph"] as { nodes: unknown[] }).nodes).toEqual([]);
+    expect(wire["scope_kind"]).toBe(2);
   });
 });

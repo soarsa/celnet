@@ -27,7 +27,19 @@ function provenance(over: Partial<HedgeProvenance> = {}): HedgeProvenance {
     utilization: 1.45,
     band: "red",
     policyPath: [0, 1],
-    action: null,
+    // An EXTERNAL exit action (submit_market_order) — the desk shows external hedges
+    // by default; an internalised action (warehouse / cross_internal / …) is hidden.
+    action: {
+      kind: "submit_market_order",
+      instrument: "",
+      size: { kind: "overflow", fixed: 0 },
+      skewBp: null,
+      toEdge: false,
+      style: "immediate",
+      lps: [],
+      internalFirst: false,
+      reason: "",
+    },
     internalCrossed: 30_000_000,
     externalHedged: 70_000_000,
     residual: 5_000_000,
@@ -104,6 +116,35 @@ describe("HedgeDealsView", () => {
     render(<HedgeDealsView />);
     const cell = await screen.findByTestId("hedge-parent-HDG-8");
     expect(cell).toHaveTextContent("—");
+  });
+
+  it("hides internalised (warehouse) decisions by default, reveals them via the toggle", async () => {
+    const warehouse = provenance({
+      hedgeId: "WH-1",
+      action: {
+        kind: "warehouse",
+        instrument: "",
+        size: { kind: "overflow", fixed: 0 },
+        skewBp: null,
+        toEdge: false,
+        style: "immediate",
+        lps: [],
+        internalFirst: false,
+        reason: "",
+      },
+      lpWon: null,
+      externalHedged: 0,
+    });
+    state.app = makeApp({ can: true, rows: [provenance(), warehouse] }).app;
+    render(<HedgeDealsView />);
+
+    // The external hedge shows; the warehouse (internalised) row is hidden by default.
+    await screen.findByTestId("hedge-deal-row-hedge-1");
+    expect(screen.queryByTestId("hedge-deal-row-WH-1")).not.toBeInTheDocument();
+
+    // Turn on "Show internalised" — the warehouse row now appears.
+    fireEvent.click(screen.getByTestId("hedge-show-internalised"));
+    expect(await screen.findByTestId("hedge-deal-row-WH-1")).toBeInTheDocument();
   });
 
   it("shows the honest empty note when no hedges have fired", async () => {

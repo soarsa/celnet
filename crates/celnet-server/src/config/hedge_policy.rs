@@ -221,6 +221,96 @@ impl HedgeScopeKind {
     }
 }
 
+/// How a live hedge decision is **executed** once the policy resolves an external exit
+/// action — the "Both — config per policy" control
+/// (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §6). Replaces the former
+/// boolean `advisory_only`: [`Advisory`](HedgeExecutionMode::Advisory) is the old dry-run
+/// posture; the three live modes each name a concrete venue path the executor drives.
+///
+/// The mode is consulted only for **external** actions; internal crosses / no-trade
+/// actions ignore it. `Advisory` in any mode means the engine stamps a real intent +
+/// provenance but books nothing (the shadow run).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HedgeExecutionMode {
+    /// Shadow-run: compute + stamp the intent / provenance but never trade.
+    Advisory,
+    /// Externalise onto the LP-sim RFQ/FIX panel; an unfilled clip records an honest miss.
+    LpPanel,
+    /// Externalise against the Agg Book COMPOSITE mid (spread applied); always fills.
+    Composite,
+    /// Try the LP panel first; on no fill within the bounded timeout, fall back to Composite.
+    LpPanelThenComposite,
+}
+
+impl HedgeExecutionMode {
+    /// Every mode, in stable (proto-ordinal) order.
+    pub const ALL: [HedgeExecutionMode; 4] = [
+        HedgeExecutionMode::Advisory,
+        HedgeExecutionMode::LpPanel,
+        HedgeExecutionMode::Composite,
+        HedgeExecutionMode::LpPanelThenComposite,
+    ];
+
+    /// Stable snake_case label for audit / logging.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            HedgeExecutionMode::Advisory => "advisory",
+            HedgeExecutionMode::LpPanel => "lp_panel",
+            HedgeExecutionMode::Composite => "composite",
+            HedgeExecutionMode::LpPanelThenComposite => "lp_panel_then_composite",
+        }
+    }
+
+    /// Whether this mode books nothing (the dry-run shadow posture).
+    #[must_use]
+    pub const fn is_advisory(self) -> bool {
+        matches!(self, HedgeExecutionMode::Advisory)
+    }
+
+    /// Whether an LP-panel attempt is made before any composite fallback.
+    #[must_use]
+    pub const fn tries_lp_panel(self) -> bool {
+        matches!(
+            self,
+            HedgeExecutionMode::LpPanel | HedgeExecutionMode::LpPanelThenComposite
+        )
+    }
+
+    /// Whether the composite venue is an allowed fill path (as primary or fallback).
+    #[must_use]
+    pub const fn allows_composite(self) -> bool {
+        matches!(
+            self,
+            HedgeExecutionMode::Composite | HedgeExecutionMode::LpPanelThenComposite
+        )
+    }
+
+    /// The proto `HedgeExecutionModeEnum` ordinal
+    /// (ADVISORY=0, LP_PANEL=1, COMPOSITE=2, LP_PANEL_THEN_COMPOSITE=3).
+    #[must_use]
+    pub const fn as_i32(self) -> i32 {
+        match self {
+            HedgeExecutionMode::Advisory => 0,
+            HedgeExecutionMode::LpPanel => 1,
+            HedgeExecutionMode::Composite => 2,
+            HedgeExecutionMode::LpPanelThenComposite => 3,
+        }
+    }
+
+    /// Parse from the proto ordinal; out-of-range folds to the live default
+    /// (`LpPanelThenComposite`).
+    #[must_use]
+    pub fn from_i32(v: i32) -> Self {
+        match v {
+            0 => HedgeExecutionMode::Advisory,
+            1 => HedgeExecutionMode::LpPanel,
+            2 => HedgeExecutionMode::Composite,
+            _ => HedgeExecutionMode::LpPanelThenComposite,
+        }
+    }
+}
+
 /// One persisted warehouse threshold bound to a scope — the configurable "100" for a
 /// desk / book / instrument (§4). A plain serde mirror of the pure
 /// [`WarehouseThreshold`] plus its scope binding.
@@ -293,6 +383,84 @@ impl ScopedThreshold {
     }
 }
 
+/// What a hedge **policy graph** binds to — the scope of an exit-policy decision graph
+/// (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4/§5). A fill in book `B`
+/// is governed by the **most-specific** applicable policy: `B`'s own [`Book`](Self::Book)
+/// policy, else the nearest ancestor [`Bucket`](Self::Bucket) policy (a Bucket names a
+/// risk-book subtree ROOT id and governs the whole subtree), else the [`Firm`](Self::Firm)
+/// default. The Firm graph is the singleton kept on the identity store's existing
+/// `hedge_policy_graph` field; Book / Bucket graphs live in a scope→graph list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HedgePolicyScope {
+    /// The firm-wide default policy (the singleton fallback).
+    Firm,
+    /// A single risk book / portfolio (matches exactly that book).
+    Book(String),
+    /// A risk-book subtree ROOT id (matches that book and every descendant book).
+    Bucket(String),
+}
+
+impl HedgePolicyScope {
+    /// Stable snake_case kind label for audit / logging (id excluded).
+    #[must_use]
+    pub const fn kind_label(&self) -> &'static str {
+        match self {
+            HedgePolicyScope::Firm => "firm",
+            HedgePolicyScope::Book(_) => "book",
+            HedgePolicyScope::Bucket(_) => "bucket",
+        }
+    }
+
+    /// The proto `HedgePolicyScopeKindEnum` ordinal (FIRM=0, BOOK=1, BUCKET=2).
+    #[must_use]
+    pub const fn kind_as_i32(&self) -> i32 {
+        match self {
+            HedgePolicyScope::Firm => 0,
+            HedgePolicyScope::Book(_) => 1,
+            HedgePolicyScope::Bucket(_) => 2,
+        }
+    }
+
+    /// The bound scope id (empty for [`Firm`](Self::Firm)).
+    #[must_use]
+    pub fn id(&self) -> &str {
+        match self {
+            HedgePolicyScope::Firm => "",
+            HedgePolicyScope::Book(id) | HedgePolicyScope::Bucket(id) => id,
+        }
+    }
+
+    /// Reconstruct from the proto `(kind_ordinal, id)` pair — the wire encoding.
+    /// Out-of-range kind folds to `Firm`.
+    #[must_use]
+    pub fn from_wire(kind: i32, id: String) -> Self {
+        match kind {
+            1 => HedgePolicyScope::Book(id),
+            2 => HedgePolicyScope::Bucket(id),
+            _ => HedgePolicyScope::Firm,
+        }
+    }
+}
+
+/// A hedge policy graph together with the scope it binds to — the persisted list
+/// element for the Book / Bucket scoped graphs (the Firm graph is the identity store's
+/// singleton `hedge_policy_graph`). Mirrors [`ScopedThreshold`] / [`ScopedLpPanel`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScopedHedgeGraph {
+    /// The scope this graph governs (`Book(id)` or `Bucket(id)`; never `Firm` here).
+    pub scope: HedgePolicyScope,
+    /// The exit-policy decision graph.
+    pub graph: celnet_hedge_routing::HedgeGraph,
+}
+
+impl ScopedHedgeGraph {
+    /// Whether two scoped graphs address the same scope — the upsert key.
+    #[must_use]
+    pub fn same_scope(&self, other: &ScopedHedgeGraph) -> bool {
+        self.scope == other.scope
+    }
+}
+
 /// A **standing hedging LP panel** bound to a scope — the include/exclude
 /// liquidity-provider selection every external exit action inherits for that
 /// desk / book / instrument (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md`
@@ -338,11 +506,21 @@ pub struct HedgeConfigDef {
     /// Global kill-switch: when true, ALL auto-hedging halts (positions warehouse).
     #[serde(default)]
     pub kill_switch: bool,
-    /// Advisory-only: compute + emit intents / provenance but never trade externally.
-    /// **Defaults ON** — a desk must explicitly disarm advisory to allow live external
-    /// orders (the mandatory shadow-run stance, §8.4).
-    #[serde(default = "default_true")]
-    pub advisory_only: bool,
+    /// How external hedge actions are executed — the "Both — config per policy" control
+    /// (§6). `Advisory` is the dry-run shadow posture; the three live modes each name a
+    /// concrete venue (LP panel, composite, or LP-panel-then-composite fallback).
+    /// **Defaults to [`LpPanelThenComposite`](HedgeExecutionMode::LpPanelThenComposite)**
+    /// — live, LP-first with a composite backstop. (The global `kill_switch`, per-desk
+    /// toggles, and rate/size guards remain the safety envelope.)
+    #[serde(default = "default_execution")]
+    pub execution: HedgeExecutionMode,
+    /// The spread (basis points) applied to the Agg Book COMPOSITE mid when a hedge fills
+    /// on the composite venue (`Composite` / the `LpPanelThenComposite` fallback). Applied
+    /// on the adverse side (worsening the fill vs mid), so it is the cost of the composite
+    /// back-to-back. A small finite default; persisted through [`nonfinite_f64`] for
+    /// robustness.
+    #[serde(default = "default_composite_spread_bp", with = "nonfinite_f64")]
+    pub composite_spread_bp: f64,
     /// Per-desk enable overrides (a desk absent from the list is enabled by default).
     #[serde(default)]
     pub desk_enabled: Vec<HedgeDeskToggle>,
@@ -375,9 +553,14 @@ pub struct HedgeConfigDef {
     pub min_edge_bps: f64,
 }
 
-/// serde default for [`HedgeConfigDef::advisory_only`].
-const fn default_true() -> bool {
-    true
+/// serde default for [`HedgeConfigDef::execution`] — the live LP-first-then-composite mode.
+const fn default_execution() -> HedgeExecutionMode {
+    HedgeExecutionMode::LpPanelThenComposite
+}
+
+/// serde default for [`HedgeConfigDef::composite_spread_bp`] — a small composite hedge cost.
+const fn default_composite_spread_bp() -> f64 {
+    0.5
 }
 
 /// serde default for [`HedgeConfigDef::min_edge_bps`] — kept in sync with
@@ -390,7 +573,8 @@ impl Default for HedgeConfigDef {
     fn default() -> Self {
         Self {
             kill_switch: false,
-            advisory_only: true,
+            execution: default_execution(),
+            composite_spread_bp: default_composite_spread_bp(),
             desk_enabled: Vec::new(),
             max_clip: 0.0,
             max_hedges_per_interval: 0,
@@ -507,11 +691,36 @@ mod tests {
     }
 
     #[test]
-    fn config_default_is_advisory_only_kill_switch_off() {
+    fn config_default_is_live_lp_then_composite_kill_switch_off() {
         let c = HedgeConfigDef::default();
-        assert!(c.advisory_only, "advisory-only must default ON");
+        assert_eq!(
+            c.execution,
+            HedgeExecutionMode::LpPanelThenComposite,
+            "execution defaults to the live LP-first-then-composite mode"
+        );
+        assert!(!c.execution.is_advisory());
+        assert_eq!(c.composite_spread_bp, 0.5);
         assert!(!c.kill_switch);
         assert!(c.desk_active("RATES"), "no per-desk override ⇒ active");
+    }
+
+    #[test]
+    fn execution_mode_ordinals_round_trip() {
+        for m in HedgeExecutionMode::ALL {
+            assert_eq!(HedgeExecutionMode::from_i32(m.as_i32()), m);
+        }
+    }
+
+    #[test]
+    fn policy_scope_wire_round_trips() {
+        for s in [
+            HedgePolicyScope::Firm,
+            HedgePolicyScope::Book("RATES-EUR".into()),
+            HedgePolicyScope::Bucket("RATES".into()),
+        ] {
+            let back = HedgePolicyScope::from_wire(s.kind_as_i32(), s.id().to_owned());
+            assert_eq!(back, s);
+        }
     }
 
     #[test]

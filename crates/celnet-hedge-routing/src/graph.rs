@@ -103,6 +103,15 @@ pub enum ExitAction {
         /// The escalation rationale, surfaced on the notification.
         reason: String,
     },
+    /// **Flatten the book's net to zero** — a full-size market order for the whole
+    /// residual, externalised to the street. The most aggressive external exit:
+    /// where `SubmitMarketOrder { size: Overflow }` hedges only to the band edge,
+    /// `ClearRisk` always sheds the *entire* net position (equivalent to a
+    /// `SubmitMarketOrder { size: Full, style: Immediate }`), leaving zero
+    /// warehoused risk. A desk selects it as the terminal leaf for a hard breach or
+    /// an end-of-day flatten. External (`is_external()` true); it fans to the same
+    /// RFQ/FIX panel a market order does.
+    ClearRisk,
 }
 
 impl ExitAction {
@@ -117,6 +126,7 @@ impl ExitAction {
             ExitAction::RfqOut { .. } => "RFQ_OUT",
             ExitAction::Split { .. } => "SPLIT",
             ExitAction::Escalate { .. } => "ESCALATE",
+            ExitAction::ClearRisk => "CLEAR_RISK",
         }
     }
 
@@ -130,6 +140,7 @@ impl ExitAction {
             ExitAction::SubmitMarketOrder { .. }
                 | ExitAction::RfqOut { .. }
                 | ExitAction::Split { .. }
+                | ExitAction::ClearRisk
         )
     }
 }
@@ -747,6 +758,24 @@ mod tests {
             }
             .is_external()
         );
+        assert_eq!(ExitAction::ClearRisk.kind(), "CLEAR_RISK");
+        assert!(
+            ExitAction::ClearRisk.is_external(),
+            "ClearRisk flattens to the street — external"
+        );
+    }
+
+    /// A `ClearRisk` leaf carries no registry target (it fans to the default panel like a
+    /// market order), so a graph terminating on it validates and survives persistence.
+    #[test]
+    fn clear_risk_leaf_validates_and_round_trips() {
+        let mut g = valid_graph();
+        g.nodes.insert(2, act(ExitAction::ClearRisk));
+        assert!(g.validate(&instruments(), &lps()).is_ok());
+        let json = serde_json::to_string(&g).expect("serialize");
+        assert!(json.contains("ClearRisk"), "{json}");
+        let back: HedgeGraph = serde_json::from_str(&json).expect("reload");
+        assert_eq!(back, g);
     }
 
     #[test]

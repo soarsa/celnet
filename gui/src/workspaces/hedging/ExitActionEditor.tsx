@@ -290,6 +290,12 @@ export function ExitActionEditor({
       {!actionUsesSize(action.kind) && !actionUsesStyle(action.kind) && action.kind === "warehouse" && (
         <p className={rr.ruleEditorHint}>No parameters — the risk is simply held.</p>
       )}
+
+      {action.kind === "clear_risk" && (
+        <p className={rr.ruleEditorHint} data-testid="exit-clear-risk-note">
+          No parameters — the book&rsquo;s entire net is flattened to zero via the live composite.
+        </p>
+      )}
     </div>
   );
 }

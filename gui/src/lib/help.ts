@@ -497,6 +497,67 @@ const ENTRY_LIST: readonly HelpEntry[] = [
       "Monotone-convex is more sensitive to noisy / crossed pillar quotes than log-linear. Both are only as good as the pillar set — a sparse ladder leaves large gaps the scheme must span.",
     keywords: ["interpolation", "log-linear", "discount factor", "monotone convex", "forward", "hagan", "west", "scheme", "bootstrap", "smooth"],
   },
+
+  // ============================== HEDGING ===================================
+  {
+    id: "concept.hedge-execution-mode",
+    category: "concept",
+    title: "Hedge execution mode",
+    purpose: "Decide whether a hedge policy is a dry-run or trades live — and how it externalises.",
+    howItWorks:
+      "Each auto-hedge policy is armed at one of four execution modes (it replaces the old advisory-only on/off). ADVISORY is a dry-run: the engine computes intents and stamps shadow provenance but trades NOTHING. LP PANEL routes every external leg to the standing LP panel only. COMPOSITE crosses the live consolidated Agg-Book composite mid, charging the composite half-spread. LP PANEL → COMPOSITE (the default) tries the LP panel first and falls back to the composite mid. Whenever a mode crosses the composite, the composite spread (bp) sets the half-spread charged around the consolidated mid, so a live composite hedge books a real offsetting leg at mid ± spread and stamps a real price, signed slippage, and lpWon = COMPOSITE.",
+    example: {
+      scenario: "Breach hedge of a long book, composite mid 100.25, composite spread 0.5 bp.",
+      rows: [
+        { label: "Advisory", value: "intent emitted, nothing traded — no price on the hedge row" },
+        { label: "LP panel", value: "fan the external leg to the standing panel; lpWon = the touched LP" },
+        { label: "Composite", value: "cross the mid: hedge px 100.25 ± (100.25 · 0.5/10000); lpWon = COMPOSITE" },
+        { label: "LP panel → Composite", value: "try the panel, else the composite mid (the default)" },
+      ],
+      takeaway: "Advisory is the safe shadow; the three live modes differ only in where the external leg fills.",
+    },
+    howToConfigure: [
+      "Open Hedging → Monitor → Engine controls.",
+      "Pick an execution mode: Advisory (dry-run), LP panel, Composite, or LP panel → Composite.",
+      "For a composite-touching mode, set the Composite spread (bp) — the half-spread around the consolidated mid (default 0.5).",
+      "Keep the kill switch for a hard, firm-wide halt (all risk warehouses) independent of the mode.",
+    ],
+    whenToUse:
+      "Run Advisory while you calibrate a new policy, then arm LP panel → Composite for production so the desk gets fills from the panel with a composite backstop.",
+    risks:
+      "A live mode trades real risk — verify the policy in Advisory first. Too tight a composite spread over-crosses the book at the mid; too wide leaves residual. The kill switch overrides every mode.",
+    keywords: ["execution", "mode", "advisory", "lp panel", "composite", "spread", "live", "dry-run", "hedge", "kill switch"],
+  },
+  {
+    id: "concept.hedge-policy-scope",
+    category: "concept",
+    title: "Hedge policy scope & Clear risk",
+    purpose: "Bind a hedge exit policy to the Firm, a single Book, or a Bucket (whole portfolio).",
+    howItWorks:
+      "A hedge exit policy can be authored at three scopes. FIRM is the single default policy evaluated for every book with no override. BOOK is a per-book override whose conditions read that one book's own net risk. BUCKET binds to a risk-book subtree ROOT and its conditions read the WHOLE portfolio's rolled-up aggregate (net notional / DV01 / …) — so you can write “if PORTFOLIO notional > n → submit market order / clear risk”. A Book or Bucket with an EMPTY policy falls back to the Firm policy (saving an empty override removes it). Among the exit actions, CLEAR RISK is a parameter-free leaf that flattens the book's entire net to zero via the live composite — the “panic flat” terminal.",
+    example: {
+      scenario: "A rates portfolio rolled up under the subtree-root book fi-emea.",
+      rows: [
+        { label: "Firm", value: "default: Breach → Split (net then hedge)" },
+        { label: "Book fi-rates-emea", value: "override: Counterparty = CITADEL → Submit market order" },
+        { label: "Bucket fi-emea", value: "if PORTFOLIO net notional > 5bn → Clear risk (flatten to zero)" },
+        { label: "Empty override", value: "removes the scope's policy ⇒ it falls back to Firm" },
+      ],
+      takeaway: "Firm sets the baseline; Book/Bucket refine it; Bucket reads the whole portfolio aggregate.",
+    },
+    howToConfigure: [
+      "Open Hedging → Exit Policy and pick the Policy scope: Firm, Book, or Bucket.",
+      "For Book/Bucket, choose the risk book (a Bucket is a subtree-root portfolio) from the picker.",
+      "Author the rules table (IF <conditions> THEN <exit action>) exactly as for the Firm policy, then Save.",
+      "Add Clear risk as the exit action to flatten the book's whole net to zero (no parameters).",
+      "Use “Remove override” on a Book/Bucket to delete its policy and fall back to Firm.",
+    ],
+    whenToUse:
+      "Use Firm for the house default, a Book override for a desk with distinct handling, and a Bucket policy when a decision must read the whole portfolio's aggregate rather than one book. Reach for Clear risk when a breach must be flattened outright.",
+    risks:
+      "A Bucket condition reads the ROLLED-UP aggregate, not a single book — size thresholds accordingly. Clear risk flattens the ENTIRE net in one action; use it only where a full flatten is intended. An empty Book/Bucket policy silently falls back to Firm.",
+    keywords: ["scope", "firm", "book", "bucket", "portfolio", "aggregate", "subtree", "clear risk", "flatten", "override", "policy"],
+  },
 ];
 
 /** The registry keyed by id (built once from the ordered list). */

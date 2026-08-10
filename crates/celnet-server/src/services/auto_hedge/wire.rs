@@ -27,8 +27,8 @@ use celnet_proto::{
 use tonic::Status;
 
 use crate::config::hedge_policy::{
-    HedgeConfigDef, HedgeDeskToggle, HedgeMetric, HedgeScopeKind, HedgeThresholdDef, ScopedLpPanel,
-    ScopedThreshold,
+    HedgeConfigDef, HedgeDeskToggle, HedgeExecutionMode, HedgeMetric, HedgeScopeKind,
+    HedgeThresholdDef, ScopedLpPanel, ScopedThreshold,
 };
 
 // --- RagStatus label --------------------------------------------------------
@@ -277,6 +277,9 @@ pub fn exit_action_to_wire(action: &ExitAction) -> ExitActionDesc {
             d.kind = ExitActionKind::ExitActionEscalate as i32;
             d.reason = reason.clone();
         }
+        ExitAction::ClearRisk => {
+            d.kind = ExitActionKind::ExitActionClearRisk as i32;
+        }
     }
     d
 }
@@ -317,6 +320,7 @@ pub fn exit_action_from_wire(d: &ExitActionDesc) -> Result<ExitAction, Status> {
         Ok(ExitActionKind::ExitActionEscalate) => Ok(ExitAction::Escalate {
             reason: d.reason.clone(),
         }),
+        Ok(ExitActionKind::ExitActionClearRisk) => Ok(ExitAction::ClearRisk),
         Err(_) => Err(Status::invalid_argument(format!(
             "unknown ExitActionKind ordinal {}",
             d.kind
@@ -477,7 +481,8 @@ pub fn lp_panel_from_wire(d: &HedgeLpPanelDesc) -> ScopedLpPanel {
 pub fn config_to_wire(c: &HedgeConfigDef) -> HedgeConfigDesc {
     HedgeConfigDesc {
         kill_switch: c.kill_switch,
-        advisory_only: c.advisory_only,
+        execution: c.execution.as_i32(),
+        composite_spread_bp: c.composite_spread_bp,
         desk_enabled: c
             .desk_enabled
             .iter()
@@ -498,7 +503,8 @@ pub fn config_to_wire(c: &HedgeConfigDef) -> HedgeConfigDesc {
 pub fn config_from_wire(d: &HedgeConfigDesc) -> HedgeConfigDef {
     HedgeConfigDef {
         kill_switch: d.kill_switch,
-        advisory_only: d.advisory_only,
+        execution: HedgeExecutionMode::from_i32(d.execution),
+        composite_spread_bp: d.composite_spread_bp,
         desk_enabled: d
             .desk_enabled
             .iter()
@@ -646,7 +652,8 @@ mod tests {
     fn config_round_trips() {
         let c = HedgeConfigDef {
             kill_switch: true,
-            advisory_only: false,
+            execution: HedgeExecutionMode::Composite,
+            composite_spread_bp: 1.25,
             desk_enabled: vec![HedgeDeskToggle {
                 desk: "FX".into(),
                 enabled: false,

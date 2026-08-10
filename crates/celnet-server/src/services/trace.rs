@@ -260,7 +260,7 @@ impl TraceStore {
             .filter(|s| counterparty.is_none_or(|f| s.counterparty.as_deref() == Some(f)))
             .collect();
         // Newest first by the last event's timestamp (most recently active trace).
-        summaries.sort_by(|a, b| b.last_timestamp_ns.cmp(&a.last_timestamp_ns));
+        summaries.sort_by_key(|b| std::cmp::Reverse(b.last_timestamp_ns));
         summaries.truncate(limit);
         summaries
     }
@@ -398,8 +398,8 @@ impl PosIndex {
     }
 }
 
-/// The shared trace hub (behind an `Arc`): the producer-facing capture + minting
-/// + correlation indexes, plus the drain-side [`TraceStore`] the query RPCs read.
+/// The shared trace hub (behind an `Arc`): the producer-facing capture, minting,
+/// and correlation indexes, plus the drain-side [`TraceStore`] the query RPCs read.
 /// Constructed once at boot; the SAME `Arc` is cloned into the FIX + rates-book
 /// services (producers) and into `AuthEdge` (reader).
 #[derive(Debug)]

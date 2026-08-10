@@ -43,6 +43,22 @@
   color: var(--text-tertiary);
 }
 
+.internalisedToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.internalisedToggle input {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .error {
   color: var(--danger);
   font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);

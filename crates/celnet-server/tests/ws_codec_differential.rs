@@ -69,11 +69,12 @@ use celnet_proto::{ListLpFlowMetricsRequest, ListLpFlowMetricsResponse, LpFlowMe
 use celnet_proto::ExecStyleEnum;
 use celnet_proto::{
     ExitActionDesc, ExitActionKind, GetHedgeConfigResponse, GetHedgePolicyGraphResponse,
-    HedgeConditionDesc, HedgeConfigDesc, HedgeDeskToggle, HedgeFieldEnum, HedgeGraphDesc,
-    HedgeIntent, HedgeLpPanelDesc, HedgeMetricEnum, HedgeNodeDesc, HedgeProvenance,
-    HedgeScopeKindEnum, HedgeSizeDesc, HedgeSizeKind, ListHedgeProvenanceResponse,
-    ListHedgeThresholdsResponse, SetHedgeConfigResponse, UpdateHedgePolicyGraphResponse,
-    UpdateHedgeThresholdResponse, WarehouseThresholdDesc, hedge_node_desc,
+    HedgeConditionDesc, HedgeConfigDesc, HedgeDeskToggle, HedgeExecutionModeEnum, HedgeFieldEnum,
+    HedgeGraphDesc, HedgeIntent, HedgeLpPanelDesc, HedgeMetricEnum, HedgeNodeDesc,
+    HedgePolicyScopeKindEnum, HedgeProvenance, HedgeScopeKindEnum, HedgeSizeDesc, HedgeSizeKind,
+    ListHedgeProvenanceResponse, ListHedgeThresholdsResponse, SetHedgeConfigResponse,
+    UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdResponse, WarehouseThresholdDesc,
+    hedge_node_desc,
 };
 // Incoming-quote acceptance (AuthService acceptance RPCs): the acceptance decision graph
 // (`AcceptanceGraphDesc`/`AcceptanceNodeDesc`/`AcceptanceConditionDesc`/`AcceptanceActionDesc`).
@@ -6465,6 +6466,8 @@ fn get_hedge_policy_graph_response_encode_byte_identical() {
     let present = GetHedgePolicyGraphResponse {
         graph: Some(hedge_graph_desc()),
         correlation_id: Some(2),
+        scope_kind: HedgePolicyScopeKindEnum::HedgePolicyScopeBook as i32,
+        scope_id: "gm".to_owned(),
     };
     assert_bytes_eq(
         "GetHedgePolicyGraphResponse(present)",
@@ -6485,6 +6488,8 @@ fn update_hedge_policy_graph_response_encode_byte_identical() {
     let updated = UpdateHedgePolicyGraphResponse {
         graph: Some(hedge_graph_desc()),
         correlation_id: Some(9),
+        scope_kind: HedgePolicyScopeKindEnum::HedgePolicyScopeBucket as i32,
+        scope_id: "rates".to_owned(),
     };
     assert_bytes_eq(
         "UpdateHedgePolicyGraphResponse",
@@ -6887,7 +6892,8 @@ fn list_hedge_provenance_response_encode_byte_identical() {
 fn hedge_config_full() -> HedgeConfigDesc {
     HedgeConfigDesc {
         kill_switch: false,
-        advisory_only: true,
+        execution: HedgeExecutionModeEnum::HedgeExecLpPanelThenComposite as i32,
+        composite_spread_bp: 0.75,
         desk_enabled: vec![
             HedgeDeskToggle {
                 desk: "fi-desk".to_owned(),
@@ -6924,7 +6930,8 @@ fn hedge_config_full() -> HedgeConfigDesc {
 fn hedge_config_body() -> Value {
     json!({
         "kill_switch": false,
-        "advisory_only": true,
+        "execution": HedgeExecutionModeEnum::HedgeExecLpPanelThenComposite as i32,
+        "composite_spread_bp": 0.75,
         "desk_enabled": [
             { "desk": "fi-desk", "enabled": true },
             { "desk": "fx-desk", "enabled": false },

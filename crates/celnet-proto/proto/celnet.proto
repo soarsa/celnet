@@ -5314,6 +5314,37 @@ enum ExitActionKind {
   EXIT_ACTION_SPLIT = 5;
   // Fire an alert / route to a human desk instead of auto-acting.
   EXIT_ACTION_ESCALATE = 6;
+  // Flatten the book's net to zero — a full-size external market order for the
+  // whole residual (the most aggressive external exit; is_external() true).
+  EXIT_ACTION_CLEAR_RISK = 7;
+}
+
+// How a live hedge decision is executed once the policy resolves an EXTERNAL exit
+// action — the "Both — config per policy" control (mirrors
+// `crate::config::hedge_policy::HedgeExecutionMode`, same ordinal order). Replaces
+// the former boolean `advisory_only`. Consulted only for external actions.
+enum HedgeExecutionModeEnum {
+  // Shadow-run: compute + stamp the intent/provenance but never trade.
+  HEDGE_EXEC_ADVISORY = 0;
+  // Externalise onto the LP-sim RFQ/FIX panel; an unfilled clip is an honest miss.
+  HEDGE_EXEC_LP_PANEL = 1;
+  // Externalise against the Agg Book COMPOSITE mid (spread applied); always fills.
+  HEDGE_EXEC_COMPOSITE = 2;
+  // Try the LP panel first; on no fill, fall back to the composite venue (the live default).
+  HEDGE_EXEC_LP_PANEL_THEN_COMPOSITE = 3;
+}
+
+// What a hedge POLICY GRAPH binds to — the scope of an exit-policy decision graph
+// (mirrors `crate::config::hedge_policy::HedgePolicyScope`). A fill in book B is
+// governed by the most-specific applicable policy: B's own BOOK policy, else the
+// nearest ancestor BUCKET policy (a subtree ROOT id), else the FIRM default.
+enum HedgePolicyScopeKindEnum {
+  // The firm-wide default policy (the singleton fallback; `scope_id` empty).
+  HEDGE_POLICY_SCOPE_FIRM = 0;
+  // A single risk book / portfolio (matches exactly that book; `scope_id` = book id).
+  HEDGE_POLICY_SCOPE_BOOK = 1;
+  // A risk-book subtree ROOT id (matches that book + every descendant; `scope_id` = root id).
+  HEDGE_POLICY_SCOPE_BUCKET = 2;
 }
 
 // A decision node: evaluate `field op value` on the risk state (mirrors
@@ -5509,8 +5540,10 @@ message HedgeLpPanelDesc {
 message HedgeConfigDesc {
   // Global kill-switch: when true, ALL auto-hedging halts (positions warehouse).
   bool kill_switch = 1;
-  // Advisory-only: compute + emit intents/provenance but never trade externally.
-  bool advisory_only = 2;
+  // How external hedge actions are executed (replaces the former boolean
+  // `advisory_only`): advisory shadow-run, or a live LP-panel / composite /
+  // LP-panel-then-composite venue path. Defaults to the live LP-then-composite mode.
+  HedgeExecutionModeEnum execution = 2;
   // Per-desk enable overrides.
   repeated HedgeDeskToggle desk_enabled = 3;
   // A hard ceiling on any single hedge clip (native metric units).
@@ -5522,25 +5555,41 @@ message HedgeConfigDesc {
   // The standing hedging LP panels — per-scope include/exclude LP selection every
   // external exit action inherits (most-specific-wins). Empty ⇒ no restriction.
   repeated HedgeLpPanelDesc lp_panels = 7;
+  // The spread (bp) applied to the Agg Book COMPOSITE mid when a hedge fills on the
+  // composite venue (the `COMPOSITE` mode / the `LP_PANEL_THEN_COMPOSITE` fallback).
+  double composite_spread_bp = 8;
 }
 
-// Read the firm-wide hedge policy graph (gated `hedge` × asset). Absent until defined.
+// Read a scoped hedge policy graph (gated `hedge` × asset). Absent until defined.
+// The scope selects WHICH policy: FIRM (the default singleton, empty `scope_id`), a
+// BOOK graph, or a BUCKET (subtree-root) graph. A FIRM-scope request reads the
+// firm-wide graph exactly as before (back-compatible default).
 message GetHedgePolicyGraphRequest {
   // The caller's bearer token.
   string session_token = 1;
   // Echoed request correlation id.
   optional uint64 correlation_id = 2;
+  // The policy scope to read (FIRM=0 default → the firm-wide graph).
+  HedgePolicyScopeKindEnum scope_kind = 3;
+  // The book id (BOOK) / subtree-root id (BUCKET) to read; empty for FIRM.
+  string scope_id = 4;
 }
-// The current hedge policy graph, or absent when none is defined yet.
+// The current hedge policy graph for the requested scope, or absent when none defined.
 message GetHedgePolicyGraphResponse {
-  // The firm-wide hedge policy graph (absent ⇒ none defined).
+  // The hedge policy graph for the requested scope (absent ⇒ none defined).
   optional HedgeGraphDesc graph = 1;
   // Echoed request correlation id.
   optional uint64 correlation_id = 2;
+  // The scope this graph governs (echoed).
+  HedgePolicyScopeKindEnum scope_kind = 3;
+  // The echoed scope id.
+  string scope_id = 4;
 }
 
-// Replace the firm-wide hedge policy graph (gated `hedge` × asset). Validated against
-// the aggregation instruments + FIX LP registry before commit.
+// Replace a scoped hedge policy graph (gated `hedge` × asset). Validated against the
+// aggregation instruments + FIX LP registry before commit. The scope selects which
+// policy is written: FIRM (the singleton), a BOOK graph, or a BUCKET (subtree-root)
+// graph. A BOOK/BUCKET graph with an empty node set REMOVES that scope's policy.
 message UpdateHedgePolicyGraphRequest {
   // The caller's bearer token.
   string session_token = 1;
@@ -5548,6 +5597,10 @@ message UpdateHedgePolicyGraphRequest {
   HedgeGraphDesc graph = 2;
   // Echoed request correlation id.
   optional uint64 correlation_id = 3;
+  // The policy scope to write (FIRM=0 default → the firm-wide graph).
+  HedgePolicyScopeKindEnum scope_kind = 4;
+  // The book id (BOOK) / subtree-root id (BUCKET) to write; empty for FIRM.
+  string scope_id = 5;
 }
 // The committed hedge policy graph.
 message UpdateHedgePolicyGraphResponse {
@@ -5555,6 +5608,10 @@ message UpdateHedgePolicyGraphResponse {
   HedgeGraphDesc graph = 1;
   // Echoed request correlation id.
   optional uint64 correlation_id = 2;
+  // The scope this graph governs (echoed).
+  HedgePolicyScopeKindEnum scope_kind = 3;
+  // The echoed scope id.
+  string scope_id = 4;
 }
 
 // ===========================================================================

@@ -3676,7 +3676,11 @@ export interface HedgeSize {
 /**
  * The kind of exit-action leaf (mirrors `ExitActionKind`, ordinals warehouse=0 /
  * cross_internal=1 / skew=2 / submit_market_order=3 / rfq_out=4 / split=5 /
- * escalate=6).
+ * escalate=6 / clear_risk=7). The EXTERNAL kinds (those that trade away —
+ * submit_market_order / rfq_out / split / clear_risk) are the desk-visible hedges;
+ * the internal kinds (warehouse / cross_internal / skew / escalate) never leave the
+ * firm. `clear_risk` is a leaf with NO parameters — it flattens the book's entire
+ * net to zero via the live composite.
  */
 export type ExitActionKind =
   | "warehouse"
@@ -3685,7 +3689,38 @@ export type ExitActionKind =
   | "submit_market_order"
   | "rfq_out"
   | "split"
-  | "escalate";
+  | "escalate"
+  | "clear_risk";
+
+/**
+ * The per-policy EXECUTION MODE of the auto-hedge engine (mirrors
+ * `HedgeExecutionModeEnum`, ordinals advisory=0 / lp_panel=1 / composite=2 /
+ * lp_panel_then_composite=3; the proto3 default is `lp_panel_then_composite`).
+ * Replaces the old advisory-only boolean — a policy is now armed at exactly one of:
+ *  - `advisory`               — dry-run: compute + emit intents, trade NOTHING.
+ *  - `lp_panel`               — route external legs to the standing LP panel only.
+ *  - `composite`             — cross the live consolidated Agg-Book composite mid.
+ *  - `lp_panel_then_composite` — try the LP panel first, fall back to the composite.
+ */
+export type HedgeExecutionMode =
+  | "advisory"
+  | "lp_panel"
+  | "composite"
+  | "lp_panel_then_composite";
+
+/**
+ * The scope a HEDGE POLICY graph binds to (mirrors `HedgePolicyScopeKindEnum`,
+ * ordinals firm=0 / book=1 / bucket=2). DISTINCT from {@link HedgeScopeKind} (the
+ * warehouse-threshold / LP-panel desk/book/instrument scope):
+ *  - `firm`   — the single firm-wide policy singleton (empty `scopeId`).
+ *  - `book`   — a policy for one risk book (`scopeId` = the book id); conditions read
+ *               that book's own net risk.
+ *  - `bucket` — a policy for a risk-book SUBTREE ROOT (`scopeId` = the subtree-root
+ *               book id); conditions read the WHOLE portfolio's rolled-up aggregate
+ *               (net notional / DV01 / …), enabling "if PORTFOLIO notional > n →
+ *               market order / clear risk".
+ */
+export type HedgePolicyScopeKind = "firm" | "book" | "bucket";
 
 /**
  * One exit action — a terminal leaf of a {@link HedgeGraph} (mirrors `ExitActionDesc`,
@@ -4017,8 +4052,12 @@ export interface HedgeLpPanel {
 export interface HedgeConfig {
   /** Global kill-switch: when true, ALL auto-hedging halts (positions warehouse). */
   killSwitch: boolean;
-  /** Advisory-only: compute + emit intents/provenance but never trade externally. */
-  advisoryOnly: boolean;
+  /**
+   * The engine execution mode (mirrors `HedgeConfigDesc.execution`, field 2 —
+   * replaces the old advisory-only boolean). `advisory` is the dry-run shadow;
+   * every other mode trades live. The proto3 default is `lp_panel_then_composite`.
+   */
+  execution: HedgeExecutionMode;
   /** Per-desk enable overrides. */
   deskEnabled: HedgeDeskToggle[];
   /** A hard ceiling on any single hedge clip (native metric units). */
@@ -4032,6 +4071,12 @@ export interface HedgeConfig {
    * external exit action inherits (mirrors `HedgeConfigDesc.lp_panels`, field 7).
    */
   lpPanels: HedgeLpPanel[];
+  /**
+   * The half-spread (in bp) charged around the consolidated composite mid when a
+   * hedge crosses the composite (mirrors `HedgeConfigDesc.composite_spread_bp`,
+   * field 8). Read only by the composite-touching execution modes. Default 0.5.
+   */
+  compositeSpreadBp: number;
 }
 
 /**
