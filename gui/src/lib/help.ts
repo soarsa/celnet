@@ -558,6 +558,36 @@ const ENTRY_LIST: readonly HelpEntry[] = [
       "A Bucket condition reads the ROLLED-UP aggregate, not a single book — size thresholds accordingly. Clear risk flattens the ENTIRE net in one action; use it only where a full flatten is intended. An empty Book/Bucket policy silently falls back to Firm.",
     keywords: ["scope", "firm", "book", "bucket", "portfolio", "aggregate", "subtree", "clear risk", "flatten", "override", "policy"],
   },
+  {
+    id: "concept.hedge-rule-from-pricing-group",
+    category: "concept",
+    title: "Create a hedging rule from a pricing group",
+    purpose: "Seed a hedge exit-policy rule pre-scoped to a pricing group, then finish it in the Hedging builder.",
+    howItWorks:
+      "From a pricing group's editor (the “Create hedging rule” button) or its roster row (right-click / the context-menu key) you hand off a NEW draft rule to Hedging → Exit Policy. Only ONE fact carries across: the group's DESK membership. A pricing group has no currency, product or counterparty and no book/bucket scope, and a hedge rule is a flat AND of conditions (it cannot OR several desks), so the seed is honest about the gap. Exactly one member desk seeds a `desk = <desk>` condition; zero or many desks seed a NO-condition draft (identical to the manual “+ Create hedge rule”) and the hint tells you what to add. The scope stays FIRM and the exit action defaults to Warehouse — you complete the conditions, pick the real exit action, and Save.",
+    example: {
+      scenario: "Three pricing groups handed off to the Hedging builder.",
+      rows: [
+        { label: "One desk (g10-rates)", value: "seeds Desk = g10-rates at Firm scope" },
+        { label: "Many desks", value: "no condition seeded — add one desk condition (one rule per desk)" },
+        { label: "No desks (user/session)", value: "no condition seeded — the graph can't test membership; add conditions" },
+        { label: "Always", value: "exit action defaults to Warehouse — pick the real action + Save" },
+      ],
+      takeaway: "Desk membership is the only bridge into the hedge vocabulary; the builder is where you finish the rule.",
+    },
+    howToConfigure: [
+      "Open Fixed Income → Pricing → Pricing Groups.",
+      "Either open a group and click “Create hedging rule”, or right-click the group in the roster (or press the context-menu key) and choose “Create hedging rule”.",
+      "You land in Hedging → Exit Policy with a new draft: a single-desk group is pre-scoped Desk = <desk>; otherwise add the conditions the hint asks for.",
+      "Pick the exit action (Warehouse is the safe default), review the preview, and Save — nothing auto-saves.",
+      "Seeding needs the Hedge · Fixed-Income capability — you can seed from a group you can only view.",
+    ],
+    whenToUse:
+      "When a pricing group corresponds to a desk whose warehoused flow you want an exit policy for, and you want the desk condition and the jump to the builder in one click instead of hand-composing it.",
+    risks:
+      "A group's desk is its ONLY testable overlap — the seed never invents a currency/product/counterparty condition a group can't substantiate. A multi-desk or user/session group seeds no condition on purpose; author one rule per desk. The rule is Firm-scoped — narrow it to a Book/Bucket in the builder if you need per-book handling.",
+    keywords: ["hedging", "rule", "pricing group", "seed", "desk", "exit policy", "create", "right-click", "context menu", "firm", "warehouse"],
+  },
 ];
 
 /** The registry keyed by id (built once from the ordered list). */

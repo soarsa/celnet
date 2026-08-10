@@ -18,7 +18,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useApp } from "../../app/AppContext";
 import { useHedgeSeed } from "../../app/HedgeSeedContext";
-import { hedgeRuleFromSeed, type HedgeSeedDeal } from "../../lib/hedgeSeed";
+import {
+  hedgeRuleFromPricingGroupSeed,
+  hedgeRuleFromSeed,
+  hedgeSeedGapNote,
+  hedgeSeedHint,
+  pricingGroupSeedGapNote,
+  pricingGroupSeedHint,
+} from "../../lib/hedgeSeed";
 import type {
   HedgeConfig,
   HedgeGraph,
@@ -192,11 +199,12 @@ function PolicyTab({
   const [books, setBooks] = useState<RiskBook[]>([]);
   const [hasScopedPolicy, setHasScopedPolicy] = useState(false);
   const scopeReady = scopeKind === "firm" || scopeId !== "";
-  // A "Change hedging strategy" hand-off from a Deals-blotter row: the originating deal +
-  // the id of the draft rule it seeded, so the editor shows the hint ONLY for that draft
-  // (a subsequent hand-built rule has a different id ⇒ no stale hint).
+  // A hedge-rule seed hand-off from a Deals-blotter row ("Change hedging strategy") OR a
+  // pricing group ("Create hedging rule"): the SOURCE-AGNOSTIC hint + gap note + the id of
+  // the draft rule it seeded, so the editor shows the hint ONLY for that draft (a
+  // subsequent hand-built rule has a different id ⇒ no stale hint).
   const { pending: pendingSeed, consumeHedgeSeed } = useHedgeSeed();
-  const [seed, setSeed] = useState<{ deal: HedgeSeedDeal; ruleId: string } | null>(null);
+  const [seed, setSeed] = useState<{ hint: string; gapNote: string; ruleId: string } | null>(null);
   const appliedSeedNonce = useRef(0);
 
   // The risk-book roster backs the Book / Bucket scope picker (a Bucket is a
@@ -245,15 +253,23 @@ function PolicyTab({
     };
   }, [app.transport, scopeKind, scopeId, scopeReady]);
 
-  // Consume a pending "Change hedging strategy" seed exactly once (de-duped by nonce):
-  // open a NEW draft rule pre-scoped to the deal's flow, and remember which draft it is so
-  // the editor shows the seed hint. The trader picks the exit action + Saves — nothing
-  // auto-saves; the seed is cleared so re-entering the tab does not re-seed.
+  // Consume a pending seed exactly once (de-duped by nonce): open a NEW draft rule
+  // pre-scoped from the source (a deal's flow, or a pricing group's single desk), and
+  // remember the source-agnostic hint + gap note for that draft so the editor shows them.
+  // The trader picks the exit action + Saves — nothing auto-saves; the seed is cleared so
+  // re-entering the tab does not re-seed.
   useEffect(() => {
     if (!pendingSeed || pendingSeed.nonce === appliedSeedNonce.current) return;
     appliedSeedNonce.current = pendingSeed.nonce;
-    const draft = hedgeRuleFromSeed(pendingSeed.deal);
-    setSeed({ deal: pendingSeed.deal, ruleId: draft.id });
+    const source = pendingSeed.source;
+    const draft =
+      source.kind === "deal"
+        ? hedgeRuleFromSeed(source.deal)
+        : hedgeRuleFromPricingGroupSeed(source.group);
+    const hint =
+      source.kind === "deal" ? hedgeSeedHint(source.deal) : pricingGroupSeedHint(source.group);
+    const gapNote = source.kind === "deal" ? hedgeSeedGapNote() : pricingGroupSeedGapNote();
+    setSeed({ hint, gapNote, ruleId: draft.id });
     setMode({ kind: "editor", index: null, draft });
     setSaveState({ kind: "idle" });
     consumeHedgeSeed();
@@ -392,7 +408,7 @@ function PolicyTab({
   if (mode.kind === "editor") {
     // The seed hint shows ONLY for the exact draft the seed created (id match) — a
     // hand-built rule opened afterwards has a different id and no banner.
-    const seedDeal = seed !== null && mode.draft.id === seed.ruleId ? seed.deal : null;
+    const activeSeed = seed !== null && mode.draft.id === seed.ruleId ? seed : null;
     return (
       <HedgeRuleEditor
         draft={mode.draft}
@@ -402,7 +418,8 @@ function PolicyTab({
         lpOptions={LP_OPTIONS}
         onSave={onEditorSave}
         onCancel={() => setMode({ kind: "list" })}
-        seedDeal={seedDeal}
+        seedHint={activeSeed?.hint ?? null}
+        seedGapNote={activeSeed?.gapNote ?? ""}
       />
     );
   }

@@ -875,6 +875,13 @@
   border-top: var(--hairline);
 }
 
+/* Keeps the "Create hedging rule" action and its inline help "?" pill together. */
+.hedgeAction {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .dirtyHint {
   font-size: var(--type-caption);
   color: var(--text-tertiary);

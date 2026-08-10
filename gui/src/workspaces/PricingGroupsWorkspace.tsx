@@ -44,8 +44,15 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 
 import { useApp } from "../app/AppContext";
+import { useHedgeSeed } from "../app/HedgeSeedContext";
 import { useTour } from "../app/TourProvider";
 import { Button } from "../components/Button";
+import { HelpButton } from "../components/HelpButton";
+import {
+  PricingGroupRowMenu,
+  type PricingGroupMenuTarget,
+} from "../components/PricingGroupRowMenu";
+import { hedgeSeedFromPricingGroup } from "../lib/hedgeSeed";
 import type {
   DeskDesc,
   FeatureKind,
@@ -232,6 +239,24 @@ function PricingGroupsPanel(): React.ReactElement {
   // same cap, so anyone reaching the pane may edit; `can` is permissive signed-out.
   const canManagePricing = auth.can("manage_pricing", "fixed_income");
   const readOnly = !canManagePricing;
+  // Seeding a hedge rule from a group is a HEDGE authority (`hedge` × FI — the SAME cap
+  // the Deals-blotter "Change hedging strategy" and the Hedging surface gate on), NOT a
+  // pricing authority: a hedge trader may create a rule from a group they can only view.
+  const hedge = useHedgeSeed();
+  const canHedge = auth.can("hedge", "fixed_income");
+  // The roster right-click menu ("Create hedging rule"): the group + anchor point, or null.
+  const [rowMenu, setRowMenu] = useState<PricingGroupMenuTarget | null>(null);
+
+  // Seed a hedge exit-policy rule scoped from `g` (a `desk =` condition when the group has
+  // exactly one member desk, else a no-condition draft), then deep-link to the Hedging
+  // workspace — its Exit Policy tab (the default) consumes the seed and opens the draft.
+  const createHedgeRuleFromGroup = useCallback(
+    (g: PricingGroup): void => {
+      hedge.requestHedgeSeedFromPricingGroup(hedgeSeedFromPricingGroup(g));
+      app.setWorkspace("hedging");
+    },
+    [hedge, app],
+  );
 
   const [groups, setGroups] = useState<PricingGroup[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -734,7 +759,28 @@ function PricingGroupsPanel(): React.ReactElement {
                     type="button"
                     className={`${styles.groupBtn} ${active ? styles.groupBtnActive : ""}`}
                     aria-pressed={active}
+                    aria-label={
+                      canHedge
+                        ? `${g.name} — click to edit; right-click or press the menu key to create a hedging rule`
+                        : undefined
+                    }
                     onClick={() => selectGroup(g.id)}
+                    onContextMenu={(e) => {
+                      // Right-click offers "Create hedging rule" — only when the viewer can
+                      // author hedge policy; otherwise let the native menu stand.
+                      if (!canHedge) return;
+                      e.preventDefault();
+                      setRowMenu({ groupId: g.id, name: g.name, x: e.clientX, y: e.clientY });
+                    }}
+                    onKeyDown={(e) => {
+                      // Keyboard parity for the right-click: the context-menu key / Shift+F10.
+                      if (!canHedge) return;
+                      if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+                        e.preventDefault();
+                        const r = e.currentTarget.getBoundingClientRect();
+                        setRowMenu({ groupId: g.id, name: g.name, x: r.left + 12, y: r.bottom - 8 });
+                      }
+                    }}
                   >
                     <span className={styles.groupRow}>
                       <span className={styles.groupName}>{g.name}</span>
@@ -758,6 +804,16 @@ function PricingGroupsPanel(): React.ReactElement {
         </section>
 
       </div>
+
+      {/* Roster right-click menu — "Create hedging rule" from the picked group. */}
+      <PricingGroupRowMenu
+        target={rowMenu}
+        onClose={() => setRowMenu(null)}
+        onCreateHedgingRule={(groupId) => {
+          const g = groups.find((x) => x.id === groupId);
+          if (g) createHedgeRuleFromGroup(g);
+        }}
+      />
 
       {/* The group + pipeline editor — a dismissible portal modal over the list. */}
       {editorOpen &&
@@ -1359,6 +1415,25 @@ function PricingGroupsPanel(): React.ReactElement {
                       Delete
                     </Button>
                   </>
+                )}
+                {/* HEDGE authority (not pricing): seed a hedge exit-policy rule from this
+                    group and jump to the Hedging builder. Shown to a hedge trader even
+                    when they can only VIEW the group (read-only pricing). */}
+                {canHedge && !creating && selectedGroup && (
+                  <span className={styles.hedgeAction}>
+                    <Button
+                      variant="ghost"
+                      onClick={() => createHedgeRuleFromGroup(selectedGroup)}
+                      disabled={saving}
+                      title="Seed a hedge exit-policy rule from this pricing group and open the Hedging builder"
+                    >
+                      Create hedging rule
+                    </Button>
+                    <HelpButton
+                      helpId="concept.hedge-rule-from-pricing-group"
+                      subject="creating a hedging rule from this pricing group"
+                    />
+                  </span>
                 )}
                 <span className={styles.dirtyHint} aria-live="polite">
                   {dirty ? "Unsaved changes" : "In sync"}

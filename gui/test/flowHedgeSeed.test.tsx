@@ -89,9 +89,10 @@ function makeApp(opts: { deals?: Deal[]; can?: CanFn }) {
 /** A probe that mirrors the seed store's `pending` into the DOM + can fire a seed. */
 function SeedProbe({ deal }: { deal: Deal }): React.ReactElement {
   const { pending, requestHedgeSeed } = useHedgeSeed();
+  const dealId = pending?.source.kind === "deal" ? pending.source.deal.dealId : "";
   return (
     <div>
-      <span data-testid="hseed-deal">{pending?.deal.dealId ?? ""}</span>
+      <span data-testid="hseed-deal">{dealId}</span>
       <button data-testid="hseed-fire" onClick={() => requestHedgeSeed(hedgeSeedFromDeal(deal))}>
         seed
       </button>
