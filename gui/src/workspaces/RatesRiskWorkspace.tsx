@@ -29,10 +29,13 @@
  * never hardcoded results; every number on the right is computed by the transport.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
 import { Panel } from "../components/Panel";
+import { cacheKeyPart, useCachedResource } from "../hooks/useCachedResource";
+import { useTableUiState } from "../hooks/useTableUiState";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { principalForScope } from "../data/riskView";
 import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
 import { fmtPnlAdaptive } from "../lib/format";
@@ -254,17 +257,36 @@ export function RatesRiskPanel(): React.ReactElement {
   const app = useApp();
   const curve = DEFAULT_USD_SOFR_CURVE;
 
-  const [rows, setRows] = useState<RatesRiskRow[]>(() =>
-    defaultRatesRiskRows(curve),
-  );
-  const [scopeInput, setScopeInput] = useState<RatesRiskScopeInput>({
-    entity: "",
-    book: "",
-    ccy: "",
+  // The editable portfolio + scope filter are persisted per-table so a trader's
+  // edited book (and scope) SURVIVE a tab switch (the workspace unmounting) rather
+  // than reseeding to the defaults on return.
+  const [ui, setUi] = useTableUiState<{
+    rows: RatesRiskRow[];
+    scopeInput: RatesRiskScopeInput;
+  }>("fi-rates-risk", {
+    rows: defaultRatesRiskRows(curve),
+    scopeInput: { entity: "", book: "", ccy: "" },
   });
-  const [nodes, setNodes] = useState<RatesRiskNode[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const rows = ui.rows;
+  const scopeInput = ui.scopeInput;
+  // The latest rows/scope through refs so the functional row mutations below read the
+  // current value (they merge into the persisted store, which has no functional patch).
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const setRows = useCallback(
+    (next: RatesRiskRow[] | ((rs: RatesRiskRow[]) => RatesRiskRow[])) => {
+      const value = typeof next === "function" ? next(rowsRef.current) : next;
+      setUi({ rows: value });
+    },
+    [setUi],
+  );
+  const setScopeInput = useCallback(
+    (next: RatesRiskScopeInput | ((s: RatesRiskScopeInput) => RatesRiskScopeInput)) => {
+      const value = typeof next === "function" ? next(ui.scopeInput) : next;
+      setUi({ scopeInput: value });
+    },
+    [setUi, ui.scopeInput],
+  );
   // Monotone id source for rows the trader adds (seed rows carry `seed-*` ids).
   const nextId = useRef(0);
 
@@ -277,53 +299,53 @@ export function RatesRiskPanel(): React.ReactElement {
   // omits it and the server applies its audited grant-all default.
   const principal = useMemo(() => principalForScope(app.scope), [app.scope]);
 
-  const scope = useMemo(() => buildScope(scopeInput), [scopeInput]);
+  // Debounce the editable portfolio so re-aggregation only fires once edits settle
+  // (the same intent the prior in-effect debounce had), then build the request off the
+  // settled inputs.
+  const debouncedRows = useDebouncedValue(rows, REPRICE_DEBOUNCE_MS);
+  const debouncedScopeInput = useDebouncedValue(scopeInput, REPRICE_DEBOUNCE_MS);
+  const scope = useMemo(() => buildScope(debouncedScopeInput), [debouncedScopeInput]);
 
   const request = useMemo<AggregateRatesRiskRequest>(
     () =>
-      buildRatesRiskRequest(rows, {
+      buildRatesRiskRequest(debouncedRows, {
         curve,
         ...(scope ? { scope } : {}),
         ...(principal ? { principal } : {}),
       }),
-    [rows, curve, scope, principal],
+    [debouncedRows, curve, scope, principal],
   );
 
-  // Live rollup: debounce the editable portfolio, then aggregate via the transport
-  // seam. A failure (a server refusal, a transport deadline, or an offline
-  // validation throw) is surfaced as a real error — never a fabricated rollup.
-  useEffect(() => {
-    let live = true;
-    setBusy(true);
-    const handle = setTimeout(() => {
-      void app.transport
-        .aggregateRatesRisk(request, app.conventions)
-        .then((res) => {
-          if (!live) return;
-          setNodes([...res.nodes]);
-          setError(null);
-          setBusy(false);
-        })
-        .catch((err) => {
-          if (!live) return;
-          setNodes(null);
-          setError(
-            err instanceof Error
-              ? err.message
-              : "rates risk aggregation failed",
-          );
-          setBusy(false);
-        });
-    }, REPRICE_DEBOUNCE_MS);
-    return () => {
-      live = false;
-      clearTimeout(handle);
-    };
-  }, [app.transport, app.conventions, request]);
+  // Stale-while-revalidate rollup: cache the aggregation keyed on the projected
+  // positions + scope + principal, so returning to this workspace shows the last
+  // rollup INSTANTLY (no "Aggregating…" flash) while a background revalidation
+  // refreshes it. A failure surfaces as a real error and keeps the last good rollup —
+  // never a fabricated one.
+  const cacheKey = `ratesRisk|${cacheKeyPart(request.positions)}|${cacheKeyPart(scope)}|${cacheKeyPart(principal)}`;
+  const {
+    data: nodesData,
+    isValidating,
+    error: fetchError,
+  } = useCachedResource<RatesRiskNode[]>(cacheKey, () =>
+    app.transport.aggregateRatesRisk(request, app.conventions).then((res) => [...res.nodes]),
+  );
+  // `null` (not yet loaded) drives the ResultsBody "Aggregating…" state; a landed
+  // rollup renders. `busy` reflects a background revalidation.
+  const nodes = nodesData ?? null;
+  const busy = isValidating;
+  const error =
+    fetchError === undefined || fetchError === null
+      ? null
+      : fetchError instanceof Error
+        ? fetchError.message
+        : "rates risk aggregation failed";
 
-  const updateRow = useCallback((id: string, patch: Partial<RatesRiskRow>) => {
-    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-  }, []);
+  const updateRow = useCallback(
+    (id: string, patch: Partial<RatesRiskRow>) => {
+      setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    },
+    [setRows],
+  );
 
   const addRow = useCallback(() => {
     setRows((rs) => [
@@ -340,15 +362,18 @@ export function RatesRiskPanel(): React.ReactElement {
         direction: "RECEIVE_FIXED",
       },
     ]);
-  }, [curve.pillars]);
+  }, [curve.pillars, setRows]);
 
-  const removeRow = useCallback((id: string) => {
-    setRows((rs) => rs.filter((r) => r.id !== id));
-  }, []);
+  const removeRow = useCallback(
+    (id: string) => {
+      setRows((rs) => rs.filter((r) => r.id !== id));
+    },
+    [setRows],
+  );
 
   const clearScope = useCallback(
     () => setScopeInput({ entity: "", book: "", ccy: "" }),
-    [],
+    [setScopeInput],
   );
 
   const scopeActive = scope !== undefined;

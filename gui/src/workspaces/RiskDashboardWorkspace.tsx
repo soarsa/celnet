@@ -46,6 +46,12 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 
 import { useApp } from "../app/AppContext";
 import { useAcceptanceSeed } from "../app/AcceptanceSeedContext";
+import { TableSkeleton } from "../components/TableSkeleton";
+import {
+  primeCachedResource,
+  useCachedResource,
+} from "../hooks/useCachedResource";
+import { useTableUiState } from "../hooks/useTableUiState";
 import type {
   CapabilityAction,
   Deal,
@@ -312,139 +318,136 @@ export function DashboardPanel({
   const { auth } = app;
   const signedIn = auth.user !== undefined && auth.user !== null;
 
-  const [risk, setRisk] = useState<RiskBookRisk[]>([]);
-  const [books, setBooks] = useState<RiskBook[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [live, setLive] = useState(false);
-  // The routed deals that back the per-portfolio tenor/instrument drill-down. The
-  // risk roster carries only per-book aggregates (no buckets); the `Deal` is the one
-  // GUI source that links instrument-level detail (tenor / notional) to a risk
-  // PORTFOLIO via `riskBookId` — so we group the SAME deals the Deals blotter loads,
-  // per book, client-side (see data/riskBreakdown.ts for the honest-source rationale).
-  const [deals, setDeals] = useState<Deal[]>([]);
-  // The set of portfolio rows whose drill-down is expanded (independent of the
-  // selected-book detail; several may be open at once).
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
-  // The active column sort. Default: GROSS notional DESCENDING — gross is the standard
-  // exposure measure, so the roster opens highest-exposure-first.
-  const [sort, setSort] = useState<{ key: RiskSortKey; dir: SortDir }>({
-    key: "gross",
-    dir: "desc",
+
+  // Persisted table UI state: the column sort, the selected portfolio, and which rows
+  // are expanded all SURVIVE a tab switch (the workspace unmounting) and are restored
+  // on return. Default sort: GROSS notional DESCENDING (highest exposure first).
+  const [ui, setUi] = useTableUiState<{
+    sort: { key: RiskSortKey; dir: SortDir };
+    selectedId: string | null;
+    expanded: string[];
+  }>("fi-risk-dashboard", {
+    sort: { key: "gross", dir: "desc" },
+    selectedId: null,
+    expanded: [],
   });
+  const sort = ui.sort;
+  const selectedId = ui.selectedId;
+  const setSelectedId = useCallback((id: string | null) => setUi({ selectedId: id }), [setUi]);
 
   // Toggle direction on the active column; select another column fresh at descending
-  // (largest-first, the exposure-ranked default). Pure state update — no mutation.
-  const onSort = useCallback((key: RiskSortKey): void => {
-    setSort((prev) =>
-      prev.key === key
-        ? { key, dir: prev.dir === "asc" ? "desc" : "asc" }
-        : { key, dir: "desc" },
-    );
-  }, []);
+  // (largest-first, the exposure-ranked default).
+  const onSort = useCallback(
+    (key: RiskSortKey): void => {
+      setUi({
+        sort:
+          ui.sort.key === key
+            ? { key, dir: ui.sort.dir === "asc" ? "desc" : "asc" }
+            : { key, dir: "desc" },
+      });
+    },
+    [setUi, ui.sort],
+  );
 
-  // Apply a fresh risk-book set (from a pushed frame or the fallback poll): keep the
-  // current selection if it still exists, else fall to the first book.
-  const applyRisk = useCallback((rows: RiskBookRisk[]): void => {
-    setRisk(rows);
-    setLoadError(null);
-    setSelectedId((prev) =>
-      prev && rows.some((x) => x.bookId === prev) ? prev : (rows[0]?.bookId ?? null),
-    );
-  }, []);
+  // Stale-while-revalidate cache for the per-portfolio risk roll-up: the rows SURVIVE
+  // the workspace unmounting on a tab switch, so returning shows them instantly (no
+  // blank flash). The poll fetcher backs a cache MISS; the LIVE push (below) primes the
+  // SAME cache line on every frame, so while mounted the rows stay live without a poll.
+  const {
+    data: riskData,
+    isLoading: riskLoading,
+    error: riskError,
+  } = useCachedResource<RiskBookRisk[]>(
+    "riskBookRisk",
+    () => app.transport.listRiskBookRisk(),
+    { enabled: signedIn },
+  );
+  const risk = useMemo(() => riskData ?? [], [riskData]);
+  const loadError =
+    riskError === undefined || riskError === null
+      ? null
+      : riskError instanceof Error
+        ? riskError.message
+        : "failed to load risk";
 
+  // Prefer the LIVE push: subscribe to `RiskBookRisk` frames over the multiplexed RFS
+  // session and PRIME the cache with each not-older frame (the payload is delivered by
+  // the push itself — no refetch). A transport without the seam simply relies on the
+  // poll fetcher above.
   useEffect(() => {
     if (!signedIn) {
-      setRisk([]);
-      setBooks([]);
-      setSelectedId(null);
       setLive(false);
       return;
     }
-    let cancelled = false;
-
-    // The book roster (names / desk / tree order) is one-shot; only the risk rows
-    // stream. Load it alongside the subscription.
-    void app.transport
-      .listRiskBooks()
-      .then((b) => {
-        if (!cancelled) setBooks(b);
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setLoadError(e instanceof Error ? e.message : "failed to load books");
-      });
-
-    // Prefer the LIVE push: subscribe to `RiskBookRisk` frames over the multiplexed
-    // RFS session, applying only a frame whose `version` is not older than the last.
     const subscribe = app.transport.subscribeRiskBookRisk;
-    if (typeof subscribe === "function") {
-      try {
-        let lastVersion = -1;
-        const teardown = subscribe.call(app.transport, (rows, version) => {
-          if (cancelled || version < lastVersion) return;
-          lastVersion = version;
-          applyRisk(rows);
-        });
-        setLive(true);
-        return () => {
-          cancelled = true;
-          teardown();
-        };
-      } catch {
-        // Fall through to the one-shot poll on a transport that errors on subscribe.
-      }
+    if (typeof subscribe !== "function") {
+      setLive(false);
+      return;
     }
-
-    // Graceful fallback: a transport without the push (or one that threw) polls once.
-    setLive(false);
-    void app.transport
-      .listRiskBookRisk()
-      .then((r) => {
-        if (!cancelled) applyRisk(r);
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setLoadError(e instanceof Error ? e.message : "failed to load risk");
+    try {
+      let lastVersion = -1;
+      const teardown = subscribe.call(app.transport, (rows, version) => {
+        if (version < lastVersion) return;
+        lastVersion = version;
+        primeCachedResource<RiskBookRisk[]>("riskBookRisk", rows);
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [app.transport, signedIn, applyRisk]);
+      setLive(true);
+      return () => {
+        setLive(false);
+        teardown();
+      };
+    } catch {
+      // A transport that errors on subscribe relies on the poll fetcher above.
+      setLive(false);
+    }
+    return undefined;
+  }, [app.transport, signedIn]);
 
-  // The routed deals for the drill-down: load once and refresh on every push
-  // `Notification` (a fill mints a deal), exactly as the Deals blotter does — so the
-  // per-book tenor/instrument breakdown stays live without its own poll. Best-effort:
-  // a transport without the seam (or that errors) simply leaves the breakdown empty.
+  // The book roster (names / desk / tree order) — cached + shared with other surfaces
+  // that list risk books, so it does not blank on a tab switch either.
+  const { data: booksData } = useCachedResource<RiskBook[]>(
+    "riskBooks",
+    () => app.transport.listRiskBooks(),
+    { enabled: signedIn },
+  );
+  const books = useMemo(() => booksData ?? [], [booksData]);
+
+  // Reconcile the selected portfolio against the current rows: keep a still-present
+  // selection, else fall to the first book (or none).
   useEffect(() => {
-    if (!signedIn) {
-      setDeals([]);
+    if (risk.length === 0) {
+      if (selectedId !== null) setSelectedId(null);
       return;
     }
-    let cancelled = false;
-    const listDeals = app.transport.listDeals;
-    // The deals seam is optional here (defensive, like the risk subscribe seam): a
-    // transport without it simply leaves the drill-down empty rather than throwing.
-    if (typeof listDeals !== "function") {
-      setDeals([]);
-      return;
-    }
-    const load = (): void => {
-      void listDeals
-        .call(app.transport, {})
-        .then((res) => {
-          if (!cancelled) setDeals(res.deals);
-        })
-        .catch(() => {
-          /* no deals seam ⇒ the drill-down shows its honest empty note. */
-        });
-    };
-    load();
+    if (selectedId && risk.some((x) => x.bookId === selectedId)) return;
+    setSelectedId(risk[0]?.bookId ?? null);
+  }, [risk, selectedId, setSelectedId]);
+
+  // The routed deals for the drill-down: cached (survives unmount) and refreshed on
+  // every push `Notification` (a fill mints a deal), exactly as the Deals blotter does.
+  // Best-effort: a transport without the seam simply leaves the breakdown empty.
+  const { data: dealsData, refresh: refreshDeals } = useCachedResource<Deal[]>(
+    "riskDeals",
+    () => {
+      const listDeals = app.transport.listDeals;
+      return typeof listDeals === "function"
+        ? listDeals.call(app.transport, {}).then((res) => res.deals)
+        : Promise.resolve([]);
+    },
+    { enabled: signedIn },
+  );
+  const deals = useMemo(() => dealsData ?? [], [dealsData]);
+  const refreshDealsRef = useRef(refreshDeals);
+  refreshDealsRef.current = refreshDeals;
+  useEffect(() => {
+    if (!signedIn) return;
     const stream = app.transport.streamNotifications;
     const dispose =
-      typeof stream === "function" ? stream.call(app.transport, undefined, () => load()) : undefined;
-    return () => {
-      cancelled = true;
-      dispose?.();
-    };
+      typeof stream === "function"
+        ? stream.call(app.transport, undefined, () => refreshDealsRef.current())
+        : undefined;
+    return () => dispose?.();
   }, [app.transport, signedIn]);
 
   const deskOf = useCallback(
@@ -460,14 +463,19 @@ export function DashboardPanel({
   // the failure mode where the breakdown came back blank on live.
   const dealsByBook = useMemo(() => bucketDealsByBook(deals), [deals]);
 
-  const toggleExpanded = useCallback((bookId: string): void => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(bookId)) next.delete(bookId);
-      else next.add(bookId);
-      return next;
-    });
-  }, []);
+  // Expanded rows are persisted (as an id list) so open drill-downs survive a tab
+  // switch. A Set view keeps the per-row lookup O(1) in render.
+  const expandedSet = useMemo(() => new Set(ui.expanded), [ui.expanded]);
+  const toggleExpanded = useCallback(
+    (bookId: string): void => {
+      setUi({
+        expanded: ui.expanded.includes(bookId)
+          ? ui.expanded.filter((x) => x !== bookId)
+          : [...ui.expanded, bookId],
+      });
+    },
+    [setUi, ui.expanded],
+  );
 
   const selected = useMemo(
     () => risk.find((r) => r.bookId === selectedId) ?? null,
@@ -583,7 +591,14 @@ export function DashboardPanel({
             </tr>
           </thead>
           <tbody>
-            {risk.length === 0 && (
+            {riskLoading && risk.length === 0 && (
+              <tr>
+                <td colSpan={7}>
+                  <TableSkeleton rows={4} label="Loading risk portfolios…" />
+                </td>
+              </tr>
+            )}
+            {!riskLoading && risk.length === 0 && (
               <tr>
                 <td colSpan={7} className={styles.empty}>
                   No enabled risk portfolios to report. Routing <em>rules</em> only pick a
@@ -602,7 +617,7 @@ export function DashboardPanel({
             )}
             {sortedRisk.map((r) => {
               const band = worstBand(r.limits);
-              const isOpen = expanded.has(r.bookId);
+              const isOpen = expandedSet.has(r.bookId);
               const panelId = `risk-breakdown-${r.bookId}`;
               return (
                 <Fragment key={r.bookId}>

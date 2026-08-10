@@ -20,13 +20,16 @@
  * quote appears live without polling churn.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { useAcceptanceSeed } from "../app/AcceptanceSeedContext";
 import { Panel } from "../components/Panel";
 import { FlowRowContextMenu, type FlowRowMenuTarget } from "../components/FlowRowContextMenu";
 import { TableSearch } from "../components/TableSearch";
+import { TableSkeleton } from "../components/TableSkeleton";
 import { useTableFilter } from "../hooks/useTableFilter";
+import { cacheKeyPart, useCachedResource } from "../hooks/useCachedResource";
+import { useTableUiState } from "../hooks/useTableUiState";
 import { principalForScope } from "../data/riskView";
 import { fmtRate, fmtClock, fmtCompact } from "../lib/format";
 import { sideLabel } from "./QuotingWorkspace";
@@ -74,29 +77,41 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
   const seed = useAcceptanceSeed();
   const canManageAcceptance = app.auth.can("manage_acceptance", "fixed_income");
 
-  const [requests, setRequests] = useState<DeskRequest[]>([]);
-  const [error, setError] = useState<string | null>(null);
   // The row context menu (right-click / ⋯ kebab): the counterparty + anchor point of the
   // row whose "Create acceptance rule" the trader is spawning.
   const [rowMenu, setRowMenu] = useState<FlowRowMenuTarget | null>(null);
+  // Persisted search query — survives a tab switch and is restored on return.
+  const [ui, setUi] = useTableUiState("fi-quotes-blotter", { query: "" });
 
-  const refresh = useCallback(() => {
-    void app.transport
-      .listDeskRequests({ ...(principal ? { principal } : {}) })
-      .then((res) => {
-        setRequests(res.requests);
-        setError(null);
-      })
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "failed to load quotes"),
-      );
-  }, [app.transport, principal]);
+  // Stale-while-revalidate cache keyed on the entitlement principal (scope): the shown
+  // quotes SURVIVE the workspace unmounting on a tab switch, so returning shows them
+  // instantly (no blank flash) while a background revalidation refreshes them.
+  const {
+    data,
+    isLoading,
+    error: fetchError,
+    refresh,
+  } = useCachedResource<DeskRequest[]>(
+    `deskRequests|${cacheKeyPart(principal)}`,
+    () =>
+      app.transport
+        .listDeskRequests({ ...(principal ? { principal } : {}) })
+        .then((res) => res.requests),
+  );
+  const requests = useMemo(() => data ?? [], [data]);
+  const error =
+    fetchError === undefined || fetchError === null
+      ? null
+      : fetchError instanceof Error
+        ? fetchError.message
+        : "failed to load quotes";
 
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
 
+  // Refresh on every push Notification (a quote sent/auto-quoted/accepted mutates a
+  // request) — a background revalidate that keeps the current rows visible.
   useEffect(() => {
-    refreshRef.current();
     const dispose = app.transport.streamNotifications(undefined, () => refreshRef.current());
     return dispose;
   }, [app.transport]);
@@ -119,7 +134,11 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
     [requests, activeAsset],
   );
 
-  const { query, setQuery, filtered, shown, total } = useTableFilter(quotes, quoteSearchText);
+  const { query, setQuery, filtered, shown, total } = useTableFilter(
+    quotes,
+    quoteSearchText,
+    { query: ui.query, setQuery: (q) => setUi({ query: q }) },
+  );
 
   const isOffline = !app.transport.label.startsWith("live");
   const totalQuoted = quotes.reduce((acc, r) => acc + (r.quote?.notional ?? 0), 0);
@@ -139,7 +158,9 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
             {error}
           </p>
         )}
-        {quotes.length === 0 ? (
+        {isLoading ? (
+          <TableSkeleton label="Loading quotes…" />
+        ) : quotes.length === 0 ? (
           <p className={styles.empty}>
             {activeAsset === "fixed_income"
               ? "No quotes shown yet — price a request in the Quoting workspace to show one."

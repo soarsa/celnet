@@ -21,7 +21,10 @@ import { hedgeSeedFromDeal } from "../lib/hedgeSeed";
 import { Panel } from "../components/Panel";
 import { FlowRowContextMenu, type FlowRowMenuTarget } from "../components/FlowRowContextMenu";
 import { TableSearch } from "../components/TableSearch";
+import { TableSkeleton } from "../components/TableSkeleton";
 import { useTableFilter } from "../hooks/useTableFilter";
+import { cacheKeyPart, useCachedResource } from "../hooks/useCachedResource";
+import { useTableUiState } from "../hooks/useTableUiState";
 import { principalForScope } from "../data/riskView";
 import { fmtRate, fmtClock, fmtCompact } from "../lib/format";
 import type { Deal, Internalise, Side } from "../data/contract";
@@ -275,51 +278,60 @@ export function DealsBlotterWorkspace(): React.ReactElement {
   // "Change hedging strategy" row action is hidden entirely without it.
   const canHedge = app.auth.can("hedge", "fixed_income");
 
-  // Client fills vs executed hedges — the two separated lenses of the blotter.
-  const [lens, setLens] = useState<DealsLens>("client");
-  const [allDeals, setAllDeals] = useState<Deal[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  // Client fills vs executed hedges — the two separated lenses of the blotter. The
+  // active lens + the search query are persisted so they SURVIVE a tab switch.
+  const [ui, setUi] = useTableUiState<{ lens: DealsLens; query: string }>(
+    "fi-deals-blotter",
+    { lens: "client", query: "" },
+  );
+  const lens = ui.lens;
+  const setLens = useCallback((l: DealsLens) => setUi({ lens: l }), [setUi]);
   const [selected, setSelected] = useState<Deal | null>(null);
   // The row context menu (right-click / context-menu key): the counterparty + anchor
   // point of the row whose "Create acceptance rule" the trader is spawning.
   const [rowMenu, setRowMenu] = useState<FlowRowMenuTarget | null>(null);
+
   // The Risk Portfolio roster (id → human name) resolves each deal's routed
-  // `riskBookId` to its portfolio name. Best-effort: an unavailable roster (e.g. no
-  // routing configured) leaves the column falling back to the raw id / `—`.
-  const [riskBookNames, setRiskBookNames] = useState<ReadonlyMap<string, string>>(
-    () => new Map(),
+  // `riskBookId` to its portfolio name. Cached + shared with other surfaces that list
+  // risk books; best-effort — an unavailable roster leaves the column at the raw id / `—`.
+  const { data: riskBooks } = useCachedResource(
+    "riskBooks",
+    () => app.transport.listRiskBooks(),
+  );
+  const riskBookNames = useMemo<ReadonlyMap<string, string>>(
+    () => new Map((riskBooks ?? []).map((b) => [b.id, b.name])),
+    [riskBooks],
   );
 
-  useEffect(() => {
-    let live = true;
-    void app.transport
-      .listRiskBooks()
-      .then((books) => {
-        if (live) setRiskBookNames(new Map(books.map((b) => [b.id, b.name])));
-      })
-      .catch(() => {
-        /* no roster ⇒ the column falls back to the raw id / `—` (non-fatal). */
-      });
-    return () => {
-      live = false;
-    };
-  }, [app.transport]);
-
-  const refresh = useCallback(() => {
-    void app.transport
-      .listDeals({ ...(principal ? { principal } : {}) })
-      .then((res) => {
-        setAllDeals(res.deals);
-        setError(null);
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : "failed to load deals"));
-  }, [app.transport, principal]);
+  // Stale-while-revalidate cache keyed on the entitlement principal (scope): booked
+  // deals SURVIVE the workspace unmounting on a tab switch, so returning shows them
+  // instantly (no blank flash) while a background revalidation refreshes them.
+  const {
+    data,
+    isLoading,
+    error: fetchError,
+    refresh,
+  } = useCachedResource<Deal[]>(
+    `deals|${cacheKeyPart(principal)}`,
+    () =>
+      app.transport
+        .listDeals({ ...(principal ? { principal } : {}) })
+        .then((res) => res.deals),
+  );
+  const allDeals = useMemo(() => data ?? [], [data]);
+  const error =
+    fetchError === undefined || fetchError === null
+      ? null
+      : fetchError instanceof Error
+        ? fetchError.message
+        : "failed to load deals";
 
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
 
+  // Refresh on every push Notification (a QUOTE_ACCEPTED mints a deal) — a background
+  // revalidate that keeps the current rows visible rather than clearing the table.
   useEffect(() => {
-    refreshRef.current();
     const dispose = app.transport.streamNotifications(undefined, () => refreshRef.current());
     return dispose;
   }, [app.transport]);
@@ -334,7 +346,10 @@ export function DealsBlotterWorkspace(): React.ReactElement {
     (d: Deal) => dealSearchText(d, riskBookNames),
     [riskBookNames],
   );
-  const { query, setQuery, filtered, shown, total } = useTableFilter(deals, searchText);
+  const { query, setQuery, filtered, shown, total } = useTableFilter(deals, searchText, {
+    query: ui.query,
+    setQuery: (q) => setUi({ query: q }),
+  });
 
   const isOffline = !app.transport.label.startsWith("live");
   const totalNotional = deals.reduce((acc, d) => acc + d.notional, 0);
@@ -378,7 +393,9 @@ export function DealsBlotterWorkspace(): React.ReactElement {
             {error}
           </p>
         )}
-        {deals.length === 0 ? (
+        {isLoading ? (
+          <TableSkeleton label="Loading deals…" />
+        ) : deals.length === 0 ? (
           <p className={styles.empty}>
             {activeAsset === "fixed_income"
               ? "No deals yet — accept a quote in the Quoting workspace to book one."

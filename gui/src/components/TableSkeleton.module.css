@@ -1,0 +1,50 @@
+/* TableSkeleton — shimmer placeholder rows for a table's first load. Theme-aware
+ * via the shared surface tokens; motion-safe (the shimmer is disabled under
+ * prefers-reduced-motion, leaving a static muted bar). */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 4px;
+}
+
+.row {
+  height: 18px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--surface-2, rgba(128, 128, 128, 0.12)) 25%,
+    var(--surface-3, rgba(128, 128, 128, 0.22)) 37%,
+    var(--surface-2, rgba(128, 128, 128, 0.12)) 63%
+  );
+  background-size: 400% 100%;
+  animation: tableSkeletonShimmer 1.4s ease-in-out infinite;
+}
+
+/* Progressively narrower rows read as tabular content rather than solid blocks. */
+.row:nth-child(3n) {
+  width: 82%;
+}
+.row:nth-child(3n + 1) {
+  width: 94%;
+}
+.row:nth-child(3n + 2) {
+  width: 88%;
+}
+
+@keyframes tableSkeletonShimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row {
+    animation: none;
+    background: var(--surface-2, rgba(128, 128, 128, 0.14));
+  }
+}

@@ -36,12 +36,19 @@ export type TableFilter<T> = {
  * @param rows the table's rows, already ordered/grouped by the caller
  * @param toSearchText projects a row to the concatenated text to match against
  *   (instrument, counterparty, side, state, tenor, id, …)
+ * @param controlled an OPTIONAL externally-owned `[query, setQuery]` pair — pass a
+ *   value from `useTableUiState` so the search text SURVIVES the workspace
+ *   unmounting on a tab switch and is restored on return. Omit it (the default) to
+ *   keep the query in the hook's own local state (the prior behaviour, unchanged).
  */
 export function useTableFilter<T>(
   rows: readonly T[],
   toSearchText: (row: T) => string,
+  controlled?: { query: string; setQuery: (query: string) => void },
 ): TableFilter<T> {
-  const [query, setQuery] = useState("");
+  const [localQuery, setLocalQuery] = useState("");
+  const query = controlled ? controlled.query : localQuery;
+  const setQuery = controlled ? controlled.setQuery : setLocalQuery;
 
   // Read the projection through a ref so an inline arrow at the call site does
   // not change the memo's dependency identity every render.

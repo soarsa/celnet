@@ -7,6 +7,20 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
+import { __resetCachedResourceStore } from "../src/hooks/useCachedResource";
+import { __resetTableUiStore } from "../src/hooks/useTableUiState";
+
+/**
+ * The GUI's stale-while-revalidate cache (`useCachedResource`) and per-table UI-state
+ * store (`useTableUiState`) are MODULE-LEVEL by design — they survive component
+ * unmount so a table's data/sort/filter persist across a tab switch. Under the test
+ * runner that persistence would leak state between test cases (a prior test's rows or
+ * selection bleeding into the next), so reset both stores after every test.
+ */
+afterEach(() => {
+  __resetCachedResourceStore();
+  __resetTableUiStore();
+});
 
 /**
  * jsdom does not implement `ResizeObserver` (the layout engine that backs it is

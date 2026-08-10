@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
+import { TableSkeleton } from "../components/TableSkeleton";
 import type {
   AggregatedBookDesc,
   AggregatedBookSpec,
@@ -33,6 +34,8 @@ import type {
   FixConnection,
 } from "../data/contract";
 import { useAggregatedBook } from "../hooks/useAggregatedBook";
+import { useCachedResource } from "../hooks/useCachedResource";
+import { useTableUiState } from "../hooks/useTableUiState";
 import { useSettings } from "../hooks/useSettings";
 import { AggregationPanel } from "./AggregationPanel";
 import { useReferenceData } from "../hooks/useReferenceData";
@@ -215,9 +218,6 @@ export function AggregatedBookWorkspace(): React.ReactElement {
   const app = useApp();
   const { auth } = app;
 
-  const [books, setBooks] = useState<AggregatedBookDesc[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // "Manage" mode edits the book roster + per-book tiering right here under Fixed
   // Income. The View composite is a trader read (any FI viewer), but the Manage panel
@@ -225,41 +225,54 @@ export function AggregatedBookWorkspace(): React.ReactElement {
   // ops, distinct from super-admin — docs/PERMISSIONS-GRANULAR-REVIEW.md §4); admin
   // holds it via grant-all. A user without it never sees the Manage toggle.
   const canManageLiquidity = auth.can("manage_liquidity", "fixed_income");
-  const [mode, setMode] = useState<"view" | "manage">("view");
   const [connections, setConnections] = useState<FixConnection[]>([]);
   const [manageError, setManageError] = useState<string | null>(null);
 
   const signedIn = auth.user !== undefined && auth.user !== null;
 
-  // Load (and reload after an admin mutation) the roster of defined books — any
-  // authenticated user may list them. A deterministic default selection lands on
-  // the first ENABLED book; an existing selection is preserved when still present.
-  const reloadBooks = useCallback(async (): Promise<void> => {
-    const list = await app.transport.listAggregatedBooks();
-    setBooks(list);
-    setLoadError(null);
-    setSelectedId((prev) => {
-      if (prev && list.some((b) => b.id === prev)) return prev;
-      const firstEnabled = list.find((b) => b.enabled) ?? list[0];
-      return firstEnabled ? firstEnabled.id : null;
-    });
-  }, [app.transport]);
+  // The selected book + View/Manage mode are persisted so they SURVIVE a tab switch
+  // (the workspace unmounting) and are restored on return.
+  const [ui, setUi] = useTableUiState<{ selectedId: string | null; mode: "view" | "manage" }>(
+    "fi-agg-book",
+    { selectedId: null, mode: "view" },
+  );
+  const selectedId = ui.selectedId;
+  const setSelectedId = useCallback((id: string | null) => setUi({ selectedId: id }), [setUi]);
+  const mode = canManageLiquidity ? ui.mode : "view";
+  const setMode = useCallback((m: "view" | "manage") => setUi({ mode: m }), [setUi]);
 
+  // Stale-while-revalidate cache for the defined-book roster (any authenticated user
+  // may list them): the roster SURVIVES the workspace unmounting, so returning shows
+  // the selector instantly. A mutation revalidates via `reloadBooks` (a background
+  // refresh). The live composite for the selected book is a separate PUSH line
+  // (`useAggregatedBook`) that re-subscribes on mount.
+  const {
+    data: booksData,
+    isLoading: booksLoading,
+    error: booksError,
+    refresh: reloadBooks,
+  } = useCachedResource<AggregatedBookDesc[]>(
+    "aggBooks",
+    () => app.transport.listAggregatedBooks(),
+    { enabled: signedIn },
+  );
+  const books = useMemo(() => booksData ?? [], [booksData]);
+  const loadError =
+    booksError === undefined || booksError === null
+      ? null
+      : booksError instanceof Error
+        ? booksError.message
+        : "failed to load aggregated books";
+
+  // Reconcile the selection against the loaded roster: keep a still-present selection,
+  // else land deterministically on the first ENABLED book (else the first / none).
   useEffect(() => {
-    if (!signedIn) {
-      setBooks([]);
-      setSelectedId(null);
-      return;
-    }
-    let cancelled = false;
-    void reloadBooks().catch((e: unknown) => {
-      if (cancelled) return;
-      setLoadError(e instanceof Error ? e.message : "failed to load aggregated books");
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [reloadBooks, signedIn]);
+    if (!signedIn || books.length === 0) return;
+    if (selectedId && books.some((b) => b.id === selectedId)) return;
+    const firstEnabled = books.find((b) => b.enabled) ?? books[0];
+    const next = firstEnabled ? firstEnabled.id : null;
+    if (next !== selectedId) setSelectedId(next);
+  }, [books, signedIn, selectedId, setSelectedId]);
 
   // The managed FIX-connection registry feeds the Manage editor's member candidates
   // — an admin-only list, so it is fetched ONLY for admins (a non-admin never issues
@@ -297,7 +310,7 @@ export function AggregatedBookWorkspace(): React.ReactElement {
   const createBook = useCallback(
     async (spec: AggregatedBookSpec): Promise<AggregatedBookDesc> => {
       const created = await app.transport.createAggregatedBook(spec);
-      await reloadBooks();
+      reloadBooks(); // background revalidate the roster (keeps the View selector in sync)
       return created;
     },
     [app.transport, reloadBooks],
@@ -305,7 +318,7 @@ export function AggregatedBookWorkspace(): React.ReactElement {
   const updateBook = useCallback(
     async (id: string, spec: AggregatedBookSpec): Promise<AggregatedBookDesc> => {
       const updated = await app.transport.updateAggregatedBook(id, spec);
-      await reloadBooks();
+      reloadBooks();
       return updated;
     },
     [app.transport, reloadBooks],
@@ -313,7 +326,7 @@ export function AggregatedBookWorkspace(): React.ReactElement {
   const deleteBook = useCallback(
     async (id: string): Promise<unknown> => {
       const ok = await app.transport.deleteAggregatedBook(id);
-      await reloadBooks();
+      reloadBooks();
       return ok;
     },
     [app.transport, reloadBooks],
@@ -467,7 +480,9 @@ export function AggregatedBookWorkspace(): React.ReactElement {
         <>
           {loadError && <p className={styles.banner}>{loadError}</p>}
 
-          {books.length === 0 ? (
+          {booksLoading ? (
+            <TableSkeleton rows={3} label="Loading aggregated books…" />
+          ) : books.length === 0 ? (
             <div className={styles.empty}>
               No aggregated books are defined.{" "}
               {canManageLiquidity ? (

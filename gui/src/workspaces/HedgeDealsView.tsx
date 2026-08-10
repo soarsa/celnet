@@ -15,12 +15,15 @@
  * hedge ledger, not a per-deal join. Numbers are right-aligned + tabular so they line
  * up; DV01-family amounts read in the shared compact units. Theme-aware via tokens.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { useApp } from "../app/AppContext";
 import { Panel } from "../components/Panel";
 import { TableSearch } from "../components/TableSearch";
+import { TableSkeleton } from "../components/TableSkeleton";
 import { useTableFilter } from "../hooks/useTableFilter";
+import { useCachedResource } from "../hooks/useCachedResource";
+import { useTableUiState } from "../hooks/useTableUiState";
 import { fmtCompact, fmtRate } from "../lib/format";
 import { describeExitAction, isExternalExitAction } from "../lib/hedgeExit";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
@@ -88,36 +91,49 @@ export function HedgeDealsView(): React.ReactElement {
   const app = useApp();
   const canView = app.auth.can("hedge", "fixed_income");
 
-  const [rows, setRows] = useState<HedgeProvenance[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  // Persisted table UI state: the "show internalised" toggle and the search query
+  // survive a tab switch (the workspace unmounting) and are restored on return.
+  const [ui, setUi] = useTableUiState("fi-hedge-deals", {
+    showInternalised: false,
+    query: "",
+  });
   // The hedge desk is hedging-only by default: internalised (warehouse / cross-internal
   // / skew / escalate) decisions are hidden unless the trader opts to audit them.
-  const [showInternalised, setShowInternalised] = useState(false);
+  const showInternalised = ui.showInternalised;
 
-  const refetch = useCallback(() => {
-    void app.transport
-      .listHedgeProvenance()
-      .then((p) => {
-        setRows(p);
-        setError(null);
-      })
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : "failed to load hedge provenance"),
-      );
-  }, [app.transport]);
+  // Stale-while-revalidate cache: the fired-hedge ledger SURVIVES the workspace
+  // unmounting on a tab switch, so returning to it shows the rows instantly (no blank
+  // flash) while a background revalidation refreshes them. Cache MISS shows a skeleton.
+  const {
+    data,
+    isLoading,
+    error: fetchError,
+    refresh,
+  } = useCachedResource<HedgeProvenance[]>(
+    "hedgeProvenance",
+    () => app.transport.listHedgeProvenance(),
+    { enabled: canView },
+  );
+  const rows = useMemo(() => data ?? [], [data]);
+  const error =
+    fetchError === undefined || fetchError === null
+      ? null
+      : fetchError instanceof Error
+        ? fetchError.message
+        : "failed to load hedge provenance";
 
-  const refetchRef = useRef(refetch);
-  refetchRef.current = refetch;
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
 
-  // Load once and refetch on each live hedge-intent tick (a fire appends provenance),
-  // mirroring the Hedging monitor — the ledger tracks fires without its own poll.
+  // Refresh on each live hedge-intent tick (a fire appends provenance), mirroring the
+  // Hedging monitor — a background revalidate that keeps the current rows visible
+  // rather than a raw refetch that would clear the table.
   useEffect(() => {
     if (!canView) return;
-    refetchRef.current();
     const stream = app.transport.streamHedgeIntents;
     const dispose =
       typeof stream === "function"
-        ? stream.call(app.transport, () => refetchRef.current())
+        ? stream.call(app.transport, () => refreshRef.current())
         : undefined;
     return () => dispose?.();
   }, [app.transport, canView]);
@@ -129,7 +145,11 @@ export function HedgeDealsView(): React.ReactElement {
     () => (showInternalised ? sorted : sorted.filter(isExternalHedge)),
     [sorted, showInternalised],
   );
-  const { query, setQuery, filtered, shown, total } = useTableFilter(visible, hedgeSearchText);
+  const { query, setQuery, filtered, shown, total } = useTableFilter(
+    visible,
+    hedgeSearchText,
+    { query: ui.query, setQuery: (q) => setUi({ query: q }) },
+  );
 
   const isOffline = !app.transport.label.startsWith("live");
   // The "external" total reflects the CURRENTLY-VISIBLE set (the filtered desk view).
@@ -160,7 +180,7 @@ export function HedgeDealsView(): React.ReactElement {
               type="checkbox"
               checked={showInternalised}
               data-testid="hedge-show-internalised"
-              onChange={(e) => setShowInternalised(e.target.checked)}
+              onChange={(e) => setUi({ showInternalised: e.target.checked })}
             />
             <span>
               Show internalised{internalisedCount > 0 ? ` (${internalisedCount})` : ""}
@@ -176,7 +196,9 @@ export function HedgeDealsView(): React.ReactElement {
             {error}
           </p>
         )}
-        {visible.length === 0 ? (
+        {isLoading ? (
+          <TableSkeleton label="Loading hedge deals…" />
+        ) : visible.length === 0 ? (
           <p className={styles.empty}>
             {rows.length === 0
               ? "No fired hedges yet — as the auto-hedge engine sheds warehoused risk, each external execution (the LP/composite we hit, its price, the amount) appears here."
