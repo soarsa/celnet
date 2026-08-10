@@ -1277,6 +1277,21 @@ impl RatesPositionStore {
             }
             None => self.book_net_dv01(book),
         };
+        // The signed FACE NOTIONAL over the SAME scope (subtree under a `Bucket` policy, else
+        // the fill's own book) — a DISTINCT measure from `book_net_dv01` (notional vs. PV01;
+        // see [`rates_signed_notional`] vs. [`rates_linear_exposure`]). This is the operand a
+        // hedge rule's `NetNotional` / `NetDelta` condition compares against, so such a rule
+        // measures true face notional and NOT the DV01 proxy. It never re-scales the DV01-based
+        // warehouse cap: the default warehouse threshold's metric is `Dv01`, so the RAG band /
+        // overflow / sizing keep reading `book_net_dv01` below.
+        let book_net_notional = match &bucket_root {
+            Some(root) => {
+                let empty = Vec::new();
+                let desc = policy.book_descendants.get(root).unwrap_or(&empty);
+                self.subtree_net_notional(root, desc)
+            }
+            None => self.book_net_notional(book),
+        };
         let fill_dv01 = rates_linear_exposure(fill).abs();
 
         // The price-tolerance verdict: did the desk capture enough edge to warehouse this fill?
@@ -1299,11 +1314,18 @@ impl RatesPositionStore {
             // `counterparty == "X"` back-to-backs a given client's flow (a property of the
             // incoming fill, not a per-counterparty net position).
             counterparty: attribution.counterparty.clone(),
+            // `net_dv01` and `net_notional` are two DISTINCT, honestly-different risk measures
+            // of the SAME scope, NOT one mirrored onto the other:
+            //  - `net_dv01`      = signed DV01 (linear PV01 proxy) — the warehouse-cap basis the
+            //    default `Dv01`-metric threshold classifies (RAG band / overflow / sizing).
+            //  - `net_notional`  = signed face notional — the operand a `NetNotional`/`NetDelta`
+            //    rule CONDITION compares against, so a trader's "net notional > 1M" rule fires on
+            //    true notional (a two-way rates book nets to low-thousands DV01 but tens of
+            //    millions face — mirroring DV01 here would make such a rule never fire).
+            // A threshold whose metric IS explicitly `NetNotional`/`NetDelta` then measures the
+            // cap against `net_notional` too (the trader owns denominating that cap in notional).
             net_dv01: book_net_dv01,
-            // The rates warehouse budget is DV01-based; mirror it onto `net_notional` so a
-            // threshold configured with a non-DV01 metric still classifies the SAME magnitude
-            // against the cap (RAG classification depends only on `|exposure| / cap`).
-            net_notional: book_net_dv01,
+            net_notional: book_net_notional,
             breached: wh.breached(book_net_dv01),
             threshold: wh.cap,
             utilization: wh.utilization(book_net_dv01),
@@ -1616,6 +1638,32 @@ impl RatesPositionStore {
         let mut sum = self.book_net_dv01(root);
         for d in descendants {
             sum += self.book_net_dv01(d);
+        }
+        sum
+    }
+
+    /// The routed book's signed net FACE NOTIONAL over the positions currently stamped into
+    /// it — the operand a hedge rule's `NetNotional` / `NetDelta` condition measures against
+    /// (a DISTINCT measure from [`Self::book_net_dv01`]: notional vs. PV01;
+    /// [`rates_signed_notional`] signs by trade direction, [`rates_linear_exposure`] by IR
+    /// duration). Own positions only, exactly mirroring the DV01 method's scope + locking.
+    #[must_use]
+    fn book_net_notional(&self, book: &str) -> f64 {
+        self.positions_in_risk_book(book)
+            .iter()
+            .map(rates_signed_notional)
+            .sum()
+    }
+
+    /// The **subtree** signed net face notional of a `Bucket` policy: the bucket root's own
+    /// plus every descendant book's, summed — the notional analogue of
+    /// [`Self::subtree_net_dv01`] (same primed-descendant scope, book-local per node), used
+    /// as the `NetNotional` / `NetDelta` operand for a bucket-scoped hedge decision (§5).
+    #[must_use]
+    fn subtree_net_notional(&self, root: &str, descendants: &[String]) -> f64 {
+        let mut sum = self.book_net_notional(root);
+        for d in descendants {
+            sum += self.book_net_notional(d);
         }
         sum
     }
@@ -2301,6 +2349,70 @@ pub(crate) mod tests {
         );
     }
 
+    /// A flexible OIS position constructor (explicit tenor / notional / side) — the
+    /// notional-vs-DV01 divergence tests need a large notional at a SHORT tenor, which the
+    /// fixed `position` helper (5y / 10mm / Buy) cannot express. `entity` is fixed at 1.
+    pub(crate) fn ois(
+        id: u64,
+        book: u32,
+        tenor_years: u32,
+        notional: f64,
+        side: Side,
+    ) -> RatesPosition {
+        RatesPosition {
+            position_id: id,
+            entity: 1,
+            book,
+            instrument: Some(RatesInstrument {
+                instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
+                    tenor_years,
+                    fixed_rate: 0.04,
+                    notional,
+                    side: side as i32,
+                })),
+            }),
+        }
+    }
+
+    /// `book_net_notional` / `subtree_net_notional` sum each position's SIGNED FACE NOTIONAL
+    /// ([`rates_signed_notional`]): a mixed buy/sell book nets by direction, a one-directional
+    /// book accumulates, and a subtree rolls the root + descendants — the notional analogue of
+    /// `subtree_net_dv01`, and the operand a `NetNotional` hedge rule now measures.
+    #[test]
+    fn book_and_subtree_net_notional_sum_signed_notional() {
+        let store = RatesPositionStore::new();
+        // Mixed buy/sell into the root book NETS by signed notional: +10mm − 4mm = +6mm.
+        store
+            .book_into_risk_book(ois(0, 10, 5, 10_000_000.0, Side::Buy), "NB")
+            .expect("buy books");
+        store
+            .book_into_risk_book(ois(0, 10, 5, 4_000_000.0, Side::Sell), "NB")
+            .expect("sell books");
+        assert!(
+            (store.book_net_notional("NB") - 6_000_000.0).abs() < 1e-6,
+            "mixed buy/sell nets: +10mm − 4mm = +6mm ({})",
+            store.book_net_notional("NB")
+        );
+        // A one-directional child book ACCUMULATES: +15mm + 10mm = +25mm.
+        store
+            .book_into_risk_book(ois(0, 11, 2, 15_000_000.0, Side::Buy), "NB-EUR")
+            .expect("child leg 1 books");
+        store
+            .book_into_risk_book(ois(0, 11, 2, 10_000_000.0, Side::Buy), "NB-EUR")
+            .expect("child leg 2 books");
+        assert!(
+            (store.book_net_notional("NB-EUR") - 25_000_000.0).abs() < 1e-6,
+            "one-directional accumulates: +15mm + 10mm = +25mm ({})",
+            store.book_net_notional("NB-EUR")
+        );
+        // Subtree = root (+6mm) + child (+25mm) = +31mm.
+        let sub = store.subtree_net_notional("NB", &["NB-EUR".to_owned()]);
+        assert!(
+            (sub - 31_000_000.0).abs() < 1e-6,
+            "subtree net notional = root + child = +31mm ({sub})"
+        );
+    }
+
     /// A zero-id booking is assigned a fresh monotonic id; a snapshot reports the
     /// book ascending by id.
     #[test]
@@ -2850,6 +2962,146 @@ pub(crate) mod tests {
         assert_eq!(prov.external_dv01, 0.0);
         assert!((prov.edge_bps - 5.0).abs() < 1e-6);
         assert_eq!(prov.hedge_band, "green");
+    }
+
+    /// REGRESSION (the notional-operand fix): a book whose signed FACE NOTIONAL is large
+    /// (+50mm) while its signed DV01 is TINY (+5,000 = 50mm · 1y · 1bp). A hedge rule whose
+    /// CONDITION is `NetNotional > 1mm` must FIRE an external shed — it measures true face
+    /// notional (50mm > 1mm), NOT the DV01 proxy (which is 5,000 < 1mm and would never fire).
+    /// Simultaneously: the default DV01 warehouse RAG stays GREEN (util 5,000 / 100,000 =
+    /// 0.05), and the SAME book under a `NetDv01 > 1mm` rule does NOT fire (5,000 < 1mm).
+    /// Before the fix `ctx.net_notional` mirrored `book_net_dv01`, so the `NetNotional` rule
+    /// compared against 5,000 and never fired — the "0 external hedges on 252mm gross" bug.
+    #[test]
+    fn net_notional_condition_fires_on_true_face_notional_not_dv01() {
+        use celnet_hedge_routing::{
+            ExecStyle, ExitAction, HedgeField, HedgeGraph, HedgeNode, HedgeSize,
+        };
+        use celnet_risk_routing::{RouteOp, RouteValue};
+        use std::collections::BTreeMap;
+
+        // `IF <field> > 1mm THEN SubmitMarketOrder(Full) ELSE Warehouse`.
+        let rule_gt_1mm = |field: HedgeField| HedgeGraph {
+            entry: 0,
+            nodes: BTreeMap::from([
+                (
+                    0u32,
+                    HedgeNode::Condition {
+                        field,
+                        op: RouteOp::Gt,
+                        value: RouteValue::Num(1_000_000.0),
+                        on_true: 2,
+                        on_false: 1,
+                    },
+                ),
+                (
+                    1u32,
+                    HedgeNode::Action {
+                        exit: ExitAction::Warehouse,
+                    },
+                ),
+                (
+                    2u32,
+                    HedgeNode::Action {
+                        exit: ExitAction::SubmitMarketOrder {
+                            size: HedgeSize::Full,
+                            style: ExecStyle::Immediate,
+                        },
+                    },
+                ),
+            ]),
+        };
+
+        // A 1y 50mm pay-fixed OIS: +50mm signed notional, but only +5,000 signed DV01.
+        // Deal AT the mid ⇒ 0 edge, below the 0.5bp floor ⇒ below tolerance, so the combine
+        // hands the whole fill to the graph's OWN resolved action (external ⇒ shed).
+
+        // (a) A `NetNotional` rule FIRES external on the true 50mm notional.
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        store.set_hedge_policy(Some(RatesHedgePolicy {
+            graph: Some(rule_gt_1mm(HedgeField::NetNotional)),
+            ..hedge_policy("wh", 100_000.0, 0.5)
+        }));
+        let booked = store
+            .book_with_routing(
+                ois(0, 10, 1, 50_000_000.0, Side::Buy),
+                priced_attribution(0.0405, 0.0405),
+            )
+            .expect("books");
+        let prov = store
+            .internalise_of(booked.position_id)
+            .expect("a priced fill under a hedge policy is stamped");
+        assert!(
+            prov.external_dv01 > 0.0,
+            "NetNotional > 1mm fires on the true 50mm face notional (external_dv01 {})",
+            prov.external_dv01
+        );
+        assert!(
+            !prov.internalised,
+            "a NetNotional-fired external shed is not warehoused"
+        );
+        assert_eq!(
+            prov.hedge_band, "green",
+            "the DV01 warehouse RAG is green — the 50mm notional does not touch the DV01 band"
+        );
+
+        // (b) The SAME book under a `NetDv01 > 1mm` rule does NOT fire (5,000 < 1mm).
+        let store_dv01 = RatesPositionStore::new();
+        store_dv01.set_routing(Some(single_book_graph("wh")));
+        store_dv01.set_hedge_policy(Some(RatesHedgePolicy {
+            graph: Some(rule_gt_1mm(HedgeField::NetDv01)),
+            ..hedge_policy("wh", 100_000.0, 0.5)
+        }));
+        let booked_dv01 = store_dv01
+            .book_with_routing(
+                ois(0, 10, 1, 50_000_000.0, Side::Buy),
+                priced_attribution(0.0405, 0.0405),
+            )
+            .expect("books");
+        let prov_dv01 = store_dv01
+            .internalise_of(booked_dv01.position_id)
+            .expect("stamped");
+        assert_eq!(
+            prov_dv01.external_dv01, 0.0,
+            "NetDv01 > 1mm does NOT fire: the book's 5,000 DV01 is far under 1mm"
+        );
+        assert!(
+            prov_dv01.internalised,
+            "the DV01-metric rule warehouses this tiny-DV01 book"
+        );
+    }
+
+    /// The DV01 warehouse behaviour is UNCHANGED by the notional-operand fix: the default
+    /// policy (which branches on `breached`, a DV01-band signal) warehouses a +50mm-notional
+    /// but +5,000-DV01 fill GREEN and fully internalises it — the huge net notional never
+    /// leaks into the DV01 band / overflow / sizing. `net_risk` for the default `Dv01`
+    /// threshold stays `net_dv01`.
+    #[test]
+    fn default_dv01_warehouse_unchanged_by_large_notional() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        store.set_hedge_policy(Some(hedge_policy("wh", 100_000.0, 0.5)));
+        // Pay-fixed 4.00% vs 4.05% fair mid ⇒ +5bp edge (within tolerance); DV01 5,000 far
+        // under the 100k cap ⇒ green ⇒ fully warehoused, nothing shed.
+        let booked = store
+            .book_with_routing(
+                ois(0, 10, 1, 50_000_000.0, Side::Buy),
+                priced_attribution(0.0400, 0.0405),
+            )
+            .expect("books");
+        let prov = store.internalise_of(booked.position_id).expect("stamped");
+        assert!(prov.within_tolerance);
+        assert!(
+            prov.internalised,
+            "under the DV01 cap + making money ⇒ warehoused, regardless of the 50mm notional"
+        );
+        assert_eq!(prov.external_dv01, 0.0);
+        assert!((prov.internal_dv01 - 5000.0).abs() < 1e-6);
+        assert_eq!(
+            prov.hedge_band, "green",
+            "DV01 util 0.05 is green — the large notional does not perturb the DV01 warehouse"
+        );
     }
 
     /// A fill classified B2B (below the min-edge tolerance) under an EXTERNAL shed policy emits a
