@@ -1254,6 +1254,10 @@ impl RatesPositionStore {
             return;
         };
         let instrument = internalise_instrument_label(fill);
+        // The tradeable identity behind that family label, when the fill resolves one. Kept
+        // SEPARATE from `instrument` because thresholds/provenance are family-scoped while
+        // street execution is security-scoped — see `hedge_execution_instrument`.
+        let execution_instrument = hedge_execution_instrument(fill);
         // Resolve the most-specific warehouse threshold for this fill (instrument > book >
         // desk). No threshold configured for ANY of the fill's scopes — e.g. it routed into an
         // operator-defined risk book the firm never bound a warehouse cap to — falls back to
@@ -1307,6 +1311,7 @@ impl RatesPositionStore {
             .unwrap_or(0);
         let ctx = HedgeContext {
             instrument_id: instrument,
+            execution_instrument_id: execution_instrument,
             ccy: attribution.ccy.clone(),
             book: book.to_owned(),
             // The originating counterparty of THIS fill — the same party id the Deal /
@@ -1522,7 +1527,15 @@ impl RatesPositionStore {
         // appending a second row — otherwise a fired hedge would double-count in the blotter.
         if external_dv01 > 0.0 {
             let req = crate::services::auto_hedge::ExternalHedgeRequest {
-                instrument: &ctx.instrument_id,
+                // The LP panel is asked for the TRADEABLE security, falling back to the family
+                // label only when the cell resolves none. Asking for a family ("BOND") can
+                // never match an aggregated-book instrument, so before this the panel always
+                // missed and every shed backstopped to the synthetic composite — which in turn
+                // left the street-side league table with no fill to attribute.
+                instrument: ctx
+                    .execution_instrument_id
+                    .as_deref()
+                    .unwrap_or(&ctx.instrument_id),
                 net_risk: book_net_dv01,
                 size: external_dv01,
                 mid,
@@ -1564,7 +1577,13 @@ impl RatesPositionStore {
                 && let Some(lp) = exec.lp_won.as_deref()
                 && let Some(log) = self.hedge_flow.get()
             {
-                log.record_fill(lp, ctx.instrument_id.clone(), exec.filled, now);
+                // Keyed on the SECURITY actually dealt when the cell resolved one (that is
+                // what the LP quoted), falling back to the family label otherwise.
+                let attributed = ctx
+                    .execution_instrument_id
+                    .clone()
+                    .unwrap_or_else(|| ctx.instrument_id.clone());
+                log.record_fill(lp, attributed, exec.filled, now);
             }
             // Build the REALISED execution record: the graph's own (external) action + the fill's
             // real economics, keyed by `parent_position_id` for deal reconciliation. It SUPERSEDES
@@ -1831,6 +1850,32 @@ fn fill_side_and_quote_kind(fill: &RatesPosition) -> Option<(Side, QuoteKind)> {
 
 /// A short instrument-family label (`OIS` / `IRS` / `FRA` / `BOND`) for the internalise
 /// decision's [`HedgeContext`] + instrument-scoped threshold match. Empty for a missing arm.
+/// The **executable security id** for a fill, when it has one — the canonical
+/// `BondInstrument.instrument_id` the reference registry, the wire and the LP feed all share
+/// (the same id that names an aggregated-book instrument).
+///
+/// This is what makes a rates shed reachable on the street. [`internalise_instrument_label`]
+/// deliberately returns the product FAMILY ("BOND"/"OIS"/…) because warehouse thresholds and
+/// provenance are scoped by family — but a family label is not tradeable, so pricing the LP
+/// lookup off it can only ever miss and silently backstop the shed to the synthetic composite.
+///
+/// `None` for an OIS/IRS/FRA fill (a rates cell genuinely carries no security-master id) and
+/// for a bond whose `instrument_id` never resolved against refdata — empty means unresolved
+/// on the wire and is never fabricated into an id (guardrail 2). The executor then falls back
+/// to the family label, preserving the previous behaviour exactly.
+fn hedge_execution_instrument(fill: &RatesPosition) -> Option<String> {
+    let arm = fill
+        .instrument
+        .as_ref()
+        .and_then(|i| i.instrument.as_ref())?;
+    match arm {
+        rates_instrument::Instrument::Bond(bond) if !bond.instrument_id.is_empty() => {
+            Some(bond.instrument_id.clone())
+        }
+        _ => None,
+    }
+}
+
 fn internalise_instrument_label(fill: &RatesPosition) -> String {
     let Some(arm) = fill.instrument.as_ref().and_then(|i| i.instrument.as_ref()) else {
         return String::new();
@@ -2618,6 +2663,43 @@ pub(crate) mod tests {
                 })),
             }),
         }
+    }
+
+    /// `hedge_execution_instrument` — the TRADEABLE security behind the family label, which is
+    /// what makes a rates shed reachable on the LP panel at all. It must resolve ONLY when the
+    /// fill genuinely carries a security-master id, and must never disturb the family label the
+    /// warehouse thresholds and provenance are scoped by.
+    #[test]
+    fn hedge_execution_instrument_resolves_only_a_bond_carrying_a_real_security_id() {
+        // A bond whose refdata id resolved ⇒ that id is what the LP panel gets asked for.
+        let mut resolved = bond_position(1, 100.0, Side::Buy);
+        if let Some(ri) = resolved.instrument.as_mut()
+            && let Some(rates_instrument::Instrument::Bond(bond)) = ri.instrument.as_mut()
+        {
+            bond.instrument_id = "US91282CJL6".to_owned();
+        }
+        assert_eq!(
+            hedge_execution_instrument(&resolved).as_deref(),
+            Some("US91282CJL6"),
+        );
+        // …and the family label is UNCHANGED, so instrument-scoped warehouse thresholds and the
+        // provenance blotter keep resolving exactly as before.
+        assert_eq!(internalise_instrument_label(&resolved), "BOND");
+
+        // An UNRESOLVED bond id (empty on the wire) is honestly absent — never fabricated into
+        // an id that would then miss on the panel anyway.
+        let unresolved = bond_position(2, 100.0, Side::Buy);
+        assert_eq!(hedge_execution_instrument(&unresolved), None);
+        assert_eq!(internalise_instrument_label(&unresolved), "BOND");
+
+        // A cell with no instrument arm at all resolves nothing.
+        let bare = RatesPosition {
+            position_id: 3,
+            entity: 1,
+            book: 7,
+            instrument: None,
+        };
+        assert_eq!(hedge_execution_instrument(&bare), None);
     }
 
     /// With a graph installed, a rates fill routes into the resolved risk book; the

@@ -1,0 +1,797 @@
+/*
+ * Mobile status board styling — mobile-first, theme-aware (reuses the Aurora design
+ * tokens so light/dark/high-contrast all inherit), compositor-friendly (transform /
+ * opacity only), touch targets ≥ 44px, safe-area aware, and NEVER horizontally
+ * scrolling the page (wide content clamps or scrolls inside its own container).
+ *
+ * RAG: green → --bid, amber → --warn, red → --danger (all defined + theme-varied in
+ * design/tokens.css), consumed via the shared [data-band] selectors.
+ */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+}
+
+/* --- header ---------------------------------------------------------------- */
+
+/*
+ * Four stacked rows (brand · identity · asset tabs · sub tabs) is a lot of chrome on a
+ * 844px-tall phone, so the header runs TIGHT: a small inter-row gap and slim vertical
+ * padding buy back vertical space for the rows that actually carry risk. Touch targets
+ * inside it stay at their own ≥40px minimums — the density comes from the gaps, never
+ * from shrinking a tap target.
+ */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: calc(env(safe-area-inset-top, 0px) + var(--space-2)) var(--space-4) var(--space-2);
+  padding-left: calc(env(safe-area-inset-left, 0px) + var(--space-4));
+  padding-right: calc(env(safe-area-inset-right, 0px) + var(--space-4));
+  background: var(--bg-raised);
+  border-bottom: var(--hairline);
+  box-shadow: var(--shadow-panel);
+}
+
+.brandRow,
+.identityRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.mark {
+  flex: none;
+}
+
+.wordmark {
+  font-family: var(--font-brand);
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+  font-weight: 600;
+}
+
+.spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
+
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-full);
+  background: var(--text-tertiary);
+}
+.status[data-tone="live"] .statusDot {
+  background: var(--bid);
+  box-shadow: 0 0 0 3px oklch(from var(--bid) l c h / 0.2);
+}
+.status[data-tone="warn"] .statusDot {
+  background: var(--warn);
+}
+.status[data-tone="danger"] .statusDot {
+  background: var(--danger);
+}
+.status[data-tone="live"] {
+  color: var(--bid);
+}
+.status[data-tone="warn"] {
+  color: var(--warn);
+}
+.status[data-tone="danger"] {
+  color: var(--danger);
+}
+
+.iconBtn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: var(--r-md);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: background var(--dur, 120ms) ease;
+}
+.iconBtn:active {
+  background: var(--bg-overlay-solid);
+}
+.iconBtn:focus-visible,
+.textBtn:focus-visible,
+.assetTab:focus-visible,
+.subTab:focus-visible,
+.rowBtn:focus-visible,
+.moreBtn:focus-visible,
+.primaryBtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.identity {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow: hidden;
+}
+.userName {
+  font-weight: 600;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sep {
+  color: var(--text-tertiary);
+}
+.desk {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.textBtn {
+  flex: none;
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border-radius: var(--r-md);
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.textBtn:disabled {
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+}
+
+/* --- segmented tabs -------------------------------------------------------- */
+
+.assetTabs,
+.subTabs {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-1);
+  background: var(--bg-inset);
+  border-radius: var(--r-md);
+}
+
+.assetTab,
+.subTab {
+  flex: 1 1 0;
+  min-height: 40px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur, 120ms) ease, color var(--dur, 120ms) ease;
+  white-space: nowrap;
+}
+.assetTabActive,
+.subTabActive {
+  background: var(--accent);
+  color: var(--bg-base);
+  box-shadow: var(--shadow-panel);
+}
+
+/* --- content scroll area --------------------------------------------------- */
+
+.content {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--space-4);
+  padding-left: calc(env(safe-area-inset-left, 0px) + var(--space-4));
+  padding-right: calc(env(safe-area-inset-right, 0px) + var(--space-4));
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--space-6));
+}
+
+.board {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 100%;
+}
+
+/* --- summary strip (bento stat tiles) -------------------------------------- */
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.statTile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+  border: var(--hairline);
+  min-width: 0;
+}
+.statTile[data-tone="accent"] {
+  border-color: oklch(from var(--accent) l c h / 0.5);
+}
+.statTile[data-tone="danger"] {
+  background: oklch(from var(--danger) l c h / 0.14);
+  border-color: oklch(from var(--danger) l c h / 0.5);
+}
+.statTile[data-tone="amber"] {
+  border-color: oklch(from var(--warn) l c h / 0.5);
+}
+.statTile[data-tone="red"] {
+  background: oklch(from var(--danger) l c h / 0.14);
+  border-color: oklch(from var(--danger) l c h / 0.5);
+}
+.statLabel {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+.statValue {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+.statSub {
+  font-size: 0.9rem;
+  color: var(--text-tertiary);
+}
+
+/* --- risk cards ------------------------------------------------------------ */
+
+.cardList,
+.rowList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  padding-left: var(--space-5);
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+  border: var(--hairline);
+  overflow: hidden;
+}
+/* RAG left edge */
+.card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--bid);
+}
+.card[data-band="amber"]::before {
+  background: var(--warn);
+}
+.card[data-band="red"]::before {
+  background: var(--danger);
+}
+.card[data-breach] {
+  border-color: oklch(from var(--danger) l c h / 0.55);
+  background: oklch(from var(--danger) l c h / 0.08);
+}
+
+.cardTop {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.ragDot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--r-full);
+  background: var(--bid);
+}
+.ragDot[data-band="amber"] {
+  background: var(--warn);
+}
+.ragDot[data-band="red"] {
+  background: var(--danger);
+}
+.cardTitle {
+  flex: 1 1 auto;
+  font-weight: 600;
+  font-size: 0.98rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.cardBadge {
+  flex: none;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px var(--space-3);
+  border-radius: var(--r-full);
+  background: oklch(from var(--bid) l c h / 0.18);
+  color: var(--bid);
+}
+.cardBadge[data-band="amber"] {
+  background: var(--warn);
+  color: #17120a;
+}
+.cardBadge[data-band="red"] {
+  background: var(--danger);
+  color: #fff;
+}
+
+.metricRow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.metric dt {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+}
+.metric dd {
+  margin: 0;
+}
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.utils {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.util {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.utilHead {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 0.72rem;
+}
+.utilMetric {
+  color: var(--text-secondary);
+  text-transform: capitalize;
+}
+.utilRatio {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.utilPct {
+  color: var(--text-tertiary);
+}
+.bar {
+  height: 8px;
+  border-radius: var(--r-full);
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+.barFill {
+  height: 100%;
+  border-radius: var(--r-full);
+  background: var(--bid);
+  transform-origin: left center;
+}
+.barFill[data-band="amber"] {
+  background: var(--warn);
+}
+.barFill[data-band="red"] {
+  background: var(--danger);
+}
+.noLimits {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+}
+
+/* --- blotter rows ---------------------------------------------------------- */
+
+.row {
+  position: relative;
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+  border: var(--hairline);
+  overflow: hidden;
+}
+.rowBtn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 56px;
+  padding: var(--space-3) var(--space-4);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+.rowTime {
+  flex: none;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.rowMain {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.rowTitle {
+  font-weight: 600;
+  font-size: 0.92rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rowSub {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/*
+ * The truncating half of the meta line. Badges beside it (disposition, advisory) keep
+ * their intrinsic width — only the descriptor ellipsises — so a long bond name can
+ * never squeeze a badge out of the row.
+ */
+.rowProduct {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rowSub .inlBadge,
+.rowSub .advisory {
+  flex: none;
+}
+.rowRight {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.rowNotional {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.sideBadge {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px var(--space-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+}
+.sideBadge[data-side="buy"] {
+  background: oklch(from var(--bid) l c h / 0.2);
+  color: var(--bid);
+}
+.sideBadge[data-side="sell"] {
+  background: oklch(from var(--offer) l c h / 0.2);
+  color: var(--offer);
+}
+.advisory {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--warn);
+  border: 1px solid oklch(from var(--warn) l c h / 0.5);
+  border-radius: var(--r-sm);
+  padding: 0 4px;
+}
+
+.inlBadge {
+  font-size: 0.66rem;
+  font-weight: 700;
+  padding: 2px var(--space-2);
+  border-radius: var(--r-sm);
+  background: oklch(from var(--bid) l c h / 0.18);
+  color: var(--bid);
+  text-transform: capitalize;
+}
+.inlBadge[data-band="amber"] {
+  background: var(--warn);
+  color: #17120a;
+}
+.inlBadge[data-band="red"],
+.inlBadge[data-band="breach"] {
+  background: var(--danger);
+  color: #fff;
+}
+.rowDetail {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0 var(--space-4) var(--space-4);
+  border-top: var(--hairline);
+  padding-top: var(--space-3);
+}
+.rowDetail dt {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+}
+.rowDetail dd {
+  margin: 0;
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+.detailWide {
+  grid-column: 1 / -1;
+}
+
+.moreBtn {
+  align-self: center;
+  min-height: 44px;
+  padding: 0 var(--space-5);
+  margin-top: var(--space-2);
+  border-radius: var(--r-full);
+  border: var(--hairline);
+  background: var(--bg-raised);
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* --- empty / error / skeleton --------------------------------------------- */
+
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-5);
+  text-align: center;
+  color: var(--text-secondary);
+}
+.state[data-tone="danger"] {
+  color: var(--danger);
+}
+.stateGlyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-full);
+  background: var(--bg-inset);
+  font-size: 1.4rem;
+}
+.stateText {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.skel {
+  position: relative;
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+.skel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    oklch(1 0 0 / 0.06),
+    transparent
+  );
+  animation: shimmer 1.3s ease-in-out infinite;
+}
+.statTile.skel {
+  height: 76px;
+}
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel::after {
+    animation: none;
+  }
+}
+
+/* --- help / hint bottom sheet ---------------------------------------------- */
+
+.sheetScrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.sheetBackdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: oklch(0 0 0 / 0.5);
+  cursor: pointer;
+}
+.sheet {
+  position: relative;
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5)
+    calc(env(safe-area-inset-bottom, 0px) + var(--space-6));
+  background: var(--bg-raised);
+  border-top-left-radius: var(--r-lg);
+  border-top-right-radius: var(--r-lg);
+  box-shadow: var(--shadow-hud);
+  animation: sheetUp var(--dur-slow, 280ms) cubic-bezier(0.16, 1, 0.3, 1);
+  max-height: 82dvh;
+}
+@keyframes sheetUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet {
+    animation: none;
+  }
+}
+.sheetHandle {
+  align-self: center;
+  width: 40px;
+  height: 4px;
+  border-radius: var(--r-full);
+  background: var(--text-tertiary);
+  opacity: 0.5;
+}
+.sheetTitle {
+  margin: 0;
+  font-family: var(--font-brand);
+  font-size: 1.15rem;
+}
+.sheetBody {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.helpScroll {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.helpSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.helpHeading {
+  margin: 0;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+.dots {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: center;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-full);
+  background: var(--text-tertiary);
+  opacity: 0.4;
+}
+.dot[data-on] {
+  opacity: 1;
+  background: var(--accent);
+  transform: scale(1.15);
+}
+.sheetActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  align-items: center;
+}
+.primaryBtn {
+  min-height: 44px;
+  padding: 0 var(--space-6);
+  border-radius: var(--r-full);
+  border: none;
+  background: var(--accent);
+  color: var(--bg-base);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}

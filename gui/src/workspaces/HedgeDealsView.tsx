@@ -227,7 +227,9 @@ export function HedgeDealsView(): React.ReactElement {
                       <th>Band</th>
                       <th>Action</th>
                       <th>Hedged with</th>
-                      <th>LP panel hit</th>
+                      <th title="The LPs the exit policy made ELIGIBLE for this hedge — not the LPs that quoted or filled. The fill's actual venue is the “Hedged with” column.">
+                        Panel (eligible)
+                      </th>
                       <th className={styles.num}>Internal</th>
                       <th className={styles.num}>External</th>
                       <th className={styles.num}>Residual</th>

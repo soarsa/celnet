@@ -24,6 +24,22 @@ pub struct HedgeContext {
     // ---- identity -----------------------------------------------------------
     /// Instrument identifier / symbol.
     pub instrument_id: String,
+    /// The **executable security** this risk cell can be hedged in, when the cell resolves
+    /// to one — the canonical `instrument_id` shared with the reference registry and the LP
+    /// feed (the same id that names an aggregated-book instrument).
+    ///
+    /// DISTINCT from [`Self::instrument_id`], which for a rates cell is the product FAMILY
+    /// ("BOND"/"OIS"/…) that warehouse thresholds and provenance are scoped by. A family
+    /// label is not tradeable: asking the LP panel for a security called "BOND" can only
+    /// miss, which silently backstops every shed to the synthetic composite and leaves the
+    /// street-side league table with nothing to attribute. The executor therefore prices the
+    /// LP lookup off THIS id when present.
+    ///
+    /// `None` when the cell has no security-master identity (an OIS/IRS/FRA cell, or a bond
+    /// whose id never resolved against refdata) — honestly absent, never fabricated, and the
+    /// executor falls back to the family label exactly as before.
+    #[serde(default)]
+    pub execution_instrument_id: Option<String>,
     /// Currency or pair.
     pub ccy: String,
     /// Product family (vanilla / swap / bond / …).
@@ -113,6 +129,7 @@ impl Default for HedgeContext {
     fn default() -> Self {
         Self {
             instrument_id: String::new(),
+            execution_instrument_id: None,
             ccy: String::new(),
             product: String::new(),
             book: String::new(),
@@ -142,6 +159,7 @@ mod tests {
     fn sample() -> HedgeContext {
         HedgeContext {
             instrument_id: "EURUSD".into(),
+            execution_instrument_id: None,
             ccy: "EUR".into(),
             product: "swap".into(),
             book: "RATES-EUR".into(),

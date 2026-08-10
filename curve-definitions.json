@@ -1,0 +1,84 @@
+{
+  "curves": [
+    {
+      "curve_id": "usd-sofr",
+      "display_name": "USD SOFR",
+      "index_label": "USD-SOFR",
+      "day_count": "ACT/360",
+      "calendar": "US / Modified Following",
+      "interpolation": "log_linear_df",
+      "currency": "USD",
+      "reference_date": [
+        2026,
+        6,
+        25
+      ],
+      "pillars": [
+        {
+          "tenor": {
+            "kind": "years",
+            "value": 1
+          },
+          "par_rate": 0.0432
+        },
+        {
+          "tenor": {
+            "kind": "years",
+            "value": 2
+          },
+          "par_rate": 0.0418
+        },
+        {
+          "tenor": {
+            "kind": "years",
+            "value": 3
+          },
+          "par_rate": 0.0409
+        },
+        {
+          "tenor": {
+            "kind": "years",
+            "value": 5
+          },
+          "par_rate": 0.0405
+        },
+        {
+          "tenor": {
+            "kind": "years",
+            "value": 7
+          },
+          "par_rate": 0.0408
+        },
+        {
+          "tenor": {
+            "kind": "years",
+            "value": 10
+          },
+          "par_rate": 0.0415
+        },
+        {
+          "tenor": {
+            "kind": "years",
+            "value": 15
+          },
+          "par_rate": 0.0421
+        },
+        {
+          "tenor": {
+            "kind": "years",
+            "value": 20
+          },
+          "par_rate": 0.0424
+        },
+        {
+          "tenor": {
+            "kind": "years",
+            "value": 30
+          },
+          "par_rate": 0.0423
+        }
+      ],
+      "primary": true
+    }
+  ]
+}

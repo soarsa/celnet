@@ -19,12 +19,14 @@ import { LoginScreen } from "./app/LoginScreen";
 import { LoginView } from "./app/LoginView";
 import { ReconnectOverlay } from "./app/ReconnectOverlay";
 import { Shell } from "./app/Shell";
+import { MobileStatusApp } from "./app/mobile/MobileStatusApp";
 import { UpdateBanner } from "./app/UpdateBanner";
 import { resolveTransport } from "./data/transportConfig";
 import { resetAndReloadTo, useVersionWatch } from "./data/versionManifest";
 import { useAppearance } from "./design/appearance";
 import { useDensity } from "./design/density";
 import { useConnectionStatus } from "./hooks/useConnectionStatus";
+import { useMobileLayout } from "./hooks/useMobileLayout";
 
 export function App(): React.ReactElement {
   // Initialize the appearance attributes on first paint (Dark default).
@@ -73,7 +75,7 @@ export function App(): React.ReactElement {
       <AuthGate>
         <AcceptanceSeedProvider>
           <HedgeSeedProvider>
-          <Shell />
+          <AppSurface />
           {connection.phase === "reconnecting" && (
           <ReconnectOverlay
             remainingSeconds={connection.remainingSeconds}
@@ -103,4 +105,46 @@ function AuthGate({ children }: { children: React.ReactNode }): React.ReactEleme
   const { auth } = useApp();
   if (!auth.user) return <LoginView />;
   return <>{children}</>;
+}
+
+/**
+ * Pick the app surface for the authenticated session: on a mobile viewport (and not
+ * forced to the desktop), the touch-friendly read-only {@link MobileStatusApp}; on
+ * desktop — or when the trader chose "Use full app" on a phone — the full {@link
+ * Shell}, unchanged. The mobile↔desktop choice lives here (one source of truth) so
+ * the "Use full app" hatch and the "Mobile view" return affordance stay in sync.
+ */
+function AppSurface(): React.ReactElement {
+  const { showMobile, isMobileViewport, forceDesktop, setForceDesktop } = useMobileLayout();
+  if (showMobile) return <MobileStatusApp onUseFullApp={() => setForceDesktop(true)} />;
+  return (
+    <>
+      <Shell />
+      {isMobileViewport && forceDesktop && (
+        <button
+          type="button"
+          onClick={() => setForceDesktop(false)}
+          aria-label="switch back to the mobile status view"
+          style={{
+            position: "fixed",
+            right: "calc(env(safe-area-inset-right, 0px) + 12px)",
+            bottom: "calc(env(safe-area-inset-bottom, 0px) + 12px)",
+            zIndex: 60,
+            minHeight: "44px",
+            padding: "0 16px",
+            borderRadius: "999px",
+            border: "1px solid var(--accent)",
+            background: "var(--accent)",
+            color: "var(--bg-base)",
+            fontSize: "0.85rem",
+            fontWeight: 600,
+            boxShadow: "var(--shadow-float)",
+            cursor: "pointer",
+          }}
+        >
+          ▾ Mobile view
+        </button>
+      )}
+    </>
+  );
 }
