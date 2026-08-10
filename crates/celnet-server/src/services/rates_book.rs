@@ -33,7 +33,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 use crate::services::consensus::{ConsensusHandle, rates_book_key};
 
 use celnet_acceptance::AcceptanceGraph;
-use celnet_hedge_routing::{HedgeContext, HedgeGraph};
+use celnet_hedge_routing::{ExecStyle, ExitAction, HedgeContext, HedgeGraph, HedgeSize};
 use celnet_limits::{
     IncrementalTrade, LimitScope, LimitSpec, LimitTree, NonAdditiveExposure, PreTradeDecision,
     PreTradeResult, ScopePath, pre_trade_check,
@@ -1435,6 +1435,29 @@ impl RatesPositionStore {
                 let _ = self.book_into_risk_book(leg, book);
             }
             if outcome.provenance.is_none() {
+                // The desk shows the action that ACTUALLY executed. Reaching here means the fill
+                // sheds externally (`external_dv01 > 0`) — an over-cap overflow OR a below-min-edge
+                // back-to-back. If the book-band policy graph resolved to an internal hold
+                // (`Warehouse`/`Skew`/`CrossInternal`/`Escalate`), stamp the market back-to-back
+                // that really fired rather than the graph's hold: otherwise the row reads
+                // "Warehouse (hold)" while carrying a live composite hedge, and the hedging-only
+                // desk filter (which keys off `is_external`) wrongly hides a real hedge.
+                let graph_is_external = outcome
+                    .intent
+                    .action
+                    .as_ref()
+                    .and_then(|d| crate::services::auto_hedge::wire::exit_action_from_wire(d).ok())
+                    .is_some_and(|a| a.is_external());
+                let record_action = if graph_is_external {
+                    outcome.intent.action.clone()
+                } else {
+                    Some(crate::services::auto_hedge::wire::exit_action_to_wire(
+                        &ExitAction::SubmitMarketOrder {
+                            size: HedgeSize::Fixed(external_dv01),
+                            style: ExecStyle::Immediate,
+                        },
+                    ))
+                };
                 let execution = HedgeProvenance {
                     hedge_id: String::new(), // minted by `record_execution`
                     book: book.to_owned(),
@@ -1446,7 +1469,7 @@ impl RatesPositionStore {
                     utilization,
                     band: prov.hedge_band.clone(),
                     policy_path: outcome.intent.policy_path.clone(),
-                    action: outcome.intent.action.clone(),
+                    action: record_action,
                     internal_crossed: internal_dv01,
                     external_hedged: exec.filled,
                     residual: exec.residual,
