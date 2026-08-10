@@ -59,7 +59,7 @@ use crate::config::identity::{IdentityStore, RiskBookEdit};
 use crate::services::desk::RfqDeskEdge;
 use crate::services::desk::tests::{edge_with_rates, gate_graph, quote_request};
 use crate::services::rates_book::tests::{
-    hedge_policy, position, priced_attribution, single_book_graph,
+    external_hedge_policy, hedge_policy, position, priced_attribution, single_book_graph,
 };
 use crate::services::rates_book::{RatesPositionStore, RatesRoutingAttribution};
 use crate::services::risk::book_risk::{RiskBookRisk, aggregate_risk_book};
@@ -419,7 +419,9 @@ fn s02_accept_then_back_to_back_thin_edge() {
     let wh = enabled_book(&mut identity, "Warehouse", None);
     let store = RatesPositionStore::new();
     store.set_routing(Some(single_book_graph(&wh)));
-    store.set_hedge_policy(Some(hedge_policy(&wh, 100_000.0, 0.5)));
+    // An EXTERNAL shed policy: a thin fill is genuinely backed-to-back (an INTERNAL-hold policy
+    // would now warehouse it — the wash-book fix, Part A; covered by the store-seam unit tests).
+    store.set_hedge_policy(Some(external_hedge_policy(&wh, 100_000.0, 0.5)));
 
     // Pay-fixed 4.049% vs 4.05% mid → +0.1bp edge = (0.0405 − 0.04049)/1e-4, BELOW the 0.5bp floor.
     let booked = store
@@ -427,7 +429,10 @@ fn s02_accept_then_back_to_back_thin_edge() {
         .expect("books");
     let prov = store.internalise_of(booked.position_id).expect("stamped");
     assert!(!prov.within_tolerance, "0.1bp is below the 0.5bp floor");
-    assert!(!prov.internalised, "a thin fill is not warehoused");
+    assert!(
+        !prov.internalised,
+        "a thin fill under a shed policy is not warehoused"
+    );
     assert_eq!(prov.internal_dv01, 0.0);
     assert!(
         (prov.external_dv01 - 5000.0).abs() < 1e-6,

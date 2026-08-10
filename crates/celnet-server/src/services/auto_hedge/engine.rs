@@ -131,6 +131,37 @@ impl AutoHedgeEngine {
         prov
     }
 
+    /// **Amend** the book-level DECISION record [`Self::evaluate`] just rang (matched by its
+    /// minted `hedge_id`) IN PLACE with the REALISED execution economics, so a fired hedge leaves
+    /// EXACTLY ONE ring record — the pre-execution intent superseded by the real fill (its price /
+    /// mid / signed slippage / winning LP / `parent_position_id`) rather than a duplicate row.
+    /// This is the paired counterpart to `evaluate`'s self-ring on the live rates booking path:
+    /// `evaluate` decides + rings the intent, then the executor amends that same record with the
+    /// realised fill, keeping the `hedge_id` stable (so the event-trace `HedgeFired` stage, which
+    /// carries the decision id, still resolves to the now-realised record).
+    ///
+    /// `realised.hedge_id` is overwritten with `hedge_id`, so the caller need not carry it. If the
+    /// decision record has already aged out of the bounded ring (only under extreme churn between
+    /// the decide and the amend), the realised record is appended instead so a real fill is never
+    /// dropped — still exactly one record for that fill. Returns the stored record.
+    pub fn amend_execution(
+        &self,
+        hedge_id: &str,
+        mut realised: HedgeProvenance,
+    ) -> HedgeProvenance {
+        realised.hedge_id = hedge_id.to_owned();
+        let mut g = self.lock();
+        if let Some(slot) = g.ring.iter_mut().find(|p| p.hedge_id == hedge_id) {
+            *slot = realised.clone();
+        } else {
+            if g.ring.len() >= self.capacity {
+                g.ring.pop_front();
+            }
+            g.ring.push_back(realised.clone());
+        }
+        realised
+    }
+
     /// The recorded provenance, newest first, optionally filtered by `book` / `instrument`.
     #[must_use]
     pub fn provenance(&self, book: Option<&str>, instrument: Option<&str>) -> Vec<HedgeProvenance> {
@@ -912,6 +943,83 @@ mod tests {
             );
         }
         assert_eq!(e.provenance(None, None).len(), 2, "ring caps at capacity");
+    }
+
+    #[test]
+    fn amend_execution_supersedes_the_decision_record_in_place() {
+        // A size-bearing external action self-rings ONE decision record; amending it by id must
+        // REPLACE that record (with realised economics) rather than append a second row — the
+        // no-double-record invariant the live rates booking path relies on.
+        let e = AutoHedgeEngine::new(8);
+        let g = graph(ExitAction::SubmitMarketOrder {
+            size: HedgeSize::Overflow,
+            style: ExecStyle::Immediate,
+        });
+        let decision = e
+            .evaluate(
+                &g,
+                &thr(),
+                &HedgeConfigDef::default(),
+                &ctx(95_000.0, true, 0.0, "RATES"),
+                &known(),
+                1,
+            )
+            .provenance
+            .expect("an external action self-rings a decision record");
+        assert_eq!(e.provenance(None, None).len(), 1);
+        assert!(
+            decision.lp_won.is_none(),
+            "the decision carries no realised LP"
+        );
+
+        let mut realised = decision.clone();
+        realised.lp_won = Some("LP-9".to_owned());
+        realised.hedge_price = 1.2345;
+        realised.slippage_bp = -1.0;
+        realised.parent_position_id = Some(42);
+        realised.advisory = false;
+        let stored = e.amend_execution(&decision.hedge_id, realised);
+
+        let ring = e.provenance(None, None);
+        assert_eq!(ring.len(), 1, "amend REPLACES, never appends");
+        assert_eq!(ring[0].hedge_id, decision.hedge_id, "the id is preserved");
+        assert_eq!(ring[0].lp_won.as_deref(), Some("LP-9"));
+        assert_eq!(ring[0].parent_position_id, Some(42));
+        assert!((ring[0].slippage_bp - (-1.0)).abs() < 1e-12);
+        assert_eq!(stored.hedge_id, decision.hedge_id);
+    }
+
+    #[test]
+    fn amend_execution_appends_when_no_matching_decision() {
+        // Defensive fallback: if the decision aged out (or was never rung), amend appends so a
+        // real fill is never dropped — still exactly one record for that fill.
+        let e = AutoHedgeEngine::new(8);
+        let template = e
+            .evaluate(
+                &g_market(),
+                &thr(),
+                &HedgeConfigDef::default(),
+                &ctx(95_000.0, true, 0.0, "RATES"),
+                &known(),
+                1,
+            )
+            .provenance
+            .expect("template decision");
+        assert_eq!(e.provenance(None, None).len(), 1);
+        let stored = e.amend_execution("HDG-nonexistent", template);
+        assert_eq!(
+            e.provenance(None, None).len(),
+            2,
+            "an unmatched amend appends so the fill is never lost"
+        );
+        assert_eq!(stored.hedge_id, "HDG-nonexistent");
+    }
+
+    fn g_market() -> HedgeGraph {
+        graph(ExitAction::SubmitMarketOrder {
+            size: HedgeSize::Overflow,
+            style: ExecStyle::Immediate,
+        })
     }
 
     // --- hedging LP panel: include / exclude resolution on external actions -----

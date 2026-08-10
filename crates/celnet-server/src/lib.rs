@@ -487,6 +487,18 @@ impl Edge {
         // hedge stages of a FIX lift into the ring store the `GetTrace` / `ListTraces` RPCs read
         // (the FIX-side stages are captured by the `FixSession` edge). Off the pinned core.
         rates_store.set_trace(Arc::clone(link.trace()));
+        // Wire the live LP panel (the aggregation hub's inbound per-LP quotes) as the rates
+        // store's external-hedge LP source, so an LP-panel hedge mode fills an external shed
+        // against the best executable LP price for the hedged instrument (venue=Lp, lp_won=<that
+        // LP>) instead of always backstopping to the composite mid. Off the pinned pricing core.
+        rates_store.set_lp_hedge_source(
+            Arc::clone(&aggregation_hub) as Arc<dyn services::auto_hedge::LpHedgeSource>
+        );
+        // The shared hedge-execution → street-side LP flow log (Analytics §2.4): the rates
+        // booking seam records a named-LP hedge fill here (a WON deal for that LP), and the SAME
+        // `Arc` is folded by the LP league-table rollup as an `LpFlowSource` (registered below).
+        let hedge_flow = Arc::new(services::analytics::hedge_flow::HedgeFillFlowLog::new());
+        rates_store.set_hedge_flow_log(Arc::clone(&hedge_flow));
         let stream = StreamServiceServer::new(
             StreamEdge::with_store_and_fleet(
                 Arc::clone(&link),
@@ -901,6 +913,12 @@ impl Edge {
             )
             .with_lp_flow_source(
                 Arc::clone(&aggregation_hub) as Arc<dyn services::analytics::lp::LpFlowSource>
+            )
+            // The hedge-execution attribution source: named-LP auto-hedge fills recorded by the
+            // rates booking seam, so an LP that fills our OUTBOUND hedges shows Deals won / Won
+            // notional in the Street-side LP league table (not just client-RFQ panel wins).
+            .with_lp_flow_source(
+                Arc::clone(&hedge_flow) as Arc<dyn services::analytics::lp::LpFlowSource>
             )
             // Back the Latency/Ops analytics RPC with the SAME telemetry hub the
             // `CoreLink` owns — the pinned core + async edges fold their per-stage

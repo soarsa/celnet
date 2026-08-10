@@ -33,7 +33,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 use crate::services::consensus::{ConsensusHandle, rates_book_key};
 
 use celnet_acceptance::AcceptanceGraph;
-use celnet_hedge_routing::{ExecStyle, ExitAction, HedgeContext, HedgeGraph, HedgeSize};
+use celnet_hedge_routing::{HedgeContext, HedgeGraph};
 use celnet_limits::{
     IncrementalTrade, LimitScope, LimitSpec, LimitTree, NonAdditiveExposure, PreTradeDecision,
     PreTradeResult, ScopePath, pre_trade_check,
@@ -218,7 +218,6 @@ impl RatesHedgePolicy {
 /// The shared in-memory linear-rates position book. Cheap to share behind an
 /// [`Arc`](std::sync::Arc); every mutation takes the write lock briefly. Lives
 /// strictly on the async edge — never the pinned zero-alloc pricing core.
-#[derive(Debug)]
 pub struct RatesPositionStore {
     inner: RwLock<Vec<RatesPosition>>,
     /// The monotonic id source: the next server-assigned `position_id`. Starts at
@@ -296,6 +295,19 @@ pub struct RatesPositionStore {
     /// stage events into it OFF the pinned pricing core (guardrail 11). `None` (the unit-test
     /// default) ⇒ every trace call is a no-op, byte-identical to the pre-tracing path.
     trace: OnceLock<Arc<crate::services::trace::TraceHub>>,
+    /// The live **external-hedge LP source** (§6.2) — the standing LP panel a live-LP hedge
+    /// mode (`LpPanel` / `LpPanelThenComposite`) fills an external shed against. In production
+    /// this is the aggregation hub (the inbound per-LP quotes the agg book consolidates), wired
+    /// once at boot; a store never given one falls back to the honest [`NoLpSource`], so an
+    /// `LpPanelThenComposite` shed reaches the composite backstop and a pure `LpPanel` shed
+    /// records an honest miss — never a fabricated LP fill (guardrail 2). Off the pinned core.
+    lp_hedge_source: OnceLock<Arc<dyn crate::services::auto_hedge::LpHedgeSource>>,
+    /// The shared **hedge-execution → street-side LP flow log** (Analytics §2.4). A hedge that
+    /// FILLED on a named LP records a WON deal + won notional there, off-core, so the Street-side
+    /// LP league table attributes the fill to the executing LP (never to the COMPOSITE
+    /// pseudo-venue). The SAME `Arc` the analytics rollup folds as an `LpFlowSource`; `None` (the
+    /// unit-test default) means the attribution call is a no-op.
+    hedge_flow: OnceLock<Arc<crate::services::analytics::hedge_flow::HedgeFillFlowLog>>,
 }
 
 /// A read view of one booked rates position assembled for a **risk transfer** (§6):
@@ -332,6 +344,34 @@ impl Default for RatesTransferView {
     }
 }
 
+impl std::fmt::Debug for RatesPositionStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // A concise state summary — the trait-object seams (`lp_hedge_source`) are not `Debug`,
+        // so this hand impl replaces the derive and reports their presence rather than contents.
+        f.debug_struct("RatesPositionStore")
+            .field(
+                "positions",
+                &self.inner.read().map(|g| g.len()).unwrap_or(0),
+            )
+            .field("next_id", &self.next_id.load(Ordering::Relaxed))
+            .field(
+                "has_routing",
+                &self.routing.read().map(|g| g.is_some()).unwrap_or(false),
+            )
+            .field(
+                "has_hedge_policy",
+                &self
+                    .hedge_policy
+                    .read()
+                    .map(|g| g.is_some())
+                    .unwrap_or(false),
+            )
+            .field("has_lp_hedge_source", &self.lp_hedge_source.get().is_some())
+            .field("has_hedge_flow_log", &self.hedge_flow.get().is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 impl Default for RatesPositionStore {
     fn default() -> Self {
         Self::new()
@@ -356,6 +396,8 @@ impl RatesPositionStore {
             acceptance: RwLock::new(None),
             telemetry: OnceLock::new(),
             trace: OnceLock::new(),
+            lp_hedge_source: OnceLock::new(),
+            hedge_flow: OnceLock::new(),
         }
     }
 
@@ -374,6 +416,27 @@ impl RatesPositionStore {
     /// owns, wired once at boot. Idempotent-once; a store never given a hub records nothing.
     pub fn set_trace(&self, hub: Arc<crate::services::trace::TraceHub>) {
         let _ = self.trace.set(hub);
+    }
+
+    /// Attach the live **external-hedge LP source** (§6.2) — the standing LP panel a live-LP
+    /// hedge mode fills an external shed against (production wires the aggregation hub's inbound
+    /// per-LP quotes). Wired once at boot; idempotent-once. A store never given one falls back to
+    /// the honest [`NoLpSource`](crate::services::auto_hedge::NoLpSource), so an
+    /// `LpPanelThenComposite` shed reaches the composite backstop and a pure `LpPanel` shed
+    /// records an honest miss — never a fabricated LP fill.
+    pub fn set_lp_hedge_source(&self, src: Arc<dyn crate::services::auto_hedge::LpHedgeSource>) {
+        let _ = self.lp_hedge_source.set(src);
+    }
+
+    /// Attach the shared **hedge-execution → street-side LP flow log** (Analytics §2.4) so a
+    /// hedge that fills on a named LP is attributed to that LP in the LP league table. The SAME
+    /// `Arc` the analytics rollup folds as an `LpFlowSource`; wired once at boot, idempotent-once.
+    /// A store never given one simply records no hedge-LP attribution (byte-identical otherwise).
+    pub fn set_hedge_flow_log(
+        &self,
+        log: Arc<crate::services::analytics::hedge_flow::HedgeFillFlowLog>,
+    ) {
+        let _ = self.hedge_flow.set(log);
     }
 
     /// Record an async-edge stage latency (`nanos`) under `kind` into the shared telemetry hub,
@@ -1270,16 +1333,37 @@ impl RatesPositionStore {
         // fill's own DV01 to it (a fill can shed at most what it added).
         let shed = outcome.intent.external_hedged;
 
-        // Combine the engine's shed with the tolerance verdict (§6):
+        // Whether the resolved policy graph's action for THIS fill is an EXTERNAL shed (a market
+        // order / RFQ-out) rather than an internal hold (warehouse / cross-internal / skew /
+        // escalate) — read from the graph's OWN resolved action, computed BEFORE the split so the
+        // below-tolerance branch can HONOR the policy. A warehouse / wash / internal-only book
+        // captures ~0 edge on essentially every fill; it must NOT be force-shed to the street.
+        let graph_is_external = outcome
+            .intent
+            .action
+            .as_ref()
+            .and_then(|d| crate::services::auto_hedge::wire::exit_action_from_wire(d).ok())
+            .is_some_and(|a| a.is_external());
+
+        // Combine the engine's shed with the tolerance verdict (§6), honoring the resolved policy:
         // - within tolerance (making money): warehouse the fill, shedding only the over-cap
         //   overflow (clamped to the fill's DV01) externally; internalised iff nothing is shed.
-        // - below tolerance (thin / adverse edge): a losing fill is NOT warehoused — the whole
-        //   fill goes to an advisory external back-to-back.
+        //   (A warehouse hold decomposes to shed = 0, so a within-tolerance shed already implies
+        //   an external graph action.)
+        // - below tolerance AND the policy is EXTERNAL: a losing fill under a shed policy is
+        //   handed straight back to the street as a back-to-back (the whole fill).
+        // - below tolerance BUT the policy is an INTERNAL hold (warehouse / wash): HONOR it —
+        //   warehouse the fill. A wash / internal-only book must never emit an external B2B that
+        //   contradicts its own internal mandate just because the fill captured thin edge.
+        // Consequence exploited below: `external_dv01 > 0` now implies `graph_is_external` in
+        // BOTH shedding branches, so the external portion always stamps the graph's OWN action.
         let (internal_dv01, external_dv01, internalised) = if verdict.within_tolerance {
             let ext = shed.min(fill_dv01).max(0.0);
             (fill_dv01 - ext, ext, ext == 0.0)
-        } else {
+        } else if graph_is_external {
             (0.0, fill_dv01, false)
+        } else {
+            (fill_dv01, 0.0, true)
         };
 
         let prov = InternaliseProvenance {
@@ -1398,31 +1482,46 @@ impl RatesPositionStore {
         }
 
         // LIVE EXECUTION (§6.2): when THIS fill sheds risk externally (an over-cap overflow OR a
-        // below-min-edge back-to-back), execute the shed on the policy's configured venue off
-        // the reference composite mid — the LP-sim panel, the Agg Book COMPOSITE mid, or
-        // LP-first-then-composite — then BOOK the offsetting leg so the warehoused net actually
-        // reduces, and stamp a **per-fill hedge-execution record** with the REAL economics
-        // (advisory=false, realised price / mid / signed slippage / winning venue). Keyed by
-        // the fill's `position_id`, so the LIVE HEDGE DESK reconciles to the originating B2B
-        // deal (which carries the same id). An `Advisory` mode (or a pure `LpPanel` miss) books
-        // nothing and stamps an honest advisory record — never a fabricated fill (guardrail 2).
-        // When the engine already stamped a book-level breach record we do not double-record.
+        // below-min-edge back-to-back under an external policy — see the split above), execute
+        // the shed on the policy's configured venue off the reference composite mid — the live LP
+        // panel, the Agg Book COMPOSITE mid, or LP-first-then-composite — then BOOK the offsetting
+        // leg so the warehoused net actually reduces, and stamp a **per-fill hedge-execution
+        // record** with the REAL economics (advisory=false, realised price / mid / signed slippage
+        // / winning venue). Keyed by the fill's `position_id`, so the LIVE HEDGE DESK reconciles
+        // to the originating B2B deal (which carries the same id). An `Advisory` mode (or a pure
+        // `LpPanel` miss) books nothing and stamps an honest advisory record — never a fabricated
+        // fill (guardrail 2).
+        //
+        // Because the split above forces `external_dv01 = 0` for an internal-policy hold, reaching
+        // here implies `graph_is_external`, so the record carries the graph's OWN external action
+        // (no synthesized market-order stand-in) with the fill's realised economics. To keep
+        // EXACTLY ONE ring record per fill, this realised record SUPERSEDES the pre-execution
+        // decision record `evaluate` already rang (amended in place by its `hedge_id`) rather than
+        // appending a second row — otherwise a fired hedge would double-count in the blotter.
         if external_dv01 > 0.0 {
-            let exec = crate::services::auto_hedge::execute_external(
-                &crate::services::auto_hedge::ExternalHedgeRequest {
-                    instrument: &ctx.instrument_id,
-                    net_risk: book_net_dv01,
-                    size: external_dv01,
-                    mid,
-                    bp_scale: kind.bp_scale(),
-                    mode: policy.config.execution,
-                    composite_spread_bp: policy.config.composite_spread_bp,
-                },
-                // No live outbound RFQ/FIX panel is wired into the rates store, so the honest
-                // default LP source never fills: `LpPanelThenComposite` reaches the composite
-                // backstop and pure `LpPanel` records an honest miss (never a fabricated fill).
-                &crate::services::auto_hedge::NoLpSource,
-            );
+            let req = crate::services::auto_hedge::ExternalHedgeRequest {
+                instrument: &ctx.instrument_id,
+                net_risk: book_net_dv01,
+                size: external_dv01,
+                mid,
+                bp_scale: kind.bp_scale(),
+                mode: policy.config.execution,
+                composite_spread_bp: policy.config.composite_spread_bp,
+            };
+            // Fill against the LIVE LP panel when one is wired (the aggregation hub's inbound
+            // per-LP quotes): an LP-panel mode then fills against the best executable LP price for
+            // the hedged instrument on the required side (`venue=Lp`, `lp_won=<that LP>`, a real
+            // signed slippage vs mid), and only falls back to the composite when NO LP has a firm
+            // price. When no panel is wired the honest [`NoLpSource`] never fills, so
+            // `LpPanelThenComposite` reaches the composite backstop and pure `LpPanel` records an
+            // honest miss (never a fabricated fill, guardrail 2).
+            let exec = match self.lp_hedge_source.get() {
+                Some(src) => crate::services::auto_hedge::execute_external(&req, src.as_ref()),
+                None => crate::services::auto_hedge::execute_external(
+                    &req,
+                    &crate::services::auto_hedge::NoLpSource,
+                ),
+            };
             // Book the offsetting leg into the same book so the warehoused net reduces by the
             // filled amount. `book_into_risk_book` re-runs the hard-cap gate (a reducing leg
             // never breaches, §8.3) and does NOT recurse into `stamp_internalise`. Best-effort:
@@ -1434,55 +1533,63 @@ impl RatesPositionStore {
             {
                 let _ = self.book_into_risk_book(leg, book);
             }
-            if outcome.provenance.is_none() {
-                // The desk shows the action that ACTUALLY executed. Reaching here means the fill
-                // sheds externally (`external_dv01 > 0`) — an over-cap overflow OR a below-min-edge
-                // back-to-back. If the book-band policy graph resolved to an internal hold
-                // (`Warehouse`/`Skew`/`CrossInternal`/`Escalate`), stamp the market back-to-back
-                // that really fired rather than the graph's hold: otherwise the row reads
-                // "Warehouse (hold)" while carrying a live composite hedge, and the hedging-only
-                // desk filter (which keys off `is_external`) wrongly hides a real hedge.
-                let graph_is_external = outcome
-                    .intent
-                    .action
-                    .as_ref()
-                    .and_then(|d| crate::services::auto_hedge::wire::exit_action_from_wire(d).ok())
-                    .is_some_and(|a| a.is_external());
-                let record_action = if graph_is_external {
-                    outcome.intent.action.clone()
-                } else {
-                    Some(crate::services::auto_hedge::wire::exit_action_to_wire(
-                        &ExitAction::SubmitMarketOrder {
-                            size: HedgeSize::Fixed(external_dv01),
-                            style: ExecStyle::Immediate,
-                        },
-                    ))
-                };
-                let execution = HedgeProvenance {
-                    hedge_id: String::new(), // minted by `record_execution`
-                    book: book.to_owned(),
-                    instrument: ctx.instrument_id.clone(),
-                    fired_at: now,
-                    metric: thr_def.metric.as_i32(),
-                    threshold: wh.cap,
-                    net_risk: book_net_dv01,
-                    utilization,
-                    band: prov.hedge_band.clone(),
-                    policy_path: outcome.intent.policy_path.clone(),
-                    action: record_action,
-                    internal_crossed: internal_dv01,
-                    external_hedged: exec.filled,
-                    residual: exec.residual,
-                    hedge_price: exec.hedge_price,
-                    mid_at_fire: exec.mid_at_fire,
-                    slippage_bp: exec.slippage_bp,
-                    lp_won: exec.lp_won.clone(),
-                    // A real venue fill is NOT advisory; a miss / advisory-mode is.
-                    advisory: !exec.is_filled(),
-                    lps: outcome.intent.lps.clone(),
-                    parent_position_id: Some(fill.position_id),
-                };
-                policy.engine.record_execution(execution);
+            // Street-side LP attribution (Analytics §2.4): a hedge that FILLED on a NAMED LP
+            // records a WON deal + won notional for that LP into the shared flow log the LP
+            // league table folds, off-core. A composite-venue fill is deliberately NOT attributed
+            // to a named LP (COMPOSITE is a pseudo-venue, not a street LP); no last-look / cover
+            // is honestly known for a hedge fill, so those stay absent (guardrail 2).
+            if exec.venue == Some(crate::services::auto_hedge::HedgeVenue::LpPanel)
+                && let Some(lp) = exec.lp_won.as_deref()
+                && let Some(log) = self.hedge_flow.get()
+            {
+                log.record_fill(lp, ctx.instrument_id.clone(), exec.filled, now);
+            }
+            // Build the REALISED execution record: the graph's own (external) action + the fill's
+            // real economics, keyed by `parent_position_id` for deal reconciliation. It SUPERSEDES
+            // the engine's pre-execution decision record in place (see below), so a fired hedge
+            // leaves exactly one ring row carrying the realised fill.
+            let execution = HedgeProvenance {
+                hedge_id: String::new(), // set by `amend_execution` / minted by `record_execution`
+                book: book.to_owned(),
+                instrument: ctx.instrument_id.clone(),
+                fired_at: now,
+                metric: thr_def.metric.as_i32(),
+                threshold: wh.cap,
+                net_risk: book_net_dv01,
+                utilization,
+                band: prov.hedge_band.clone(),
+                policy_path: outcome.intent.policy_path.clone(),
+                action: outcome.intent.action.clone(),
+                internal_crossed: internal_dv01,
+                external_hedged: exec.filled,
+                residual: exec.residual,
+                hedge_price: exec.hedge_price,
+                mid_at_fire: exec.mid_at_fire,
+                slippage_bp: exec.slippage_bp,
+                lp_won: exec.lp_won.clone(),
+                // A real venue fill is NOT advisory; a miss / advisory-mode is.
+                advisory: !exec.is_filled(),
+                lps: outcome.intent.lps.clone(),
+                parent_position_id: Some(fill.position_id),
+            };
+            // EXACTLY ONE ring record per external fill: `evaluate` already rang a book-level
+            // DECISION record for this size-bearing external action (it self-rings any non-hold
+            // action, returning `provenance: Some`). Amend THAT record in place with the realised
+            // economics — matched by its minted `hedge_id` — rather than appending a duplicate. On
+            // the (defensive) chance the engine rang nothing here, fall back to appending a fresh
+            // realised record so the fill is never lost.
+            match outcome
+                .provenance
+                .as_ref()
+                .map(|p| p.hedge_id.clone())
+                .filter(|id| !id.is_empty())
+            {
+                Some(decision_id) => {
+                    policy.engine.amend_execution(&decision_id, execution);
+                }
+                None => {
+                    policy.engine.record_execution(execution);
+                }
             }
         }
     }
@@ -2645,6 +2752,69 @@ pub(crate) mod tests {
         }
     }
 
+    /// A hedge policy whose exit graph ALWAYS sheds externally — a single `SubmitMarketOrder`
+    /// action at the entry, every band — the counterpart to [`hedge_policy`]'s default
+    /// warehouse-vs-shed graph. Exercises the below-tolerance EXTERNAL-policy path: a thin /
+    /// adverse fill under a shed policy is handed back to the street (whereas the default
+    /// internal-hold graph now WAREHOUSES it — the wash-book fix, Part A).
+    pub(crate) fn external_hedge_policy(
+        book: &str,
+        cap: f64,
+        min_edge_bps: f64,
+    ) -> RatesHedgePolicy {
+        use celnet_hedge_routing::{ExecStyle, ExitAction, HedgeNode, HedgeSize};
+        let mut nodes = std::collections::BTreeMap::new();
+        nodes.insert(
+            0u32,
+            HedgeNode::Action {
+                exit: ExitAction::SubmitMarketOrder {
+                    size: HedgeSize::Full,
+                    style: ExecStyle::Immediate,
+                },
+            },
+        );
+        RatesHedgePolicy {
+            graph: Some(HedgeGraph { entry: 0, nodes }),
+            ..hedge_policy(book, cap, min_edge_bps)
+        }
+    }
+
+    /// A stub external-hedge LP source that always fills at the LP's firm two-way on the required
+    /// side — reducing a long (`net_risk > 0`) fills at `bid`, reducing a short at `offer` — so
+    /// the Part B wiring can be exercised without standing up a live aggregation book.
+    struct StubLp {
+        lp: &'static str,
+        bid: f64,
+        offer: f64,
+    }
+    impl crate::services::auto_hedge::LpHedgeSource for StubLp {
+        fn best_fill(
+            &self,
+            _instrument: &str,
+            net_risk: f64,
+            _size: f64,
+        ) -> Option<crate::services::auto_hedge::LpFill> {
+            let price = if net_risk > 0.0 { self.bid } else { self.offer };
+            Some(crate::services::auto_hedge::LpFill {
+                lp_id: self.lp.to_owned(),
+                price,
+            })
+        }
+    }
+
+    /// A stub LP source that never has a firm price (an honest miss) — for the composite-fallback path.
+    struct NoFillLp;
+    impl crate::services::auto_hedge::LpHedgeSource for NoFillLp {
+        fn best_fill(
+            &self,
+            _instrument: &str,
+            _net_risk: f64,
+            _size: f64,
+        ) -> Option<crate::services::auto_hedge::LpFill> {
+            None
+        }
+    }
+
     /// A booking attribution carrying the dealt level + reference mid (the RFQ-desk / lift path).
     pub(crate) fn priced_attribution(dealt: f64, mid: f64) -> RatesRoutingAttribution {
         RatesRoutingAttribution {
@@ -2682,24 +2852,26 @@ pub(crate) mod tests {
         assert_eq!(prov.hedge_band, "green");
     }
 
-    /// Part C: a fill classified B2B (below the min-edge tolerance) that the book-level band
-    /// did NOT itself breach STILL emits a per-fill hedge-EXECUTION record into the ring the
-    /// LIVE HEDGE DESK reads (`ListHedgeProvenance`), so the desk populates and reconciles to
-    /// the originating B2B deal via `parent_position_id`. Regression for "0 hedges · 0 external
-    /// despite B2B deals": the tolerance-driven external shed used to be advisory-only with no
-    /// execution record when the engine warehoused at book level.
+    /// A fill classified B2B (below the min-edge tolerance) under an EXTERNAL shed policy emits a
+    /// per-fill hedge-EXECUTION record into the ring the LIVE HEDGE DESK reads
+    /// (`ListHedgeProvenance`), so the desk populates and reconciles to the originating B2B deal
+    /// via `parent_position_id`. Regression for "0 hedges · 0 external despite B2B deals": the
+    /// tolerance-driven external shed used to be advisory-only with no execution record.
+    ///
+    /// (Part A: under an INTERNAL-hold policy a below-tolerance fill is now WAREHOUSED instead —
+    /// see `wash_book_warehouses_thin_edge_fill_with_no_external_deal`. This scenario uses an
+    /// explicit external shed policy, which is the configuration that actually backs-to-back.)
     #[test]
     fn b2b_below_tolerance_fill_emits_a_reconcilable_hedge_execution() {
         let store = RatesPositionStore::new();
         store.set_routing(Some(single_book_graph("wh")));
-        let policy = hedge_policy("wh", 100_000.0, 0.5);
+        let policy = external_hedge_policy("wh", 100_000.0, 0.5);
         // The SAME engine the `ListHedgeProvenance` RPC serves (production wires
         // `Arc::clone(&self.auto_hedge)` into the policy).
         let engine = Arc::clone(&policy.engine);
         store.set_hedge_policy(Some(policy));
-        // Deal AT the mid ⇒ 0 captured edge, below the 0.5bp floor ⇒ below tolerance ⇒ the
-        // whole fill is backed-to-back externally; the 5000-DV01 fill sits far under the 100k
-        // cap (green band) ⇒ the policy engine warehouses and stamps NO book-level intent.
+        // Deal AT the mid ⇒ 0 captured edge, below the 0.5bp floor ⇒ below tolerance ⇒ under the
+        // EXTERNAL shed policy the whole 5000-DV01 fill is backed-to-back externally.
         let booked = store
             .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
             .expect("books");
@@ -2904,24 +3076,290 @@ pub(crate) mod tests {
         );
     }
 
-    /// A thin (sub-floor) edge ⇒ a losing / marginal fill is NOT warehoused: the whole fill
-    /// goes to an advisory external back-to-back, and it is not internalised.
+    /// PART A (wash-book fix): a thin (sub-floor edge) fill under an INTERNAL-hold policy (the
+    /// default warehouse-vs-shed graph, green band ⇒ `Warehouse`) is now WAREHOUSED, not
+    /// force-shed to the street. A wash / internal-only book captures ~0 edge on essentially
+    /// every fill; it must never emit an external B2B market order that contradicts its own
+    /// internal mandate. No external DV01, no offsetting hedge leg, no per-fill execution record.
     #[test]
-    fn thin_edge_books_external_back_to_back() {
+    fn wash_book_warehouses_thin_edge_fill_with_no_external_deal() {
         let store = RatesPositionStore::new();
         store.set_routing(Some(single_book_graph("wh")));
-        store.set_hedge_policy(Some(hedge_policy("wh", 100_000.0, 0.5)));
-        // 4.049% vs 4.05% mid → 0.1bp edge, below the 0.5bp floor.
+        let policy = hedge_policy("wh", 100_000.0, 0.5);
+        let engine = Arc::clone(&policy.engine);
+        store.set_hedge_policy(Some(policy));
+        // 4.049% vs 4.05% mid → 0.1bp edge, below the 0.5bp floor; the 5000-DV01 fill sits far
+        // under the 100k cap (green band) ⇒ the default graph resolves to Warehouse (INTERNAL).
         let booked = store
             .book_with_routing(position(0, 1, 10), priced_attribution(0.04049, 0.0405))
             .expect("books");
         let prov = store.internalise_of(booked.position_id).expect("stamped");
         assert!(!prov.within_tolerance, "0.1bp is below the 0.5bp floor");
-        assert!(!prov.internalised);
+        assert!(
+            prov.internalised,
+            "an internal-policy thin fill is warehoused, not shed"
+        );
+        assert!(
+            (prov.internal_dv01 - 5000.0).abs() < 1e-6,
+            "the whole fill is warehoused"
+        );
+        assert_eq!(prov.external_dv01, 0.0, "NOTHING is shed to the street");
+        // No external shed ⇒ the engine rings NOTHING (a green-band Warehouse hold self-rings no
+        // decision record) and no per-fill execution record is stamped — the ring is empty.
+        assert!(
+            engine.provenance(None, None).is_empty(),
+            "a warehoused wash fill emits no hedge ring record at all"
+        );
+        assert!(
+            (store.book_net_dv01("wh") - 5000.0).abs() < 1e-6,
+            "the warehoused net is the fill itself — no offsetting hedge leg was booked"
+        );
+    }
+
+    /// FOLLOW-UP (no double-record): an over-cap BREACH fill (RED, size-bearing external action —
+    /// the engine's `evaluate` self-rings a book-level DECISION record) leaves EXACTLY ONE ring
+    /// record, and it carries the REALISED economics (the LP that filled + a real signed slippage),
+    /// NOT the engine's pre-execution intent (which lacks `lp_won` / slippage). Guards against the
+    /// decision-record + execution-record double count in the Hedge Deals blotter.
+    #[test]
+    fn breach_fill_leaves_exactly_one_realised_ring_record() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        // cap 4000 DV01: the +5000-DV01 pay-fixed fill breaches (util 1.25) ⇒ the default graph's
+        // breach node fires a size-bearing SubmitMarketOrder → `evaluate` self-rings a decision.
+        let policy = hedge_policy("wh", 4000.0, 0.5);
+        let engine = Arc::clone(&policy.engine);
+        store.set_hedge_policy(Some(policy));
+        // A live LP is on the panel: the shed fills against it (a long sheds by selling the bid).
+        store.set_lp_hedge_source(Arc::new(StubLp {
+            lp: "LP-SIM-03",
+            bid: 0.0404,
+            offer: 0.0406,
+        }));
+        // +5bp edge (within tolerance) so the overflow-only shed path (not the below-edge path) is
+        // exercised — the case where `evaluate` DID ring a decision record.
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0400, 0.0405))
+            .expect("books");
+
+        let records = engine.provenance(None, None);
+        assert_eq!(
+            records.len(),
+            1,
+            "a fired breach hedge leaves exactly one ring record, got {records:?}"
+        );
+        let rec = &records[0];
+        assert_eq!(rec.parent_position_id, Some(booked.position_id));
+        assert_eq!(
+            rec.lp_won.as_deref(),
+            Some("LP-SIM-03"),
+            "the single record carries the REALISED winning LP, not the intent's empty lp_won"
+        );
+        assert!(!rec.advisory, "a real LP fill is not advisory");
+        // Realised, not the intent's zero economics: sold a long below mid ⇒ negative slippage.
+        assert!(
+            (rec.slippage_bp - (-1.0)).abs() < 1e-9,
+            "the record carries realised slippage, got {}",
+            rec.slippage_bp
+        );
+        assert!(
+            (rec.hedge_price - 0.0404).abs() < 1e-12,
+            "the record carries the realised LP fill price, not 0"
+        );
+    }
+
+    /// FOLLOW-UP (no double-record): an external-policy BELOW-EDGE back-to-back also leaves EXACTLY
+    /// ONE realised ring record (the engine self-rings the external action's decision, which the
+    /// executor then supersedes in place).
+    #[test]
+    fn external_below_edge_back_to_back_leaves_exactly_one_ring_record() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let policy = external_hedge_policy("wh", 100_000.0, 0.5);
+        let engine = Arc::clone(&policy.engine);
+        store.set_hedge_policy(Some(policy));
+        store.set_lp_hedge_source(Arc::new(StubLp {
+            lp: "LP-SIM-01",
+            bid: 0.0404,
+            offer: 0.0406,
+        }));
+        // Deal at mid ⇒ zero edge ⇒ below the floor ⇒ the whole fill backs to back externally.
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
+            .expect("books");
+        let records = engine.provenance(None, None);
+        assert_eq!(
+            records.len(),
+            1,
+            "one realised record for the back-to-back, got {records:?}"
+        );
+        assert_eq!(records[0].parent_position_id, Some(booked.position_id));
+        assert_eq!(records[0].lp_won.as_deref(), Some("LP-SIM-01"));
+        assert!(!records[0].advisory);
+    }
+
+    /// PART A: a thin (sub-floor edge) fill under an EXTERNAL shed policy IS handed back to the
+    /// street — the whole fill sheds, it is not internalised, and the per-fill execution record
+    /// carries the graph's OWN external action (so the hedging-only desk filter, which keys off
+    /// `is_external`, shows it).
+    #[test]
+    fn thin_edge_under_external_policy_sheds_back_to_back() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let policy = external_hedge_policy("wh", 100_000.0, 0.5);
+        let engine = Arc::clone(&policy.engine);
+        store.set_hedge_policy(Some(policy));
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.04049, 0.0405))
+            .expect("books");
+        let prov = store.internalise_of(booked.position_id).expect("stamped");
+        assert!(!prov.within_tolerance, "0.1bp is below the 0.5bp floor");
+        assert!(
+            !prov.internalised,
+            "a shed policy does not warehouse a thin fill"
+        );
         assert_eq!(prov.internal_dv01, 0.0);
         assert!(
             (prov.external_dv01 - 5000.0).abs() < 1e-6,
             "the whole fill goes to the street"
+        );
+        let exec = engine
+            .provenance(None, None)
+            .into_iter()
+            .find(|p| p.parent_position_id == Some(booked.position_id))
+            .expect("a reconcilable per-fill execution record");
+        let action = exec.action.as_ref().expect("an action is stamped");
+        let exit = crate::services::auto_hedge::wire::exit_action_from_wire(action)
+            .expect("the action decodes");
+        assert!(
+            exit.is_external(),
+            "the stamped action is the external shed the policy fired, not a hold"
+        );
+    }
+
+    /// PART B: with a live LP source wired, an external shed FILLS against the best executable LP
+    /// price on the required side — `venue = Lp`, `lp_won = <that LP>`, and a REAL signed slippage
+    /// vs mid (negative when selling a long below mid) — not the composite backstop.
+    #[test]
+    fn external_shed_fills_against_the_live_lp_panel() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let policy = external_hedge_policy("wh", 100_000.0, 0.5);
+        let engine = Arc::clone(&policy.engine);
+        store.set_hedge_policy(Some(policy));
+        // The long fill (+5000 DV01) sheds by SELLING to the LP at its bid 0.0404 vs the 0.0405 mid.
+        store.set_lp_hedge_source(Arc::new(StubLp {
+            lp: "LP-SIM-01",
+            bid: 0.0404,
+            offer: 0.0406,
+        }));
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
+            .expect("books");
+        let exec = engine
+            .provenance(None, None)
+            .into_iter()
+            .find(|p| p.parent_position_id == Some(booked.position_id))
+            .expect("a per-fill execution record");
+        assert_eq!(
+            exec.lp_won.as_deref(),
+            Some("LP-SIM-01"),
+            "filled on the named LP, not COMPOSITE"
+        );
+        assert!(!exec.advisory, "a real LP fill is not advisory");
+        assert!(
+            (exec.hedge_price - 0.0404).abs() < 1e-12,
+            "the LP bid is the fill price"
+        );
+        // Sold a long BELOW mid ⇒ negative slippage: (0.0404 − 0.0405)/1e-4 = −1.0 bp.
+        assert!(
+            (exec.slippage_bp - (-1.0)).abs() < 1e-9,
+            "signed slippage vs mid, got {}",
+            exec.slippage_bp
+        );
+    }
+
+    /// PART B: when NO LP has a firm price (the source honestly misses), a live LP-then-composite
+    /// shed falls back to the composite backstop — never a fabricated LP fill (guardrail 2).
+    #[test]
+    fn external_shed_falls_back_to_composite_when_no_lp_price() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let policy = external_hedge_policy("wh", 100_000.0, 0.5);
+        let engine = Arc::clone(&policy.engine);
+        store.set_hedge_policy(Some(policy));
+        store.set_lp_hedge_source(Arc::new(NoFillLp));
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
+            .expect("books");
+        let exec = engine
+            .provenance(None, None)
+            .into_iter()
+            .find(|p| p.parent_position_id == Some(booked.position_id))
+            .expect("record");
+        assert_eq!(
+            exec.lp_won.as_deref(),
+            Some("COMPOSITE"),
+            "an LP miss honestly backstops to the composite"
+        );
+        assert!(!exec.advisory, "a live composite shed is not advisory");
+    }
+
+    /// PART C: a hedge that fills on a NAMED LP is attributed to that LP in the street-side LP
+    /// flow rollup (a WON deal + won notional), so the LP league table shows the win.
+    #[tokio::test]
+    async fn hedge_fill_on_named_lp_is_attributed_in_the_lp_flow_rollup() {
+        use crate::services::analytics::hedge_flow::HedgeFillFlowLog;
+        use crate::services::analytics::lp::{LpFlowSource, fold};
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        store.set_hedge_policy(Some(external_hedge_policy("wh", 100_000.0, 0.5)));
+        store.set_lp_hedge_source(Arc::new(StubLp {
+            lp: "LP-SIM-01",
+            bid: 0.0404,
+            offer: 0.0406,
+        }));
+        let log = Arc::new(HedgeFillFlowLog::new());
+        store.set_hedge_flow_log(Arc::clone(&log));
+        store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
+            .expect("books");
+
+        let recs = log.lp_flow_records(None, None).await;
+        let won = recs
+            .iter()
+            .find(|r| r.lp_id == "LP-SIM-01")
+            .expect("the fill is attributed to the executing LP");
+        assert!(
+            won.was_won && won.was_quoted,
+            "a hedge fill is a quoted win"
+        );
+        assert!(won.notional > 0.0, "the hedge notional is the won notional");
+        // The LP league-table fold now grades LP-SIM-01 with a won deal (not 0 · $0).
+        let rows = fold(&recs, &std::collections::BTreeMap::new(), Some("LP-SIM-01"));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].deals_won, 1);
+        assert!(rows[0].won_notional > 0.0);
+    }
+
+    /// PART C: a COMPOSITE-venue hedge fill is NOT attributed to a named street LP (COMPOSITE is
+    /// a pseudo-venue) — the flow log stays empty, so no fabricated LP win.
+    #[tokio::test]
+    async fn composite_hedge_fill_is_not_attributed_to_a_named_lp() {
+        use crate::services::analytics::hedge_flow::HedgeFillFlowLog;
+        use crate::services::analytics::lp::LpFlowSource;
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        store.set_hedge_policy(Some(external_hedge_policy("wh", 100_000.0, 0.5)));
+        // No LP source ⇒ the default LP-then-composite shed fills on the composite venue.
+        let log = Arc::new(HedgeFillFlowLog::new());
+        store.set_hedge_flow_log(Arc::clone(&log));
+        store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
+            .expect("books");
+        assert!(
+            log.lp_flow_records(None, None).await.is_empty(),
+            "a COMPOSITE fill is not a street-LP win"
         );
     }
 

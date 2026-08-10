@@ -336,6 +336,55 @@ impl crate::services::analytics::lp::LpFlowSource for AggregationHub {
     }
 }
 
+/// The aggregation hub as a live **external-hedge LP source** (§6.2): the standing LP panel
+/// an auto-hedge shed fills against is the SAME inbound per-LP quotes the agg book
+/// consolidates. For a shed of `net_risk` on `instrument`, this returns the BEST executable
+/// member-LP price on the required side (reducing a long ⇒ we SELL to an LP at its bid;
+/// reducing a short ⇒ we BUY at its offer), among the fresh (non-stale) member lines — or
+/// `None` when no covering book has a fresh member with a firm price on that side (an honest
+/// miss the executor backstops to the composite / warehouses, never a fabricated fill).
+impl crate::services::auto_hedge::LpHedgeSource for AggregationHub {
+    fn best_fill(
+        &self,
+        instrument: &str,
+        net_risk: f64,
+        _size: f64,
+    ) -> Option<crate::services::auto_hedge::LpFill> {
+        let composite = self.resolve_rfq_composite(instrument)?;
+        // Reducing a long (net_risk > 0) sheds by SELLING → lift an LP's BID (best = highest);
+        // reducing a short sheds by BUYING → lift an LP's OFFER (best = lowest). A zero/None
+        // net has no side; treat it as a sell (a degenerate shed) for determinism.
+        let sell = net_risk > 0.0;
+        let mut best: Option<(&str, f64)> = None;
+        for m in &composite.members {
+            if m.stale {
+                continue; // a stale contribution is not executable (excluded from the panel).
+            }
+            let price = if sell { m.bid } else { m.offer };
+            if !price.is_finite() {
+                continue;
+            }
+            let improves = match best {
+                None => true,
+                Some((_, incumbent)) => {
+                    if sell {
+                        price > incumbent // we receive more selling into a higher bid.
+                    } else {
+                        price < incumbent // we pay less buying at a lower offer.
+                    }
+                }
+            };
+            if improves {
+                best = Some((m.lp_name.as_str(), price));
+            }
+        }
+        best.map(|(lp_id, price)| crate::services::auto_hedge::LpFill {
+            lp_id: lp_id.to_owned(),
+            price,
+        })
+    }
+}
+
 impl AggregationHub {
     /// The shared constructor: an empty hub bound to `clock`, with the optional
     /// live `inventory` source and the firm-wide inbound `pricing_control` gate.
