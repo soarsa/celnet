@@ -9,6 +9,13 @@
 # file, writes a pidfile, and logs to the shared log dir. Stop is graceful:
 # celnet-server drains on SIGINT (see ARCHITECTURE.md §5), so we send SIGINT
 # and wait before escalating to SIGKILL.
+#
+# RESTART IS RACE-SAFE. `restart` used to be `stop; start` back-to-back, which is a
+# bug: SIGKILL is ASYNCHRONOUS, so `kill` returns long before the kernel has torn the
+# process down and released its listening sockets. `start` then bound a port the corpse
+# still held and died with `Os { code: 98, AddrInUse }`, leaving the server DOWN on a
+# routine deploy. Three bounded waits close it — `stop` waits for the reap,
+# `restart` waits for the ports, and `start` retries an in-use bind with backoff.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -19,11 +26,57 @@ ENV_FILE="{{ celnet_config_dir }}/celnet.env"
 PIDFILE="{{ celnet_run_dir }}/celnet-server.pid"
 LOG="{{ celnet_log_dir }}/celnet-server.out.log"
 DRAIN_WAIT={{ celnet_stop_drain_seconds | default(35) }}
+KILL_WAIT={{ celnet_kill_wait_seconds | default(10) }}
+PORT_FREE_WAIT={{ celnet_port_free_wait_seconds | default(20) }}
+START_ATTEMPTS={{ celnet_start_attempts | default(4) }}
+START_SETTLE={{ celnet_start_settle_seconds | default(2) }}
+
+# Source the shared env ONCE, exported, so EVERY subcommand sees the real bind
+# addresses — the port probes and `status` included, not just the spawned child.
+# (Previously only `start` sourced it, so `status` reported the build-time template
+# default rather than what the server was actually configured to bind.)
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  set -a; source "$ENV_FILE"; set +a
+fi
 
 is_running() {
   [[ -f "$PIDFILE" ]] || return 1
   local pid; pid="$(cat "$PIDFILE" 2>/dev/null || true)"
   [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+# The TCP ports celnet-server listens on, taken from the env it will actually load.
+# `host:port` → `port` via the RIGHTMOST colon, so IPv6 literals survive intact.
+listen_ports() {
+  local grpc ws
+  grpc="${CELNET_GRPC_ADDR:-{{ celnet_grpc_addr }}}"
+  ws="${CELNET_WS_ADDR:-{{ celnet_ws_addr }}}"
+  echo "${grpc##*:}" "${ws##*:}"
+}
+
+# True when ANY listening port is still bound. `ss` absent ⇒ report free: we must not
+# block a start on a probe we cannot run (the bind retry in `start` is the backstop).
+port_bound() {
+  command -v ss >/dev/null 2>&1 || return 1
+  local p
+  for p in $(listen_ports); do
+    if ss -lnt 2>/dev/null | awk -v port=":${p}" '$4 ~ port"$" { found = 1 } END { exit !found }'; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Wait (bounded) for every listening port to be released. Non-zero if still bound.
+wait_ports_free() {
+  local waited=0
+  while (( waited < PORT_FREE_WAIT )); do
+    port_bound || return 0
+    sleep 1
+    waited=$(( waited + 1 ))
+  done
+  ! port_bound
 }
 
 start() {
@@ -33,16 +86,39 @@ start() {
   [[ -x "$BIN" ]] || { echo "ERROR: $BIN not found/executable (deploy a release first)"; exit 1; }
   [[ -f "$ENV_FILE" ]] || { echo "ERROR: env file $ENV_FILE missing"; exit 1; }
   echo "Starting celnet-server from $(readlink -f "$CURRENT")"
-  # shellcheck disable=SC1090
-  set -a; source "$ENV_FILE"; set +a
-  nohup "$BIN" >>"$LOG" 2>&1 &
-  echo $! > "$PIDFILE"
-  sleep 1
-  if is_running; then
-    echo "Started (pid $(cat "$PIDFILE")). Logs: $LOG"
-  else
-    echo "ERROR: celnet-server failed to start; last log lines:"; tail -n 20 "$LOG" || true; exit 1
-  fi
+  local attempt=1 backoff=2 pid mark
+  while true; do
+    # Where the log ends BEFORE this attempt, so the in-use check below reads only
+    # THIS attempt's output — never a stale AddrInUse from an earlier failed start.
+    # Guard on existence: the `< "$LOG"` redirection is performed by the SHELL, so on a
+    # first-ever start its failure would print to the script's stderr and slip past a
+    # `2>/dev/null` attached to `wc`.
+    mark=0
+    if [[ -f "$LOG" ]]; then mark=$(wc -l < "$LOG"); fi
+    nohup "$BIN" >>"$LOG" 2>&1 &
+    pid=$!
+    echo "$pid" > "$PIDFILE"
+    sleep "$START_SETTLE"
+    if is_running; then
+      echo "Started (pid $pid). Logs: $LOG"
+      return 0
+    fi
+    # Retry ONLY the address-in-use race. Every other startup failure is a real defect
+    # and must surface at once rather than be masked behind a retry loop.
+    if (( attempt < START_ATTEMPTS )) \
+       && tail -n +"$(( mark + 1 ))" "$LOG" 2>/dev/null | grep -q "AddrInUse"; then
+      echo "Bind refused (address still in use); retrying in ${backoff}s [attempt $(( attempt + 1 ))/${START_ATTEMPTS}]..."
+      sleep "$backoff"
+      backoff=$(( backoff * 2 ))
+      attempt=$(( attempt + 1 ))
+      continue
+    fi
+    # Never leave a pidfile pointing at a process that is not running — a stale one
+    # makes the next `stop` a no-op and misleads every operator who reads it.
+    rm -f "$PIDFILE"
+    echo "ERROR: celnet-server failed to start; last log lines:"; tail -n 20 "$LOG" || true
+    exit 1
+  done
 }
 
 stop() {
@@ -56,8 +132,21 @@ stop() {
   done
   echo "Drain timed out; sending SIGKILL."
   kill -KILL "$pid" 2>/dev/null || true
+  # SIGKILL is ASYNCHRONOUS. `kill` returns immediately, but the kernel still has to
+  # tear the process down and release its listening sockets — and a drain that just
+  # timed out implies plenty of connections left to unwind. Returning here is exactly
+  # what let `restart` bind a port the corpse still held. Wait for the actual reap.
+  local waited=0
+  while kill -0 "$pid" 2>/dev/null && (( waited < KILL_WAIT )); do
+    sleep 1
+    waited=$(( waited + 1 ))
+  done
   rm -f "$PIDFILE"
-  echo "Killed."
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "WARNING: pid $pid still present ${KILL_WAIT}s after SIGKILL (uninterruptible or zombie)."
+  else
+    echo "Killed (reaped after ${waited}s)."
+  fi
 }
 
 status() {
@@ -73,7 +162,16 @@ status() {
 case "${1:-}" in
   start)   start ;;
   stop)    stop ;;
-  restart) stop || true; start ;;
+  restart)
+    stop || true
+    # Never hand `start` a port the previous process has not yet released. If the wait
+    # expires we still proceed — `start`'s bind retry is the second line of defence —
+    # but say so, because a port bound this long is someone else's process, not ours.
+    if ! wait_ports_free; then
+      echo "WARNING: listening port(s) still bound after ${PORT_FREE_WAIT}s; start will retry the bind."
+    fi
+    start
+    ;;
   status)  status ;;
   tail)    tail -n "${2:-50}" -f "$LOG" ;;
   *) echo "usage: celnetctl {start|stop|restart|status|tail [n]}"; exit 64 ;;
