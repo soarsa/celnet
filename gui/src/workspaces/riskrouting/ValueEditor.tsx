@@ -10,6 +10,8 @@ import type { RouteOp, RouteValue } from "../../data/contract";
 import type { FieldKind } from "../../lib/routeFields";
 import styles from "./RiskRoutingWorkspace.module.css";
 
+import { NumberField } from "../../components/NumberField";
+
 /** One selectable enum value (value id + display label). */
 export interface ValueOption {
   value: string;
@@ -41,18 +43,16 @@ export function ValueEditor({
       <div className={styles.editorField}>
         <span className={styles.fieldLabel}>Range (inclusive)</span>
         <div className={styles.rangeRow}>
-          <input
+          <NumberField
             className={styles.input}
-            type="number"
             value={lo}
             disabled={readOnly}
             aria-label="Lower bound"
             onChange={(e) => onChange({ kind: "range", lo: Number(e.target.value), hi })}
           />
           <span className={styles.rangeSep}>to</span>
-          <input
+          <NumberField
             className={styles.input}
-            type="number"
             value={hi}
             disabled={readOnly}
             aria-label="Upper bound"
@@ -83,9 +83,8 @@ export function ValueEditor({
     return (
       <label className={styles.editorField}>
         <span className={styles.fieldLabel}>Value</span>
-        <input
+        <NumberField
           className={styles.input}
-          type="number"
           value={num}
           disabled={readOnly}
           data-testid="value-num"

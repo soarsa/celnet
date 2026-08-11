@@ -20,6 +20,8 @@ import { ALL_ASSET_CLASSES } from "./capability";
 import { crossAssetOverlayFor } from "./crossAsset";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /** The listed-future-option ticket inputs. */
 export interface ListedFutureOptionInputs {
   optionType: OptionType;
@@ -110,9 +112,8 @@ function ListedFutureOptionInputBlock({
         </label>
         <label className={styles.productField}>
           <span>Settles after option</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={1 / 12}
             value={value.futureLagYears}
@@ -141,9 +142,8 @@ function ListedFutureOptionInputBlock({
         </div>
         <label className={styles.productField}>
           <span>Strike</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={Math.pow(10, -pipDecimals)}
             value={value.strike}

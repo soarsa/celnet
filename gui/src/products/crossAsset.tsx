@@ -27,6 +27,8 @@ import {
   type CrossAssetOverlay,
 } from "../data/seed";
 import styles from "../workspaces/TicketWorkspace.module.css";
+import { NumberField } from "../components/NumberField";
+
 import {
   defineProduct,
   withTenorAndModel,
@@ -285,9 +287,8 @@ function CrossAssetInputBlock({ value, onChange }: InputBlockProps<CrossAssetInp
         </div>
         <label className={styles.productField}>
           <span>Strike</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             value={value.strike}
             aria-label="strike"

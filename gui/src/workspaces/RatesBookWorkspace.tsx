@@ -43,6 +43,8 @@ import { pillarYears } from "../data/contract";
 import { capabilityAssetForDomain, ratesPositionAsset } from "../data/assetClass";
 import styles from "./RatesBookWorkspace.module.css";
 
+import { NumberField } from "../components/NumberField";
+
 const MM = 1_000_000;
 
 /** The Book ticket input model (the editable booking form). */
@@ -340,9 +342,8 @@ export function RatesBookWorkspace(): React.ReactElement {
                 </select>
               </Field>
               <Field label="Tenor (y)">
-                <input
+                <NumberField
                   className={styles.input}
-                  type="number"
                   min={1}
                   step={1}
                   value={ticket.tenorYears}
@@ -358,9 +359,8 @@ export function RatesBookWorkspace(): React.ReactElement {
                 />
               </Field>
               <Field label="Fixed %">
-                <input
+                <NumberField
                   className={styles.input}
-                  type="number"
                   step={0.01}
                   value={ticket.fixedRatePct}
                   aria-label="fixed rate in percent"
@@ -370,9 +370,8 @@ export function RatesBookWorkspace(): React.ReactElement {
                 />
               </Field>
               <Field label="Notional mm">
-                <input
+                <NumberField
                   className={styles.input}
-                  type="number"
                   min={1}
                   step={5}
                   value={ticket.notionalMm}

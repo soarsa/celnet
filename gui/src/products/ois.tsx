@@ -24,6 +24,8 @@ import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineRatesProduct, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /** The OIS ticket inputs — direction, whole-year tenor, fixed rate (%), notional (mm). */
 export interface OisInputs {
   /** Pay-fixed (payer) or receive-fixed (receiver). */
@@ -94,9 +96,8 @@ function OisInputBlock({ value, onChange }: InputBlockProps<OisInputs>) {
           ))}
           <label className={styles.productField}>
             <span>yrs</span>
-            <input
+            <NumberField
               className="num"
-              type="number"
               min={1}
               step={1}
               value={value.tenorYears}
@@ -110,9 +111,8 @@ function OisInputBlock({ value, onChange }: InputBlockProps<OisInputs>) {
       <div className={styles.productRow}>
         <label className={styles.productField}>
           <span>Fixed rate</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             step={0.01}
             value={value.fixedRatePct}
             aria-label="fixed rate in percent"
@@ -122,9 +122,8 @@ function OisInputBlock({ value, onChange }: InputBlockProps<OisInputs>) {
         </label>
         <label className={styles.productField}>
           <span>Notional</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={5}
             value={value.notionalMm}

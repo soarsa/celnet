@@ -100,6 +100,8 @@ import { PricingFeatureCard } from "./PricingFeatureCard";
 import styles from "./PricingGroupsWorkspace.module.css";
 import { TieringWorkspace } from "./TieringWorkspace";
 
+import { NumberField } from "../components/NumberField";
+
 const PRICING_MODES: readonly PricingMode[] = ["ESP", "RFQ"];
 const PRICING_MODE_LABEL: Record<PricingMode, string> = { ESP: "ESP (streaming)", RFQ: "RFQ / RFS" };
 const EMPTY_PIPELINE_ERRORS: PipelineErrors = { features: {}, guardrails: {} };
@@ -965,9 +967,8 @@ function PricingGroupsPanel(): React.ReactElement {
                           aria-describedby="pg-skew-help"
                           onChange={(e) => patchDraft({ bookSkewWeight: Number(e.target.value) })}
                         />
-                        <input
+                        <NumberField
                           className={`${styles.input} ${styles.numInput} ${styles.skewNum}`}
-                          type="number"
                           min={0}
                           max={1}
                           step={0.05}
@@ -1021,10 +1022,9 @@ function PricingGroupsPanel(): React.ReactElement {
 
                   <label className={`${styles.field} ${styles.fieldWide}`} htmlFor="pg-last-look-tol">
                     <span className={styles.fieldLabel}>Tolerance (bps)</span>
-                    <input
+                    <NumberField
                       id="pg-last-look-tol"
                       className={`${styles.input} ${styles.numInput}`}
-                      type="number"
                       min={0}
                       step={0.1}
                       value={draft.lastLookToleranceBps ?? DEFAULT_LAST_LOOK_TOLERANCE_BPS}
@@ -1059,9 +1059,8 @@ function PricingGroupsPanel(): React.ReactElement {
                           aria-describedby="pg-async-giveback-help"
                           onChange={(e) => patchDraft({ asyncGivebackPct: Number(e.target.value) })}
                         />
-                        <input
+                        <NumberField
                           className={`${styles.input} ${styles.numInput} ${styles.skewNum}`}
-                          type="number"
                           min={0}
                           max={100}
                           step={5}
@@ -1244,10 +1243,9 @@ function PricingGroupsPanel(): React.ReactElement {
                       <div className={styles.grid}>
                         <label className={styles.param} htmlFor="pg-g-hmin">
                           <span className={styles.paramLabel}>Guardrail h_min</span>
-                          <input
+                          <NumberField
                             id="pg-g-hmin"
                             className={`${styles.input} ${styles.numInput} ${activeErrors.guardrails.hMin ? styles.inputError : ""}`}
-                            type="number"
                             step="any"
                             value={activePipeline.guardrails.hMin}
                             disabled={readOnly}
@@ -1259,10 +1257,9 @@ function PricingGroupsPanel(): React.ReactElement {
                         </label>
                         <label className={styles.param} htmlFor="pg-g-hmax">
                           <span className={styles.paramLabel}>Guardrail h_max</span>
-                          <input
+                          <NumberField
                             id="pg-g-hmax"
                             className={`${styles.input} ${styles.numInput} ${activeErrors.guardrails.hMax ? styles.inputError : ""}`}
-                            type="number"
                             step="any"
                             value={activePipeline.guardrails.hMax}
                             disabled={readOnly}
@@ -1274,10 +1271,9 @@ function PricingGroupsPanel(): React.ReactElement {
                         </label>
                         <label className={styles.param} htmlFor="pg-g-smax">
                           <span className={styles.paramLabel}>Guardrail s_max</span>
-                          <input
+                          <NumberField
                             id="pg-g-smax"
                             className={`${styles.input} ${styles.numInput} ${activeErrors.guardrails.sMax ? styles.inputError : ""}`}
-                            type="number"
                             step="any"
                             value={activePipeline.guardrails.sMax}
                             disabled={readOnly}
@@ -1289,10 +1285,9 @@ function PricingGroupsPanel(): React.ReactElement {
                         </label>
                         <label className={styles.param} htmlFor="pg-g-floor">
                           <span className={styles.paramLabel}>Guardrail spread_floor</span>
-                          <input
+                          <NumberField
                             id="pg-g-floor"
                             className={`${styles.input} ${styles.numInput} ${activeErrors.guardrails.spreadFloor ? styles.inputError : ""}`}
-                            type="number"
                             step="any"
                             value={activePipeline.guardrails.spreadFloor}
                             disabled={readOnly}

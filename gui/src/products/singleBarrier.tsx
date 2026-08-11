@@ -20,6 +20,8 @@ import { fmtRate } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /**
  * The single-barrier ticket inputs. The barrier is entered as a level (absolute
  * quote); the strike is entered as a level too (`0` ⇒ default to the ATM-forward
@@ -94,9 +96,8 @@ function SingleBarrierInputBlock({ value, onChange, ctx }: InputBlockProps<Singl
         </div>
         <label className={styles.productField}>
           <span>Strike</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={step}
             value={value.strike}
@@ -141,9 +142,8 @@ function SingleBarrierInputBlock({ value, onChange, ctx }: InputBlockProps<Singl
       <div className={styles.productRow}>
         <label className={styles.productField}>
           <span>Barrier</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={step}
             value={value.barrier}
@@ -163,9 +163,8 @@ function SingleBarrierInputBlock({ value, onChange, ctx }: InputBlockProps<Singl
         </label>
         <label className={styles.productField}>
           <span>Rebate</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.005}
             value={value.rebate}

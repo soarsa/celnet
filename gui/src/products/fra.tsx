@@ -18,6 +18,8 @@ import styles from "../workspaces/TicketWorkspace.module.css";
 import { RatesTabs } from "./ratesControls";
 import { defineRatesProduct, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /** The FRA ticket inputs — direction, the `[startMonths, endMonths]` window, rate, notional, basis. */
 export interface FraInputs {
   /** Pay-fixed (payer) or receive-fixed (receiver). */
@@ -109,9 +111,8 @@ function FraInputBlock({ value, onChange }: InputBlockProps<FraInputs>) {
       <div className={styles.productRow}>
         <label className={styles.productField}>
           <span>Start</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={1}
             step={1}
             value={value.startMonths}
@@ -122,9 +123,8 @@ function FraInputBlock({ value, onChange }: InputBlockProps<FraInputs>) {
         </label>
         <label className={styles.productField}>
           <span>End</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={1}
             step={1}
             value={value.endMonths}
@@ -138,9 +138,8 @@ function FraInputBlock({ value, onChange }: InputBlockProps<FraInputs>) {
       <div className={styles.productRow}>
         <label className={styles.productField}>
           <span>Fixed rate</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             step={0.01}
             value={value.fixedRatePct}
             aria-label="fixed rate in percent"
@@ -150,9 +149,8 @@ function FraInputBlock({ value, onChange }: InputBlockProps<FraInputs>) {
         </label>
         <label className={styles.productField}>
           <span>Notional</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={5}
             value={value.notionalMm}

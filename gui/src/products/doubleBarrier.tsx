@@ -15,6 +15,8 @@ import { fmtRate } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /**
  * The double-barrier ticket inputs. Both barriers are entered as levels
  * (`0` ⇒ default to a symmetric corridor around spot); the strike is entered as a
@@ -90,9 +92,8 @@ function DoubleBarrierInputBlock({ value, onChange, ctx }: InputBlockProps<Doubl
         </div>
         <label className={styles.productField}>
           <span>Strike</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={step}
             value={value.strike}
@@ -124,9 +125,8 @@ function DoubleBarrierInputBlock({ value, onChange, ctx }: InputBlockProps<Doubl
       <div className={styles.productRow}>
         <label className={styles.productField}>
           <span>Lower</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={step}
             value={value.lowerBarrier}
@@ -143,9 +143,8 @@ function DoubleBarrierInputBlock({ value, onChange, ctx }: InputBlockProps<Doubl
         </label>
         <label className={styles.productField}>
           <span>Upper</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={step}
             value={value.upperBarrier}
@@ -162,9 +161,8 @@ function DoubleBarrierInputBlock({ value, onChange, ctx }: InputBlockProps<Doubl
         </label>
         <label className={styles.productField}>
           <span>Rebate</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.005}
             value={value.rebate}

@@ -15,6 +15,8 @@ import { fmtRate } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /**
  * The accumulator ticket inputs (pivot / knock-out barrier / leverage / monitoring
  * / fixing count / MC). Always Monte-Carlo. `pivot` 0 ⇒ default to the ATM-forward
@@ -75,9 +77,8 @@ function AccumulatorInputBlock({
       <div className={styles.productRow}>
         <label className={styles.productField}>
           <span>Pivot</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={Math.pow(10, -pipDecimals)}
             value={accumulator.pivot}
@@ -91,9 +92,8 @@ function AccumulatorInputBlock({
         </label>
         <label className={styles.productField}>
           <span>KO +</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.005}
             value={accumulator.barrierOffset}
@@ -109,9 +109,8 @@ function AccumulatorInputBlock({
         </label>
         <label className={styles.productField}>
           <span>Leverage</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.5}
             value={accumulator.leverage}
@@ -140,9 +139,8 @@ function AccumulatorInputBlock({
         </div>
         <label className={styles.productField}>
           <span>Fixings</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={1}
             step={1}
             value={accumulator.fixings}
@@ -157,9 +155,8 @@ function AccumulatorInputBlock({
         </label>
         <label className={styles.productField}>
           <span>MC pairs</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={1000}
             value={accumulator.mcPairs}

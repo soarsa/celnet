@@ -10,6 +10,8 @@ import { fmtVol } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /** The volatility-swap ticket inputs: the strike in VOL terms (`0` ⇒ fair strike). */
 export interface VolatilitySwapInputs {
   /** Strike in VOL terms; `0` ⇒ request the fair volatility strike off the priced reply. */
@@ -27,9 +29,8 @@ function VolatilitySwapInputBlock({ value, onChange }: InputBlockProps<Volatilit
       <div className={styles.productRow}>
         <span className={styles.productLabel}>Strike vol</span>
         <label className={styles.productField}>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.005}
             value={value.swapStrikeVol}

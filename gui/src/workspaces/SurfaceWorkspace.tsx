@@ -38,6 +38,8 @@ import type { AssetClass } from "../products/types";
 import { CubeWorkspace, type CubeDrill } from "./CubeWorkspace";
 import styles from "./SurfaceWorkspace.module.css";
 
+import { NumberField } from "../components/NumberField";
+
 /** The Surface workspace's internal view: mark one surface, or scan the cube. */
 type SurfaceView = "mark" | "cube";
 
@@ -769,10 +771,9 @@ export function SurfaceWorkspace(): React.ReactElement {
                   const isEdited = edited[h] !== undefined;
                   if (active) {
                     return (
-                      <input
+                      <NumberField
                         key={h}
                         className={`num ${styles.editCell} ${isEdited ? styles.editDirty : ""}`}
-                        type="number"
                         step={h === "atmVol" ? 0.05 : 0.01}
                         value={(val * 100).toFixed(2)}
                         onChange={(e) => setHandle(s.tenorYears, h, e.target.value)}

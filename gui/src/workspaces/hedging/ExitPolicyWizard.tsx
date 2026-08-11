@@ -54,6 +54,8 @@ import { WizardShell, type StepMeta } from "../setupWizard/WizardShell";
 import { Explainer } from "../setupWizard/PortfolioRoutingSteps";
 import styles from "../setupWizard/setupWizard.module.css";
 
+import { NumberField } from "../../components/NumberField";
+
 export interface ExitPolicyWizardProps {
   /** The scope's currently-selected book id (defaults the analysis book), if any. */
   scopeBookId?: string | undefined;
@@ -402,9 +404,8 @@ function ScenarioStep({
                 <span className={styles.miniLabel}>
                   {spec.inputs.escalate ? "First threshold" : "Threshold"} ({md.unit})
                 </span>
-                <input
+                <NumberField
                   className={styles.input}
-                  type="number"
                   value={params.threshold}
                   disabled={readOnly}
                   data-testid="rw-threshold"
@@ -418,9 +419,8 @@ function ScenarioStep({
             {spec.inputs.escalate && (
               <label className={styles.field}>
                 <span className={styles.miniLabel}>Upper (escalation) threshold ({md.unit})</span>
-                <input
+                <NumberField
                   className={styles.input}
-                  type="number"
                   value={params.escalateThreshold}
                   disabled={readOnly}
                   data-testid="rw-escalate"

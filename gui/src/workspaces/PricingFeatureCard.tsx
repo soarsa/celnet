@@ -34,6 +34,8 @@ import {
 import type { TieringSpreadUnit } from "../data/contract";
 import styles from "./PricingGroupsWorkspace.module.css";
 
+import { NumberField } from "../components/NumberField";
+
 /** An all-clear tiering error set for a TIERING feature with no errors. */
 const NO_TIERING_ERRORS: TieringErrors = { strategies: {}, guardrails: {} };
 
@@ -338,10 +340,9 @@ function NumField({ id, label, value, readOnly, error, onChange }: NumFieldProps
   return (
     <label className={styles.param} htmlFor={id}>
       <span className={styles.paramLabel}>{label}</span>
-      <input
+      <NumberField
         id={id}
         className={`${styles.input} ${styles.numInput} ${error ? styles.inputError : ""}`}
-        type="number"
         step="any"
         value={value}
         disabled={readOnly}

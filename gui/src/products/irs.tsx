@@ -26,6 +26,8 @@ import styles from "../workspaces/TicketWorkspace.module.css";
 import { RatesTabs } from "./ratesControls";
 import { defineRatesProduct, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /** The vanilla-IRS ticket inputs — direction, tenor, fixed rate, notional, per-leg conventions. */
 export interface IrsInputs {
   /** Pay-fixed (payer) or receive-fixed (receiver). */
@@ -111,9 +113,8 @@ function IrsInputBlock({ value, onChange }: InputBlockProps<IrsInputs>) {
           ))}
           <label className={styles.productField}>
             <span>yrs</span>
-            <input
+            <NumberField
               className="num"
-              type="number"
               min={1}
               step={1}
               value={value.tenorYears}
@@ -127,9 +128,8 @@ function IrsInputBlock({ value, onChange }: InputBlockProps<IrsInputs>) {
       <div className={styles.productRow}>
         <label className={styles.productField}>
           <span>Fixed rate</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             step={0.01}
             value={value.fixedRatePct}
             aria-label="fixed rate in percent"
@@ -139,9 +139,8 @@ function IrsInputBlock({ value, onChange }: InputBlockProps<IrsInputs>) {
         </label>
         <label className={styles.productField}>
           <span>Notional</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={5}
             value={value.notionalMm}

@@ -12,6 +12,8 @@ import { fmtRate } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /**
  * The touch ticket inputs (kind / barrier level(s) / rebate). The single-barrier
  * kinds (one-/no-touch) use only `lowerBarrier`; the double kinds use both. Levels
@@ -97,9 +99,8 @@ function TouchInputBlock({ value: touch, onChange: onTouch, ctx }: InputBlockPro
       <div className={styles.productRow}>
         <label className={styles.productField}>
           <span>{double ? "Lower" : "Barrier"}</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={step}
             value={touch.lowerBarrier}
@@ -116,9 +117,8 @@ function TouchInputBlock({ value: touch, onChange: onTouch, ctx }: InputBlockPro
         {double && (
           <label className={styles.productField}>
             <span>Upper</span>
-            <input
+            <NumberField
               className="num"
-              type="number"
               min={0}
               step={step}
               value={touch.upperBarrier}
@@ -133,9 +133,8 @@ function TouchInputBlock({ value: touch, onChange: onTouch, ctx }: InputBlockPro
         )}
         <label className={styles.productField}>
           <span>Rebate</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.005}
             value={touch.rebate}

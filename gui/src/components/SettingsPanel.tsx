@@ -37,6 +37,8 @@ import {
 } from "../lib/soundKit";
 import styles from "./SettingsPanel.module.css";
 
+import { NumberField } from "../components/NumberField";
+
 /** Build hashes that are not real git identities — a dev/undefined build. */
 const PLACEHOLDER_HASHES: ReadonlySet<string> = new Set(["v0.0.0", "unknown", "test"]);
 
@@ -450,9 +452,8 @@ export function SettingsPanel(): React.ReactElement {
                 Min notional
               </label>
               <span className={styles.numWrap}>
-                <input
+                <NumberField
                   id={`${titleId}-minqty`}
-                  type="number"
                   min={0}
                   step={1000000}
                   value={settings.minQty}
@@ -498,9 +499,8 @@ export function SettingsPanel(): React.ReactElement {
                 Clear after (s)
               </label>
               <span className={styles.numWrap}>
-                <input
+                <NumberField
                   id={`${titleId}-ttl`}
-                  type="number"
                   min={0}
                   step={5}
                   value={settings.autoClearTtlSeconds}

@@ -13,6 +13,8 @@ import { fmtRate } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /** The outright-forward ticket inputs. */
 export interface ForwardInputs {
   /** Contract (delivery) rate; `0` ⇒ default to the ATM-forward when shown. */
@@ -60,9 +62,8 @@ function ForwardInputBlock({ value, onChange, ctx }: InputBlockProps<ForwardInpu
         </div>
         <label className={styles.productField}>
           <span>Rate</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={Math.pow(10, -pipDecimals)}
             value={value.contractRate}

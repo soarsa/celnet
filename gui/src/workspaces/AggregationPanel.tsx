@@ -29,6 +29,8 @@ import type {
 } from "../data/contract";
 import styles from "./AggregationPanel.module.css";
 
+import { NumberField } from "../components/NumberField";
+
 /** The LP-SIM fleet members the bundled sim streams (ADR-0022 D3 / celnet-lp-sim). */
 const LP_SIM_MEMBERS: readonly string[] = [
   "LP-SIM-01",
@@ -451,10 +453,9 @@ export function AggregationPanel({
             <div className={styles.paramsGrid}>
               <label className={styles.param} htmlFor="agg-tau">
                 <span className={styles.paramLabel}>Staleness τ (ms)</span>
-                <input
+                <NumberField
                   id="agg-tau"
                   className={`${styles.input} ${styles.numInput}`}
-                  type="number"
                   min={1}
                   step="any"
                   value={form.params.stalenessTauMs}
@@ -463,10 +464,9 @@ export function AggregationPanel({
               </label>
               <label className={styles.param} htmlFor="agg-maxage">
                 <span className={styles.paramLabel}>Max quote age (ms)</span>
-                <input
+                <NumberField
                   id="agg-maxage"
                   className={`${styles.input} ${styles.numInput}`}
-                  type="number"
                   min={1}
                   step="any"
                   value={form.params.maxQuoteAgeMs}
@@ -475,10 +475,9 @@ export function AggregationPanel({
               </label>
               <label className={styles.param} htmlFor="agg-mincontrib">
                 <span className={styles.paramLabel}>Min contributors</span>
-                <input
+                <NumberField
                   id="agg-mincontrib"
                   className={`${styles.input} ${styles.numInput}`}
-                  type="number"
                   min={1}
                   step={1}
                   value={form.params.minContributors}
@@ -487,10 +486,9 @@ export function AggregationPanel({
               </label>
               <label className={styles.param} htmlFor="agg-depth">
                 <span className={styles.paramLabel}>Depth levels</span>
-                <input
+                <NumberField
                   id="agg-depth"
                   className={`${styles.input} ${styles.numInput}`}
-                  type="number"
                   min={1}
                   step={1}
                   value={form.params.depthLevels}

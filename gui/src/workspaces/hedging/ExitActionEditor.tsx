@@ -18,6 +18,8 @@ import {
 } from "../../lib/hedgeExit";
 import rr from "../riskrouting/RiskRoutingWorkspace.module.css";
 
+import { NumberField } from "../../components/NumberField";
+
 const SIZE_KINDS: readonly HedgeSizeKind[] = ["overflow", "full", "fixed"];
 const EXEC_STYLES: readonly ExecStyle[] = ["immediate", "worked"];
 
@@ -62,9 +64,8 @@ function SizeEditor({
       {size.kind === "fixed" && (
         <label className={rr.editorField}>
           <span className={rr.fieldLabel}>Fixed amount</span>
-          <input
+          <NumberField
             className={rr.input}
-            type="number"
             value={size.fixed}
             disabled={readOnly}
             data-testid="exit-size-fixed"
@@ -159,9 +160,8 @@ export function ExitActionEditor({
           {!action.toEdge && (
             <label className={rr.editorField}>
               <span className={rr.fieldLabel}>Skew (bp)</span>
-              <input
+              <NumberField
                 className={rr.input}
-                type="number"
                 value={action.skewBp ?? 0}
                 disabled={readOnly}
                 data-testid="exit-skew-bp"

@@ -46,6 +46,8 @@ import { RiskTransferInboxWorkspace } from "./RiskTransferInboxWorkspace";
 import { RiskTransferAuditWorkspace } from "./RiskTransferAuditWorkspace";
 import styles from "./RiskTransferWorkspace.module.css";
 
+import { NumberField } from "../../components/NumberField";
+
 /** The tab the consolidated Risk Transfer surface shows: the initiate ticket
  * (default), the accept/reject inbox, or the immutable audit trail. `ticket` is the
  * default; `inbox` / `audit` are the deep-link targets for the retired
@@ -533,9 +535,8 @@ function RiskTransferTicketPanel(): React.ReactElement {
               <span className={styles.fieldLabel}>
                 Notional to move (max {fmtCompact(Math.abs(selectedTotal))})
               </span>
-              <input
+              <NumberField
                 className={styles.input}
-                type="number"
                 min={0}
                 max={Math.abs(selectedTotal)}
                 value={partialInput}
@@ -576,9 +577,8 @@ function RiskTransferTicketPanel(): React.ReactElement {
             <>
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Agreed price</span>
-                <input
+                <NumberField
                   className={styles.input}
-                  type="number"
                   step="0.01"
                   value={agreedInput}
                   onChange={(e) => setAgreedInput(e.target.value)}

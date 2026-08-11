@@ -18,6 +18,8 @@
 import type { OptionType, Side, StrategyKind, StrikeOrDelta } from "../data/contract";
 import styles from "../workspaces/TicketWorkspace.module.css";
 
+import { NumberField } from "../components/NumberField";
+
 /** The side an editable leg takes — a leg is bought or sold, never two-way. */
 export type StrategyLegSide = Extract<Side, "BUY" | "SELL">;
 
@@ -420,9 +422,8 @@ export function StrategyLegEditor({ template, legs, onChange }: StrategyLegEdito
                 {!isVanilla && (
                   <label className={styles.productField}>
                     <span>×</span>
-                    <input
+                    <NumberField
                       className="num"
-                      type="number"
                       min={0}
                       step={0.25}
                       value={leg.ratio}

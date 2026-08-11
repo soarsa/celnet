@@ -53,6 +53,8 @@ import {
 } from "./wizardModel";
 import styles from "../../setupWizard/setupWizard.module.css";
 
+import { NumberField } from "../../../components/NumberField";
+
 // Re-export the shared steps so the wizard host imports all four step surfaces from here.
 export { PortfoliosStep, RoutingStep } from "../../setupWizard/PortfolioRoutingSteps";
 
@@ -267,9 +269,8 @@ export function HedgingStep({
             </label>
             <label className={styles.field}>
               <span className={styles.miniLabel}>Cap (the &ldquo;100&rdquo;)</span>
-              <input
+              <NumberField
                 className={styles.input}
-                type="number"
                 value={threshold.cap}
                 disabled={readOnly}
                 data-testid="wiz-threshold-cap"
@@ -278,9 +279,8 @@ export function HedgingStep({
             </label>
             <label className={styles.field}>
               <span className={styles.miniLabel}>Amber band (0–1)</span>
-              <input
+              <NumberField
                 className={styles.input}
-                type="number"
                 step={0.05}
                 value={threshold.amber}
                 disabled={readOnly}
@@ -289,9 +289,8 @@ export function HedgingStep({
             </label>
             <label className={styles.field}>
               <span className={styles.miniLabel}>Red band (0–1)</span>
-              <input
+              <NumberField
                 className={styles.input}
-                type="number"
                 step={0.05}
                 value={threshold.red}
                 disabled={readOnly}

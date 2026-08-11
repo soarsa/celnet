@@ -46,6 +46,8 @@ import {
 } from "../data/contract";
 import styles from "./ReferenceDataWorkspace.module.css";
 
+import { NumberField as NumberFieldBase } from "../components/NumberField";
+
 // --- per-family default factories ------------------------------------------
 
 function defaultDeposit(): DepositDef {
@@ -227,10 +229,9 @@ function NumberField({
 }): React.ReactElement {
   return (
     <Field label={label} htmlFor={id}>
-      <input
+      <NumberFieldBase
         id={id}
         className={styles.control}
-        type="number"
         value={Number.isFinite(value) ? value : 0}
         step={step ?? 1}
         disabled={disabled}
@@ -325,11 +326,10 @@ function BrokenDateField({
     <div className={styles.dateCell}>
       <span className={styles.fieldLabel}>{label}</span>
       <div className={styles.dateRow}>
-        <input
+        <NumberFieldBase
           id={`${idPrefix}-year`}
           aria-label={`${label} year`}
           className={`${styles.control} ${styles.dateInput}`}
-          type="number"
           value={value.year}
           onChange={(e) => onChange({ ...value, year: Number(e.target.value) })}
         />
@@ -346,11 +346,10 @@ function BrokenDateField({
             </option>
           ))}
         </select>
-        <input
+        <NumberFieldBase
           id={`${idPrefix}-day`}
           aria-label={`${label} day`}
           className={`${styles.control} ${styles.dateInput}`}
-          type="number"
           min={1}
           max={31}
           value={value.day}

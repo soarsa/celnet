@@ -12,6 +12,8 @@ import { fmtRate } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /**
  * The American / Bermudan ticket inputs. `strike` `0` ⇒ default to the
  * ATM-forward level at build. `bermudanDates` is the number of equally-spaced
@@ -108,9 +110,8 @@ function AmericanInputBlock({
         />
         <label className={styles.productField}>
           <span>Strike</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={step}
             value={american.strike}
@@ -141,9 +142,8 @@ function AmericanInputBlock({
         {american.exerciseStyle === "BERMUDAN" && (
           <label className={styles.productField}>
             <span>Exercise dates</span>
-            <input
+            <NumberField
               className="num"
-              type="number"
               min={1}
               step={1}
               value={american.bermudanDates}
@@ -163,9 +163,8 @@ function AmericanInputBlock({
         <span className={styles.productLabel}>Engine</span>
         <label className={styles.productField}>
           <span>LSM paths</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={1000}
             value={american.lsmPaths}
@@ -179,9 +178,8 @@ function AmericanInputBlock({
         {isLsm && (
           <label className={styles.productField}>
             <span>LSM seed</span>
-            <input
+            <NumberField
               className="num"
-              type="number"
               min={0}
               step={1}
               value={Number(american.lsmSeed)}

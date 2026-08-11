@@ -13,6 +13,8 @@ import { fmtRate } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /**
  * The enumerated published settlement-rate options (`FixingSource`), each with its
  * trader-facing label. Identity only — names *which* published rate the NDF fixes
@@ -79,9 +81,8 @@ function NdfInputBlock({ value, onChange, ctx }: InputBlockProps<NdfInputs>) {
         </div>
         <label className={styles.productField}>
           <span>Rate</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={Math.pow(10, -pipDecimals)}
             value={value.contractRate}

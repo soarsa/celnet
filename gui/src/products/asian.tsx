@@ -16,6 +16,8 @@ import { fmtRate } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /** The Asian ticket inputs (fresh — no in-progress average / seasoning). */
 export interface AsianInputs {
   optionType: OptionType;
@@ -69,9 +71,8 @@ function AsianInputBlock({ value, onChange, ctx }: InputBlockProps<AsianInputs>)
         </div>
         <label className={styles.productField}>
           <span>Strike</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={Math.pow(10, -pipDecimals)}
             value={value.strike}
@@ -100,9 +101,8 @@ function AsianInputBlock({ value, onChange, ctx }: InputBlockProps<AsianInputs>)
         {value.averaging === "DISCRETE" && (
           <label className={styles.productField}>
             <span>Fixings</span>
-            <input
+            <NumberField
               className="num"
-              type="number"
               min={1}
               step={1}
               value={value.observations}

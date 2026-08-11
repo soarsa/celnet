@@ -39,6 +39,8 @@ import { STRATEGY_HELP_ID } from "../lib/help";
 import { HelpButton } from "./HelpButton";
 import styles from "./TieringEditor.module.css";
 
+import { NumberField } from "../components/NumberField";
+
 /** Format a preview price: 2–5 dp, trimming trailing zeros beyond 2. */
 function fmtPrice(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 5 });
@@ -182,10 +184,9 @@ export function TieringEditor({
                       {!isScaled && (
                         <label className={styles.param} htmlFor={`${idPrefix}-s${i}-half`}>
                           <span className={styles.paramLabel}>Half-spread H</span>
-                          <input
+                          <NumberField
                             id={`${idPrefix}-s${i}-half`}
                             className={`${styles.input} ${styles.numInput} ${se.halfSpread ? styles.inputError : ""}`}
-                            type="number"
                             step="any"
                             value={s.halfSpread}
                             data-tour-id={i === 0 ? "tiering-bps" : undefined}
@@ -201,10 +202,9 @@ export function TieringEditor({
                         <>
                           <label className={styles.param} htmlFor={`${idPrefix}-s${i}-kappa`}>
                             <span className={styles.paramLabel}>κ (per unit inventory)</span>
-                            <input
+                            <NumberField
                               id={`${idPrefix}-s${i}-kappa`}
                               className={`${styles.input} ${styles.numInput} ${se.kappa ? styles.inputError : ""}`}
-                              type="number"
                               step="any"
                               value={s.kappa}
                               aria-invalid={se.kappa ? true : undefined}
@@ -214,10 +214,9 @@ export function TieringEditor({
                           </label>
                           <label className={styles.param} htmlFor={`${idPrefix}-s${i}-smax`}>
                             <span className={styles.paramLabel}>Strategy sMax</span>
-                            <input
+                            <NumberField
                               id={`${idPrefix}-s${i}-smax`}
                               className={`${styles.input} ${styles.numInput} ${se.sMax ? styles.inputError : ""}`}
-                              type="number"
                               step="any"
                               value={s.sMax}
                               aria-invalid={se.sMax ? true : undefined}
@@ -231,10 +230,9 @@ export function TieringEditor({
                         <>
                           <label className={styles.param} htmlFor={`${idPrefix}-s${i}-w`}>
                             <span className={styles.paramLabel}>Smoothing weight w (0–1]</span>
-                            <input
+                            <NumberField
                               id={`${idPrefix}-s${i}-w`}
                               className={`${styles.input} ${styles.numInput} ${se.smoothingWeight ? styles.inputError : ""}`}
-                              type="number"
                               step="any"
                               value={s.smoothingWeight}
                               aria-invalid={se.smoothingWeight ? true : undefined}
@@ -248,10 +246,9 @@ export function TieringEditor({
                           </label>
                           <label className={styles.param} htmlFor={`${idPrefix}-s${i}-e`}>
                             <span className={styles.paramLabel}>Expected spread e</span>
-                            <input
+                            <NumberField
                               id={`${idPrefix}-s${i}-e`}
                               className={`${styles.input} ${styles.numInput} ${se.expectedSpread ? styles.inputError : ""}`}
-                              type="number"
                               step="any"
                               value={s.expectedSpread}
                               aria-invalid={se.expectedSpread ? true : undefined}
@@ -265,10 +262,9 @@ export function TieringEditor({
                           </label>
                           <label className={styles.param} htmlFor={`${idPrefix}-s${i}-d`}>
                             <span className={styles.paramLabel}>Max divergence d</span>
-                            <input
+                            <NumberField
                               id={`${idPrefix}-s${i}-d`}
                               className={`${styles.input} ${styles.numInput} ${se.maxDivergence ? styles.inputError : ""}`}
-                              type="number"
                               step="any"
                               value={s.maxDivergence}
                               aria-invalid={se.maxDivergence ? true : undefined}
@@ -282,10 +278,9 @@ export function TieringEditor({
                           </label>
                           <label className={styles.param} htmlFor={`${idPrefix}-s${i}-c`}>
                             <span className={styles.paramLabel}>Core spread c</span>
-                            <input
+                            <NumberField
                               id={`${idPrefix}-s${i}-c`}
                               className={`${styles.input} ${styles.numInput} ${se.coreSpread ? styles.inputError : ""}`}
-                              type="number"
                               step="any"
                               value={s.coreSpread}
                               aria-invalid={se.coreSpread ? true : undefined}
@@ -297,10 +292,9 @@ export function TieringEditor({
                           </label>
                           <label className={styles.param} htmlFor={`${idPrefix}-s${i}-m`}>
                             <span className={styles.paramLabel}>Max output spread m</span>
-                            <input
+                            <NumberField
                               id={`${idPrefix}-s${i}-m`}
                               className={`${styles.input} ${styles.numInput} ${se.maxOutputSpread ? styles.inputError : ""}`}
-                              type="number"
                               step="any"
                               value={s.maxOutputSpread}
                               aria-invalid={se.maxOutputSpread ? true : undefined}
@@ -314,10 +308,9 @@ export function TieringEditor({
                           </label>
                           <label className={styles.param} htmlFor={`${idPrefix}-s${i}-f`}>
                             <span className={styles.paramLabel}>Spread scale factor f</span>
-                            <input
+                            <NumberField
                               id={`${idPrefix}-s${i}-f`}
                               className={`${styles.input} ${styles.numInput} ${se.spreadScaleFactor ? styles.inputError : ""}`}
-                              type="number"
                               step="any"
                               value={s.spreadScaleFactor}
                               aria-invalid={se.spreadScaleFactor ? true : undefined}
@@ -356,10 +349,9 @@ export function TieringEditor({
             <div className={styles.grid}>
               <label className={styles.param} htmlFor={`${idPrefix}-hmin`}>
                 <span className={styles.paramLabel}>h_min</span>
-                <input
+                <NumberField
                   id={`${idPrefix}-hmin`}
                   className={`${styles.input} ${styles.numInput} ${errors.guardrails.hMin ? styles.inputError : ""}`}
-                  type="number"
                   step="any"
                   value={value.guardrails?.hMin ?? 0}
                   aria-invalid={errors.guardrails.hMin ? true : undefined}
@@ -371,10 +363,9 @@ export function TieringEditor({
               </label>
               <label className={styles.param} htmlFor={`${idPrefix}-hmax`}>
                 <span className={styles.paramLabel}>h_max</span>
-                <input
+                <NumberField
                   id={`${idPrefix}-hmax`}
                   className={`${styles.input} ${styles.numInput} ${errors.guardrails.hMax ? styles.inputError : ""}`}
-                  type="number"
                   step="any"
                   value={value.guardrails?.hMax ?? 0}
                   aria-invalid={errors.guardrails.hMax ? true : undefined}
@@ -386,10 +377,9 @@ export function TieringEditor({
               </label>
               <label className={styles.param} htmlFor={`${idPrefix}-smax`}>
                 <span className={styles.paramLabel}>s_max</span>
-                <input
+                <NumberField
                   id={`${idPrefix}-smax`}
                   className={`${styles.input} ${styles.numInput} ${errors.guardrails.sMax ? styles.inputError : ""}`}
-                  type="number"
                   step="any"
                   value={value.guardrails?.sMax ?? 0}
                   aria-invalid={errors.guardrails.sMax ? true : undefined}
@@ -401,10 +391,9 @@ export function TieringEditor({
               </label>
               <label className={styles.param} htmlFor={`${idPrefix}-floor`}>
                 <span className={styles.paramLabel}>spread_floor</span>
-                <input
+                <NumberField
                   id={`${idPrefix}-floor`}
                   className={`${styles.input} ${styles.numInput} ${errors.guardrails.spreadFloor ? styles.inputError : ""}`}
-                  type="number"
                   step="any"
                   value={value.guardrails?.spreadFloor ?? 0}
                   aria-invalid={errors.guardrails.spreadFloor ? true : undefined}

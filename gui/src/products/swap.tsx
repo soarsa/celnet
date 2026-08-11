@@ -12,6 +12,8 @@ import { fmtRate } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /** The FX-swap ticket inputs: the two leg rates + the near leg's direction. */
 export interface SwapInputs {
   /** The near (spot-dated) leg's rate; `0` ⇒ default to the spot when shown. */
@@ -64,9 +66,8 @@ function SwapInputBlock({ value, onChange, ctx }: InputBlockProps<SwapInputs>) {
         </div>
         <label className={styles.productField}>
           <span>Near rate</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={Math.pow(10, -pipDecimals)}
             value={value.nearRate}
@@ -84,9 +85,8 @@ function SwapInputBlock({ value, onChange, ctx }: InputBlockProps<SwapInputs>) {
         <span className={styles.productLabel}>{farSide === "BUY" ? "Buy" : "Sell"}</span>
         <label className={styles.productField}>
           <span>Far rate</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={Math.pow(10, -pipDecimals)}
             value={value.farRate}

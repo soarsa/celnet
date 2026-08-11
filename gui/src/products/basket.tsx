@@ -11,6 +11,8 @@ import { pairLabel } from "../lib/universe";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /**
  * The correlated multi-asset basket ticket inputs. The trader builds 2–3 legs
  * (each a currency pair + weight + its own spot / vol / foreign rate), a single
@@ -230,9 +232,8 @@ function BasketInputBlock({ value: basket, onChange }: InputBlockProps<BasketInp
           </label>
           <label className={styles.productField}>
             <span>Weight</span>
-            <input
+            <NumberField
               className="num"
-              type="number"
               step={0.05}
               value={leg.weight}
               aria-label={`leg ${i + 1} weight`}
@@ -241,9 +242,8 @@ function BasketInputBlock({ value: basket, onChange }: InputBlockProps<BasketInp
           </label>
           <label className={styles.productField}>
             <span>Spot</span>
-            <input
+            <NumberField
               className="num"
-              type="number"
               min={0}
               step={0.0001}
               value={leg.spot}
@@ -253,9 +253,8 @@ function BasketInputBlock({ value: basket, onChange }: InputBlockProps<BasketInp
           </label>
           <label className={styles.productField}>
             <span>Vol</span>
-            <input
+            <NumberField
               className="num"
-              type="number"
               min={0}
               step={0.005}
               value={leg.vol}
@@ -265,9 +264,8 @@ function BasketInputBlock({ value: basket, onChange }: InputBlockProps<BasketInp
           </label>
           <label className={styles.productField}>
             <span>r_for</span>
-            <input
+            <NumberField
               className="num"
-              type="number"
               step={0.001}
               value={leg.rFor}
               aria-label={`leg ${i + 1} r_for`}
@@ -296,9 +294,8 @@ function BasketInputBlock({ value: basket, onChange }: InputBlockProps<BasketInp
         <span className={styles.productLabel}>Correlation</span>
         <label className={styles.productField}>
           <span>ρ</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={-1}
             max={1}
             step={0.05}
@@ -312,9 +309,8 @@ function BasketInputBlock({ value: basket, onChange }: InputBlockProps<BasketInp
         </label>
         <label className={styles.productField}>
           <span>Strike</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.0001}
             value={basket.strike}
@@ -331,9 +327,8 @@ function BasketInputBlock({ value: basket, onChange }: InputBlockProps<BasketInp
         <span className={styles.productLabel}>Engine</span>
         <label className={styles.productField}>
           <span>MC paths</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={1024}
             value={basket.mcPaths}
@@ -345,9 +340,8 @@ function BasketInputBlock({ value: basket, onChange }: InputBlockProps<BasketInp
         </label>
         <label className={styles.productField}>
           <span>Scrambles</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={1}
             value={basket.mcReplications}
@@ -362,9 +356,8 @@ function BasketInputBlock({ value: basket, onChange }: InputBlockProps<BasketInp
         </label>
         <label className={styles.productField}>
           <span>Steps</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={1}
             value={basket.mcSteps}

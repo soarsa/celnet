@@ -4,10 +4,13 @@
  * app — including inputs mounted later — without touching each of the ~180
  * call sites.
  *
- * 1. Select-on-focus. Every numeric control is a controlled input bound to a
- *    number that defaults to `0`. On focus the caret would otherwise land
- *    *after* that `0`, trapping the user against the leading zero. Selecting
- *    the contents makes the first keystroke overwrite the value.
+ * 1. Select-on-focus, so the first keystroke overwrites rather than appends to an
+ *    existing value. This no longer has anything to do with the leading-zero trap:
+ *    an UNSET field is now rendered EMPTY (with a `0` placeholder) by the
+ *    `NumberField` drop-in, so there is nothing there to select and the caret
+ *    already starts at the left. What remains is the case this still earns its
+ *    keep for — replacing a REAL value, e.g. clicking a field holding `5000000`
+ *    and typing straight over it.
  *
  * 2. Magnitude shorthand. Traders enter large notionals with `k`/`m`/`b`
  *    suffixes: `5m` → 5,000,000, `1k` → 1,000, `2b` → 2,000,000,000. Native

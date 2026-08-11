@@ -32,6 +32,8 @@ import { useCorporateActions } from "../hooks/useCorporateActions";
 import admin from "./AdminWorkspace.module.css";
 import styles from "./CorporateActionsWorkspace.module.css";
 
+import { NumberField } from "../components/NumberField";
+
 /** A dash when a date/value is empty. */
 function dash(value: string): React.ReactElement | string {
   return value.length > 0 ? value : "—";
@@ -306,8 +308,7 @@ export function CorporateActionsWorkspace(): React.ReactElement {
             <div className={styles.lifecycle}>
               <label className={styles.faceField}>
                 <span>Held face</span>
-                <input
-                  type="number"
+                <NumberField
                   min={0}
                   step={100000}
                   value={heldFace}

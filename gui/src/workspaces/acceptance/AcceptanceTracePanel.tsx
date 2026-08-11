@@ -16,6 +16,8 @@ import {
 } from "../../lib/acceptanceTrace";
 import styles from "./AcceptanceWorkspace.module.css";
 
+import { NumberField } from "../../components/NumberField";
+
 interface AcceptanceTracePanelProps {
   /** The compiled policy graph (enabled rules only) — traced live as the trader dials. */
   graph: AcceptanceGraph;
@@ -92,9 +94,8 @@ export function AcceptanceTracePanel({ graph }: AcceptanceTracePanelProps): Reac
         {NUMERIC_FIELDS.map((f) => (
           <label key={f.key} className={styles.traceField}>
             <span className={styles.traceFieldLabel}>{f.label}</span>
-            <input
+            <NumberField
               className={styles.input}
-              type="number"
               step={f.step ?? 1}
               value={lift[f.key] as number}
               data-testid={`trace-${f.key}`}

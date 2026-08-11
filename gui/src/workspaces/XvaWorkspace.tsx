@@ -26,6 +26,8 @@ import type { OptionType, XvaPricingRequest, XvaResult } from "../data/contract"
 import { useApp } from "../app/AppContext";
 import styles from "./XvaWorkspace.module.css";
 
+import { NumberField as NumberFieldBase } from "../components/NumberField";
+
 /** One editable netting-set trade (vols/notional held in trader-facing units). */
 interface EditableTrade {
   readonly optionType: OptionType;
@@ -305,8 +307,7 @@ export function XvaWorkspace(): React.ReactElement {
               </select>
               <label className={styles.inlineInput}>
                 <span className={styles.inlineLabel}>K</span>
-                <input
-                  type="number"
+                <NumberFieldBase
                   step={0.01}
                   value={t.strike}
                   aria-label={`trade ${i + 1} strike`}
@@ -314,8 +315,7 @@ export function XvaWorkspace(): React.ReactElement {
                 />
               </label>
               <label className={styles.inlineInput}>
-                <input
-                  type="number"
+                <NumberFieldBase
                   step={0.25}
                   value={t.expiryYears}
                   aria-label={`trade ${i + 1} expiry in years`}
@@ -324,8 +324,7 @@ export function XvaWorkspace(): React.ReactElement {
                 <span className={styles.inputUnit}>y</span>
               </label>
               <label className={styles.inlineInput}>
-                <input
-                  type="number"
+                <NumberFieldBase
                   step={0.5}
                   value={t.volPct}
                   aria-label={`trade ${i + 1} vol in percent`}
@@ -334,8 +333,7 @@ export function XvaWorkspace(): React.ReactElement {
                 <span className={styles.inputUnit}>%</span>
               </label>
               <label className={styles.inlineInput}>
-                <input
-                  type="number"
+                <NumberFieldBase
                   step={100_000}
                   value={t.notional}
                   aria-label={`trade ${i + 1} notional`}
@@ -514,8 +512,7 @@ function NumberField({
     <label className={styles.field}>
       <span className={styles.fieldLabel}>{label}</span>
       <span className={styles.inlineInput}>
-        <input
-          type="number"
+        <NumberFieldBase
           step={step}
           value={value}
           aria-label={label}

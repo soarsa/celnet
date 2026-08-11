@@ -10,6 +10,8 @@ import { useState } from "react";
 import type { HedgeMetric, HedgeScopeKind, WarehouseThreshold } from "../../data/contract";
 import styles from "./HedgingWorkspace.module.css";
 
+import { NumberField } from "../../components/NumberField";
+
 const SCOPE_KINDS: readonly HedgeScopeKind[] = ["desk", "book", "instrument"];
 const METRICS: readonly HedgeMetric[] = ["dv01", "net_notional", "net_delta", "net_vega"];
 
@@ -209,9 +211,8 @@ export function ThresholdConfig({
             </label>
             <label className={styles.formField}>
               <span className={styles.fieldLabel}>Cap (the “100”)</span>
-              <input
+              <NumberField
                 className={styles.input}
-                type="number"
                 value={draft.cap}
                 data-testid="threshold-cap"
                 onChange={numField("cap")}
@@ -219,17 +220,16 @@ export function ThresholdConfig({
             </label>
             <label className={styles.formField}>
               <span className={styles.fieldLabel}>Amber (0–1)</span>
-              <input className={styles.input} type="number" step={0.05} value={draft.amber} onChange={numField("amber")} />
+              <NumberField className={styles.input} step={0.05} value={draft.amber} onChange={numField("amber")} />
             </label>
             <label className={styles.formField}>
               <span className={styles.fieldLabel}>Red (0–1)</span>
-              <input className={styles.input} type="number" step={0.05} value={draft.red} onChange={numField("red")} />
+              <NumberField className={styles.input} step={0.05} value={draft.red} onChange={numField("red")} />
             </label>
             <label className={styles.formField}>
               <span className={styles.fieldLabel}>Target fraction</span>
-              <input
+              <NumberField
                 className={styles.input}
-                type="number"
                 step={0.05}
                 value={draft.targetFraction}
                 onChange={numField("targetFraction")}
@@ -237,11 +237,11 @@ export function ThresholdConfig({
             </label>
             <label className={styles.formField}>
               <span className={styles.fieldLabel}>Min clip</span>
-              <input className={styles.input} type="number" value={draft.minClip} onChange={numField("minClip")} />
+              <NumberField className={styles.input} value={draft.minClip} onChange={numField("minClip")} />
             </label>
             <label className={styles.formField}>
               <span className={styles.fieldLabel}>Max clip</span>
-              <input className={styles.input} type="number" value={draft.maxClip} onChange={numField("maxClip")} />
+              <NumberField className={styles.input} value={draft.maxClip} onChange={numField("maxClip")} />
             </label>
             <label className={styles.checkField}>
               <input
@@ -255,7 +255,7 @@ export function ThresholdConfig({
             {draft.ramped && (
               <label className={styles.formField}>
                 <span className={styles.fieldLabel}>Ramp gain k</span>
-                <input className={styles.input} type="number" step={0.1} value={draft.rampK} onChange={numField("rampK")} />
+                <NumberField className={styles.input} step={0.1} value={draft.rampK} onChange={numField("rampK")} />
               </label>
             )}
           </div>

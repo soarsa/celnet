@@ -11,6 +11,8 @@ import { fmtRate } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /**
  * The digital ticket inputs (call/put / strike / cash-or-asset settlement /
  * payout). `strike` `0` ⇒ ATM-forward.
@@ -61,9 +63,8 @@ function DigitalInputBlock({ value, onChange, ctx }: InputBlockProps<DigitalInpu
         </div>
         <label className={styles.productField}>
           <span>Strike</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={step}
             value={value.strike}
@@ -91,9 +92,8 @@ function DigitalInputBlock({ value, onChange, ctx }: InputBlockProps<DigitalInpu
         </div>
         <label className={styles.productField}>
           <span>Payout</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.5}
             value={value.payout}

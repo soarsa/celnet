@@ -9,6 +9,8 @@ import { bookingModelsFor } from "../data/seed";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /** The forward-start ticket inputs (option type / reset-moneyness / reset date). */
 export interface ForwardStartInputs {
   optionType: OptionType;
@@ -72,9 +74,8 @@ function ForwardStartInputBlock({ value, onChange }: InputBlockProps<ForwardStar
         />
         <label className={styles.productField}>
           <span>Reset m</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.01}
             value={value.moneyness}
@@ -87,9 +88,8 @@ function ForwardStartInputBlock({ value, onChange }: InputBlockProps<ForwardStar
         </label>
         <label className={styles.productField}>
           <span>Reset t₁</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.05}
             value={value.reset}

@@ -19,6 +19,8 @@ import { ALL_ASSET_CLASSES } from "./capability";
 import { crossAssetOverlayFor } from "./crossAsset";
 import { defineProduct, withModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /** The perpetual-option ticket inputs. */
 export interface PerpetualInputs {
   optionType: OptionType;
@@ -68,9 +70,8 @@ function PerpetualInputBlock({ value, onChange, ctx }: InputBlockProps<Perpetual
         </div>
         <label className={styles.productField}>
           <span>Strike</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={Math.pow(10, -pipDecimals)}
             value={value.strike}

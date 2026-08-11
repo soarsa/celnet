@@ -11,6 +11,8 @@ import { fmtRate, fmtVol } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /** The quanto ticket inputs (payoff kind / option type / strike / σ_Z / ρ). */
 export interface QuantoInputs {
   payoff: QuantoPayoff;
@@ -92,9 +94,8 @@ function QuantoInputBlock({ value, onChange, ctx }: InputBlockProps<QuantoInputs
       <div className={styles.productRow}>
         <label className={styles.productField}>
           <span>Strike</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={Math.pow(10, -pipDecimals)}
             value={value.strike}
@@ -106,9 +107,8 @@ function QuantoInputBlock({ value, onChange, ctx }: InputBlockProps<QuantoInputs
         </label>
         <label className={styles.productField}>
           <span>Conv vol σ_Z</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.005}
             value={value.conversionVol}
@@ -121,9 +121,8 @@ function QuantoInputBlock({ value, onChange, ctx }: InputBlockProps<QuantoInputs
         </label>
         <label className={styles.productField}>
           <span>Corr ρ</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={-1}
             max={1}
             step={0.05}

@@ -10,6 +10,8 @@ import type { HedgeConfig, HedgeExecutionMode } from "../../data/contract";
 import { HelpButton } from "../../components/HelpButton";
 import styles from "./HedgingWorkspace.module.css";
 
+import { NumberField } from "../../components/NumberField";
+
 interface HedgeConfigControlProps {
   config: HedgeConfig;
   readOnly: boolean;
@@ -128,9 +130,8 @@ export function HedgeConfigControl({
       <div className={styles.formGrid}>
         <label className={styles.formField}>
           <span className={styles.fieldLabel}>Max clip</span>
-          <input
+          <NumberField
             className={styles.input}
-            type="number"
             value={config.maxClip}
             disabled={disabled}
             onChange={(e) => patch({ maxClip: Number(e.target.value) })}
@@ -138,9 +139,8 @@ export function HedgeConfigControl({
         </label>
         <label className={styles.formField}>
           <span className={styles.fieldLabel}>Max hedges / interval</span>
-          <input
+          <NumberField
             className={styles.input}
-            type="number"
             value={config.maxHedgesPerInterval}
             disabled={disabled}
             onChange={(e) => patch({ maxHedgesPerInterval: Math.max(0, Math.trunc(Number(e.target.value))) })}
@@ -148,9 +148,8 @@ export function HedgeConfigControl({
         </label>
         <label className={styles.formField}>
           <span className={styles.fieldLabel}>Daily external cap</span>
-          <input
+          <NumberField
             className={styles.input}
-            type="number"
             value={config.dailyExternalNotionalCap}
             disabled={disabled}
             onChange={(e) => patch({ dailyExternalNotionalCap: Number(e.target.value) })}
@@ -159,9 +158,8 @@ export function HedgeConfigControl({
         {showComposite && (
           <label className={styles.formField} data-testid="composite-spread-field">
             <span className={styles.fieldLabel}>Composite spread (bp)</span>
-            <input
+            <NumberField
               className={styles.input}
-              type="number"
               step="0.1"
               min="0"
               value={config.compositeSpreadBp}

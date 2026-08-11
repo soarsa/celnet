@@ -10,6 +10,8 @@ import { bookingModelsFor } from "../data/seed";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /**
  * The cliquet ticket inputs. The local cap/floor are presence-tracked via
  * `useCap`/`useFloor` toggles; any clamp on switches the pricer to Monte-Carlo
@@ -91,9 +93,8 @@ function CliquetInputBlock({ value, onChange }: InputBlockProps<CliquetInputs>) 
         />
         <label className={styles.productField}>
           <span>Per-period m</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.01}
             value={value.moneyness}
@@ -105,9 +106,8 @@ function CliquetInputBlock({ value, onChange }: InputBlockProps<CliquetInputs>) 
         </label>
         <label className={styles.productField}>
           <span>Periods</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={1}
             step={1}
             value={value.periods}
@@ -128,9 +128,8 @@ function CliquetInputBlock({ value, onChange }: InputBlockProps<CliquetInputs>) 
             onChange={(ev) => onChange({ ...value, useLocalCap: ev.target.checked })}
           />
           <span>Cap</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.005}
             value={value.localCap}
@@ -149,9 +148,8 @@ function CliquetInputBlock({ value, onChange }: InputBlockProps<CliquetInputs>) 
             onChange={(ev) => onChange({ ...value, useLocalFloor: ev.target.checked })}
           />
           <span>Floor</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.005}
             value={value.localFloor}
@@ -167,9 +165,8 @@ function CliquetInputBlock({ value, onChange }: InputBlockProps<CliquetInputs>) 
         <div className={styles.productRow}>
           <span className={styles.productLabel}>MC pairs</span>
           <label className={styles.productField}>
-            <input
+            <NumberField
               className="num"
-              type="number"
               min={0}
               step={1000}
               value={value.mcPairs}

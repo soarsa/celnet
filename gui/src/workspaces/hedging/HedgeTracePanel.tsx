@@ -13,6 +13,8 @@ import { describeExitAction } from "../../lib/hedgeExit";
 import { blankHedgeState, traceHedgeGraph, type HedgeSampleState } from "../../lib/hedgeTrace";
 import styles from "./HedgingWorkspace.module.css";
 
+import { NumberField } from "../../components/NumberField";
+
 interface HedgeTracePanelProps {
   /** The compiled policy graph (enabled rules only) — traced live as the trader dials. */
   graph: HedgeGraph;
@@ -120,9 +122,8 @@ export function HedgeTracePanel({ graph }: HedgeTracePanelProps): React.ReactEle
                 {f.label}
                 {f.unit ? <span className={styles.traceUnit}> · {f.unit}</span> : null}
               </span>
-              <input
+              <NumberField
                 className={styles.input}
-                type="number"
                 step={f.step ?? 1}
                 value={value}
                 data-testid={`trace-${f.key}`}

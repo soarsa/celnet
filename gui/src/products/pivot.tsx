@@ -18,6 +18,8 @@ import { fmtRate } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /**
  * The pivot-TRA ticket inputs (favourable side / strike / pivot / target /
  * leverage / gap-risk redemption / fixing count / MC). Always Monte-Carlo, so the
@@ -91,9 +93,8 @@ function PivotInputBlock({ value: pivot, onChange, ctx }: InputBlockProps<PivotI
         </div>
         <label className={styles.productField}>
           <span>Strike</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={Math.pow(10, -pipDecimals)}
             value={pivot.strike}
@@ -105,9 +106,8 @@ function PivotInputBlock({ value: pivot, onChange, ctx }: InputBlockProps<PivotI
         </label>
         <label className={styles.productField}>
           <span>Pivot</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={Math.pow(10, -pipDecimals)}
             value={pivot.pivot}
@@ -121,9 +121,8 @@ function PivotInputBlock({ value: pivot, onChange, ctx }: InputBlockProps<PivotI
       <div className={styles.productRow}>
         <label className={styles.productField}>
           <span>Target</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.01}
             value={pivot.target}
@@ -133,9 +132,8 @@ function PivotInputBlock({ value: pivot, onChange, ctx }: InputBlockProps<PivotI
         </label>
         <label className={styles.productField}>
           <span>Leverage</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={0.5}
             value={pivot.leverage}
@@ -148,9 +146,8 @@ function PivotInputBlock({ value: pivot, onChange, ctx }: InputBlockProps<PivotI
         </label>
         <label className={styles.productField}>
           <span>Fixings</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={1}
             step={1}
             value={pivot.fixings}
@@ -178,9 +175,8 @@ function PivotInputBlock({ value: pivot, onChange, ctx }: InputBlockProps<PivotI
         </div>
         <label className={styles.productField}>
           <span>MC pairs</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={1000}
             value={pivot.mcPairs}

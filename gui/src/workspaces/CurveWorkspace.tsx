@@ -78,6 +78,8 @@ import { CurveDashboard } from "./CurveDashboard";
 import { CurveDefinitionEditor } from "./CurveDefinitionEditor";
 import styles from "./CurveWorkspace.module.css";
 
+import { NumberField } from "../components/NumberField";
+
 /** The manager lenses, in the order the tab bar offers them. */
 type ManagerMode =
   | "dashboard"
@@ -787,8 +789,7 @@ function PillarEditorMode({
               />
 
               <label className={styles.inlineInput}>
-                <input
-                  type="number"
+                <NumberField
                   step={0.01}
                   value={p.parRatePct}
                   aria-label={`pillar ${i + 1} par rate in percent`}
@@ -829,8 +830,7 @@ function PillarEditorMode({
               );
             })}
             <label className={styles.inlineInput}>
-              <input
-                type="number"
+              <NumberField
                 min={0}
                 max={span}
                 step={0.5}
@@ -1266,8 +1266,7 @@ function InstrumentReferenceMode(): React.ReactElement {
                   {instrumentLabel(p.instrumentId)}
                 </span>
                 <label className={styles.inlineInput}>
-                  <input
-                    type="number"
+                  <NumberField
                     step={0.01}
                     value={p.quotePct}
                     aria-label={`${p.instrumentId} calibrating quote in percent`}
@@ -1320,8 +1319,7 @@ function InstrumentReferenceMode(): React.ReactElement {
                   />
                 </label>
                 <label className={styles.inlineInput}>
-                  <input
-                    type="number"
+                  <NumberField
                     step={0.01}
                     value={dp.quotePct}
                     aria-label={`date pillar ${dp.key} rate in percent`}
@@ -1750,8 +1748,7 @@ function CurveQueryMode({
             <li key={p.id} className={styles.pillarItem}>
               <span className={styles.pickLabel}>{pillarTenorLabel(p.tenor)}</span>
               <label className={styles.inlineInput}>
-                <input
-                  type="number"
+                <NumberField
                   step={0.01}
                   value={p.parRatePct}
                   aria-label={`${pillarTenorLabel(p.tenor)} par rate in percent`}
@@ -1761,8 +1758,7 @@ function CurveQueryMode({
               </label>
               {keyRateMode && (
                 <label className={styles.inlineInput}>
-                  <input
-                    type="number"
+                  <NumberField
                     step={1}
                     value={keyRateBp[i] ?? 0}
                     aria-label={`${pillarTenorLabel(p.tenor)} key-rate shift in basis points`}
@@ -1778,8 +1774,7 @@ function CurveQueryMode({
         <div className={styles.field}>
           <span className={styles.fieldLabel}>Parallel shift</span>
           <label className={styles.inlineInput}>
-            <input
-              type="number"
+            <NumberField
               step={1}
               value={parallelBp}
               aria-label="scenario parallel shift in basis points"
@@ -1803,8 +1798,7 @@ function CurveQueryMode({
           {repriceLeg && (
             <div className={styles.tenorPicks}>
               <label className={styles.inlineInput}>
-                <input
-                  type="number"
+                <NumberField
                   min={1}
                   step={1}
                   value={legTenorY}
@@ -1816,8 +1810,7 @@ function CurveQueryMode({
                 <span className={styles.inputUnit}>y</span>
               </label>
               <label className={styles.inlineInput}>
-                <input
-                  type="number"
+                <NumberField
                   step={0.01}
                   value={legFixedPct}
                   aria-label="repriced leg fixed rate in percent"
@@ -1826,8 +1819,7 @@ function CurveQueryMode({
                 <span className={styles.inputUnit}>%</span>
               </label>
               <label className={styles.inlineInput}>
-                <input
-                  type="number"
+                <NumberField
                   step={1_000_000}
                   value={legNotional}
                   aria-label="repriced leg notional"
@@ -2080,8 +2072,7 @@ function PillarTenorInput({
   const unit = tenor.kind === "years" ? "y" : "m";
   return (
     <label className={styles.inlineInput}>
-      <input
-        type="number"
+      <NumberField
         min={1}
         step={1}
         value={value}

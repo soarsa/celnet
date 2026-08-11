@@ -52,6 +52,8 @@ import type {
 import { pillarYears } from "../data/contract";
 import styles from "./RatesRiskWorkspace.module.css";
 
+import { NumberField } from "../components/NumberField";
+
 /** One million — the notional input is denominated in millions of the curve ccy. */
 const MM = 1_000_000;
 
@@ -412,9 +414,8 @@ export function RatesRiskPanel(): React.ReactElement {
               {rows.map((row) => (
                 <tr key={row.id}>
                   <td>
-                    <input
+                    <NumberField
                       className={styles.cellInput}
-                      type="number"
                       min={0}
                       step={1}
                       value={row.entity}
@@ -427,9 +428,8 @@ export function RatesRiskPanel(): React.ReactElement {
                     />
                   </td>
                   <td>
-                    <input
+                    <NumberField
                       className={styles.cellInput}
-                      type="number"
                       min={0}
                       step={1}
                       value={row.book}
@@ -442,9 +442,8 @@ export function RatesRiskPanel(): React.ReactElement {
                     />
                   </td>
                   <td>
-                    <input
+                    <NumberField
                       className={styles.cellInput}
-                      type="number"
                       min={1}
                       step={1}
                       value={row.tenorYears}
@@ -457,9 +456,8 @@ export function RatesRiskPanel(): React.ReactElement {
                     />
                   </td>
                   <td>
-                    <input
+                    <NumberField
                       className={styles.cellInput}
-                      type="number"
                       step={0.01}
                       value={row.fixedRatePct}
                       aria-label="fixed rate in percent"
@@ -471,9 +469,8 @@ export function RatesRiskPanel(): React.ReactElement {
                     />
                   </td>
                   <td>
-                    <input
+                    <NumberField
                       className={styles.cellInput}
-                      type="number"
                       min={0}
                       step={5}
                       value={row.notionalMm}
@@ -542,9 +539,8 @@ export function RatesRiskPanel(): React.ReactElement {
           </legend>
           <label className={styles.scopeField}>
             <span className={styles.scopeFieldLabel}>Entity</span>
-            <input
+            <NumberField
               className={styles.scopeInput}
-              type="number"
               min={0}
               step={1}
               placeholder="all"
@@ -557,9 +553,8 @@ export function RatesRiskPanel(): React.ReactElement {
           </label>
           <label className={styles.scopeField}>
             <span className={styles.scopeFieldLabel}>Book</span>
-            <input
+            <NumberField
               className={styles.scopeInput}
-              type="number"
               min={0}
               step={1}
               placeholder="all"

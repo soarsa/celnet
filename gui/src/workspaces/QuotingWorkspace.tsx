@@ -36,6 +36,8 @@ import { oisRatesInstrument } from "../data/contract";
 import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
 import styles from "./QuotingWorkspace.module.css";
 
+import { NumberField } from "../components/NumberField";
+
 const MM = 1_000_000;
 
 /** The taker RFQ instrument arms (the client-reachable `RatesInstrument` oneof). */
@@ -490,9 +492,8 @@ function TakerRfqPanel({ trader }: { trader: string }): React.ReactElement {
           {(arm === "ois" || arm === "irs") && (
             <>
               <Field label="Tenor (y)">
-                <input
+                <NumberField
                   className={styles.input}
-                  type="number"
                   min={1}
                   step={1}
                   value={tenorYears}
@@ -501,9 +502,8 @@ function TakerRfqPanel({ trader }: { trader: string }): React.ReactElement {
                 />
               </Field>
               <Field label="Fixed %">
-                <input
+                <NumberField
                   className={styles.input}
-                  type="number"
                   step={0.01}
                   value={fixedPct}
                   aria-label="fixed rate in percent"
@@ -515,9 +515,8 @@ function TakerRfqPanel({ trader }: { trader: string }): React.ReactElement {
           {arm === "fra" && (
             <>
               <Field label="Start (m)">
-                <input
+                <NumberField
                   className={styles.input}
-                  type="number"
                   min={0}
                   step={1}
                   value={startMonths}
@@ -526,9 +525,8 @@ function TakerRfqPanel({ trader }: { trader: string }): React.ReactElement {
                 />
               </Field>
               <Field label="End (m)">
-                <input
+                <NumberField
                   className={styles.input}
-                  type="number"
                   min={1}
                   step={1}
                   value={endMonths}
@@ -537,9 +535,8 @@ function TakerRfqPanel({ trader }: { trader: string }): React.ReactElement {
                 />
               </Field>
               <Field label="Fixed %">
-                <input
+                <NumberField
                   className={styles.input}
-                  type="number"
                   step={0.01}
                   value={fixedPct}
                   aria-label="FRA fixed rate in percent"
@@ -551,9 +548,8 @@ function TakerRfqPanel({ trader }: { trader: string }): React.ReactElement {
           {arm === "bond" && (
             <>
               <Field label="Coupon %">
-                <input
+                <NumberField
                   className={styles.input}
-                  type="number"
                   step={0.01}
                   value={couponPct}
                   aria-label="bond coupon in percent"
@@ -561,9 +557,8 @@ function TakerRfqPanel({ trader }: { trader: string }): React.ReactElement {
                 />
               </Field>
               <Field label="Maturity (y)">
-                <input
+                <NumberField
                   className={styles.input}
-                  type="number"
                   min={1}
                   step={1}
                   value={maturityYears}
@@ -574,9 +569,8 @@ function TakerRfqPanel({ trader }: { trader: string }): React.ReactElement {
             </>
           )}
           <Field label="Notional (mm)">
-            <input
+            <NumberField
               className={styles.input}
-              type="number"
               min={1}
               step={5}
               value={notionalMm}
@@ -800,9 +794,8 @@ function PricePanel({
           <div className={styles.quoteForm}>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Quote rate %</span>
-              <input
+              <NumberField
                 className={styles.input}
-                type="number"
                 step={0.01}
                 value={ratePct}
                 aria-label="quote rate in percent"
@@ -811,9 +804,8 @@ function PricePanel({
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Good for (s)</span>
-              <input
+              <NumberField
                 className={styles.input}
-                type="number"
                 min={1}
                 step={5}
                 value={validSecs}

@@ -71,6 +71,8 @@ import { nowNanos } from "../hooks/useClock";
 import { samePair } from "../lib/universe";
 import styles from "./TicketWorkspace.module.css";
 
+import { NumberField } from "../components/NumberField";
+
 /** The resting booking-model set — the fixed-income family has no option booking model. */
 const DEFAULT_ALLOWED_MODELS: readonly PricingModel[] = ["DEFAULT"];
 
@@ -820,9 +822,8 @@ export function TicketWorkspace({
             {optionSpec && instrument && (
               <label className={styles.notional}>
                 <span>notional</span>
-                <input
+                <NumberField
                   className="num"
-                  type="number"
                   min={1}
                   value={notionalMm}
                   onChange={(e) => setNotionalMm(Math.max(1, Number(e.target.value)))}

@@ -16,6 +16,8 @@ import { fmtRate } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /**
  * The window-barrier ticket inputs. `strike` 0 ⇒ default to the ATM-forward
  * level; the barrier defaults off spot on the chosen side; the active window
@@ -121,9 +123,8 @@ function WindowBarrierInputBlock({
         />
         <label className={styles.productField}>
           <span>Strike</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={step}
             value={windowBarrier.strike}
@@ -153,9 +154,8 @@ function WindowBarrierInputBlock({
         </div>
         <label className={styles.productField}>
           <span>Barrier</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={step}
             value={windowBarrier.barrier}
@@ -177,9 +177,8 @@ function WindowBarrierInputBlock({
       <div className={styles.productRow}>
         <label className={styles.productField}>
           <span>Window start</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             max={1}
             step={0.05}
@@ -196,9 +195,8 @@ function WindowBarrierInputBlock({
         </label>
         <label className={styles.productField}>
           <span>Window end</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             max={1}
             step={0.05}
@@ -215,9 +213,8 @@ function WindowBarrierInputBlock({
         </label>
         <label className={styles.productField}>
           <span>MC pairs</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={1000}
             value={windowBarrier.mcPairs}

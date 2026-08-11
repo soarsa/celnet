@@ -17,6 +17,8 @@ import { fmtRate } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /**
  * The lookback ticket inputs (style floating|fixed / option / monitoring
  * continuous|discrete / strike / observations / MC). CONTINUOUS prices by exact
@@ -110,9 +112,8 @@ function LookbackInputBlock({ value, onChange, ctx }: InputBlockProps<LookbackIn
         {isFixed && (
           <label className={styles.productField}>
             <span>Strike K</span>
-            <input
+            <NumberField
               className="num"
-              type="number"
               min={0}
               step={Math.pow(10, -pipDecimals)}
               value={value.strike}
@@ -130,9 +131,8 @@ function LookbackInputBlock({ value, onChange, ctx }: InputBlockProps<LookbackIn
         <div className={styles.productRow}>
           <label className={styles.productField}>
             <span>Observations</span>
-            <input
+            <NumberField
               className="num"
-              type="number"
               min={0}
               step={1}
               value={value.observations}
@@ -148,9 +148,8 @@ function LookbackInputBlock({ value, onChange, ctx }: InputBlockProps<LookbackIn
           </label>
           <label className={styles.productField}>
             <span>MC pairs</span>
-            <input
+            <NumberField
               className="num"
-              type="number"
               min={0}
               step={1000}
               value={value.mcPairs}

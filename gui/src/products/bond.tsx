@@ -28,6 +28,8 @@ import styles from "../workspaces/TicketWorkspace.module.css";
 import { RatesTabs } from "./ratesControls";
 import { defineRatesProduct, type InputBlockProps, type RatesResultView } from "./types";
 
+import { NumberField } from "../components/NumberField";
+
 /** The cash-bond ticket inputs — position, coupon, frequency, day-count, maturity, redemption. */
 export interface BondInputs {
   /** Long (bought, +PV) or short (sold, −PV). */
@@ -125,9 +127,8 @@ function BondInputBlock({ value, onChange }: InputBlockProps<BondInputs>) {
       <div className={styles.productRow}>
         <label className={styles.productField}>
           <span>Coupon</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             step={0.01}
             value={value.couponPct}
             aria-label="annual coupon rate in percent"
@@ -137,9 +138,8 @@ function BondInputBlock({ value, onChange }: InputBlockProps<BondInputs>) {
         </label>
         <label className={styles.productField}>
           <span>Redemption</span>
-          <input
+          <NumberField
             className="num"
-            type="number"
             min={0}
             step={1}
             value={value.redemption}
