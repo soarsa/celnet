@@ -364,6 +364,12 @@ struct RawRecord {
     buy_price: Option<f64>,
     #[serde(default)]
     sell_price: Option<f64>,
+    /// The auction award price per 100 face. This is the ONLY price a freshly
+    /// auctioned security carries: until it trades in the secondary market its
+    /// `buyPrice`/`sellPrice` stay `null`, so it is the fallback reference
+    /// [`RawRecord::into_bond`] prices such a security off.
+    #[serde(default)]
+    price_per_100: Option<f64>,
 }
 
 impl RawRecord {
@@ -379,8 +385,22 @@ impl RawRecord {
         if !isin_is_well_formed(&self.isin) {
             return None;
         }
-        let ask = price_in_band(self.buy_price)?;
-        let bid = price_in_band(self.sell_price)?;
+        // The secondary two-way when the record carries one, else the auction award
+        // price as a zero-width reference. A freshly auctioned security has no
+        // secondary buy/sell yet, and dropping it here silently shrinks the QUOTABLE
+        // universe below the TRADEABLE one the server seeds from
+        // `celnet_refdata::government_universe` (which imposes no price filter at
+        // all). That asymmetry is not cosmetic: an instrument the venue lets clients
+        // trade but no LP-SIM member can quote never reaches an aggregated book, so
+        // `AggregationHub::best_fill` finds no composite line for it and EVERY
+        // auto-hedge shed on it backstops to the synthetic COMPOSITE venue — leaving
+        // the street-side per-LP league table permanently empty. `pricePer100` is the
+        // record's REAL auction award price, so this widens the quotable set without
+        // fabricating a level (guardrail 2); the stochastic feed builds its own
+        // two-way around the reference either way.
+        let auction_reference = price_in_band(self.price_per_100);
+        let ask = price_in_band(self.buy_price).or(auction_reference)?;
+        let bid = price_in_band(self.sell_price).or(auction_reference)?;
 
         // A coupon security must carry a coupon; a Bill is a zero. Interpret an
         // absent/None coupon on a coupon class as a zero rather than dropping it,
@@ -605,7 +625,9 @@ mod tests {
     fn loads_a_substantial_priced_universe_from_the_real_file() {
         let bonds = load_universe();
         // The committed snapshot has 267 records; a large priced subset survives
-        // validation (unpriced auctions and out-of-band rows are dropped).
+        // validation (rows with no price at all and out-of-band rows are dropped —
+        // a freshly auctioned row prices off its `pricePer100` award, see
+        // `freshly_auctioned_securities_price_off_the_auction_award`).
         assert!(
             bonds.len() >= 120,
             "expected a large priced universe, got {}",
@@ -619,6 +641,48 @@ mod tests {
             assert!(isin_is_well_formed(&b.isin), "bad ISIN {}", b.isin);
             assert_eq!(b.cusip.len(), 9, "CUSIP not 9 chars: {}", b.cusip);
         }
+    }
+
+    /// A freshly auctioned security carries ONLY its `pricePer100` award — its
+    /// secondary `buyPrice`/`sellPrice` are still `null`. It must still load, because
+    /// the server's tradeable registry (`celnet_refdata::government_universe`) admits
+    /// it unconditionally: an instrument that is tradeable but NOT quotable never
+    /// reaches an aggregated book, so every auto-hedge shed on it backstops to the
+    /// synthetic COMPOSITE venue and the street-side per-LP league table stays empty.
+    #[test]
+    fn freshly_auctioned_securities_price_off_the_auction_award() {
+        let json = r#"[
+          {"cusip":"912797UE5","isin":"US912797UE52","securityType":"Bill",
+           "securityTerm":"52-Week","maturityDate":"2027-04-15",
+           "interestPaymentFrequency":"None","pricePer100":96.400444},
+          {"cusip":"912797ZZ9","isin":"US912797UE52","securityType":"Bill",
+           "securityTerm":"52-Week","maturityDate":"2027-04-15",
+           "interestPaymentFrequency":"None"}
+        ]"#;
+        let bonds = parse_universe(json).expect("well-formed array");
+        // The awarded-but-unseasoned bill loads, priced at its award on both sides.
+        assert_eq!(bonds.len(), 1, "only the priced record survives");
+        assert_eq!(bonds[0].cusip, "912797UE5");
+        assert!((bonds[0].bid - 96.400444).abs() < 1e-9);
+        assert!((bonds[0].ask - 96.400444).abs() < 1e-9);
+        // A record carrying NO price at all is still dropped — never fabricated.
+        assert!(!bonds.iter().any(|b| b.cusip == "912797ZZ9"));
+    }
+
+    /// The secondary two-way still WINS over the auction award when present, so a
+    /// seasoned security's loaded levels are byte-identical to before the fallback.
+    #[test]
+    fn a_seasoned_two_way_takes_precedence_over_the_auction_award() {
+        let json = r#"[
+          {"cusip":"912797UD7","isin":"US912797UD79","securityType":"Bill",
+           "securityTerm":"52-Week","maturityDate":"2027-03-18",
+           "interestPaymentFrequency":"None","pricePer100":96.476278,
+           "buyPrice":96.681486,"sellPrice":96.676806}
+        ]"#;
+        let bonds = parse_universe(json).expect("well-formed array");
+        assert_eq!(bonds.len(), 1);
+        assert!((bonds[0].ask - 96.681486).abs() < 1e-9, "buyPrice wins");
+        assert!((bonds[0].bid - 96.676806).abs() < 1e-9, "sellPrice wins");
     }
 
     #[test]
