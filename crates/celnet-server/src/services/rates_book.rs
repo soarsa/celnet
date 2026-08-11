@@ -1559,14 +1559,28 @@ impl RatesPositionStore {
             };
             // Book the offsetting leg into the same book so the warehoused net reduces by the
             // filled amount. `book_into_risk_book` re-runs the hard-cap gate (a reducing leg
-            // never breaches, §8.3) and does NOT recurse into `stamp_internalise`. Best-effort:
-            // a leg we cannot construct (e.g. a bond's coarse linear proxy) is skipped, never
-            // faked — the record below is still stamped with the real executed economics.
+            // never breaches, §8.3) and does NOT recurse into `stamp_internalise`. Every rates
+            // arm — swaps AND cash bonds — yields a leg, so a filled shed always reduces the
+            // book; only a cell carrying no instrument arm can construct none.
+            //
+            // A REJECTED booking is an operational break, not a no-op: the street trade really
+            // happened, so the record below stays honestly non-advisory, but the book did NOT
+            // reduce and the next fill would compound risk the blotter claims is hedged. Never
+            // discard that Result silently — ring it at ERROR so ops sees the divergence.
             if exec.is_filled()
                 && fill_dv01 > 0.0
                 && let Some(leg) = offsetting_rates_leg(fill, exec.filled / fill_dv01)
+                && let Err(status) = self.book_into_risk_book(leg, book)
             {
-                let _ = self.book_into_risk_book(leg, book);
+                tracing::error!(
+                    book,
+                    instrument = %ctx.instrument_id,
+                    parent_position_id = fill.position_id,
+                    hedged_dv01 = exec.filled,
+                    reason = %status,
+                    "auto-hedge shed FILLED externally but its offsetting leg was REJECTED — \
+                     the book did not reduce; risk and blotter now diverge",
+                );
             }
             // Street-side LP attribution (Analytics §2.4): a hedge that FILLED on a NAMED LP
             // records a WON deal + won notional for that LP into the shared flow log the LP
@@ -1927,9 +1941,18 @@ fn resolve_hedge_threshold(
 /// negation of the shed portion — booking it reduces the book's net by the hedged amount.
 /// `position_id` is zeroed so [`RatesPositionStore::book_into_risk_book`] assigns a fresh id.
 ///
-/// Returns `None` for a non-positive factor or a bond leg (whose curve-DV01 scaling is not
-/// modelled by this linear proxy) — the caller then skips booking rather than fabricating a
-/// leg (guardrail 2).
+/// A **cash bond** sheds the same way, and exactly: the offsetting leg is the SAME security
+/// (same coupon / maturity / day-count / security id) on the opposite side with its `redemption`
+/// FACE scaled by `factor`. Because the leg and the fill are the identical bond, their DV01 ratio
+/// is identically `1` — selling `factor` of the face you are long sheds exactly `factor` of the
+/// risk under ANY duration measure, so no curve or duration input is needed to scale it honestly.
+/// (Under the book's own [`rates_linear_exposure`], whose bond arm is `redemption · 1bp` signed by
+/// side, this is likewise exact.) This is what makes a bond hedge actually REDUCE the warehoused
+/// net; before it, a bond stamped hedge provenance while the book retained 100% of the risk, so
+/// every subsequent fill compounded a position the blotter already claimed was hedged.
+///
+/// Returns `None` only for a non-positive/non-finite factor or a cell carrying no instrument arm
+/// — the caller then skips booking rather than fabricating a leg (guardrail 2).
 fn offsetting_rates_leg(fill: &RatesPosition, factor: f64) -> Option<RatesPosition> {
     // Reject a non-finite (NaN/∞) or non-positive factor — both mean "no valid leg".
     // Written as a positive guard so it also rejects NaN without a negated PartialOrd compare.
@@ -1959,9 +1982,14 @@ fn offsetting_rates_leg(fill: &RatesPosition, factor: f64) -> Option<RatesPositi
             f.notional = f.notional.abs() * factor;
             f.side = flip(f.side);
         }
-        // A cash bond's linear-proxy exposure is not side/notional-scaled here — skip the
-        // physical leg (the executed economics are still stamped on the provenance record).
-        _ => return None,
+        // The offsetting leg of a cash bond is the SAME bond sold back: identical coupon,
+        // maturity, day-count and security id, opposite side, `factor` of the face. Identical
+        // security ⇒ DV01 ratio exactly 1 ⇒ scaling the face by `factor` sheds exactly `factor`
+        // of the risk with no duration input required.
+        rates_instrument::Instrument::Bond(b) => {
+            b.redemption = b.redemption.abs() * factor;
+            b.side = flip(b.side);
+        }
     }
     Some(leg)
 }
@@ -2007,10 +2035,13 @@ pub(crate) fn rates_linear_exposure(position: &RatesPosition) -> f64 {
         }
         // A cash bond's precise curve DV01 needs the discount curve, which this
         // curve-free pre-trade proxy does not carry; the per-1bp face redemption is a
-        // coarse linear-exposure proxy pending the bond booking path (not reachable
-        // through the current OIS-only desk booking, so it never feeds a live limit
-        // today). A long (SIDE_BUY) bond carries long-duration exposure — the same
-        // netting sign as a receive-fixed swap.
+        // coarse linear-exposure proxy (the exact curve-bootstrapped bond DV01 is the
+        // ADR-0016 A3 breadth wave). This arm IS live: bonds route and book through
+        // `book_with_routing`, so it feeds real limits and is the measure the auto-hedge
+        // warehouse nets and sheds in — see [`offsetting_rates_leg`], whose bond leg is the
+        // same security sold back (DV01 ratio exactly 1), so it stays exact under this proxy
+        // AND under the A3 curve DV01 that replaces it. A long (SIDE_BUY) bond carries
+        // long-duration exposure — the same netting sign as a receive-fixed swap.
         rates_instrument::Instrument::Bond(bond) => {
             let magnitude = bond.redemption.abs() * ONE_BP;
             match Side::try_from(bond.side) {
@@ -2700,6 +2731,123 @@ pub(crate) mod tests {
             instrument: None,
         };
         assert_eq!(hedge_execution_instrument(&bare), None);
+    }
+
+    /// **The growing-position regression.** A filled BOND shed must construct an offsetting leg
+    /// whose exposure exactly negates the shed portion — previously the bond arm returned `None`,
+    /// so a bond stamped hedge provenance while the book kept 100% of the risk and every
+    /// subsequent fill compounded a position the blotter already claimed was hedged.
+    ///
+    /// The leg is the SAME security sold back, so its honesty needs no duration input: identical
+    /// coupon / maturity / security id, flipped side, `factor` of the face.
+    #[test]
+    fn a_filled_bond_shed_books_an_offsetting_leg_that_actually_reduces_the_book() {
+        let mut fill = bond_position(11, 20_000_000.0, Side::Buy);
+        if let Some(ri) = fill.instrument.as_mut()
+            && let Some(rates_instrument::Instrument::Bond(bond)) = ri.instrument.as_mut()
+        {
+            bond.instrument_id = "US91282CJL6".to_owned();
+        }
+
+        // Shed 40% of the fill — the ratio the call site passes as `filled_dv01 / fill_dv01`.
+        let leg = offsetting_rates_leg(&fill, 0.4).expect("a bond shed must construct a leg");
+
+        // (1) The leg's signed exposure is EXACTLY minus the shed portion, in the very measure
+        //     the book nets in — so booking it reduces the warehoused net by the hedged amount.
+        let shed = 0.4 * rates_linear_exposure(&fill);
+        assert!((rates_linear_exposure(&leg) + shed).abs() < 1e-12);
+        // …and the book genuinely nets down to the unshed 60%, rather than staying at 100%.
+        let net = rates_linear_exposure(&fill) + rates_linear_exposure(&leg);
+        assert!((net - 0.6 * rates_linear_exposure(&fill)).abs() < 1e-12);
+
+        // (2) It is the SAME security on the opposite side with a proportional face — that
+        //     identity is why the DV01 ratio is 1 and no curve/duration input is needed.
+        let Some(rates_instrument::Instrument::Bond(hedge)) =
+            leg.instrument.as_ref().and_then(|i| i.instrument.as_ref())
+        else {
+            panic!("the offsetting leg of a bond must itself be a bond");
+        };
+        assert_eq!(hedge.instrument_id, "US91282CJL6");
+        assert_eq!(hedge.coupon_rate, 0.05);
+        assert_eq!(hedge.side, Side::Sell as i32);
+        assert!((hedge.redemption - 8_000_000.0).abs() < 1e-9);
+        // A fresh id is assigned by the booking sink, never inherited from the parent fill.
+        assert_eq!(leg.position_id, 0);
+
+        // (3) A SHORT bond sheds symmetrically — the leg buys the face back.
+        let short = bond_position(12, 20_000_000.0, Side::Sell);
+        let short_leg = offsetting_rates_leg(&short, 1.0).expect("a short bond also sheds");
+        assert!((rates_linear_exposure(&short) + rates_linear_exposure(&short_leg)).abs() < 1e-12);
+
+        // (4) Degenerate factors still construct nothing rather than fabricating a leg.
+        for bad in [0.0, -0.5, f64::NAN, f64::INFINITY] {
+            assert!(offsetting_rates_leg(&fill, bad).is_none(), "factor {bad}");
+        }
+        // A cell with no instrument arm has nothing to offset.
+        let bare = RatesPosition {
+            position_id: 13,
+            entity: 1,
+            book: 7,
+            instrument: None,
+        };
+        assert!(offsetting_rates_leg(&bare, 0.5).is_none());
+    }
+
+    /// The same regression END-TO-END through the real booking path: an over-cap BOND fill must
+    /// leave the routed book holding only the WAREHOUSED portion. This is the trader-visible
+    /// symptom the unit test above only implies — before the fix the blotter showed a fired,
+    /// filled hedge while `book_net_dv01` stayed at the full fill, so bond positions grew without
+    /// bound as each subsequent fill compounded risk that was already reported as hedged.
+    #[test]
+    fn an_over_cap_bond_fill_leaves_only_the_warehoused_portion_in_the_book() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        // 50mm face ⇒ |exposure| = 50e6 · 1bp = 5000 DV01, over the 4000 cap (util 1.25).
+        let policy = hedge_policy("wh", 4000.0, 0.5);
+        let engine = Arc::clone(&policy.engine);
+        store.set_hedge_policy(Some(policy));
+        // No LP has a firm price ⇒ the shed honestly backstops to the composite and FILLS.
+        store.set_lp_hedge_source(Arc::new(NoFillLp));
+        let booked = store
+            .book_with_routing(
+                bond_position(0, 50_000_000.0, Side::Buy),
+                priced_attribution(0.0400, 0.0405),
+            )
+            .expect("the bond books");
+
+        let exec = engine
+            .provenance(None, None)
+            .into_iter()
+            .find(|p| p.parent_position_id == Some(booked.position_id))
+            .expect("a shed bond stamps a hedge-execution record");
+        assert!(!exec.advisory, "a live composite shed is not advisory");
+        assert!(
+            exec.external_hedged > 0.0,
+            "this fixture must actually shed, else it proves nothing"
+        );
+
+        // THE FIX — the invariant that was violated: whatever the hedge REPORTS as filled must
+        // have left the book. Before it, `external_hedged` was stamped in full while the book
+        // still held all 5000, so the next fill compounded risk the blotter called hedged.
+        // A long bond carries NEGATIVE linear exposure (long duration), hence the magnitude.
+        let net = store.book_net_dv01("wh");
+        assert!(
+            (net.abs() - (5000.0 - exec.external_hedged)).abs() < 1e-6,
+            "a filled bond shed must reduce the book by exactly the hedged amount: \
+             net {net}, hedged {} (net still 5000 ⇒ the offsetting leg never booked)",
+            exec.external_hedged,
+        );
+    }
+
+    /// EVERY rates arm now sheds — the swap arms keep their existing exact-negation behaviour,
+    /// so the bond fix did not come at the cost of a regression on the paths that already worked.
+    #[test]
+    fn every_rates_arm_constructs_a_leg_that_exactly_negates_the_shed() {
+        let ois = position(21, 1, 7);
+        let leg = offsetting_rates_leg(&ois, 0.25).expect("an OIS shed must construct a leg");
+        let shed = 0.25 * rates_linear_exposure(&ois);
+        assert!((rates_linear_exposure(&leg) + shed).abs() < 1e-12);
+        assert!(offsetting_rates_leg(&bond_position(22, 1_000.0, Side::Buy), 0.25).is_some());
     }
 
     /// With a graph installed, a rates fill routes into the resolved risk book; the
