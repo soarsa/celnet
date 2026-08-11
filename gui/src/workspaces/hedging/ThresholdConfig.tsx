@@ -13,13 +13,20 @@ import styles from "./HedgingWorkspace.module.css";
 import { NumberField } from "../../components/NumberField";
 
 const SCOPE_KINDS: readonly HedgeScopeKind[] = ["desk", "book", "instrument"];
-const METRICS: readonly HedgeMetric[] = ["dv01", "net_notional", "net_delta", "net_vega"];
+const METRICS: readonly HedgeMetric[] = [
+  "dv01",
+  "net_notional",
+  "gross_notional",
+  "net_delta",
+  "net_vega",
+];
 
 const METRIC_LABEL: Record<HedgeMetric, string> = {
   dv01: "Net DV01",
   net_notional: "Net notional",
   net_delta: "Net delta",
   net_vega: "Net vega",
+  gross_notional: "Gross notional",
 };
 const SCOPE_LABEL: Record<HedgeScopeKind, string> = {
   desk: "Desk",

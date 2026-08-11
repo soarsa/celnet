@@ -4584,8 +4584,15 @@ const HEDGE_METRIC_WIRE: Record<HedgeMetric, number> = {
   net_notional: 1,
   net_delta: 2,
   net_vega: 3,
+  gross_notional: 4,
 };
-const HEDGE_METRIC_FROM: readonly HedgeMetric[] = ["dv01", "net_notional", "net_delta", "net_vega"];
+const HEDGE_METRIC_FROM: readonly HedgeMetric[] = [
+  "dv01",
+  "net_notional",
+  "net_delta",
+  "net_vega",
+  "gross_notional",
+];
 /** The wire `HedgeMetricEnum` i32 tag. */
 export function hedgeMetricToWire(m: HedgeMetric): number {
   return HEDGE_METRIC_WIRE[m];

@@ -156,6 +156,28 @@ fill by **most-specific-wins** precedence: `Instrument` → `Book` → `Desk`. I
 configured at any scope, a firm default applies, so **every booked fill carries a real cap and
 a real band — never an empty `—`**.
 
+### 5.0 The budget basis — net, gross, or DV01
+
+A threshold carries a **metric**, and that metric selects which roll-up everything downstream
+measures against — the band, the utilisation, the overflow, and the shed size:
+
+| Metric | Measured against | Character |
+| --- | --- | --- |
+| `Dv01` (default) | signed net PV01 proxy | first-order rate risk |
+| `NetNotional` / `NetDelta` | signed net face notional | direction-aware size |
+| `GrossNotional` | `Σ\|notional\|` | **turnover brake — never nets down** |
+| `NetVega` | `0` on a linear-rates cell | honestly never breaches (rates carry no vega) |
+
+`GrossNotional` behaves fundamentally differently from the others and is worth choosing
+deliberately: gross only *grows* with activity, so a gross cap stays breached until the
+positions themselves roll off. It brakes churn; it does not measure exposure.
+
+The metric is a single basis end-to-end — `book_risk` (the scope roll-up) and `fill_risk` (this
+fill's contribution) are both taken in it. That matters because the offsetting leg is scaled by
+`filled / fill_risk`: numerator and denominator must share a metric or the ratio is meaningless.
+Both `rates_linear_exposure` and `rates_signed_notional` are linear in the instrument's
+notional, so the *ratio* is identical whichever is chosen — only the consistency matters.
+
 Firm default: metric `Dv01`, `amber = 0.8`, `red = 0.9`, `target_fraction = 0.8`,
 `min_clip = 0`, `max_clip = ∞`, `ramped = false`.
 
@@ -275,16 +297,16 @@ within_tolerance = edge_bps >= max(min_edge_bps, 0)
 
 ```rust
 if verdict.within_tolerance {
-    // Made money: warehouse it, shedding only the over-cap overflow
-    // (clamped to this fill's own DV01 — a fill can shed at most what it added).
-    let ext = shed.min(fill_dv01).max(0.0);
-    (fill_dv01 - ext, ext, ext == 0.0)
+    // Made money: warehouse it, shedding the BOOK's over-cap overflow (bounded by the
+    // book's own risk, not by this fill — that is what lets a breach actually unwind).
+    let ext = shed.min(book_risk.abs()).max(0.0);
+    ((fill_risk - ext).max(0.0), ext, ext == 0.0)
 } else if graph_is_external {
     // Lost money AND the policy is a shed policy: hand the whole fill back to the street.
-    (0.0, fill_dv01, false)
+    (0.0, fill_risk, false)
 } else {
     // Lost money BUT the policy is an internal hold: HONOR IT. Warehouse the fill.
-    (fill_dv01, 0.0, true)
+    (fill_risk, 0.0, true)
 }
 ```
 
@@ -431,7 +453,9 @@ Read this section before relying on the numbers.
 
 6. **Hedging evaluates per fill, not on a timer.** The decision runs when a fill books. Risk
    that drifts past a band through *market* movement alone, with no new flow, is not
-   re-evaluated until the next fill lands.
+   re-evaluated until the next fill lands. A breach now unwinds the book's own overflow when a
+   fill does arrive (it used to be able to neutralise only the fill itself), so a quiet book
+   still needs one fill — or a manual `ClearRisk` — to shed.
 
 ---
 
@@ -465,7 +489,10 @@ These are the properties the test suite pins. If you change this subsystem, keep
    fill. A composite fill is never attributed to a named LP. An unresolved security id is
    absent, never invented.
 3. **Exactly one ring record per fired hedge** — realised supersedes decision in place.
-4. **A fill can shed at most what it added** (`ext = shed.min(fill_dv01)`).
+4. **A shed never exceeds the book's own risk** (`ext = shed.min(book_risk.abs())`). It is
+   NOT bounded by the incoming fill: a breached book sheds its own overflow, which is what
+   lets auto-hedging unwind a standing position rather than merely neutralise new flow.
+   `max_clip` is the control for bounding a single ticket.
 5. **An internal-mandate policy is never force-shed** by a thin-edge fill.
 6. **Every booked fill carries a real threshold, band, and decision** — never an empty `—`.
 7. **The two exposure measures stay distinct.** Notional rules read notional; the DV01 budget

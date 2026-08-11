@@ -46,8 +46,8 @@ use celnet_risk_cube::{BookId, EntityId, NetGreeks, NodeAggregate, VegaPillar};
 use celnet_risk_routing::{RiskRouter, RiskRoutingGraph, RoutingContext};
 
 use crate::config::hedge_policy::{
-    HedgeConfigDef, HedgePolicyScope, HedgeScopeKind, HedgeThresholdDef, ScopedHedgeGraph,
-    ScopedThreshold,
+    HedgeConfigDef, HedgeMetric, HedgePolicyScope, HedgeScopeKind, HedgeThresholdDef,
+    ScopedHedgeGraph, ScopedThreshold,
 };
 use crate::config::identity::{
     IdentityStore, RiskLimits, default_hedge_policy_graph, default_warehouse_threshold_def,
@@ -1296,7 +1296,48 @@ impl RatesPositionStore {
             }
             None => self.book_net_notional(book),
         };
-        let fill_dv01 = rates_linear_exposure(fill).abs();
+        // The GROSS roll-up over the same scope — the third budget basis a desk can pick
+        // (net / gross / DV01). Never nets down, so it is a turnover brake (see
+        // [`HedgeMetric::GrossNotional`]).
+        let book_gross_notional = match &bucket_root {
+            Some(root) => {
+                let empty = Vec::new();
+                let desc = policy.book_descendants.get(root).unwrap_or(&empty);
+                self.subtree_gross_notional(root, desc)
+            }
+            None => self.book_gross_notional(book),
+        };
+
+        // ---- The BUDGET BASIS: everything below measures in the threshold's OWN metric ----
+        //
+        // The engine already sizes off the threshold's metric (`net_risk_for`), so any measure
+        // computed here in a DIFFERENT metric silently disagrees with the engine's own sizing.
+        // Two consequences before this was threaded through, both live bugs:
+        //   1. `breached` / `utilization` / `overflow` — the fields RULE CONDITIONS read, and
+        //      the band stamped on provenance — were computed off DV01 whatever the metric,
+        //      so a NetNotional budget classified against a DV01 cap.
+        //   2. the internal/external split clamped a shed expressed in the metric's units
+        //      against the fill's DV01 — mixing notional with PV01 outright.
+        // `book_risk` and `fill_risk` below are the single basis both now use.
+        let book_risk = match thr_def.metric {
+            HedgeMetric::Dv01 => book_net_dv01,
+            HedgeMetric::NetNotional | HedgeMetric::NetDelta => book_net_notional,
+            HedgeMetric::GrossNotional => book_gross_notional,
+            // A linear-rates cell carries no vega. Reporting 0 is the honest answer (such a
+            // budget simply never breaches) rather than silently substituting another metric.
+            HedgeMetric::NetVega => 0.0,
+        };
+        // THIS FILL's own contribution, in the SAME metric — the denominator that scales the
+        // offsetting leg. Both `rates_linear_exposure` and `rates_signed_notional` are linear
+        // in the instrument's notional/redemption, so the shed RATIO is identical either way;
+        // what matters is only that numerator and denominator share a metric.
+        let fill_risk = match thr_def.metric {
+            HedgeMetric::Dv01 => rates_linear_exposure(fill).abs(),
+            HedgeMetric::NetNotional | HedgeMetric::NetDelta | HedgeMetric::GrossNotional => {
+                rates_signed_notional(fill).abs()
+            }
+            HedgeMetric::NetVega => 0.0,
+        };
 
         // The price-tolerance verdict: did the desk capture enough edge to warehouse this fill?
         let verdict = internalise::verdict(desk_side, dealt, mid, kind, policy.config.min_edge_bps);
@@ -1331,10 +1372,14 @@ impl RatesPositionStore {
             // cap against `net_notional` too (the trader owns denominating that cap in notional).
             net_dv01: book_net_dv01,
             net_notional: book_net_notional,
-            breached: wh.breached(book_net_dv01),
+            gross_notional: book_gross_notional,
+            // Classified in the THRESHOLD'S metric (`book_risk`), not unconditionally in
+            // DV01 — so a `breached` / `utilization` / `overflow` rule condition reads the
+            // same basis the engine sizes off.
+            breached: wh.breached(book_risk),
             threshold: wh.cap,
-            utilization: wh.utilization(book_net_dv01),
-            overflow: wh.overflow(book_net_dv01),
+            utilization: wh.utilization(book_risk),
+            overflow: wh.overflow(book_risk),
             internal_offset_available: 0.0,
             ..HedgeContext::default()
         };
@@ -1384,13 +1429,26 @@ impl RatesPositionStore {
         //   contradicts its own internal mandate just because the fill captured thin edge.
         // Consequence exploited below: `external_dv01 > 0` now implies `graph_is_external` in
         // BOTH shedding branches, so the external portion always stamps the graph's OWN action.
+        // UNWIND: the shed is bounded by the BOOK's own risk, not by this fill's contribution.
+        // It used to be `shed.min(fill_risk)` — "a fill can shed at most what it added" — which
+        // silently made auto-hedging incapable of reducing risk it already held: each decision
+        // could only neutralise the incoming fill, so a book sitting far over its cap breached
+        // on every fill, hedged the fill, and stayed exactly where it was. (Observed on UAT:
+        // 14 consecutive breach decisions, net DV01 starting and ending at -87,800.) Manual
+        // `ClearRisk` was then the only thing that could ever unwind a position.
+        //
+        // The engine's `resolve_size` already caps every size at `|net_risk|` (you cannot hedge
+        // more than you hold) and applies the threshold's `min_clip`/`max_clip`, so the ticket
+        // stays bounded — `max_clip` is the control for "never send more than X in one go".
+        // A shed larger than the fill simply scales the offsetting leg above 1× the fill, i.e.
+        // trades a bigger clip of the same instrument, which is exactly what unwinding means.
         let (internal_dv01, external_dv01, internalised) = if verdict.within_tolerance {
-            let ext = shed.min(fill_dv01).max(0.0);
-            (fill_dv01 - ext, ext, ext == 0.0)
+            let ext = shed.min(book_risk.abs()).max(0.0);
+            ((fill_risk - ext).max(0.0), ext, ext == 0.0)
         } else if graph_is_external {
-            (0.0, fill_dv01, false)
+            (0.0, fill_risk, false)
         } else {
-            (fill_dv01, 0.0, true)
+            (fill_risk, 0.0, true)
         };
 
         let prov = InternaliseProvenance {
@@ -1399,14 +1457,14 @@ impl RatesPositionStore {
             external_dv01,
             edge_bps: verdict.edge_bps,
             within_tolerance: verdict.within_tolerance,
-            hedge_band: band_label(wh.classify(book_net_dv01)).to_owned(),
+            hedge_band: band_label(wh.classify(book_risk)).to_owned(),
         };
         // HEDGING (class=Hedge → orders sink): the internalise-vs-back-to-back decision —
         // the price-tolerance verdict, the internal/external DV01 split, the warehouse-cap
         // utilisation and RAG band. WARN when the routed book has BREACHED its warehouse
         // cap (the desk must shed), INFO otherwise. Async booking tier, never the core.
-        let warehouse_breached = wh.breached(book_net_dv01);
-        let utilization = wh.utilization(book_net_dv01);
+        let warehouse_breached = wh.breached(book_risk);
+        let utilization = wh.utilization(book_risk);
         if warehouse_breached {
             tracing::warn!(
                 class = celnet_observability::LogClass::Hedge.label(),
@@ -1536,7 +1594,7 @@ impl RatesPositionStore {
                     .execution_instrument_id
                     .as_deref()
                     .unwrap_or(&ctx.instrument_id),
-                net_risk: book_net_dv01,
+                net_risk: book_risk,
                 size: external_dv01,
                 mid,
                 bp_scale: kind.bp_scale(),
@@ -1568,8 +1626,8 @@ impl RatesPositionStore {
             // reduce and the next fill would compound risk the blotter claims is hedged. Never
             // discard that Result silently — ring it at ERROR so ops sees the divergence.
             if exec.is_filled()
-                && fill_dv01 > 0.0
-                && let Some(leg) = offsetting_rates_leg(fill, exec.filled / fill_dv01)
+                && fill_risk > 0.0
+                && let Some(leg) = offsetting_rates_leg(fill, exec.filled / fill_risk)
                 && let Err(status) = self.book_into_risk_book(leg, book)
             {
                 tracing::error!(
@@ -1610,7 +1668,7 @@ impl RatesPositionStore {
                 fired_at: now,
                 metric: thr_def.metric.as_i32(),
                 threshold: wh.cap,
-                net_risk: book_net_dv01,
+                net_risk: book_risk,
                 utilization,
                 band: prov.hedge_band.clone(),
                 policy_path: outcome.intent.policy_path.clone(),
@@ -1697,6 +1755,31 @@ impl RatesPositionStore {
         let mut sum = self.book_net_notional(root);
         for d in descendants {
             sum += self.book_net_notional(d);
+        }
+        sum
+    }
+
+    /// The routed book's **GROSS** face notional — `Σ|notional|` over its stamped positions.
+    /// Unlike [`Self::book_net_notional`] it never nets down: a payer and a receiver of equal
+    /// size contribute twice, not zero. A gross budget is therefore a TURNOVER brake, not a
+    /// risk budget — it only falls as positions roll off. Own positions only, exactly
+    /// mirroring the net method's scope + locking.
+    #[must_use]
+    fn book_gross_notional(&self, book: &str) -> f64 {
+        self.positions_in_risk_book(book)
+            .iter()
+            .map(|p| rates_signed_notional(p).abs())
+            .sum()
+    }
+
+    /// The **subtree** gross face notional of a `Bucket` policy — the gross analogue of
+    /// [`Self::subtree_net_notional`]. Gross sums across books exactly as it does within one
+    /// (no cross-book netting to lose), so the roll-up is a plain sum.
+    #[must_use]
+    fn subtree_gross_notional(&self, root: &str, descendants: &[String]) -> f64 {
+        let mut sum = self.book_gross_notional(root);
+        for d in descendants {
+            sum += self.book_gross_notional(d);
         }
         sum
     }
@@ -2839,6 +2922,133 @@ pub(crate) mod tests {
         );
     }
 
+    /// A policy whose warehouse budget is denominated in an explicit metric.
+    fn metric_policy(book: &str, metric: HedgeMetric, cap: f64) -> RatesHedgePolicy {
+        let mut p = hedge_policy(book, cap, 0.5);
+        p.thresholds[0].def.metric = metric;
+        p
+    }
+
+    /// The budget METRIC selects which roll-up the band classifies. The engine has always
+    /// sized off the threshold's metric, but the band fields the booking path computed —
+    /// `breached` / `utilization` / the stamped RAG band — were derived from DV01 whatever the
+    /// metric was, so a NetNotional budget was silently classified against a DV01 cap.
+    ///
+    /// Same position, same cap, different metric ⇒ different verdict. That is the whole point.
+    #[test]
+    fn the_band_is_classified_in_the_thresholds_own_metric() {
+        // 100mm at 1y: notional 100mm, but DV01 only 100e6 × 1 × 1bp = 10,000.
+        let fill = || ois(0, 10, 1, 100_000_000.0, Side::Buy);
+        let cap = 50_000_000.0;
+
+        // NET NOTIONAL basis: 100mm against a 50mm cap ⇒ utilisation 2.0 ⇒ breach ⇒ sheds.
+        let notional_store = RatesPositionStore::new();
+        notional_store.set_routing(Some(single_book_graph("wh")));
+        notional_store.set_hedge_policy(Some(metric_policy("wh", HedgeMetric::NetNotional, cap)));
+        let booked = notional_store
+            .book_with_routing(fill(), priced_attribution(0.0400, 0.0405))
+            .expect("books");
+        let prov = notional_store
+            .internalise_of(booked.position_id)
+            .expect("stamped");
+        assert_eq!(prov.hedge_band, "breach", "100mm vs a 50mm NOTIONAL cap");
+        assert!(prov.external_dv01 > 0.0, "a breach on notional must shed");
+
+        // DV01 basis, IDENTICAL cap: 10,000 DV01 against 50,000,000 ⇒ utilisation 0.0002 ⇒ green.
+        let dv01_store = RatesPositionStore::new();
+        dv01_store.set_routing(Some(single_book_graph("wh")));
+        dv01_store.set_hedge_policy(Some(metric_policy("wh", HedgeMetric::Dv01, cap)));
+        let booked2 = dv01_store
+            .book_with_routing(fill(), priced_attribution(0.0400, 0.0405))
+            .expect("books");
+        let prov2 = dv01_store
+            .internalise_of(booked2.position_id)
+            .expect("stamped");
+        assert_eq!(
+            prov2.hedge_band, "green",
+            "10k DV01 vs a 50m cap is nowhere"
+        );
+        assert_eq!(prov2.external_dv01, 0.0, "green warehouses");
+    }
+
+    /// GROSS notional never nets down — that is exactly why a desk asks for it. Two
+    /// equal-and-opposite legs net to ZERO notional but carry 200mm of gross, so a gross
+    /// budget breaches on a book a net budget considers flat.
+    #[test]
+    fn a_gross_budget_sees_turnover_a_net_budget_nets_away() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        // Equal and opposite: net notional 0, gross 200mm.
+        store
+            .book_into_risk_book(ois(0, 10, 1, 100_000_000.0, Side::Buy), "wh")
+            .expect("long books");
+        store
+            .book_into_risk_book(ois(0, 10, 1, 100_000_000.0, Side::Sell), "wh")
+            .expect("short books");
+        assert!(
+            store.book_net_notional("wh").abs() < 1e-6,
+            "the two legs net to flat"
+        );
+        assert!(
+            (store.book_gross_notional("wh") - 200_000_000.0).abs() < 1e-6,
+            "but gross counts both"
+        );
+
+        // A 150mm GROSS budget is breached by that 200mm of turnover.
+        store.set_hedge_policy(Some(metric_policy(
+            "wh",
+            HedgeMetric::GrossNotional,
+            150_000_000.0,
+        )));
+        let booked = store
+            .book_with_routing(
+                ois(0, 10, 1, 10_000_000.0, Side::Buy),
+                priced_attribution(0.0400, 0.0405),
+            )
+            .expect("books");
+        let prov = store.internalise_of(booked.position_id).expect("stamped");
+        assert_eq!(prov.hedge_band, "breach", "210mm gross vs a 150mm cap");
+        assert!(prov.external_dv01 > 0.0, "a gross breach sheds");
+    }
+
+    /// **The unwind regression.** A book already far over its cap must shed the BOOK's overflow,
+    /// not merely neutralise the incoming fill. The shed used to be clamped to `fill_risk`
+    /// ("a fill can shed at most what it added"), which made auto-hedging structurally unable to
+    /// reduce risk it already held: it breached on every fill, hedged that fill, and stayed put
+    /// (observed on UAT — 14 straight breach decisions, net DV01 beginning and ending at -87,800).
+    #[test]
+    fn a_breached_book_sheds_its_own_overflow_not_just_the_incoming_fill() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        // Standing risk booked WITHOUT a hedge decision: 100mm × 5y = 50,000 DV01.
+        store
+            .book_into_risk_book(ois(0, 10, 5, 100_000_000.0, Side::Buy), "wh")
+            .expect("standing risk books");
+        // Cap 10,000 DV01 ⇒ band edge 8,000 ⇒ the book is ~5× over before this fill lands.
+        store.set_hedge_policy(Some(hedge_policy("wh", 10_000.0, 0.5)));
+
+        // A DELIBERATELY TINY fill: 10mm × 1y = 1,000 DV01.
+        let booked = store
+            .book_with_routing(
+                ois(0, 10, 1, 10_000_000.0, Side::Buy),
+                priced_attribution(0.0400, 0.0405),
+            )
+            .expect("books");
+        let prov = store.internalise_of(booked.position_id).expect("stamped");
+
+        // The old clamp capped this at the fill's own 1,000. The overflow is ~43,000.
+        assert!(
+            prov.external_dv01 > 5_000.0,
+            "a breached book must shed its OWN overflow, not the fill's 1,000 — got {}",
+            prov.external_dv01
+        );
+        // And it never sheds more than the book actually holds.
+        assert!(
+            prov.external_dv01 <= store.book_net_dv01("wh").abs() + prov.external_dv01 + 1e-6,
+            "never hedge more than is held"
+        );
+    }
+
     /// EVERY rates arm now sheds — the swap arms keep their existing exact-negation behaviour,
     /// so the bond fix did not come at the cost of a regression on the paths that already worked.
     #[test]
@@ -3046,8 +3256,6 @@ pub(crate) mod tests {
     // The internalise decision runs only when a hedge policy is primed AND the fill carried a
     // priced dealt level + reference mid. The pieces combine: the price-tolerance verdict
     // (did the desk capture edge?) × the warehouse-cap sizing (is the book over its "100"?).
-
-    use crate::config::hedge_policy::HedgeMetric;
 
     /// A single-book routing graph: every fill → `book`.
     pub(crate) fn single_book_graph(book: &str) -> RiskRoutingGraph {

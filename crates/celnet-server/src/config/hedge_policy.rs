@@ -113,15 +113,22 @@ pub enum HedgeMetric {
     NetDelta,
     /// Net vega.
     NetVega,
+    /// **Gross** base-currency notional — `Σ|notional|` over the scope, which never
+    /// nets down. A turnover brake rather than a risk budget: unlike every other
+    /// metric here it only grows with activity, so a gross cap stays breached until
+    /// the positions themselves roll off. Offered because desks manage a book by
+    /// gross as well as by net/DV01, but it behaves fundamentally differently.
+    GrossNotional,
 }
 
 impl HedgeMetric {
     /// Every metric, in stable order (the canonical iteration set).
-    pub const ALL: [HedgeMetric; 4] = [
+    pub const ALL: [HedgeMetric; 5] = [
         HedgeMetric::Dv01,
         HedgeMetric::NetNotional,
         HedgeMetric::NetDelta,
         HedgeMetric::NetVega,
+        HedgeMetric::GrossNotional,
     ];
 
     /// Stable snake_case label for audit / logging.
@@ -132,6 +139,7 @@ impl HedgeMetric {
             HedgeMetric::NetNotional => "net_notional",
             HedgeMetric::NetDelta => "net_delta",
             HedgeMetric::NetVega => "net_vega",
+            HedgeMetric::GrossNotional => "gross_notional",
         }
     }
 
@@ -142,12 +150,18 @@ impl HedgeMetric {
     pub fn to_limit_metric(self) -> LimitMetric {
         match self {
             HedgeMetric::Dv01 => LimitMetric::Dv01,
-            HedgeMetric::NetNotional | HedgeMetric::NetDelta => LimitMetric::Delta,
+            // `GrossNotional` shares the additive base-currency amount metric: the RAG
+            // band is metric-agnostic (`|exposure| / cap`), and the gross-vs-net
+            // distinction lives in WHICH roll-up is fed in, not in the band maths.
+            HedgeMetric::NetNotional | HedgeMetric::NetDelta | HedgeMetric::GrossNotional => {
+                LimitMetric::Delta
+            }
             HedgeMetric::NetVega => LimitMetric::Vega,
         }
     }
 
-    /// The proto `HedgeMetricEnum` ordinal (DV01=0, NET_NOTIONAL=1, NET_DELTA=2, NET_VEGA=3).
+    /// The proto `HedgeMetricEnum` ordinal (DV01=0, NET_NOTIONAL=1, NET_DELTA=2,
+    /// NET_VEGA=3, GROSS_NOTIONAL=4).
     #[must_use]
     pub const fn as_i32(self) -> i32 {
         match self {
@@ -155,6 +169,7 @@ impl HedgeMetric {
             HedgeMetric::NetNotional => 1,
             HedgeMetric::NetDelta => 2,
             HedgeMetric::NetVega => 3,
+            HedgeMetric::GrossNotional => 4,
         }
     }
 
@@ -165,6 +180,7 @@ impl HedgeMetric {
             1 => HedgeMetric::NetNotional,
             2 => HedgeMetric::NetDelta,
             3 => HedgeMetric::NetVega,
+            4 => HedgeMetric::GrossNotional,
             _ => HedgeMetric::Dv01,
         }
     }

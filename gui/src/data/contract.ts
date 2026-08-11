@@ -3649,7 +3649,13 @@ export type ExecStyle = "immediate" | "worked";
  * The budget metric a warehouse threshold caps (mirrors `HedgeMetricEnum`,
  * ordinals dv01=0 / net_notional=1 / net_delta=2 / net_vega=3).
  */
-export type HedgeMetric = "dv01" | "net_notional" | "net_delta" | "net_vega";
+export type HedgeMetric =
+  | "dv01"
+  | "net_notional"
+  | "net_delta"
+  | "net_vega"
+  /** Gross notional (Σ|notional|) — a turnover brake: it never nets down. */
+  | "gross_notional";
 
 /**
  * The scope a warehouse threshold binds to (most-specific-wins resolution

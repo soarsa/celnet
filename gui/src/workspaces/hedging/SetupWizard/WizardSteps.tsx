@@ -76,6 +76,7 @@ const METRIC_LABEL: Record<HedgeMetric, string> = {
   net_notional: "Net notional",
   net_delta: "Net delta",
   net_vega: "Net vega",
+  gross_notional: "Gross notional",
 };
 
 // ---------------------------------------------------------------------------

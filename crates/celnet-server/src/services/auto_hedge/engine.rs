@@ -427,6 +427,9 @@ fn net_risk_for(metric: HedgeMetric, ctx: &HedgeContext) -> f64 {
         HedgeMetric::Dv01 => ctx.net_dv01,
         HedgeMetric::NetNotional | HedgeMetric::NetDelta => ctx.net_notional,
         HedgeMetric::NetVega => ctx.net_vega,
+        // Gross is already unsigned; `abs()` is belt-and-braces so a caller that
+        // mis-signs the roll-up cannot manufacture a negative "gross".
+        HedgeMetric::GrossNotional => ctx.gross_notional.abs(),
     }
 }
 

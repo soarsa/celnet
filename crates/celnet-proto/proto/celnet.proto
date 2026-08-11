@@ -5241,6 +5241,11 @@ enum HedgeMetricEnum {
   HEDGE_METRIC_NET_DELTA = 2;
   // Net vega.
   HEDGE_METRIC_NET_VEGA = 3;
+  // GROSS base-currency notional — the sum of |notional| over the scope, which
+  // never nets down. A turnover brake rather than a risk budget: unlike the net
+  // metrics it only grows with activity, so a gross cap stays breached until the
+  // positions themselves roll off.
+  HEDGE_METRIC_GROSS_NOTIONAL = 4;
 }
 
 // The scope a warehouse threshold binds to (most-specific-wins resolution,

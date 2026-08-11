@@ -59,6 +59,12 @@ pub struct HedgeContext {
     pub net_dv01: f64,
     /// Signed net notional / base-currency delta (FX budget metric).
     pub net_notional: f64,
+    /// **Gross** notional — `Σ|notional|` over the same scope. Unsigned and
+    /// non-decreasing in activity: it never nets down, so a gross budget is a
+    /// turnover brake rather than a risk budget. Distinct from
+    /// [`Self::net_notional`], never mirrored onto it.
+    #[serde(default)]
+    pub gross_notional: f64,
     /// Signed net vega.
     pub net_vega: f64,
     /// Signed net gamma.
@@ -137,6 +143,7 @@ impl Default for HedgeContext {
             counterparty: String::new(),
             net_dv01: 0.0,
             net_notional: 0.0,
+            gross_notional: 0.0,
             net_vega: 0.0,
             net_gamma: 0.0,
             inventory_sign: 0.0,
@@ -167,6 +174,8 @@ mod tests {
             counterparty: "CITADEL".into(),
             net_dv01: 125_000.0,
             net_notional: 60_000_000.0,
+            // Gross exceeds |net| — the two legs of a two-way book do not cancel here.
+            gross_notional: 180_000_000.0,
             net_vega: -12_000.0,
             net_gamma: 900.0,
             inventory_sign: 1.0,
