@@ -154,6 +154,9 @@ validated in CI/containers on Linux. **GPU strategy:** `wgpu` (Metal/Vulkan/DX12
 - `docs/ARCHITECTURE.md` — system architecture, crate layout, concurrency/latency model,
   GPU abstraction, hot-upgrade strategy, SDK/plugin model, data flow.
 - `docs/ANALYTICS-SPEC.md` — the market-standard FX-options analytics to implement.
+- `docs/HEDGING-AND-RISK-EXIT.md` — as-built: how risk lands, is measured, is decided on, and
+  the exact mechanism by which it EXITS a book (offsetting leg). Start here for the hedging
+  subsystem; `HEDGING-CONFIGURATION-GUIDE.md` is the trader control walkthrough.
 - `docs/COMPETITIVE-ANALYSIS.md` — competitor critique & positioning (analysis doc only).
 - `docs/CELER-INTEGRATION.md` — integration map with the Celer estate + vendor feeds.
 - `docs/INTERFACES.md` — frozen-interface registry (the current contracts).

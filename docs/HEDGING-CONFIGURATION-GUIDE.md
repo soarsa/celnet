@@ -6,6 +6,11 @@
 > the built feature is advisory-only or a deliberate follow-up, this guide says so plainly.
 > Design rationale and the academic basis live in
 > `docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md`; this is the how-to.
+>
+> **To understand what the system does with your configuration** — how risk is measured,
+> how the bands and the exit policy combine, and the exact mechanism by which risk leaves a
+> book — read [`HEDGING-AND-RISK-EXIT.md`](HEDGING-AND-RISK-EXIT.md). That is the as-built
+> explanation; this is the control-by-control walkthrough.
 
 ---
 
