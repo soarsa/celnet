@@ -145,7 +145,12 @@ describe("FI Risk consolidation — the Risk panel carries the folded-in ledger 
     // — its panel, the routed
     // Risk-Portfolio column header, and the booked Jane Street OIS deal.
     expect(await screen.findByText("Received deals")).toBeInTheDocument();
-    const dealsTable = screen.getByRole("region", { name: "Deals table" });
+    // Anchored on the TABLE itself, not on the scrollport's region landmark: the
+    // scrollport is only exposed as a focusable `region` while it GENUINELY
+    // overflows (useScrollableRegion), and jsdom computes no layout so it never
+    // does here. The old hardcoded `role="region"` was present unconditionally,
+    // which was itself the bug — a non-overflowing table became a dead tab stop.
+    const dealsTable = screen.getByRole("table", { name: "Deals" });
     expect(within(dealsTable).getByText("Risk Portfolio")).toBeInTheDocument();
     expect(await screen.findByText("Jane Street")).toBeInTheDocument();
     // Every row carries a primary BUY / SELL indicator (mapped from pay/receive fixed).

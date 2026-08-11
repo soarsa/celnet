@@ -18,12 +18,15 @@
 import { useEffect, useMemo, useRef } from "react";
 
 import { useApp } from "../app/AppContext";
+import { DataTable } from "../components/DataTable";
 import { Panel } from "../components/Panel";
 import { TableSearch } from "../components/TableSearch";
 import { TableSkeleton } from "../components/TableSkeleton";
+import { useGridState } from "../hooks/useGridState";
 import { useTableFilter } from "../hooks/useTableFilter";
 import { useCachedResource } from "../hooks/useCachedResource";
 import { useTableUiState } from "../hooks/useTableUiState";
+import type { ColumnDef } from "../lib/grid";
 import { fmtCompact, fmtRate } from "../lib/format";
 import { describeExitAction, isExternalExitAction } from "../lib/hedgeExit";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
@@ -145,11 +148,220 @@ export function HedgeDealsView(): React.ReactElement {
     () => (showInternalised ? sorted : sorted.filter(isExternalHedge)),
     [sorted, showInternalised],
   );
-  const { query, setQuery, filtered, shown, total } = useTableFilter(
+  const { query, setQuery, filtered } = useTableFilter(
     visible,
     hedgeSearchText,
     { query: ui.query, setQuery: (q) => setUi({ query: q }) },
   );
+
+  // The column model. `accessor` is the canonical TEXT projection used for
+  // search/filter/export; `cell` carries the RAG chips, LP chips and provenance
+  // treatments the hand-rolled table had; `sortValue` is the ORDERED projection
+  // (an amount must sort by its magnitude, not by its compact "70m" label).
+  const columns = useMemo<ReadonlyArray<ColumnDef<HedgeProvenance>>>(
+    () => [
+      {
+        key: "time",
+        header: "Time",
+        width: 90,
+        align: "left",
+        accessor: (p) => timeOf(p.firedAt),
+        cell: (p) => <span className={styles.mono}>{timeOf(p.firedAt)}</span>,
+        // Order by the epoch stamp, not the rendered 24h clock (which wraps).
+        sortValue: (p) => p.firedAt,
+        sortKey: "time",
+        filter: { kind: "text" },
+      },
+      {
+        key: "bookInstrument",
+        header: "Book · Instrument",
+        width: 190,
+        align: "left",
+        accessor: (p) => `${p.book} · ${p.instrument}`,
+        cell: (p) => (
+          <span className={styles.strong}>
+            {p.book} · {p.instrument}
+          </span>
+        ),
+        sortKey: "bookInstrument",
+        filter: { kind: "select" },
+      },
+      {
+        key: "parent",
+        header: "Parent deal",
+        width: 100,
+        align: "left",
+        accessor: (p) => parentDealLabel(p),
+        cell: (p) => (
+          <span className={styles.mono} data-testid={`hedge-parent-${p.hedgeId}`}>
+            {p.parentPositionId !== undefined ? (
+              <span className={styles.parentLink}>{parentDealLabel(p)}</span>
+            ) : (
+              <span className={styles.muted}>—</span>
+            )}
+          </span>
+        ),
+        // `parentPositionId` is a bigint on the wire; a book-level advisory
+        // record carries none, and NaN sorts LAST rather than heading an
+        // ascending sort as a fabricated zero would.
+        sortValue: (p) => (p.parentPositionId !== undefined ? Number(p.parentPositionId) : Number.NaN),
+        sortKey: "parent",
+        filter: { kind: "text" },
+      },
+      {
+        key: "band",
+        header: "Band",
+        width: 90,
+        align: "left",
+        accessor: (p) => p.band.toUpperCase(),
+        cell: (p) => (
+          <span className={`${styles.rag} ${styles[`rag_${ragKey(p.band)}`]}`}>
+            {p.band.toUpperCase()}
+          </span>
+        ),
+        sortKey: "band",
+        filter: { kind: "select" },
+      },
+      {
+        key: "action",
+        header: "Action",
+        width: 170,
+        align: "left",
+        accessor: (p) => describeExitAction(p.action),
+        sortKey: "action",
+        filter: { kind: "select" },
+      },
+      {
+        key: "lpWon",
+        header: "Hedged with",
+        width: 130,
+        align: "left",
+        accessor: (p) => p.lpWon ?? "internal / no-trade",
+        cell: (p) =>
+          p.lpWon ? (
+            <span className={styles.lpWon} data-testid={`hedge-lpwon-${p.hedgeId}`}>
+              {p.lpWon}
+            </span>
+          ) : (
+            <span className={styles.muted}>internal / no-trade</span>
+          ),
+        sortKey: "lpWon",
+        filter: { kind: "select" },
+      },
+      {
+        key: "panel",
+        header: "Panel (eligible)",
+        description:
+          "The LPs the exit policy made ELIGIBLE for this hedge — not the LPs that quoted or filled. The fill's actual venue is the “Hedged with” column.",
+        width: 190,
+        align: "left",
+        accessor: (p) => p.lps.join(" "),
+        cell: (p) =>
+          p.lps.length > 0 ? (
+            <span className={styles.lpChips}>
+              {p.lps.map((lp) => (
+                <span
+                  key={lp}
+                  className={`${styles.lpChip} ${lp === p.lpWon ? styles.lpChipWon : ""}`}
+                >
+                  {lp}
+                </span>
+              ))}
+            </span>
+          ) : (
+            <span className={styles.muted}>—</span>
+          ),
+        filter: { kind: "text" },
+      },
+      {
+        key: "internal",
+        header: "Internal",
+        width: 100,
+        align: "right",
+        accessor: (p) => fmtCompact(p.internalCrossed),
+        sortValue: (p) => p.internalCrossed,
+        sortKey: "internal",
+        filter: { kind: "range" },
+      },
+      {
+        key: "external",
+        header: "External",
+        width: 100,
+        align: "right",
+        accessor: (p) => fmtCompact(p.externalHedged),
+        sortValue: (p) => p.externalHedged,
+        sortKey: "external",
+        filter: { kind: "range" },
+      },
+      {
+        key: "residual",
+        header: "Residual",
+        width: 100,
+        align: "right",
+        accessor: (p) => fmtCompact(p.residual),
+        sortValue: (p) => p.residual,
+        sortKey: "residual",
+        filter: { kind: "range" },
+      },
+      {
+        key: "hedgePx",
+        header: "Hedge px",
+        width: 100,
+        align: "right",
+        accessor: (p) => (p.hedgePrice > 0 ? fmtRate(p.hedgePrice) : "—"),
+        cell: (p) => (
+          <span className={styles.px}>{p.hedgePrice > 0 ? fmtRate(p.hedgePrice) : "—"}</span>
+        ),
+        // A no-trade action has no price; NaN sorts LAST rather than as a zero.
+        sortValue: (p) => (p.hedgePrice > 0 ? p.hedgePrice : Number.NaN),
+        sortKey: "hedgePx",
+        filter: { kind: "range" },
+      },
+      {
+        key: "mid",
+        header: "Mid",
+        width: 100,
+        align: "right",
+        accessor: (p) => (p.midAtFire > 0 ? fmtRate(p.midAtFire) : "—"),
+        sortValue: (p) => (p.midAtFire > 0 ? p.midAtFire : Number.NaN),
+        sortKey: "mid",
+        filter: { kind: "range" },
+      },
+      {
+        key: "slippage",
+        header: "Slippage",
+        width: 100,
+        align: "right",
+        accessor: (p) => slippageLabel(p.slippageBp),
+        sortValue: (p) => p.slippageBp,
+        sortKey: "slippage",
+        filter: { kind: "range" },
+      },
+      {
+        key: "mode",
+        header: "Mode",
+        width: 100,
+        align: "left",
+        accessor: (p) => (p.advisory ? "ADVISORY" : "LIVE"),
+        cell: (p) =>
+          p.advisory ? (
+            <span className={styles.advisory}>ADVISORY</span>
+          ) : (
+            <span className={styles.live}>LIVE</span>
+          ),
+        sortKey: "mode",
+        filter: { kind: "select" },
+      },
+    ],
+    [],
+  );
+
+  const grid = useGridState<HedgeProvenance>({
+    tableId: "fi-hedge-deals",
+    columns,
+    rows: filtered,
+    allRows: visible,
+  });
 
   const isOffline = !app.transport.label.startsWith("live");
   // The "external" total reflects the CURRENTLY-VISIBLE set (the filtered desk view).
@@ -206,107 +418,29 @@ export function HedgeDealsView(): React.ReactElement {
           </p>
         ) : (
           <>
+            {/* "N of M" counts the survivors of BOTH pipeline stages (global
+                search AND the per-column filters), never the search alone. */}
             <TableSearch
               query={query}
               onQueryChange={setQuery}
-              shown={shown}
-              total={total}
+              shown={grid.shown}
+              total={grid.total}
               label="Search hedge deals"
               placeholder="Filter hedges…"
             />
-            {filtered.length === 0 ? (
-              <p className={styles.empty}>No hedges match “{query}”.</p>
-            ) : (
-              <div className={styles.tableWrap} tabIndex={0} role="region" aria-label="Hedge deals table">
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th>Time</th>
-                      <th>Book · Instrument</th>
-                      <th>Parent deal</th>
-                      <th>Band</th>
-                      <th>Action</th>
-                      <th>Hedged with</th>
-                      <th title="The LPs the exit policy made ELIGIBLE for this hedge — not the LPs that quoted or filled. The fill's actual venue is the “Hedged with” column.">
-                        Panel (eligible)
-                      </th>
-                      <th className={styles.num}>Internal</th>
-                      <th className={styles.num}>External</th>
-                      <th className={styles.num}>Residual</th>
-                      <th className={styles.num}>Hedge px</th>
-                      <th className={styles.num}>Mid</th>
-                      <th className={styles.num}>Slippage</th>
-                      <th>Mode</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map((p) => (
-                      <tr key={p.hedgeId} data-testid={`hedge-deal-row-${p.hedgeId}`}>
-                        <td className={styles.mono}>{timeOf(p.firedAt)}</td>
-                        <td className={styles.strong}>
-                          {p.book} · {p.instrument}
-                        </td>
-                        <td className={styles.mono} data-testid={`hedge-parent-${p.hedgeId}`}>
-                          {p.parentPositionId !== undefined ? (
-                            <span className={styles.parentLink}>{parentDealLabel(p)}</span>
-                          ) : (
-                            <span className={styles.muted}>—</span>
-                          )}
-                        </td>
-                        <td>
-                          <span className={`${styles.rag} ${styles[`rag_${ragKey(p.band)}`]}`}>
-                            {p.band.toUpperCase()}
-                          </span>
-                        </td>
-                        <td>{describeExitAction(p.action)}</td>
-                        <td>
-                          {p.lpWon ? (
-                            <span className={styles.lpWon} data-testid={`hedge-lpwon-${p.hedgeId}`}>
-                              {p.lpWon}
-                            </span>
-                          ) : (
-                            <span className={styles.muted}>internal / no-trade</span>
-                          )}
-                        </td>
-                        <td>
-                          {p.lps.length > 0 ? (
-                            <span className={styles.lpChips}>
-                              {p.lps.map((lp) => (
-                                <span
-                                  key={lp}
-                                  className={`${styles.lpChip} ${lp === p.lpWon ? styles.lpChipWon : ""}`}
-                                >
-                                  {lp}
-                                </span>
-                              ))}
-                            </span>
-                          ) : (
-                            <span className={styles.muted}>—</span>
-                          )}
-                        </td>
-                        <td className={`${styles.num} ${styles.mono}`}>{fmtCompact(p.internalCrossed)}</td>
-                        <td className={`${styles.num} ${styles.mono}`}>{fmtCompact(p.externalHedged)}</td>
-                        <td className={`${styles.num} ${styles.mono}`}>{fmtCompact(p.residual)}</td>
-                        <td className={`${styles.num} ${styles.mono} ${styles.px}`}>
-                          {p.hedgePrice > 0 ? fmtRate(p.hedgePrice) : "—"}
-                        </td>
-                        <td className={`${styles.num} ${styles.mono}`}>
-                          {p.midAtFire > 0 ? fmtRate(p.midAtFire) : "—"}
-                        </td>
-                        <td className={`${styles.num} ${styles.mono}`}>{slippageLabel(p.slippageBp)}</td>
-                        <td>
-                          {p.advisory ? (
-                            <span className={styles.advisory}>ADVISORY</span>
-                          ) : (
-                            <span className={styles.live}>LIVE</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <DataTable
+              label="Hedge deals"
+              columns={columns}
+              grid={grid}
+              rowKey={(p) => p.hedgeId}
+              hideRowCount
+              rowProps={(p) => ({ "data-testid": `hedge-deal-row-${p.hedgeId}` })}
+              emptyState={
+                query.trim() === ""
+                  ? "No hedges match the current column filters."
+                  : `No hedges match “${query}”.`
+              }
+            />
           </>
         )}
       </Panel>

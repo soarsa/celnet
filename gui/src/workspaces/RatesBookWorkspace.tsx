@@ -26,9 +26,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
+import { DataTable } from "../components/DataTable";
 import { Panel } from "../components/Panel";
 import { TableSearch } from "../components/TableSearch";
+import { useGridState } from "../hooks/useGridState";
 import { useTableFilter } from "../hooks/useTableFilter";
+import type { ColumnDef } from "../lib/grid";
 import { principalForScope } from "../data/riskView";
 import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
 import { fmtRate, fmtCompact } from "../lib/format";
@@ -270,7 +273,7 @@ export function RatesBookWorkspace(): React.ReactElement {
     [positions, activeAsset],
   );
 
-  const { query, setQuery, filtered, shown, total } = useTableFilter(
+  const { query, setQuery, filtered } = useTableFilter(
     scopedPositions,
     (p) =>
       [
@@ -283,6 +286,96 @@ export function RatesBookWorkspace(): React.ReactElement {
         directionLabel(p.instrument.direction),
       ].join(" "),
   );
+
+  // The column model. `accessor` is the canonical TEXT projection (search,
+  // filter, export); `cell` carries the presentation the hand-rolled table had;
+  // `sortValue` is the ORDERED projection — without it "1000" would sort before
+  // "50" and a 10y swap before a 2y one.
+  const columns = useMemo<ReadonlyArray<ColumnDef<RatesPosition>>>(
+    () => [
+      {
+        key: "id",
+        header: "Id",
+        width: 90,
+        align: "right",
+        accessor: (p) => p.positionId.toString(),
+        // A position id is a bigint on the wire; Number() is exact well past any
+        // realistic id, and the text projection above stays the source of truth.
+        sortValue: (p) => Number(p.positionId),
+        sortKey: "id",
+        filter: { kind: "text" },
+      },
+      {
+        key: "entity",
+        header: "Entity",
+        width: 160,
+        align: "left",
+        accessor: (p) => entityName(p.entity),
+        sortKey: "entity",
+        filter: { kind: "select" },
+      },
+      {
+        key: "book",
+        header: "Book",
+        width: 160,
+        align: "left",
+        accessor: (p) => bookName(p.book),
+        sortKey: "book",
+        filter: { kind: "select" },
+      },
+      {
+        key: "instrument",
+        header: "Instrument",
+        width: 120,
+        align: "left",
+        accessor: (p) => `${p.instrument.tenorYears}y OIS`,
+        cell: (p) => (
+          <span className={styles.strong}>{p.instrument.tenorYears}y OIS</span>
+        ),
+        sortValue: (p) => p.instrument.tenorYears,
+        sortKey: "instrument",
+        filter: { kind: "select" },
+      },
+      {
+        key: "fixed",
+        header: "Fixed",
+        width: 100,
+        align: "right",
+        accessor: (p) => fmtRate(p.instrument.fixedRate),
+        cell: (p) => <span className={styles.rate}>{fmtRate(p.instrument.fixedRate)}</span>,
+        sortValue: (p) => p.instrument.fixedRate,
+        sortKey: "fixed",
+        filter: { kind: "range" },
+      },
+      {
+        key: "notional",
+        header: "Notional",
+        width: 110,
+        align: "right",
+        accessor: (p) => fmtCompact(p.instrument.notional),
+        sortValue: (p) => p.instrument.notional,
+        sortKey: "notional",
+        filter: { kind: "range" },
+      },
+      {
+        key: "side",
+        header: "Side",
+        width: 90,
+        align: "left",
+        accessor: (p) => directionLabel(p.instrument.direction),
+        sortKey: "side",
+        filter: { kind: "select" },
+      },
+    ],
+    [entityName, bookName],
+  );
+
+  const grid = useGridState<RatesPosition>({
+    tableId: "fi-rates-book",
+    columns,
+    rows: filtered,
+    allRows: scopedPositions,
+  });
 
   const isOffline = !app.transport.label.startsWith("live");
   const totalNotional = scopedPositions.reduce((acc, p) => acc + p.instrument.notional, 0);
@@ -435,58 +528,29 @@ export function RatesBookWorkspace(): React.ReactElement {
           </p>
         ) : (
           <>
+            {/* "N of M" reports the survivors of BOTH stages of the pipeline —
+                the global search AND the per-column filters — so the count never
+                claims rows that a column filter has since removed. */}
             <TableSearch
               query={query}
               onQueryChange={setQuery}
-              shown={shown}
-              total={total}
+              shown={grid.shown}
+              total={grid.total}
               label="Search positions"
               placeholder="Filter positions…"
             />
-            {filtered.length === 0 ? (
-              <p className={styles.empty}>No positions match “{query}”.</p>
-            ) : (
-              <div className={styles.tableWrap}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th className={styles.num}>Id</th>
-                      <th>Entity</th>
-                      <th>Book</th>
-                      <th>Instrument</th>
-                      <th className={styles.num}>Fixed</th>
-                      <th className={styles.num}>Notional</th>
-                      <th>Side</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map((p) => (
-                  <tr key={p.positionId.toString()}>
-                    <td
-                      className={`${styles.num} ${styles.mono} ${styles.idCell}`}
-                    >
-                      {p.positionId.toString()}
-                    </td>
-                    <td>{entityName(p.entity)}</td>
-                    <td>{bookName(p.book)}</td>
-                    <td className={styles.strong}>
-                      {p.instrument.tenorYears}y OIS
-                    </td>
-                    <td
-                      className={`${styles.num} ${styles.mono} ${styles.rate}`}
-                    >
-                      {fmtRate(p.instrument.fixedRate)}
-                    </td>
-                    <td className={`${styles.num} ${styles.mono}`}>
-                      {fmtCompact(p.instrument.notional)}
-                    </td>
-                    <td>{directionLabel(p.instrument.direction)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <DataTable
+              label="Rates book positions"
+              columns={columns}
+              grid={grid}
+              rowKey={(p) => p.positionId.toString()}
+              hideRowCount
+              emptyState={
+                query.trim() === ""
+                  ? "No positions match the current column filters."
+                  : `No positions match “${query}”.`
+              }
+            />
           </>
         )}
       </Panel>

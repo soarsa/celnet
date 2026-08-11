@@ -18,13 +18,16 @@ import { useApp } from "../app/AppContext";
 import { useAcceptanceSeed } from "../app/AcceptanceSeedContext";
 import { useHedgeSeed } from "../app/HedgeSeedContext";
 import { hedgeSeedFromDeal } from "../lib/hedgeSeed";
+import { DataTable } from "../components/DataTable";
 import { Panel } from "../components/Panel";
 import { FlowRowContextMenu, type FlowRowMenuTarget } from "../components/FlowRowContextMenu";
 import { TableSearch } from "../components/TableSearch";
 import { TableSkeleton } from "../components/TableSkeleton";
+import { useGridState } from "../hooks/useGridState";
 import { useTableFilter } from "../hooks/useTableFilter";
 import { cacheKeyPart, useCachedResource } from "../hooks/useCachedResource";
 import { useTableUiState } from "../hooks/useTableUiState";
+import type { ColumnDef } from "../lib/grid";
 import { principalForScope } from "../data/riskView";
 import { fmtRate, fmtClock, fmtCompact } from "../lib/format";
 import type { Deal, Internalise, Side } from "../data/contract";
@@ -362,9 +365,200 @@ export function DealsBlotterWorkspace({
     (d: Deal) => dealSearchText(d, riskBookNames),
     [riskBookNames],
   );
-  const { query, setQuery, filtered, shown, total } = useTableFilter(deals, searchText, {
+  const { query, setQuery, filtered } = useTableFilter(deals, searchText, {
     query: ui.query,
     setQuery: (q) => setUi({ query: q }),
+  });
+
+  // The column model — the SAME 16 columns, with every rich cell preserved
+  // verbatim through `ColumnDef.cell` (the badges, provenance chips and
+  // two-line security descriptor are the whole reason that API exists).
+  // `accessor` stays the canonical TEXT projection driving search, the column
+  // filters and export; `sortValue` is the ORDERED projection, without which a
+  // notional would sort by its compact "1.2b" label rather than its magnitude.
+  const columns = useMemo<ReadonlyArray<ColumnDef<Deal>>>(
+    () => [
+      {
+        key: "time",
+        header: "Time",
+        width: 90,
+        align: "left",
+        accessor: (d) => fmtClock(d.executedAtNanos),
+        cell: (d) => <span className={styles.mono}>{fmtClock(d.executedAtNanos)}</span>,
+        // Order by the raw nanosecond stamp — the rendered 24h clock wraps at
+        // midnight and would sort a new session's fills before the old ones.
+        sortValue: (d) => Number(d.executedAtNanos),
+        sortKey: "time",
+        filter: { kind: "text" },
+      },
+      {
+        key: "counterparty",
+        header: "Counterparty",
+        width: 150,
+        align: "left",
+        accessor: (d) => d.counterparty,
+        cell: (d) => <span className={styles.strong}>{d.counterparty}</span>,
+        sortKey: "counterparty",
+        filter: { kind: "select" },
+      },
+      {
+        key: "desk",
+        header: "Desk",
+        width: 110,
+        align: "left",
+        accessor: (d) => d.desk,
+        sortKey: "desk",
+        filter: { kind: "select" },
+      },
+      {
+        key: "kind",
+        header: "Type",
+        width: 80,
+        align: "left",
+        accessor: (d) => d.kind,
+        cell: (d) => <span className={`${styles.kind} ${kindClass(d.kind)}`}>{d.kind}</span>,
+        sortKey: "kind",
+        filter: { kind: "select" },
+      },
+      {
+        key: "product",
+        header: "Product",
+        width: 90,
+        align: "left",
+        accessor: (d) => productLabel(d),
+        cell: (d) => <span className={styles.product}>{productLabel(d)}</span>,
+        sortKey: "product",
+        filter: { kind: "select" },
+      },
+      {
+        key: "security",
+        header: "Security",
+        width: 180,
+        align: "left",
+        accessor: (d) => securityDescriptor(d),
+        cell: (d) => <SecurityCell deal={d} />,
+        sortKey: "security",
+        filter: { kind: "text" },
+      },
+      {
+        key: "tenor",
+        header: "Tenor",
+        width: 80,
+        align: "right",
+        accessor: (d) => tenorLabel(d),
+        sortValue: (d) => d.instrument.tenorYears,
+        sortKey: "tenor",
+        filter: { kind: "range" },
+      },
+      {
+        key: "ccy",
+        header: "Ccy",
+        width: 70,
+        align: "left",
+        accessor: (d) => d.curveSet.currency,
+        cell: (d) => <span className={styles.mono}>{d.curveSet.currency}</span>,
+        sortKey: "ccy",
+        filter: { kind: "select" },
+      },
+      {
+        key: "notional",
+        header: "Notional",
+        width: 110,
+        align: "right",
+        accessor: (d) => fmtCompact(d.notional),
+        sortValue: (d) => d.notional,
+        sortKey: "notional",
+        filter: { kind: "range" },
+      },
+      {
+        key: "price",
+        header: "Rate",
+        width: 100,
+        align: "right",
+        accessor: (d) => fmtRate(d.price),
+        cell: (d) => <span className={styles.price}>{fmtRate(d.price)}</span>,
+        sortValue: (d) => d.price,
+        sortKey: "price",
+        filter: { kind: "range" },
+      },
+      {
+        key: "side",
+        header: "Side",
+        width: 150,
+        align: "left",
+        // The searchable text keeps BOTH readings of Side (the BUY/SELL axis and
+        // the rates pay/receive-fixed convention), matching the badge's label.
+        accessor: (d) => `${sideBuySell(d.side)} ${sideLabel(d.side)}`,
+        cell: (d) => <SideBadge side={d.side} />,
+        sortValue: (d) => sideBuySell(d.side),
+        sortKey: "side",
+        filter: { kind: "select", options: ["BUY Pay fixed", "SELL Receive fixed", "2-WAY Two-way"] },
+      },
+      {
+        key: "trader",
+        header: "Trader",
+        width: 110,
+        align: "left",
+        accessor: (d) => d.trader,
+        sortKey: "trader",
+        filter: { kind: "select" },
+      },
+      {
+        key: "position",
+        header: "Position",
+        width: 100,
+        align: "left",
+        accessor: (d) => positionLabel(d),
+        cell: (d) => <span className={styles.mono}>{positionLabel(d)}</span>,
+        // An unbooked fill carries no position; NaN sorts LAST rather than
+        // heading an ascending sort as a fabricated zero would.
+        sortValue: (d) => (d.positionId !== undefined ? Number(d.positionId) : Number.NaN),
+        sortKey: "position",
+        filter: { kind: "text" },
+      },
+      {
+        key: "riskPortfolio",
+        header: "Risk Portfolio",
+        width: 150,
+        align: "left",
+        accessor: (d) => riskPortfolioLabel(d, riskBookNames),
+        sortKey: "riskPortfolio",
+        filter: { kind: "select" },
+      },
+      {
+        key: "hedge",
+        header: "Hedge",
+        width: 130,
+        align: "left",
+        accessor: (d) => (d.internalise ? internaliseLabel(d.internalise) : "—"),
+        cell: (d) =>
+          d.internalise ? (
+            <InternaliseBadge inl={d.internalise} />
+          ) : (
+            <span className={styles.inlNone}>—</span>
+          ),
+        sortKey: "hedge",
+        filter: { kind: "select" },
+      },
+      {
+        key: "dealId",
+        header: "Deal",
+        width: 140,
+        align: "left",
+        accessor: (d) => d.dealId,
+        cell: (d) => <span className={styles.dealId}>{d.dealId}</span>,
+        sortKey: "dealId",
+        filter: { kind: "text" },
+      },
+    ],
+    [riskBookNames],
+  );
+
+  const grid = useGridState<Deal>({
+    tableId: "fi-deals-blotter",
+    columns,
+    rows: filtered,
+    allRows: deals,
   });
 
   const isOffline = !app.transport.label.startsWith("live");
@@ -421,121 +615,67 @@ export function DealsBlotterWorkspace({
           </p>
         ) : (
           <>
+            {/* "N of M" counts the survivors of BOTH pipeline stages (global
+                search AND the per-column filters), never the search alone. */}
             <TableSearch
               query={query}
               onQueryChange={setQuery}
-              shown={shown}
-              total={total}
+              shown={grid.shown}
+              total={grid.total}
               label="Search deals"
               placeholder="Filter deals…"
             />
-            {filtered.length === 0 ? (
-              <p className={styles.empty}>No deals match “{query}”.</p>
-            ) : (
-              <>
-              <InternaliseLegend />
-              <div className={styles.tableWrap} tabIndex={0} role="region" aria-label="Deals table">
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th>Time</th>
-                      <th>Counterparty</th>
-                      <th>Desk</th>
-                      <th>Type</th>
-                      <th>Product</th>
-                      <th>Security</th>
-                      <th className={styles.num}>Tenor</th>
-                      <th>Ccy</th>
-                      <th className={styles.num}>Notional</th>
-                      <th className={styles.num}>Rate</th>
-                      <th>Side</th>
-                      <th>Trader</th>
-                      <th>Position</th>
-                      <th>Risk Portfolio</th>
-                      <th>Hedge</th>
-                      <th>Deal</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map((d) => (
-                  <tr
-                    key={d.dealId}
-                    className={`${styles.row} ${selected?.dealId === d.dealId ? styles.rowSelected : ""}`}
-                    onClick={() => setSelected(d)}
-                    tabIndex={0}
-                    role="button"
-                    aria-label={`Open deal ${d.dealId}. Right-click or press the menu key for row actions`}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setRowMenu({
-                        counterparty: d.counterparty,
-                        x: e.clientX,
-                        y: e.clientY,
-                        hedgeSeed: hedgeSeedFromDeal(d),
-                        positionId: d.positionId,
-                      });
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        setSelected(d);
-                        return;
-                      }
-                      // The standard context-menu key (or Shift+F10) opens the row menu —
-                      // keyboard parity for the right-click, without a nested-interactive
-                      // kebab inside this role="button" row (axe-clean).
-                      if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
-                        e.preventDefault();
-                        const r = e.currentTarget.getBoundingClientRect();
-                        setRowMenu({
-                          counterparty: d.counterparty,
-                          x: r.left + 12,
-                          y: r.bottom - 8,
-                          hedgeSeed: hedgeSeedFromDeal(d),
-                          positionId: d.positionId,
-                        });
-                      }
-                    }}
-                  >
-                    <td className={styles.mono}>{fmtClock(d.executedAtNanos)}</td>
-                    <td className={styles.strong}>{d.counterparty}</td>
-                    <td>{d.desk}</td>
-                    <td>
-                      <span className={`${styles.kind} ${kindClass(d.kind)}`}>
-                        {d.kind}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={styles.product}>{productLabel(d)}</span>
-                    </td>
-                    <td>
-                      <SecurityCell deal={d} />
-                    </td>
-                    <td className={`${styles.num} ${styles.mono}`}>{tenorLabel(d)}</td>
-                    <td className={styles.mono}>{d.curveSet.currency}</td>
-                    <td className={`${styles.num} ${styles.mono}`}>{fmtCompact(d.notional)}</td>
-                    <td className={`${styles.num} ${styles.mono} ${styles.price}`}>{fmtRate(d.price)}</td>
-                    <td>
-                      <SideBadge side={d.side} />
-                    </td>
-                    <td>{d.trader}</td>
-                    <td className={styles.mono}>{positionLabel(d)}</td>
-                    <td>{riskPortfolioLabel(d, riskBookNames)}</td>
-                    <td>
-                      {d.internalise ? (
-                        <InternaliseBadge inl={d.internalise} />
-                      ) : (
-                        <span className={styles.inlNone}>—</span>
-                      )}
-                    </td>
-                    <td className={styles.dealId}>{d.dealId}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              </>
-            )}
+            <InternaliseLegend />
+            <DataTable
+              label="Deals"
+              columns={columns}
+              grid={grid}
+              rowKey={(d) => d.dealId}
+              hideRowCount
+              rowProps={(d) => ({
+                className: `${styles.row} ${selected?.dealId === d.dealId ? styles.rowSelected : ""}`,
+                onClick: () => setSelected(d),
+                tabIndex: 0,
+                role: "button",
+                "aria-label": `Open deal ${d.dealId}. Right-click or press the menu key for row actions`,
+                onContextMenu: (e) => {
+                  e.preventDefault();
+                  setRowMenu({
+                    counterparty: d.counterparty,
+                    x: e.clientX,
+                    y: e.clientY,
+                    hedgeSeed: hedgeSeedFromDeal(d),
+                    positionId: d.positionId,
+                  });
+                },
+                onKeyDown: (e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setSelected(d);
+                    return;
+                  }
+                  // The standard context-menu key (or Shift+F10) opens the row menu —
+                  // keyboard parity for the right-click, without a nested-interactive
+                  // kebab inside this role="button" row (axe-clean).
+                  if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+                    e.preventDefault();
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setRowMenu({
+                      counterparty: d.counterparty,
+                      x: r.left + 12,
+                      y: r.bottom - 8,
+                      hedgeSeed: hedgeSeedFromDeal(d),
+                      positionId: d.positionId,
+                    });
+                  }
+                },
+              })}
+              emptyState={
+                query.trim() === ""
+                  ? "No deals match the current column filters."
+                  : `No deals match “${query}”.`
+              }
+            />
           </>
         )}
       </Panel>

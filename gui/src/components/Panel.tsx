@@ -7,14 +7,15 @@
  * an `overflow: auto` scroll container, so whenever its content GENUINELY
  * overflows it must be reachable and scrollable from the keyboard — some panel
  * bodies (the surface mesh, the vega ladder) contain no focusable content at
- * all. The body therefore self-measures (a ResizeObserver for container
- * resizes + a per-commit re-measure for content changes) and, only while it
- * actually overflows, takes `tabIndex=0` and exposes itself as a `region`
+ * all. The measurement itself lives in {@link useScrollableRegion} (shared with
+ * the `<DataTable>` scrollport so the two cannot drift): only while the body
+ * actually overflows does it take `tabIndex=0` and expose itself as a `region`
  * named by the panel title. Non-overflowing panels add no tab stops.
  */
 
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useId } from "react";
 
+import { scrollableRegionProps, useScrollableRegion } from "../hooks/useScrollableRegion";
 import styles from "./Panel.module.css";
 
 export interface PanelProps {
@@ -28,11 +29,6 @@ export interface PanelProps {
   noPadding?: boolean;
 }
 
-/** Does this element's content overflow its scrollport (either axis)? */
-function overflows(el: HTMLElement): boolean {
-  return el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth;
-}
-
 export function Panel({
   title,
   glyph,
@@ -42,28 +38,8 @@ export function Panel({
   className,
   noPadding,
 }: PanelProps): React.ReactElement {
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const [scrollable, setScrollable] = useState(false);
+  const [bodyRef, scrollable] = useScrollableRegion<HTMLDivElement>();
   const titleId = useId();
-
-  // Re-measure on EVERY commit: content changes only land through React renders
-  // of the panel subtree, so a per-commit scrollHeight read (one cheap forced
-  // layout on a single element) keeps the flag honest as data streams in. The
-  // state setter bails out when the value is unchanged — no render loop.
-  useLayoutEffect(() => {
-    const el = bodyRef.current;
-    if (el) setScrollable(overflows(el));
-  });
-
-  // Container resizes (window/grid-track changes) happen WITHOUT a React
-  // commit — a ResizeObserver on the body covers those.
-  useEffect(() => {
-    const el = bodyRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => setScrollable(overflows(el)));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   const hasTitle = title !== undefined;
   return (
@@ -89,12 +65,7 @@ export function Panel({
       <div
         ref={bodyRef}
         className={styles.body}
-        {...(scrollable
-          ? {
-              tabIndex: 0,
-              ...(hasTitle ? { role: "region", "aria-labelledby": titleId } : {}),
-            }
-          : {})}
+        {...scrollableRegionProps(scrollable, hasTitle ? { labelledBy: titleId } : {})}
       >
         {children}
       </div>

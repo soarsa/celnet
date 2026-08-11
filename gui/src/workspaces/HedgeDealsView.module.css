@@ -72,59 +72,9 @@
   max-width: 76ch;
 }
 
-.tableWrap {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  border: var(--hairline) solid var(--grid-line);
-  border-radius: var(--r-md);
-}
-
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
-}
-
-.table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  text-align: left;
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg-raised);
-  border-bottom: var(--hairline) solid var(--grid-line);
-  font: var(--type-micro) / 1 var(--font-ui);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-tertiary);
-  white-space: nowrap;
-}
-
-/* Numeric HEADER cells right-align; scoped past the base `.table thead th` so the
-   right-align actually wins (a class-only `.num` loses to `.table thead th`). */
-.table thead th.num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.table tbody td {
-  padding: var(--space-2) var(--space-3);
-  border-bottom: var(--hairline) solid var(--grid-line);
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.table tbody tr:hover td {
-  background: var(--bg-inset);
-}
-
-/* Numeric BODY cells: right-aligned, mono, tabular figures so digits line up. */
-.num {
-  text-align: right;
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
+/* The table surface (scrollport, sticky header, column tracks, filter band,
+   row/cell chrome) now lives in DataTable.module.css — this module keeps only
+   the cell TREATMENTS the hedge ledger applies through `ColumnDef.cell`. */
 
 .mono {
   font-family: var(--font-mono);

@@ -23,13 +23,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { useAcceptanceSeed } from "../app/AcceptanceSeedContext";
+import { DataTable } from "../components/DataTable";
 import { Panel } from "../components/Panel";
 import { FlowRowContextMenu, type FlowRowMenuTarget } from "../components/FlowRowContextMenu";
 import { TableSearch } from "../components/TableSearch";
 import { TableSkeleton } from "../components/TableSkeleton";
+import { useGridState } from "../hooks/useGridState";
 import { useTableFilter } from "../hooks/useTableFilter";
 import { cacheKeyPart, useCachedResource } from "../hooks/useCachedResource";
 import { useTableUiState } from "../hooks/useTableUiState";
+import type { ColumnDef } from "../lib/grid";
 import { principalForScope } from "../data/riskView";
 import { fmtRate, fmtClock, fmtCompact } from "../lib/format";
 import { sideLabel } from "./QuotingWorkspace";
@@ -134,11 +137,179 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
     [requests, activeAsset],
   );
 
-  const { query, setQuery, filtered, shown, total } = useTableFilter(
+  const { query, setQuery, filtered } = useTableFilter(
     quotes,
     quoteSearchText,
     { query: ui.query, setQuery: (q) => setUi({ query: q }) },
   );
+
+  // The column model. `accessor` stays the canonical TEXT projection (search,
+  // filter, export) even where `cell` renders a chip, so matching never has to
+  // reason about markup; `sortValue` is the ORDERED projection so a rate sorts
+  // numerically rather than lexically.
+  const columns = useMemo<ReadonlyArray<ColumnDef<DeskRequest>>>(
+    () => [
+      {
+        key: "received",
+        header: "Received",
+        width: 90,
+        align: "left",
+        accessor: (r) => fmtClock(r.receivedAtNanos),
+        cell: (r) => <span className={styles.mono}>{fmtClock(r.receivedAtNanos)}</span>,
+        // Order by the raw nanosecond stamp, not the rendered clock text — the
+        // clock wraps at midnight and would sort a new session before the old.
+        sortValue: (r) => Number(r.receivedAtNanos),
+        sortKey: "received",
+        filter: { kind: "text" },
+      },
+      {
+        key: "counterparty",
+        header: "Counterparty",
+        width: 150,
+        align: "left",
+        accessor: (r) => r.counterparty,
+        cell: (r) => <span className={styles.strong}>{r.counterparty}</span>,
+        sortKey: "counterparty",
+        filter: { kind: "select" },
+      },
+      {
+        key: "desk",
+        header: "Desk",
+        width: 110,
+        align: "left",
+        accessor: (r) => r.desk,
+        sortKey: "desk",
+        filter: { kind: "select" },
+      },
+      {
+        key: "instrument",
+        header: "Instrument",
+        width: 150,
+        align: "left",
+        accessor: (r) => `${r.kind} ${r.instrument.tenorYears}y OIS`,
+        cell: (r) => (
+          <>
+            <span
+              className={`${styles.kind} ${r.kind === "IOI" ? styles.kindIoi : styles.kindRfq}`}
+            >
+              {r.kind}
+            </span>
+            {r.instrument.tenorYears}y OIS
+          </>
+        ),
+        sortValue: (r) => r.instrument.tenorYears,
+        sortKey: "instrument",
+        filter: { kind: "select" },
+      },
+      {
+        key: "ccy",
+        header: "Ccy",
+        width: 70,
+        align: "left",
+        accessor: (r) => r.curveSet.currency,
+        cell: (r) => <span className={styles.mono}>{r.curveSet.currency}</span>,
+        sortKey: "ccy",
+        filter: { kind: "select" },
+      },
+      {
+        key: "side",
+        header: "Side",
+        width: 110,
+        align: "left",
+        accessor: (r) => sideLabel(r.side),
+        sortKey: "side",
+        filter: { kind: "select" },
+      },
+      {
+        key: "price",
+        header: "Quoted rate",
+        width: 110,
+        align: "right",
+        accessor: (r) => (r.quote ? fmtRate(r.quote.price) : "—"),
+        cell: (r) => (
+          <span className={styles.price}>{r.quote ? fmtRate(r.quote.price) : "—"}</span>
+        ),
+        // An unquoted request has no price; NaN sorts LAST in both directions
+        // rather than pretending to be zero (which would head an ascending sort).
+        sortValue: (r) => r.quote?.price ?? Number.NaN,
+        sortKey: "price",
+        filter: { kind: "range" },
+      },
+      {
+        key: "notional",
+        header: "Notional",
+        width: 110,
+        align: "right",
+        accessor: (r) => fmtCompact(r.quote?.notional ?? r.notional),
+        sortValue: (r) => r.quote?.notional ?? r.notional,
+        sortKey: "notional",
+        filter: { kind: "range" },
+      },
+      {
+        key: "goodFor",
+        header: "Good for",
+        width: 90,
+        align: "right",
+        accessor: (r) => (r.quote ? `${Math.round(r.quote.validForMs / 1000)}s` : "—"),
+        sortValue: (r) => r.quote?.validForMs ?? Number.NaN,
+        sortKey: "goodFor",
+        filter: { kind: "range" },
+      },
+      {
+        key: "trader",
+        header: "Trader",
+        width: 110,
+        align: "left",
+        accessor: (r) => r.quote?.trader ?? "—",
+        sortKey: "trader",
+        filter: { kind: "select" },
+      },
+      {
+        key: "state",
+        header: "State",
+        width: 110,
+        align: "left",
+        accessor: (r) => r.state,
+        cell: (r) => <span className={`${styles.state} ${stateClass(r.state)}`}>{r.state}</span>,
+        sortKey: "state",
+        filter: { kind: "select" },
+      },
+      {
+        key: "actions",
+        header: "Actions",
+        width: 76,
+        align: "center",
+        // Previously a visually-hidden "Row actions" label. `ColumnDef.header` is
+        // a plain string (it is reused verbatim in the filter controls' ARIA
+        // labels), so the label is now VISIBLE and shortened to fit the track —
+        // an empty <th> is an axe violation and an unnamed column for AT.
+        accessor: () => "",
+        cell: (r) => (
+          <button
+            type="button"
+            className={styles.kebab}
+            aria-haspopup="menu"
+            aria-label={`Row actions for ${r.counterparty}`}
+            data-testid="quote-row-kebab"
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setRowMenu({ counterparty: r.counterparty, x: rect.left, y: rect.bottom });
+            }}
+          >
+            <span aria-hidden>⋯</span>
+          </button>
+        ),
+      },
+    ],
+    [],
+  );
+
+  const grid = useGridState<DeskRequest>({
+    tableId: "fi-quotes-blotter",
+    columns,
+    rows: filtered,
+    allRows: quotes,
+  });
 
   const isOffline = !app.transport.label.startsWith("live");
   const totalQuoted = quotes.reduce((acc, r) => acc + (r.quote?.notional ?? 0), 0);
@@ -168,93 +339,34 @@ export function QuotesBlotterWorkspace(): React.ReactElement {
           </p>
         ) : (
           <>
+            {/* "N of M" counts the survivors of BOTH pipeline stages (global
+                search AND the per-column filters), never the search alone. */}
             <TableSearch
               query={query}
               onQueryChange={setQuery}
-              shown={shown}
-              total={total}
+              shown={grid.shown}
+              total={grid.total}
               label="Search quotes"
               placeholder="Filter quotes…"
             />
-            {filtered.length === 0 ? (
-              <p className={styles.empty}>No quotes match “{query}”.</p>
-            ) : (
-              <div className={styles.tableWrap}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th>Received</th>
-                      <th>Counterparty</th>
-                      <th>Desk</th>
-                      <th>Instrument</th>
-                      <th>Ccy</th>
-                      <th>Side</th>
-                      <th className={styles.num}>Quoted rate</th>
-                      <th className={styles.num}>Notional</th>
-                      <th className={styles.num}>Good for</th>
-                      <th>Trader</th>
-                      <th>State</th>
-                      <th className={styles.actionsCol}>
-                        <span className={styles.srOnly}>Row actions</span>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map((r) => (
-                  <tr
-                    key={r.requestId}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setRowMenu({ counterparty: r.counterparty, x: e.clientX, y: e.clientY });
-                    }}
-                  >
-                    <td className={styles.mono}>{fmtClock(r.receivedAtNanos)}</td>
-                    <td className={styles.strong}>{r.counterparty}</td>
-                    <td>{r.desk}</td>
-                    <td>
-                      <span
-                        className={`${styles.kind} ${r.kind === "IOI" ? styles.kindIoi : styles.kindRfq}`}
-                      >
-                        {r.kind}
-                      </span>
-                      {r.instrument.tenorYears}y OIS
-                    </td>
-                    <td className={styles.mono}>{r.curveSet.currency}</td>
-                    <td>{sideLabel(r.side)}</td>
-                    <td className={`${styles.num} ${styles.mono} ${styles.price}`}>
-                      {r.quote ? fmtRate(r.quote.price) : "—"}
-                    </td>
-                    <td className={`${styles.num} ${styles.mono}`}>
-                      {fmtCompact(r.quote?.notional ?? r.notional)}
-                    </td>
-                    <td className={`${styles.num} ${styles.mono}`}>
-                      {r.quote ? `${Math.round(r.quote.validForMs / 1000)}s` : "—"}
-                    </td>
-                    <td>{r.quote?.trader ?? "—"}</td>
-                    <td>
-                      <span className={`${styles.state} ${stateClass(r.state)}`}>{r.state}</span>
-                    </td>
-                    <td className={styles.actionsCol}>
-                      <button
-                        type="button"
-                        className={styles.kebab}
-                        aria-haspopup="menu"
-                        aria-label={`Row actions for ${r.counterparty}`}
-                        data-testid="quote-row-kebab"
-                        onClick={(e) => {
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          setRowMenu({ counterparty: r.counterparty, x: rect.left, y: rect.bottom });
-                        }}
-                      >
-                        <span aria-hidden>⋯</span>
-                      </button>
-                    </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <DataTable
+              label="Shown quotes"
+              columns={columns}
+              grid={grid}
+              rowKey={(r) => r.requestId}
+              hideRowCount
+              rowProps={(r) => ({
+                onContextMenu: (e) => {
+                  e.preventDefault();
+                  setRowMenu({ counterparty: r.counterparty, x: e.clientX, y: e.clientY });
+                },
+              })}
+              emptyState={
+                query.trim() === ""
+                  ? "No quotes match the current column filters."
+                  : `No quotes match “${query}”.`
+              }
+            />
           </>
         )}
       </Panel>

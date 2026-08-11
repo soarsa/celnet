@@ -90,48 +90,10 @@
   padding: var(--space-5) var(--space-2);
 }
 
-.tableWrap {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  border: var(--hairline) solid var(--grid-line);
-  border-radius: var(--r-md);
-}
-
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
-}
-
-.table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  text-align: left;
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg-raised);
-  border-bottom: var(--hairline) solid var(--grid-line);
-  font: var(--type-micro) / 1 var(--font-ui);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-tertiary);
-}
-
-.table tbody td {
-  padding: var(--space-2) var(--space-3);
-  border-bottom: var(--hairline) solid var(--grid-line);
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.table tbody tr:hover td {
-  background: var(--bg-inset);
-}
-
-.num {
-  text-align: right;
-}
+/* The table surface (scrollport, sticky header, column tracks, filter band,
+   row/cell chrome) now lives in DataTable.module.css — this module keeps only
+   the cell TREATMENTS the deals blotter applies through `ColumnDef.cell`, plus
+   the row selection/hit-target styling it passes via `rowProps`. */
 
 .mono {
   font-family: var(--font-mono);
@@ -363,15 +325,19 @@
 }
 
 /* Rows are click/keyboard targets that open the deal ticket. */
-.table tbody tr.row {
+/* Row chrome applied through `DataTable`'s `rowProps`. These were scoped
+   `.table tbody tr.row` when the blotter owned its own <table>; the table
+   element now carries DataTable's class, so they are scoped to the row class
+   itself (and the selected-row tint reaches the cells via a descendant rule). */
+.row {
   cursor: pointer;
 }
 
-.table tbody tr.rowSelected td {
+.rowSelected td {
   background: color-mix(in oklab, var(--accent) 13%, transparent);
 }
 
-.table tbody tr.row:focus-visible {
+.row:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }

@@ -49,48 +49,9 @@
   padding: var(--space-5) var(--space-2);
 }
 
-.tableWrap {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  border: var(--hairline) solid var(--grid-line);
-  border-radius: var(--r-md);
-}
-
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font: var(--type-caption) / var(--type-caption-lh) var(--font-ui);
-}
-
-.table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  text-align: left;
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg-raised);
-  border-bottom: var(--hairline) solid var(--grid-line);
-  font: var(--type-micro) / 1 var(--font-ui);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-tertiary);
-}
-
-.table tbody td {
-  padding: var(--space-2) var(--space-3);
-  border-bottom: var(--hairline) solid var(--grid-line);
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.table tbody tr:hover td {
-  background: var(--bg-inset);
-}
-
-.num {
-  text-align: right;
-}
+/* The table surface (scrollport, sticky header, column tracks, filter band,
+   row/cell chrome) now lives in DataTable.module.css — this module keeps only
+   the cell TREATMENTS the quotes table applies through `ColumnDef.cell`. */
 
 .mono {
   font-family: var(--font-mono);
@@ -149,12 +110,6 @@
 
 /* --- per-row actions (⋯ kebab → context menu) --- */
 
-.actionsCol {
-  width: 1%;
-  text-align: right;
-  white-space: nowrap;
-}
-
 .kebab {
   appearance: none;
   cursor: pointer;
@@ -185,14 +140,3 @@
   outline-offset: 1px;
 }
 
-.srOnly {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}

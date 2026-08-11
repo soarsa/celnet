@@ -383,7 +383,12 @@ export function DataGrid<T>(props: DataGridProps<T>): ReactNode {
                             className={`${styles.cell} ${alignClass(col.align)}`}
                             style={{ width: col.width }}
                           >
-                            {col.accessor(fr.datum)}
+                            {/* The model's RICH renderer wins when present; the
+                                mandatory `accessor` stays the text projection
+                                search/filter/export use. Both bindings resolve a
+                                cell the same way, so a column moved between them
+                                renders identically. */}
+                            {col.cell ? col.cell(fr.datum) : col.accessor(fr.datum)}
                           </div>
                         );
                       })}
