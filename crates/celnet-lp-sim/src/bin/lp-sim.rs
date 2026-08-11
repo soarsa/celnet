@@ -25,8 +25,9 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use celnet_lp_sim::{
-    BookFeedOptions, FaultSchedule, LoginCredentials, LpSimConfig, TreasuryBond, build_fleet,
-    composite_for, into_feeds, load_government_universe, run_book_aware_feed,
+    BookFeedOptions, FaultSchedule, LoginCredentials, LpSimConfig, QuotedLine, bond_lines,
+    build_fleet, composite_for, futures_lines, into_feeds, load_futures_universe,
+    load_government_universe, run_book_aware_feed,
 };
 use celnet_types::BrokenDate;
 use clap::Parser;
@@ -104,6 +105,15 @@ struct Args {
     /// solver can bracket them); by default only coupon Notes/Bonds are streamed.
     #[arg(long, default_value_t = false)]
     include_bills: bool,
+
+    /// Do NOT quote the listed Treasury futures complex (2Y/5Y/10Y/Ultra-10Y/Bond/
+    /// Ultra-Bond). Futures are quoted by DEFAULT: the server seeds the same
+    /// contracts into its tradeable reference registry, and an instrument that is
+    /// tradeable but not quotable never reaches an aggregated book — so every
+    /// DV01-ratio hedge routed to it would backstop to the synthetic COMPOSITE
+    /// venue. Only pass this to isolate the cash feed.
+    #[arg(long, default_value_t = false)]
+    exclude_futures: bool,
 
     /// Emit a single round and exit (default: stream forever).
     #[arg(long, default_value_t = false)]
@@ -188,16 +198,37 @@ fn main() -> std::process::ExitCode {
     };
 
     // Load the full government reference universe (US Treasuries + curated non-US
-    // govvies) and keep only bonds the analytics leaf can model at this settlement —
-    // the sim's full priceable set (books select from this).
+    // govvies), keep only the bonds the analytics leaf can model at this settlement,
+    // and — unless opted out — extend it with the listed Treasury futures complex
+    // anchored to that same cash curve. This is the sim's full QUOTABLE set, and it
+    // is deliberately the same universe the server seeds its TRADEABLE registry
+    // from: anything tradeable but unquotable never reaches an aggregated book.
     let universe = load_government_universe(args.include_bills);
-    let priceable: Vec<TreasuryBond> = universe
-        .into_iter()
-        .filter(|b| {
-            b.yield_model(cfg.settlement, cfg.reversion_per_sec, cfg.perturbation)
-                .is_some()
-        })
-        .collect();
+    let mut priceable = bond_lines(
+        &universe,
+        cfg.settlement,
+        cfg.reversion_per_sec,
+        cfg.perturbation,
+    );
+    let futures_count = if args.exclude_futures {
+        0
+    } else {
+        let contracts = load_futures_universe(&universe, cfg.settlement);
+        let lines = futures_lines(
+            &contracts,
+            cfg.half_spread,
+            cfg.skew_step,
+            cfg.reversion_per_sec,
+            cfg.perturbation,
+        );
+        let n = lines.len();
+        priceable.extend(lines);
+        n
+    };
+    eprintln!(
+        "[lp-sim] quotable set: {} cash bond(s) + {futures_count} Treasury future(s)",
+        priceable.len() - futures_count,
+    );
     if priceable.is_empty() {
         eprintln!(
             "[lp-sim] ERROR: no modellable instruments at settlement {}",
@@ -313,13 +344,12 @@ fn main() -> std::process::ExitCode {
             args.book,
             wall_clock()
         );
-        for bond in &selection {
-            match composite_for(&feeds, bond, now_nanos, &ccfg) {
+        for line in &selection {
+            match composite_for(&feeds, line, now_nanos, &ccfg) {
                 Ok(c) => println!("  {}", c.rendered),
                 Err(e) => println!(
                     "  {} [{}] no composite: {e}",
-                    bond.display_name(),
-                    bond.cusip
+                    line.display_name, line.identity
                 ),
             }
         }
@@ -334,7 +364,7 @@ fn main() -> std::process::ExitCode {
 
 /// Filter a loaded universe by the `--instruments` selector (`all`, or a CSV of
 /// ISINs/CUSIPs; matching is case-insensitive on either identifier).
-fn filter_instruments(universe: Vec<TreasuryBond>, selector: &str) -> Vec<TreasuryBond> {
+fn filter_instruments(universe: Vec<QuotedLine>, selector: &str) -> Vec<QuotedLine> {
     let sel = selector.trim();
     if sel.eq_ignore_ascii_case("all") {
         return universe;
@@ -346,10 +376,16 @@ fn filter_instruments(universe: Vec<TreasuryBond>, selector: &str) -> Vec<Treasu
         .collect();
     universe
         .into_iter()
-        .filter(|b| {
-            let cusip = b.cusip.to_ascii_uppercase();
-            let isin = b.isin.to_ascii_uppercase();
-            wanted.iter().any(|w| *w == cusip || *w == isin)
+        .filter(|line| {
+            // Match the canonical id (CUSIP / slug / contract code) or any of the
+            // line's cross-reference ids (a bond's `ISIN / CUSIP`).
+            let id = line.instrument_id.to_ascii_uppercase();
+            wanted.contains(&id)
+                || line
+                    .identity
+                    .split('/')
+                    .map(|x| x.trim().to_ascii_uppercase())
+                    .any(|x| !x.is_empty() && wanted.contains(&x))
         })
         .collect()
 }

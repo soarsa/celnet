@@ -82,15 +82,16 @@ use celnet_proto::{
     UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
 };
 use celnet_proto::{
-    GetAcceptanceGraphRequest, GetAcceptanceGraphResponse, UpdateAcceptanceGraphRequest,
-    UpdateAcceptanceGraphResponse,
+    ExecuteHedgeSuggestionRequest, ExecuteHedgeSuggestionResponse, GetHedgeConfigRequest,
+    GetHedgeConfigResponse, GetHedgePolicyGraphRequest, GetHedgePolicyGraphResponse,
+    ListHedgeProvenanceRequest, ListHedgeProvenanceResponse, ListHedgeSuggestionsRequest,
+    ListHedgeSuggestionsResponse, ListHedgeThresholdsRequest, ListHedgeThresholdsResponse,
+    SetHedgeConfigRequest, SetHedgeConfigResponse, UpdateHedgePolicyGraphRequest,
+    UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdRequest, UpdateHedgeThresholdResponse,
 };
 use celnet_proto::{
-    GetHedgeConfigRequest, GetHedgeConfigResponse, GetHedgePolicyGraphRequest,
-    GetHedgePolicyGraphResponse, ListHedgeProvenanceRequest, ListHedgeProvenanceResponse,
-    ListHedgeThresholdsRequest, ListHedgeThresholdsResponse, SetHedgeConfigRequest,
-    SetHedgeConfigResponse, UpdateHedgePolicyGraphRequest, UpdateHedgePolicyGraphResponse,
-    UpdateHedgeThresholdRequest, UpdateHedgeThresholdResponse,
+    GetAcceptanceGraphRequest, GetAcceptanceGraphResponse, UpdateAcceptanceGraphRequest,
+    UpdateAcceptanceGraphResponse,
 };
 use celnet_rates::{CalibrationInstrument, bootstrap_curve};
 use tonic::{Request, Response, Status};
@@ -287,6 +288,14 @@ impl AuthEdge {
 
     /// Share the boot-path firm-wide pricing kill-switch so the `SetPricingControl` RPC
     /// drives the SAME runtime control the aggregation ingest + FIX enforcement seams
+    /// The shared auto-hedge engine — so the WS connection layer subscribes to the SAME
+    /// live intent broadcast the booking path publishes onto (the per-book RAG board's
+    /// feed).
+    #[must_use]
+    pub fn auto_hedge(&self) -> &Arc<AutoHedgeEngine> {
+        &self.auto_hedge
+    }
+
     /// read and the WS layer fans out. Chainable; seeded at boot from the persisted
     /// [`IdentityStore::pricing_control`].
     #[must_use]
@@ -2290,6 +2299,72 @@ impl AuthService for AuthEdge {
             .provenance(req.book.as_deref(), req.instrument.as_deref());
         Ok(Response::new(ListHedgeProvenanceResponse {
             records,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    /// The STANDING hedge suggestions (`docs/HEDGING-AND-RISK-EXIT.md` §6.5) — what a
+    /// `Suggest`-mode scope has computed but deliberately NOT traded, waiting for a trader.
+    ///
+    /// A read of the shared suggestion store the rates booking path raises into. An
+    /// isolated auth test (no rates store injected) honestly serves an empty roster rather
+    /// than pretending the feature is unavailable.
+    async fn list_hedge_suggestions(
+        &self,
+        request: Request<ListHedgeSuggestionsRequest>,
+    ) -> Result<Response<ListHedgeSuggestionsResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::Hedge, AssetClass::FixedIncome),
+        )?;
+        let book = (!req.book.is_empty()).then_some(req.book.as_str());
+        let suggestions = self
+            .rates_store
+            .as_ref()
+            .map(|s| s.hedge_suggestions().list(book))
+            .unwrap_or_default();
+        Ok(Response::new(ListHedgeSuggestionsResponse {
+            suggestions,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    /// Resolve one standing suggestion: FIRE the pinned hedge, or DISMISS it.
+    ///
+    /// Firing executes exactly the plan the trader was shown (same instrument, same size,
+    /// same whole-lot rounding) on the configured venue and books the offsetting leg, so the
+    /// book genuinely reduces. Dismissing trades nothing and hides nothing — the risk stays
+    /// and the next fill on that cell raises the suggestion again.
+    ///
+    /// An unknown / already-resolved / superseded id is a `not_found`, never a silent no-op:
+    /// a stale suggestion must fail loudly rather than trade a size the book has moved past.
+    async fn execute_hedge_suggestion(
+        &self,
+        request: Request<ExecuteHedgeSuggestionRequest>,
+    ) -> Result<Response<ExecuteHedgeSuggestionResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        // Firing a suggestion PLACES A REAL ORDER, so it is gated on the same narrow hedge
+        // capability that authors the policy in the first place.
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::Hedge, AssetClass::FixedIncome),
+        )?;
+        let Some(store) = self.rates_store.as_ref() else {
+            return Err(Status::unavailable(
+                "the rates position store is not wired — hedge suggestions cannot be resolved",
+            ));
+        };
+        let provenance = store
+            .resolve_hedge_suggestion(&req.suggestion_id, req.dismiss)
+            .map_err(Status::not_found)?;
+        Ok(Response::new(ExecuteHedgeSuggestionResponse {
+            provenance,
+            suggestions: store.hedge_suggestions().list(None),
             correlation_id: req.correlation_id,
         }))
     }

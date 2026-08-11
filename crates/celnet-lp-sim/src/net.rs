@@ -26,8 +26,8 @@ use tonic::transport::{Channel, Endpoint};
 use crate::books::{StreamPlan, resolve_from_descs};
 use crate::lp::Fault;
 use crate::lpsim::LpQuoteSnapshot;
+use crate::quoted::QuotedLine;
 use crate::rng::{child_seed, unit01};
-use crate::universe::TreasuryBond;
 use crate::{LpSimConfig, SimLp, build_fleet};
 
 /// The seeded admin account the server ensures on first boot — the out-of-the-box
@@ -42,16 +42,16 @@ pub const DEFAULT_SERVICE_PASSWORD: &str = "password";
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
 
 /// Produce ONE round of wire [`LpQuote`]s: every member's current top-of-book for
-/// every selected bond at `now_nanos`, stamped with the canonical `instrument_id`
-/// (CUSIP). Pure and deterministic for a fixed `(fleet, bonds, now_nanos)` — the
-/// unit test asserts its shape without a network.
+/// every selected line at `now_nanos`, stamped with the canonical `instrument_id`.
+/// Pure and deterministic for a fixed `(fleet, lines, now_nanos)` — the unit test
+/// asserts its shape without a network.
 #[must_use]
-pub fn lp_quotes_round(fleet: &[SimLp], bonds: &[TreasuryBond], now_nanos: i64) -> Vec<LpQuote> {
-    let mut out = Vec::with_capacity(fleet.len() * bonds.len());
+pub fn lp_quotes_round(fleet: &[SimLp], lines: &[QuotedLine], now_nanos: i64) -> Vec<LpQuote> {
+    let mut out = Vec::with_capacity(fleet.len() * lines.len());
     for member in fleet {
-        for bond in bonds {
-            if let Some(q) = member.top_of_book(&bond.engine_instrument(), now_nanos) {
-                let snap = LpQuoteSnapshot::from_quote(&q, bond);
+        for line in lines {
+            if let Some(q) = member.top_of_book(&line.instrument, now_nanos) {
+                let snap = LpQuoteSnapshot::from_quote(&q, line);
                 out.push(LpQuote {
                     lp_name: snap.lp_name,
                     instrument_id: snap.instrument_id,
@@ -78,7 +78,7 @@ pub fn lp_quotes_round(fleet: &[SimLp], bonds: &[TreasuryBond], now_nanos: i64) 
 /// after one attempt (`--once`).
 pub fn run_network_feed(
     cfg: &LpSimConfig,
-    selection: &[TreasuryBond],
+    selection: &[QuotedLine],
     addr: &str,
     interval_secs: u64,
     once: bool,
@@ -93,7 +93,7 @@ pub fn run_network_feed(
 /// The async connect → stream → (reconnect) supervision loop.
 async fn feed_loop(
     cfg: &LpSimConfig,
-    selection: &[TreasuryBond],
+    selection: &[QuotedLine],
     addr: &str,
     interval_secs: u64,
     once: bool,
@@ -125,7 +125,7 @@ async fn feed_loop(
 /// when the stream ends (only reached in `--once` mode, or on a server-side close).
 async fn connect_and_stream(
     cfg: &LpSimConfig,
-    selection: &[TreasuryBond],
+    selection: &[QuotedLine],
     addr: &str,
     interval_secs: u64,
     once: bool,
@@ -142,7 +142,7 @@ async fn connect_and_stream(
     // The fleet is rebuilt per connection so a reconnect reproduces the same
     // deterministic feed from the seed.
     let fleet = build_fleet(cfg, selection);
-    let bonds = selection.to_vec();
+    let lines = selection.to_vec();
     let interval = Duration::from_secs(interval_secs.max(1));
     let start = std::time::Instant::now();
 
@@ -150,7 +150,7 @@ async fn connect_and_stream(
     // sleeping `interval` between rounds; `--once` ends the stream after one round.
     let state = FeedState {
         fleet,
-        bonds,
+        lines,
         cursor: 0,
         pending: Vec::new(),
         round_done_once: false,
@@ -173,7 +173,7 @@ async fn connect_and_stream(
 /// The unfold generator state driving the client-streaming request.
 struct FeedState {
     fleet: Vec<SimLp>,
-    bonds: Vec<TreasuryBond>,
+    lines: Vec<QuotedLine>,
     /// The buffered quotes of the current round, drained front-to-back.
     pending: Vec<LpQuote>,
     /// Read cursor into `pending`.
@@ -205,7 +205,7 @@ impl FeedState {
                 tokio::time::sleep(self.interval).await;
             }
             let now_nanos = self.now_nanos();
-            self.pending = lp_quotes_round(&self.fleet, &self.bonds, now_nanos);
+            self.pending = lp_quotes_round(&self.fleet, &self.lines, now_nanos);
             self.cursor = 0;
             self.round_done_once = true;
             if self.pending.is_empty() {
@@ -405,15 +405,15 @@ async fn list_books(
 }
 
 /// Produce one round of wire [`LpQuote`]s for exactly the `(member, instrument)`
-/// pairs in `plan`, at `now_nanos`. `by_cusip` resolves a plan's canonical
-/// `instrument_id` to the bond that prices it; `by_name` resolves a member name to
+/// pairs in `plan`, at `now_nanos`. `by_id` resolves a plan's canonical
+/// `instrument_id` to the line that prices it; `by_name` resolves a member name to
 /// its [`SimLp`]. At most one member is transiently faulted this round per `faults`.
 /// Pure and deterministic for a fixed `(fleet, plan, now, round)`.
 #[must_use]
 pub fn plan_quotes_round(
     cfg: &LpSimConfig,
     fleet: &[SimLp],
-    by_cusip: &BTreeMap<&str, &TreasuryBond>,
+    by_id: &BTreeMap<&str, &QuotedLine>,
     plan: &StreamPlan,
     now_nanos: i64,
     round: u64,
@@ -436,16 +436,16 @@ pub fn plan_quotes_round(
         let Some(&(idx, member)) = by_name.get(key.lp_name.as_str()) else {
             continue;
         };
-        let Some(bond) = by_cusip.get(key.instrument_id.as_str()) else {
+        let Some(line) = by_id.get(key.instrument_id.as_str()) else {
             continue;
         };
-        let instrument = bond.engine_instrument();
+        let instrument = &line.instrument;
         let quote = match &flaky {
-            Some((fidx, faulted)) if *fidx == idx => faulted.top_of_book(&instrument, now_nanos),
-            _ => member.top_of_book(&instrument, now_nanos),
+            Some((fidx, faulted)) if *fidx == idx => faulted.top_of_book(instrument, now_nanos),
+            _ => member.top_of_book(instrument, now_nanos),
         };
         if let Some(q) = quote {
-            let snap = LpQuoteSnapshot::from_quote(&q, bond);
+            let snap = LpQuoteSnapshot::from_quote(&q, line);
             out.push(LpQuote {
                 lp_name: snap.lp_name,
                 instrument_id: snap.instrument_id,
@@ -467,7 +467,7 @@ type SharedPlan = Arc<Mutex<Arc<StreamPlan>>>;
 /// aggregated books on `opts.book_poll`, resolve the `(LP-SIM member × instrument)`
 /// streams the sim owns, and push those two-ways to the server's `LpFeed` ingest,
 /// picking up book creates/edits/deletes automatically. `universe` is the sim's full
-/// priceable Treasury set (all modellable bonds); each book selects from it.
+/// quotable set (cash bonds + listed Treasury futures); each book selects from it.
 /// Blocks the calling thread on a private tokio runtime; supervises reconnects.
 ///
 /// # Errors
@@ -475,7 +475,7 @@ type SharedPlan = Arc<Mutex<Arc<StreamPlan>>>;
 /// built) or, in `--once` mode, the first connection/login/list error.
 pub fn run_book_aware_feed(
     cfg: &LpSimConfig,
-    universe: &[TreasuryBond],
+    universe: &[QuotedLine],
     addr: &str,
     opts: &BookFeedOptions,
 ) -> Result<(), String> {
@@ -489,7 +489,7 @@ pub fn run_book_aware_feed(
 /// The connect → login → poll+stream → (reconnect) supervision loop.
 async fn book_feed_supervise(
     cfg: &LpSimConfig,
-    universe: &[TreasuryBond],
+    universe: &[QuotedLine],
     addr: &str,
     opts: &BookFeedOptions,
 ) -> Result<(), String> {
@@ -519,7 +519,7 @@ async fn book_feed_supervise(
 /// book poller, then run the `LpFeed` client stream until it ends.
 async fn book_feed_session(
     cfg: &LpSimConfig,
-    universe: &[TreasuryBond],
+    universe: &[QuotedLine],
     addr: &str,
     opts: &BookFeedOptions,
 ) -> Result<(), String> {
@@ -538,7 +538,7 @@ async fn book_feed_session(
         .collect();
     let priceable: BTreeSet<String> = universe
         .iter()
-        .map(|b| b.instrument_id().to_string())
+        .map(|l| l.instrument_id().to_string())
         .collect();
 
     // Resolve the initial plan synchronously so the first stream round is correct.
@@ -629,7 +629,7 @@ fn log_plan(phase: &str, prev: &StreamPlan, next: &StreamPlan) {
 async fn run_plan_stream(
     channel: Channel,
     cfg: &LpSimConfig,
-    universe: &[TreasuryBond],
+    universe: &[QuotedLine],
     shared: SharedPlan,
     opts: &BookFeedOptions,
 ) -> Result<(), String> {
@@ -637,7 +637,7 @@ async fn run_plan_stream(
     let state = PlanFeedState {
         cfg: cfg.clone(),
         fleet: build_fleet(cfg, universe),
-        bonds: universe.to_vec(),
+        lines: universe.to_vec(),
         shared,
         faults: opts.faults.clone(),
         interval: opts.quote_interval.max(Duration::from_secs(1)),
@@ -668,7 +668,7 @@ async fn run_plan_stream(
 struct PlanFeedState {
     cfg: LpSimConfig,
     fleet: Vec<SimLp>,
-    bonds: Vec<TreasuryBond>,
+    lines: Vec<QuotedLine>,
     shared: SharedPlan,
     faults: FaultSchedule,
     interval: Duration,
@@ -699,12 +699,12 @@ impl PlanFeedState {
             }
             let now = self.now_nanos();
             let plan = { self.shared.lock().expect("plan mutex").clone() };
-            let by_cusip: BTreeMap<&str, &TreasuryBond> =
-                self.bonds.iter().map(|b| (b.instrument_id(), b)).collect();
+            let by_id: BTreeMap<&str, &QuotedLine> =
+                self.lines.iter().map(|l| (l.instrument_id(), l)).collect();
             self.pending = plan_quotes_round(
                 &self.cfg,
                 &self.fleet,
-                &by_cusip,
+                &by_id,
                 &plan,
                 now,
                 self.round,
@@ -739,6 +739,7 @@ impl PlanFeedState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::universe::TreasuryBond;
     use celnet_types::BrokenDate;
 
     #[test]
@@ -759,9 +760,15 @@ mod tests {
             .collect();
         selection.truncate(2);
         assert_eq!(selection.len(), 2, "need two modellable bonds");
-        let fleet = build_fleet(&cfg, &selection);
+        let lines = crate::universe::bond_lines(
+            &selection,
+            cfg.settlement,
+            cfg.reversion_per_sec,
+            cfg.perturbation,
+        );
+        let fleet = build_fleet(&cfg, &lines);
         let now = 1_700_000_000_000_000_000;
-        let quotes = lp_quotes_round(&fleet, &selection, now);
+        let quotes = lp_quotes_round(&fleet, &lines, now);
         // 3 members × 2 bonds = 6 quotes, each well-formed and CUSIP-stamped.
         assert_eq!(quotes.len(), 6);
         for q in &quotes {

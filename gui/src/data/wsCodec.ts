@@ -149,6 +149,12 @@ import type {
   HedgeDeskToggle,
   HedgeConfig,
   HedgeLpPanel,
+  HedgeVehicleKind,
+  HedgeVehiclePlan,
+  HedgeVehicleRule,
+  HedgeExitMode,
+  HedgeExitModeBinding,
+  HedgeSuggestion,
   ClientFlowMetrics,
   FlowGroupBy,
   LpFlowMetrics,
@@ -4653,6 +4659,42 @@ export function exitActionKindFromWire(n: number): ExitActionKind {
   return EXIT_ACTION_FROM[n] ?? "warehouse";
 }
 
+const HEDGE_VEHICLE_KIND_WIRE: Record<HedgeVehicleKind, number> = {
+  self: 0,
+  benchmark: 1,
+  instrument: 2,
+  future: 3,
+};
+const HEDGE_VEHICLE_KIND_FROM: readonly HedgeVehicleKind[] = [
+  "self",
+  "benchmark",
+  "instrument",
+  "future",
+];
+/** The wire `HedgeVehicleKindEnum` i32 tag. */
+export function hedgeVehicleKindToWire(k: HedgeVehicleKind): number {
+  return HEDGE_VEHICLE_KIND_WIRE[k];
+}
+/**
+ * A GUI hedge-vehicle kind from the wire i32 tag. An ABSENT `vehicle_kind` reads as 0
+ * via {@link enumNum} ⇒ `"self"`, so a policy authored before the vehicle feature
+ * round-trips byte-identically with its original (same-security) behaviour.
+ */
+export function hedgeVehicleKindFromWire(n: number): HedgeVehicleKind {
+  return HEDGE_VEHICLE_KIND_FROM[n] ?? "self";
+}
+
+const HEDGE_EXIT_MODE_WIRE: Record<HedgeExitMode, number> = { auto: 0, suggest: 1 };
+const HEDGE_EXIT_MODE_FROM: readonly HedgeExitMode[] = ["auto", "suggest"];
+/** The wire `HedgeExitModeEnum` i32 tag. */
+export function hedgeExitModeToWire(m: HedgeExitMode): number {
+  return HEDGE_EXIT_MODE_WIRE[m];
+}
+/** A GUI exit mode from the wire i32 tag (absent / out of range ⇒ `auto`). */
+export function hedgeExitModeFromWire(n: number): HedgeExitMode {
+  return HEDGE_EXIT_MODE_FROM[n] ?? "auto";
+}
+
 const HEDGE_EXEC_WIRE: Record<HedgeExecutionMode, number> = {
   advisory: 0,
   lp_panel: 1,
@@ -4724,11 +4766,20 @@ export function exitActionToWire(a: ExitAction): WireObject {
     lps: [...a.lps],
     internal_first: a.internalFirst,
     reason: a.reason,
+    // The hedge VEHICLE — both keys are ALWAYS written (the wire contract pins them as
+    // present, not proto-optional): `vehicle_kind` as its i32 tag, `vehicle_instrument`
+    // as the empty string for the kinds that name nothing (self / benchmark).
+    vehicle_kind: hedgeVehicleKindToWire(a.vehicleKind),
+    vehicle_instrument: a.vehicleInstrument,
   };
   if (a.skewBp !== null) m["skew_bp"] = a.skewBp;
   return m;
 }
-/** Decode an exit action (absent `skew_bp` ⇒ `null`; absent `size` ⇒ default overflow). */
+/**
+ * Decode an exit action (absent `skew_bp` ⇒ `null`; absent `size` ⇒ default overflow;
+ * absent `vehicle_kind` ⇒ `"self"` and absent `vehicle_instrument` ⇒ `""`, so a policy
+ * authored before the vehicle feature decodes to exactly its original behaviour).
+ */
 export function exitActionFromWire(o: WireObject): ExitAction {
   const rawSize = o["size"];
   return {
@@ -4744,6 +4795,103 @@ export function exitActionFromWire(o: WireObject): ExitAction {
     lps: strArrayOf(o, "lps"),
     internalFirst: boolOf(o, "internal_first"),
     reason: str(o, "reason"),
+    vehicleKind: hedgeVehicleKindFromWire(enumNum(o, "vehicle_kind")),
+    vehicleInstrument: str(o, "vehicle_instrument"),
+  };
+}
+
+/**
+ * Encode a hedge-vehicle sizing plan (mirrors `HedgeVehiclePlanDesc`) — every field is
+ * always present; nothing here is proto-optional.
+ */
+export function hedgeVehiclePlanToWire(p: HedgeVehiclePlan): WireObject {
+  return {
+    hedge_instrument_id: p.hedgeInstrumentId,
+    unit_label: p.unitLabel,
+    whole_units: p.wholeUnits,
+    dv01_basis: p.dv01Basis,
+    duration_correct: p.durationCorrect,
+    target_dv01: p.targetDv01,
+    dv01_per_unit: p.dv01PerUnit,
+    exact_units: p.exactUnits,
+    units: p.units,
+    hedged_dv01: p.hedgedDv01,
+    residual_dv01: p.residualDv01,
+    summary: p.summary,
+  };
+}
+/** Decode a `HedgeVehiclePlanDesc`. */
+export function hedgeVehiclePlanFromWire(o: WireObject): HedgeVehiclePlan {
+  return {
+    hedgeInstrumentId: str(o, "hedge_instrument_id"),
+    unitLabel: str(o, "unit_label"),
+    wholeUnits: boolOf(o, "whole_units"),
+    dv01Basis: str(o, "dv01_basis"),
+    durationCorrect: boolOf(o, "duration_correct"),
+    targetDv01: num(o, "target_dv01"),
+    dv01PerUnit: num(o, "dv01_per_unit"),
+    exactUnits: num(o, "exact_units"),
+    units: num(o, "units"),
+    hedgedDv01: num(o, "hedged_dv01"),
+    residualDv01: num(o, "residual_dv01"),
+    summary: str(o, "summary"),
+  };
+}
+
+/**
+ * Decode an OPTIONAL nested vehicle plan: absent / `null` ⇒ `null` (a `self`-vehicle
+ * hedge genuinely has no unit arithmetic — never fabricate one).
+ */
+function vehiclePlanOrNull(o: WireObject, key: string): HedgeVehiclePlan | null {
+  const raw = o[key];
+  return raw && typeof raw === "object" ? hedgeVehiclePlanFromWire(raw as WireObject) : null;
+}
+
+/** Encode one hedge-vehicle registry row (mirrors `HedgeVehicleDesc`). */
+export function hedgeVehicleRuleToWire(v: HedgeVehicleRule): WireObject {
+  return {
+    id: v.id,
+    instrument_id: v.instrumentId,
+    product: v.product,
+    ccy: v.ccy,
+    min_maturity_years: v.minMaturityYears,
+    max_maturity_years: v.maxMaturityYears,
+    hedge_instrument_id: v.hedgeInstrumentId,
+    is_future: v.isFuture,
+    dv01_per_unit: v.dv01PerUnit,
+    unit_label: v.unitLabel,
+  };
+}
+/** Decode a `HedgeVehicleDesc`. */
+export function hedgeVehicleRuleFromWire(o: WireObject): HedgeVehicleRule {
+  return {
+    id: str(o, "id"),
+    instrumentId: str(o, "instrument_id"),
+    product: str(o, "product"),
+    ccy: str(o, "ccy"),
+    minMaturityYears: num(o, "min_maturity_years"),
+    maxMaturityYears: num(o, "max_maturity_years"),
+    hedgeInstrumentId: str(o, "hedge_instrument_id"),
+    isFuture: boolOf(o, "is_future"),
+    dv01PerUnit: num(o, "dv01_per_unit"),
+    unitLabel: str(o, "unit_label"),
+  };
+}
+
+/** Encode one AUTO/SUGGEST scope binding (reuses the `HedgeScopeKindEnum` i32 tags). */
+export function hedgeExitModeBindingToWire(b: HedgeExitModeBinding): WireObject {
+  return {
+    scope_kind: hedgeScopeToWire(b.scopeKind),
+    scope_id: b.scopeId,
+    mode: hedgeExitModeToWire(b.mode),
+  };
+}
+/** Decode a `HedgeExitModeBinding` (absent `mode` ⇒ `auto`, the pre-feature behaviour). */
+export function hedgeExitModeBindingFromWire(o: WireObject): HedgeExitModeBinding {
+  return {
+    scopeKind: hedgeScopeFromWire(enumNum(o, "scope_kind")),
+    scopeId: str(o, "scope_id"),
+    mode: hedgeExitModeFromWire(enumNum(o, "mode")),
   };
 }
 
@@ -4851,6 +4999,9 @@ export function hedgeProvenanceToWire(p: HedgeProvenance): WireObject {
     slippage_bp: p.slippageBp,
     advisory: p.advisory,
     lps: [...p.lps],
+    // The vehicle sizing actually traded — JSON `null` for a `self` hedge (the same
+    // security sold back at a ratio of 1 records no unit arithmetic).
+    vehicle_plan: p.vehiclePlan !== null ? hedgeVehiclePlanToWire(p.vehiclePlan) : null,
   };
   if (p.lpWon !== null) m["lp_won"] = p.lpWon;
   // The parent-deal reconciliation link (field 21) — present ONLY on per-fill
@@ -4886,6 +5037,7 @@ export function hedgeProvenanceFromWire(o: WireObject): HedgeProvenance {
     lpWon: typeof rawLp === "string" ? rawLp : null,
     advisory: boolOf(o, "advisory"),
     lps: strArrayOf(o, "lps"),
+    vehiclePlan: vehiclePlanOrNull(o, "vehicle_plan"),
   };
   // The parent-deal reconciliation link (field 21): present only on per-fill
   // execution records; a null/absent value leaves it undefined (never fabricated).
@@ -4913,6 +5065,8 @@ export function hedgeIntentToWire(i: HedgeIntent): WireObject {
     policy_path: [...i.policyPath],
     reason: i.reason,
     lps: [...i.lps],
+    vehicle_plan: i.vehiclePlan !== null ? hedgeVehiclePlanToWire(i.vehiclePlan) : null,
+    exit_mode: hedgeExitModeToWire(i.exitMode),
   };
 }
 /** Decode a `HedgeIntent`. */
@@ -4936,6 +5090,67 @@ export function hedgeIntentFromWire(o: WireObject): HedgeIntent {
     policyPath: numArrayOf(o, "policy_path"),
     reason: str(o, "reason"),
     lps: strArrayOf(o, "lps"),
+    vehiclePlan: vehiclePlanOrNull(o, "vehicle_plan"),
+    exitMode: hedgeExitModeFromWire(enumNum(o, "exit_mode")),
+  };
+}
+
+/** Nanoseconds per millisecond — the `raised_at` wire unit conversion. */
+const NANOS_PER_MILLI = 1e6;
+
+/**
+ * Encode a standing hedge suggestion (mirrors `HedgeSuggestion`). `raised_at` rides as
+ * epoch NANOS (the server's clock unit) while the GUI domain carries epoch MILLIS, the
+ * unit every `new Date(…)` in the app expects — so it is scaled here and unscaled on
+ * decode. `parent_position_id` is JSON `null` when there is no single parent deal (never
+ * fabricated), matching how `HedgeProvenance` treats the same link.
+ */
+export function hedgeSuggestionToWire(s: HedgeSuggestion): WireObject {
+  return {
+    suggestion_id: s.suggestionId,
+    book: s.book,
+    instrument: s.instrument,
+    desk: s.desk,
+    raised_at: Math.round(s.raisedAt * NANOS_PER_MILLI),
+    band: s.band,
+    net_risk: s.netRisk,
+    threshold: s.threshold,
+    utilization: s.utilization,
+    action: s.action !== null ? exitActionToWire(s.action) : null,
+    policy_path: [...s.policyPath],
+    external_size: s.externalSize,
+    vehicle_plan: s.vehiclePlan !== null ? hedgeVehiclePlanToWire(s.vehiclePlan) : null,
+    headline: s.headline,
+    rationale: s.rationale,
+    parent_position_id: s.parentPositionId !== null ? Number(s.parentPositionId) : null,
+    lps: [...s.lps],
+    mid_at_raise: s.midAtRaise,
+  };
+}
+/** Decode a `HedgeSuggestion` (`raised_at` nanos → the GUI's epoch millis). */
+export function hedgeSuggestionFromWire(o: WireObject): HedgeSuggestion {
+  const rawAction = o["action"];
+  const parent = optBigIntOrNull(o, "parent_position_id");
+  return {
+    suggestionId: str(o, "suggestion_id"),
+    book: str(o, "book"),
+    instrument: str(o, "instrument"),
+    desk: str(o, "desk"),
+    raisedAt: num(o, "raised_at") / NANOS_PER_MILLI,
+    band: str(o, "band"),
+    netRisk: num(o, "net_risk"),
+    threshold: num(o, "threshold"),
+    utilization: num(o, "utilization"),
+    action:
+      rawAction && typeof rawAction === "object" ? exitActionFromWire(rawAction as WireObject) : null,
+    policyPath: numArrayOf(o, "policy_path"),
+    externalSize: num(o, "external_size"),
+    vehiclePlan: vehiclePlanOrNull(o, "vehicle_plan"),
+    headline: str(o, "headline"),
+    rationale: str(o, "rationale"),
+    parentPositionId: parent,
+    lps: strArrayOf(o, "lps"),
+    midAtRaise: num(o, "mid_at_raise"),
   };
 }
 
@@ -4978,6 +5193,10 @@ export function hedgeConfigToWire(c: HedgeConfig): WireObject {
     daily_external_notional_cap: c.dailyExternalNotionalCap,
     lp_panels: c.lpPanels.map(hedgeLpPanelToWire),
     composite_spread_bp: c.compositeSpreadBp,
+    // The hedge-vehicle registry + the AUTO/SUGGEST bindings ride on the SAME
+    // get/set_hedge_config pair — there is deliberately no second CRUD verb.
+    vehicles: c.vehicles.map(hedgeVehicleRuleToWire),
+    exit_modes: c.exitModes.map(hedgeExitModeBindingToWire),
   };
 }
 /** Decode a `HedgeConfigDesc`. */
@@ -4991,6 +5210,8 @@ export function hedgeConfigFromWire(o: WireObject): HedgeConfig {
     dailyExternalNotionalCap: num(o, "daily_external_notional_cap"),
     lpPanels: array(o, "lp_panels").map(hedgeLpPanelFromWire),
     compositeSpreadBp: num(o, "composite_spread_bp"),
+    vehicles: array(o, "vehicles").map(hedgeVehicleRuleFromWire),
+    exitModes: array(o, "exit_modes").map(hedgeExitModeBindingFromWire),
   };
 }
 
@@ -5219,6 +5440,47 @@ export function hedgeConfigResponseFromWire(o: WireObject): HedgeConfig {
 /** `set_hedge_config` request body. */
 export function setHedgeConfigRequestToWire(config: HedgeConfig): WireObject {
   return { config: hedgeConfigToWire(config) };
+}
+
+/**
+ * `list_hedge_suggestions` request body — the STANDING suggestions raised by the
+ * `suggest` exit mode. An empty / omitted `book` means every book.
+ */
+export function listHedgeSuggestionsRequestToWire(book?: string): WireObject {
+  const m: WireObject = {};
+  if (book !== undefined && book.length > 0) m["book"] = book;
+  return m;
+}
+/** Decode `{ suggestions: [...] }`. */
+export function hedgeSuggestionsResponseFromWire(o: WireObject): HedgeSuggestion[] {
+  return array(o, "suggestions").map(hedgeSuggestionFromWire);
+}
+
+/**
+ * `execute_hedge_suggestion` request body: act on one standing suggestion. `dismiss`
+ * true drops it WITHOUT trading; false fires the sized hedge.
+ */
+export function executeHedgeSuggestionRequestToWire(
+  suggestionId: string,
+  dismiss: boolean,
+): WireObject {
+  return { suggestion_id: suggestionId, dismiss };
+}
+/**
+ * Decode `{ provenance: {...} | null, suggestions: [...] }` — the provenance of the hedge
+ * that just fired (`null` for a dismissal, which trades nothing) plus the REMAINING
+ * standing suggestions, so the caller replaces its list rather than guessing at it.
+ */
+export function executeHedgeSuggestionResponseFromWire(o: WireObject): {
+  provenance: HedgeProvenance | null;
+  suggestions: HedgeSuggestion[];
+} {
+  const raw = o["provenance"];
+  return {
+    provenance:
+      raw && typeof raw === "object" ? hedgeProvenanceFromWire(raw as WireObject) : null,
+    suggestions: array(o, "suggestions").map(hedgeSuggestionFromWire),
+  };
 }
 
 /** Decode one risk-book limit-utilization row (band rides as its i32 tag). */

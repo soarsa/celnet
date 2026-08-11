@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 use celnet_aggregation::{ConsolidatedBook, VenueFeed};
 use celnet_lp_sim::net::plan_quotes_round;
 use celnet_lp_sim::{
-    FaultSchedule, LpSimConfig, StreamPlan, TreasuryBond, build_fleet, into_feeds,
+    FaultSchedule, LpSimConfig, QuotedLine, StreamPlan, build_fleet, into_feeds,
     load_coupon_universe, resolve_from_descs,
 };
 use celnet_proto::{AggregatedBookDesc, AggregationScopeMode};
@@ -42,19 +42,16 @@ fn cfg() -> LpSimConfig {
 }
 
 /// The first `n` modellable coupon Treasuries at the config settlement.
-fn selection(n: usize) -> Vec<TreasuryBond> {
+fn selection(n: usize) -> Vec<QuotedLine> {
     let c = cfg();
     load_coupon_universe()
         .into_iter()
-        .filter(|b| {
-            b.yield_model(c.settlement, c.reversion_per_sec, c.perturbation)
-                .is_some()
-        })
+        .filter_map(|b| b.to_line(c.settlement, c.reversion_per_sec, c.perturbation))
         .take(n)
         .collect()
 }
 
-fn ids_of(bonds: &[TreasuryBond]) -> BTreeSet<String> {
+fn ids_of(bonds: &[QuotedLine]) -> BTreeSet<String> {
     bonds
         .iter()
         .map(|b| b.instrument_id().to_string())
@@ -259,17 +256,9 @@ fn priced_streams_stay_within_the_surviving_member_envelope() {
     assert_eq!(plan.len(), 5, "five members quote the one instrument");
 
     // Emit one round with faults OFF so every member is fresh (analytic envelope).
-    let by_cusip = bonds.iter().map(|b| (b.instrument_id(), b)).collect();
+    let by_id = bonds.iter().map(|b| (b.instrument_id(), b)).collect();
     let fleet = build_fleet(&cfg, &bonds);
-    let quotes = plan_quotes_round(
-        &cfg,
-        &fleet,
-        &by_cusip,
-        &plan,
-        NOW,
-        0,
-        &FaultSchedule::off(),
-    );
+    let quotes = plan_quotes_round(&cfg, &fleet, &by_id, &plan, NOW, 0, &FaultSchedule::off());
     assert_eq!(quotes.len(), 5);
     // Each LP's OWN two-way is uncrossed (offer ≥ bid); the composite BBO may cross.
     for q in &quotes {
@@ -281,7 +270,7 @@ fn priced_streams_stay_within_the_surviving_member_envelope() {
     }
 
     // Analytic envelope over the five members' own top-of-book at NOW.
-    let instrument = bond.engine_instrument();
+    let instrument = bond.instrument.clone();
     let bids: Vec<f64> = fleet
         .iter()
         .map(|m| m.top_of_book(&instrument, NOW).unwrap().bid)

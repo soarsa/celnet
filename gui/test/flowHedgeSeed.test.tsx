@@ -74,6 +74,9 @@ function makeApp(opts: { deals?: Deal[]; can?: CanFn }) {
         listDeals: vi.fn(async () => ({ deals: opts.deals ?? [] })),
         streamNotifications: vi.fn(() => () => {}),
         getHedgePolicyGraph: vi.fn(async () => null),
+        // The Exit Policy tab loads the engine config for the leaf editor's hedge-VEHICLE
+        // picker (a named vehicle must be a registry row).
+        getHedgeConfig: vi.fn(async () => ({ vehicles: [], exitModes: [] })),
         updateHedgePolicyGraph,
       },
       auth: {

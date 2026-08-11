@@ -55,7 +55,8 @@ function makeApp(opts: {
       //   • Quotes (QuotesBlotterWorkspace) → listDeskRequests + streamNotifications
       //   • Client blotter (DealsBlotterWorkspace, client lens) → listDeals + listRiskBooks + streamNotifications
       //   • Hedge blotter (HedgeDealsView) → listHedgeProvenance + streamHedgeIntents
-      //   • Hedge flows (HedgeMonitor) → getHedgeConfig + listHedgeProvenance + streamHedgeIntents
+      //   • Hedge flows (HedgeMonitor) → getHedgeConfig + listHedgeProvenance +
+      //     streamHedgeIntents + listHedgeSuggestions (the standing suggest-mode rows)
       listDesks: vi.fn(async () => []),
       listFixConnections: vi.fn(async () => []),
       getRiskRoutingGraph: vi.fn(async () => null),
@@ -68,6 +69,7 @@ function makeApp(opts: {
       listDeals: vi.fn(async () => ({ deals: [] })),
       streamNotifications: vi.fn(() => () => {}),
       listHedgeProvenance: vi.fn(async () => []),
+      listHedgeSuggestions: vi.fn(async () => []),
       streamHedgeIntents: vi.fn(() => () => {}),
       getHedgeConfig: vi.fn(async () => ({
         killSwitch: false,
@@ -78,6 +80,8 @@ function makeApp(opts: {
         dailyExternalNotionalCap: 1_000_000_000,
         lpPanels: [],
         compositeSpreadBp: 0.5,
+        vehicles: [],
+        exitModes: [],
       })),
     },
     conventions: {},

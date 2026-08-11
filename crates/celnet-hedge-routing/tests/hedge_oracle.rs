@@ -33,7 +33,13 @@ fn cond(field: HedgeField, op: RouteOp, value: RouteValue, t: u32, f: u32) -> He
 }
 
 fn act(exit: ExitAction) -> HedgeNode {
-    HedgeNode::Action { exit }
+    HedgeNode::action(exit)
+}
+
+/// The hedge-instrument ids the firm's vehicle registry knows (no leaf in these
+/// fixtures names a vehicle, so the set only has to exist).
+fn known_vehicles() -> BTreeSet<String> {
+    BTreeSet::new()
 }
 
 fn known(items: &[&str]) -> BTreeSet<String> {
@@ -145,7 +151,7 @@ fn state(breached: bool, toxicity: f64, offset: f64, overflow: f64) -> HedgeCont
 #[test]
 fn policy_graph_is_valid() {
     policy_graph()
-        .validate(&policy_instruments(), &policy_lps())
+        .validate(&policy_instruments(), &policy_lps(), &known_vehicles())
         .expect("policy graph must be well-formed");
 }
 
@@ -538,8 +544,8 @@ proptest! {
         let g = build_valid_graph(&seeds);
         let instr = known(GEN_INSTR);
         let lps = known(GEN_LPS);
-        prop_assert!(g.validate(&instr, &lps).is_ok(),
-            "layered DAG must validate: {:?}", g.validate(&instr, &lps));
+        prop_assert!(g.validate(&instr, &lps, &known_vehicles()).is_ok(),
+            "layered DAG must validate: {:?}", g.validate(&instr, &lps, &known_vehicles()));
         let r = HedgeRouter::resolve(&g, &ctx).expect("validated graph is total");
         // The resolved leaf is a real action node.
         let leaf_is_action = matches!(

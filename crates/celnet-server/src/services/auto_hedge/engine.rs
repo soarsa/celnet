@@ -31,19 +31,27 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::RwLock;
 
+use tokio::sync::broadcast;
+
 use celnet_hedge_routing::{
     ExitAction, HedgeContext, HedgeGraph, HedgeRouter, HedgeSize, LimitMetric, RagStatus,
     netting_split,
 };
-use celnet_proto::{ExitActionDesc, HedgeIntent, HedgeProvenance};
+use celnet_proto::{ExitActionDesc, HedgeExitModeEnum, HedgeIntent, HedgeProvenance};
 
-use super::wire::{band_label, exit_action_to_wire};
+use super::wire::{band_label, exit_action_to_wire, exit_action_with_vehicle_to_wire};
 use crate::config::hedge_policy::{HedgeConfigDef, HedgeMetric, HedgeThresholdDef};
 
 /// The default bounded depth of the fired-hedge provenance ring (the audit trail the
 /// `ListHedgeProvenance` RPC reads). Old records fall off the back — a control-plane
 /// history, not an unbounded log.
 pub const PROVENANCE_RING_CAPACITY: usize = 4_096;
+
+/// The depth of the live **intent broadcast** every connected client drains. Bounded: a
+/// client that falls this far behind is LAGGED (it drops the backlog and resumes at the
+/// newest state) rather than back-pressuring the booking tier — one slow socket must never
+/// stall risk decisions (`CLAUDE.md` §11, the same discipline as the WS RFS channel).
+const INTENT_CHANNEL_DEPTH: usize = 256;
 
 /// The outcome of one [`AutoHedgeEngine::evaluate`] call.
 #[derive(Debug, Clone, PartialEq)]
@@ -75,6 +83,15 @@ struct Inner {
 pub struct AutoHedgeEngine {
     inner: RwLock<Inner>,
     capacity: usize,
+    /// The live **intent broadcast** — every resolved decision, published for the WS
+    /// per-connection forwarder that renders the risk surface's RAG board.
+    ///
+    /// Historically the intent was computed and then dropped on the floor: nothing ever
+    /// published it, so the GUI's per-book risk panel derived its board from a stream that
+    /// never produced a frame and read "Waiting for the first risk-state tick…" forever.
+    /// This channel is the missing publication. Sending is non-blocking and ignores the
+    /// no-subscriber case, so an unwatched server pays nothing.
+    intent_tx: broadcast::Sender<HedgeIntent>,
 }
 
 impl Default for AutoHedgeEngine {
@@ -95,7 +112,23 @@ impl AutoHedgeEngine {
                 daily_external: 0.0,
             }),
             capacity: capacity.max(1),
+            intent_tx: broadcast::channel(INTENT_CHANNEL_DEPTH).0,
         }
+    }
+
+    /// Subscribe to the live intent stream. Each WS connection holds one receiver and
+    /// forwards frames onto its outbound sink; a receiver that lags is dropped-and-resumed
+    /// by the broadcast channel rather than blocking the publisher.
+    #[must_use]
+    pub fn subscribe_intents(&self) -> broadcast::Receiver<HedgeIntent> {
+        self.intent_tx.subscribe()
+    }
+
+    /// Publish one resolved intent to every connected subscriber. A send with no
+    /// subscribers is not an error — it is the ordinary state of an unwatched server — so
+    /// the result is deliberately discarded.
+    fn publish(&self, intent: &HedgeIntent) {
+        let _ = self.intent_tx.send(intent.clone());
     }
 
     /// Reset the per-interval rate counter (the control loop calls this each interval
@@ -200,17 +233,19 @@ impl AutoHedgeEngine {
 
         // Guard: a kill-switched or disabled desk simply warehouses — no action fires.
         if !config.desk_active(&ctx.desk) {
+            let intent = warehouse_intent(
+                ctx,
+                band,
+                net_risk,
+                wh.cap,
+                utilization,
+                overflow,
+                now_nanos,
+                "halted: kill-switch / desk disabled",
+            );
+            self.publish(&intent);
             return HedgeOutcome {
-                intent: warehouse_intent(
-                    ctx,
-                    band,
-                    net_risk,
-                    wh.cap,
-                    utilization,
-                    overflow,
-                    now_nanos,
-                    "halted: kill-switch / desk disabled",
-                ),
+                intent,
                 provenance: None,
             };
         }
@@ -218,44 +253,55 @@ impl AutoHedgeEngine {
         // Resolve the policy. A validated graph never errors; a structurally broken one
         // (an unvalidated store) degrades safely to a warehouse hold, never a panic.
         let Ok(resolution) = HedgeRouter::resolve(graph, ctx) else {
+            let intent = warehouse_intent(
+                ctx,
+                band,
+                net_risk,
+                wh.cap,
+                utilization,
+                overflow,
+                now_nanos,
+                "policy graph did not resolve",
+            );
+            self.publish(&intent);
             return HedgeOutcome {
-                intent: warehouse_intent(
-                    ctx,
-                    band,
-                    net_risk,
-                    wh.cap,
-                    utilization,
-                    overflow,
-                    now_nanos,
-                    "policy graph did not resolve",
-                ),
+                intent,
                 provenance: None,
             };
         };
         let action = resolution.action.clone();
+        // The leaf's hedge VEHICLE rides onto the wire action alongside the action itself, so
+        // the booking path can size the DV01 ratio against it. Dropping it here was the
+        // difference between "hedge into the 10Y future" and a silent self-hedge.
+        let vehicle = resolution.vehicle.clone();
         let path = resolution.path.clone();
 
         // A green-band Warehouse hold changes nothing — emit the intent, stamp no record.
         if matches!(action, ExitAction::Warehouse) {
+            let intent = HedgeIntent {
+                book: ctx.book.clone(),
+                instrument: ctx.instrument_id.clone(),
+                action: Some(exit_action_to_wire(&action)),
+                band: band_label(band).to_owned(),
+                net_risk,
+                threshold: wh.cap,
+                utilization,
+                overflow,
+                size: 0.0,
+                internal_crossed: 0.0,
+                external_hedged: 0.0,
+                advisory: false,
+                fired_at: now_nanos,
+                policy_path: path,
+                reason: format!("{} · WAREHOUSE", band_label(band)),
+                lps: Vec::new(),
+                // A hold trades nothing, so it names no vehicle and no mode matters.
+                vehicle_plan: None,
+                exit_mode: HedgeExitModeEnum::HedgeExitModeAuto as i32,
+            };
+            self.publish(&intent);
             return HedgeOutcome {
-                intent: HedgeIntent {
-                    book: ctx.book.clone(),
-                    instrument: ctx.instrument_id.clone(),
-                    action: Some(exit_action_to_wire(&action)),
-                    band: band_label(band).to_owned(),
-                    net_risk,
-                    threshold: wh.cap,
-                    utilization,
-                    overflow,
-                    size: 0.0,
-                    internal_crossed: 0.0,
-                    external_hedged: 0.0,
-                    advisory: false,
-                    fired_at: now_nanos,
-                    policy_path: path,
-                    reason: format!("{} · WAREHOUSE", band_label(band)),
-                    lps: Vec::new(),
-                },
+                intent,
                 provenance: None,
             };
         }
@@ -311,7 +357,7 @@ impl AutoHedgeEngine {
             Some(r) => format!("{} · {} · {r} → advisory", band_label(band), action.kind()),
             None => format!("{} · {}", band_label(band), action.kind()),
         };
-        let action_wire = exit_action_to_wire(&action);
+        let action_wire = exit_action_with_vehicle_to_wire(&action, &vehicle);
 
         let intent = HedgeIntent {
             book: ctx.book.clone(),
@@ -330,6 +376,13 @@ impl AutoHedgeEngine {
             policy_path: path.clone(),
             reason,
             lps: lps.clone(),
+            // The engine is the PURE decision layer: it resolves WHAT and HOW MUCH, but the
+            // vehicle DV01 ratio needs the fill's own instrument terms + the firm's vehicle
+            // registry, which live on the booking path. The booking path fills these in on
+            // the record it amends (`RatesPositionStore::stamp_internalise`), so they are
+            // honestly absent here rather than half-computed.
+            vehicle_plan: None,
+            exit_mode: HedgeExitModeEnum::HedgeExitModeAuto as i32,
         };
 
         let provenance = self.stamp_provenance(
@@ -347,6 +400,7 @@ impl AutoHedgeEngine {
             now_nanos,
         );
 
+        self.publish(&intent);
         HedgeOutcome {
             intent,
             provenance: Some(provenance),
@@ -400,6 +454,9 @@ impl AutoHedgeEngine {
             // execution record (`RatesPositionStore::stamp_internalise` → `record_execution`)
             // carries the parent position id for deal reconciliation.
             parent_position_id: None,
+            // Sized on the booking path (see the intent's note above), not in the pure
+            // decision layer.
+            vehicle_plan: None,
         };
         if g.ring.len() >= self.capacity {
             g.ring.pop_front();
@@ -521,6 +578,8 @@ fn warehouse_intent(
         policy_path: Vec::new(),
         reason: reason.to_owned(),
         lps: Vec::new(),
+        vehicle_plan: None,
+        exit_mode: HedgeExitModeEnum::HedgeExitModeAuto as i32,
     }
 }
 
@@ -586,13 +645,8 @@ mod tests {
                 on_false: 2,
             },
         );
-        nodes.insert(
-            1,
-            HedgeNode::Action {
-                exit: ExitAction::Warehouse,
-            },
-        );
-        nodes.insert(2, HedgeNode::Action { exit: hedge });
+        nodes.insert(1, HedgeNode::action(ExitAction::Warehouse));
+        nodes.insert(2, HedgeNode::action(hedge));
         HedgeGraph { entry: 0, nodes }
     }
 
@@ -704,19 +758,12 @@ mod tests {
         );
         nodes.insert(
             1,
-            HedgeNode::Action {
-                exit: ExitAction::SubmitMarketOrder {
-                    size: HedgeSize::Full,
-                    style: ExecStyle::Immediate,
-                },
-            },
+            HedgeNode::action(ExitAction::SubmitMarketOrder {
+                size: HedgeSize::Full,
+                style: ExecStyle::Immediate,
+            }),
         );
-        nodes.insert(
-            2,
-            HedgeNode::Action {
-                exit: ExitAction::Warehouse,
-            },
-        );
+        nodes.insert(2, HedgeNode::action(ExitAction::Warehouse));
         let g = HedgeGraph { entry: 0, nodes };
         let e = AutoHedgeEngine::default();
 

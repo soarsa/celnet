@@ -28,13 +28,21 @@ targets.
 
 ### Where to find it
 
-Open the **Hedging** workspace. It has three tabs:
+Open the **Hedging Rules** workspace. It has six tabs — together they answer *when* to
+hedge, *what kind* of exit, *with what*, and *whether it fires by itself*:
 
 | Tab | What you do there |
 |---|---|
 | **Exit Policy** | Build the exit-policy graph (the rules) + a live "what would fire" trace. |
 | **Thresholds** | Set the per-scope warehouse budgets (the "100") and bands. |
-| **Monitor** | Watch the live advisory intents, the fired-hedge audit trail, per-book RAG, and the engine safety controls. |
+| **Vehicles** | Register **what each class of risk is hedged with**, and its DV01 per unit (§3b). |
+| **Exit mode** | Bind scopes to **Auto** (fire on breach) or **Suggest** (raise a standing row) (§6). |
+| **LP Panels** | Maintain the standing include/exclude LP selection every external hedge inherits. |
+| **Execution mode** | The kill-switch, Advisory-vs-live execution mode, and the rate/size guards. |
+
+**Watching it run is a different surface:** the live monitor — per-book RAG, the fired-hedge
+audit trail, and the **standing suggestions** — lives under **Risk → Hedge flows**, so
+authoring the rules and watching them fire are deliberately separated.
 
 **Who can edit:** authoring gates on the **`hedge` capability × Fixed Income**. Without it,
 every tab is visible but **read-only** (see §8). This guide assumes you hold that capability.
@@ -165,6 +173,12 @@ pre-fills exactly this counterparty condition (alongside currency/product/desk).
 than you hold). **Style** is **Immediate** (one clip, true back-to-back) or **Worked** (an
 Almgren–Chriss-scheduled series of slices for large clips).
 
+**Vehicle** — every *size-bearing* leaf (`SUBMIT_MARKET_ORDER`, `RFQ_OUT`, `SPLIT`,
+`CLEAR_RISK`, `CROSS_INTERNAL`) also carries a **Hedge with** picker: *what* the order
+actually trades. It defaults to **Same security (self)**, which is exactly what every rule
+did before the picker existed. See §3b. `WAREHOUSE`, `SKEW` and `ESCALATE` place no order,
+so they carry no vehicle.
+
 ### Try it before you arm it — "What would fire?"
 
 Below the rules table, the **What would fire?** trace panel lets you dial a sample risk state
@@ -182,6 +196,63 @@ IF internal_offset_available > overflow       → CROSS_INTERNAL { instrument: A
 IF overflow > 50000000                        → RFQ_OUT { LPs: [LP-1, LP-2, LP-3], size: Overflow }        // big residual → work an RFQ panel
 (catch-all, no conditions)                    → SPLIT { internal-first, size: Overflow, style: Worked }    // net what we can, work the rest
 ```
+
+---
+
+## Step 3b — Pick what you hedge *with* (Vehicles tab + the leaf's "Hedge with" picker)
+
+Every exit action above says **what kind** of exit to make. It now also says **with what**.
+
+### Why this exists
+
+Selling the **same security back** is exact: the offsetting leg is the identical instrument
+— same coupon, maturity, day-count, security id — so the DV01 ratio between leg and fill is
+**identically 1** under any duration measure. Sell `factor` of the face you are long and you
+shed exactly `factor` of the risk. No curve, no duration input, nothing to get wrong.
+
+That is the right answer for a swap or a government bond. **It is not how a corporate bond is
+hedged.** A corp is hedged with a *benchmark* at matching maturity — in practice a Treasury
+future. And the moment the hedge instrument differs from the position, that ratio stops being
+1: the size now needs a **DV01 per unit**, which has to come from somewhere.
+
+### The four vehicles
+
+| Vehicle | What it trades | Sizing |
+|---|---|---|
+| **Same security (self)** | The position itself, sold back. **The default** — unchanged behaviour. | Ratio 1. Exact, no residual. |
+| **Benchmark (by maturity)** | Resolved from the **Vehicles** registry by instrument + maturity bucket. | The matched row's DV01 per unit. |
+| **Named instrument** | One explicitly named cash instrument. | That registry row's DV01 per unit. |
+| **Named future** | One explicitly named future. | DV01 per unit, rounded to **whole contracts**. |
+
+A **named** vehicle must be a row in the registry — that row is where its DV01 per unit comes
+from — so the picker offers exactly the registered hedge instruments, and **the server rejects
+a rule naming one it cannot price**.
+
+### Building the registry (Vehicles tab)
+
+Each row matches on three ANDed axes — **instrument**, **product**, **currency**, each
+optional (empty ⇒ matches anything) — plus a **half-open maturity bucket `[min, max)`** in
+years, and names the instrument a match hedges with, its **DV01 per unit** and its **unit
+label** ("contract" for a future, "1mm face" for cash).
+
+| Id | Match | Bucket | Hedges with | Future? | DV01/unit | Unit |
+|---|---|---|---|---|---|---|
+| `us-corp-7-10y` | any · BOND · USD | 7–10y | `TY-DEC26` | yes | 78 | contract |
+| `us-corp-2-5y` | any · BOND · USD | 2–5y | `FV-DEC26` | yes | 42 | contract |
+| `uk-gilt-3-7y` | any · BOND · GBP | 3–7y | `G-MAR27` | yes | 64 | contract |
+| `usd-ois-any` | any · OIS · USD | any | `USD-SOFR-OIS-5Y` | no | 480 | 1mm face |
+
+Validation is client-side and shows **every** problem at once: the id must be unique and
+non-empty, the hedge instrument must be named, **DV01 per unit must be > 0** (a zero cannot
+size anything), and `max > min` whenever either bound is set. Leave both bounds at `0` for
+"any maturity". Ticking **Future** also re-defaults the unit label, because a contract and a
+face amount are not interchangeable units.
+
+The roster saves with the rest of the engine config — there is no separate CRUD step.
+
+> **⚠ The DV01 per unit is entered, not derived.** It drifts as the benchmark rolls. Review it
+> when contracts roll or the curve moves materially, and keep maturity buckets **disjoint** —
+> overlapping buckets make it ambiguous which row a benchmark resolves through.
 
 ---
 
@@ -254,10 +325,76 @@ threshold is the *trigger*; the hard cap is the *backstop*.
 
 ---
 
-## Monitoring (Monitor tab)
+## Step 6 — Fire it, or suggest it (Exit mode tab)
 
-The **Hedge monitor** below the controls shows:
+Everything above decides *what* the hedge is. This decides **whether it fires by itself**.
 
+| Mode | What happens on a breach |
+|---|---|
+| **Auto** | The policy resolves and the hedge **trades**. This is the existing behaviour and the default. |
+| **Suggest** | The engine still measures, still resolves the policy and still **sizes** the hedge in its vehicle — then trades nothing and publishes a **standing row** on **Risk → Hedge flows**. |
+
+> **Suggest is deliberately *not* a confirmation dialog.** Nothing pops up and nothing
+> interrupts you. A modal gets dismissed reflexively and takes the decision with it; a
+> standing row survives being ignored and waits on the risk panel until someone acts on it.
+
+Bind scopes on the **Exit mode** tab. The scoping axis and precedence are the *same* as the
+warehouse thresholds and the LP panels — **instrument > book > desk**, most-specific-wins —
+and an unbound scope is **Auto**.
+
+```
+Bind:  book fi-credit-emea → Suggest      // benchmark-future hedges get a human eye
+       (everything else unbound)          → Auto
+```
+
+### Reading a standing suggestion (Risk → Hedge flows → Suggestions)
+
+A suggestion row leads with the **instruction**, because that is the thing you would do:
+
+```
+Sell 318 contracts of TY-DEC26
+BREACH · fi-credit-emea · XS2034-ACME-4H · 138% of budget · 09:41:22
+Corporate 9y is 138% of its DV01 budget. A corp is not hedged with itself —
+the 7–10y benchmark row resolves to the 10Y future.
+
+⚠ Approximate size — computed off a duration-blind exposure proxy, not a curve DV01.
+
+  TRADES 318 contracts   EXACT 318.46   TARGET DV01 24,840   HEDGED DV01 24,804
+  RESIDUAL rounded down, 36 DV01 still on the book        [ Hedge now ] [ Dismiss ]
+```
+
+Read it in three parts:
+
+1. **The instruction** — the headline is exactly the order that would go out.
+2. **The arithmetic** — `TARGET ÷ DV01-per-unit = EXACT units`, rounded to whole lots for a
+   future. **Read the residual's sign**, because it is easy to read backwards: it is
+   *target − hedged*, so *"rounded down, 36 DV01 still on the book"* means you stay
+   **under**-hedged by 36, while *"rounded up, over-hedged by 31 DV01"* means the rounding
+   took off **more** than the target.
+3. **The caveat** — when the size came off the **duration-blind exposure proxy** (the coarse
+   measure that treats every bond as duration 1 — see `HEDGING-AND-RISK-EXIT.md` §10.1), the
+   row carries a prominent **approximate-size warning**. A 10-year bond's true DV01 is roughly
+   8× what the proxy reports, so verify such a size against your own duration before acting.
+
+**Hedge now** fires the sized hedge; **Dismiss** drops the row and trades nothing. **Neither
+asks for confirmation** — that is the entire point of the mode. A rejected hedge **restores**
+the row and shows the reason inline, so a suggestion is never silently lost. Acting requires
+the **`hedge` capability on Fixed Income**; without it the rows are still visible (they are
+risk information) but carry no buttons.
+
+> **⚠ A suggestion does not hedge.** Risk keeps running until someone acts on the row, so a
+> Suggest-scoped book needs someone watching it. The numbers are a snapshot at raise time —
+> the mid and the exposure move afterwards. And Suggest is orthogonal to the **execution
+> mode**: an Advisory engine still trades nothing even when you press *Hedge now*.
+
+---
+
+## Monitoring (Risk → Hedge flows)
+
+The **Hedge monitor** shows:
+
+- **Suggestions** — the standing `Suggest`-mode rows described above, first on the panel
+  because they are the only section that asks you to act.
 - **Per-book RAG strip** — the latest band and utilisation % for each book the engine has
   ticked.
 - **Advisory intents (live)** — a rolling stream of what the engine resolved, each row showing

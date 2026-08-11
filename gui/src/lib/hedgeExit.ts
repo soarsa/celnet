@@ -105,7 +105,12 @@ export function execStyleLabel(style: ExecStyle): string {
   }
 }
 
-/** A fresh, fully-formed {@link ExitAction} of `kind` with the sensible defaults. */
+/**
+ * A fresh, fully-formed {@link ExitAction} of `kind` with the sensible defaults. The
+ * vehicle defaults to `self` — the same security sold back — which is the behaviour every
+ * exit action had before the vehicle choice existed, so a newly authored leaf is never
+ * silently given a different hedge instrument than the trader asked for.
+ */
 export function defaultExitAction(kind: ExitActionKind): ExitAction {
   return {
     kind,
@@ -117,6 +122,8 @@ export function defaultExitAction(kind: ExitActionKind): ExitAction {
     lps: [],
     internalFirst: kind === "split",
     reason: "",
+    vehicleKind: "self",
+    vehicleInstrument: "",
   };
 }
 
@@ -148,11 +155,35 @@ function sizeText(size: HedgeSize): string {
 }
 
 /**
+ * The vehicle suffix appended to a size-bearing action's description, e.g.
+ * ` · via TY-DEC26`. A `self` vehicle adds NOTHING — it is the default and the behaviour
+ * every pre-vehicle rule already had, so spelling it out on every row would be noise.
+ */
+export function vehicleSuffix(action: ExitAction): string {
+  switch (action.vehicleKind) {
+    case "self":
+      return "";
+    case "benchmark":
+      return " · via benchmark";
+    case "instrument":
+    case "future":
+      return action.vehicleInstrument.length > 0
+        ? ` · via ${action.vehicleInstrument}`
+        : " · via (vehicle?)";
+  }
+}
+
+/**
  * A plain-English one-liner for an exit action, e.g.
  * `Submit market order · overflow · immediate`, used on rule rows + the trace panel.
  */
 export function describeExitAction(action: ExitAction | null): string {
   if (action === null) return "(no action)";
+  return describeExitActionBody(action) + vehicleSuffix(action);
+}
+
+/** The action description WITHOUT its vehicle suffix (see {@link describeExitAction}). */
+function describeExitActionBody(action: ExitAction): string {
   const label = exitActionLabel(action.kind);
   switch (action.kind) {
     case "warehouse":

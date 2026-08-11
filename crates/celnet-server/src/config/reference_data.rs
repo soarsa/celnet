@@ -164,6 +164,57 @@ pub struct StirFutureDef {
     pub contract_size: f64,
 }
 
+/// Rates — a listed **bond (Treasury) futures** contract definition: the benchmark
+/// hedge vehicle an interest-rate exposure is transferred into.
+///
+/// Every field is a published contract term (the CBOT rulebook chapters cited on
+/// [`celnet_refdata::TreasuryFutureSpec`]) except
+/// [`dv01_per_contract_at_notional_yield`](Self::dv01_per_contract_at_notional_yield),
+/// which is derived.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BondFutureDef {
+    /// The listed contract code (e.g. `ZNZ26`) — also the registry `instrument_id`.
+    pub contract_code: String,
+    /// The product symbol without the delivery month (`ZT`/`ZF`/`ZN`/`TN`/`ZB`/`UB`).
+    pub contract_symbol: String,
+    /// The issuer of the deliverable securities, e.g. `US Treasury`.
+    pub underlying_issuer: String,
+    /// Face value at maturity of the deliverable, per contract.
+    pub contract_face_value: f64,
+    /// The minimum price increment for an OUTRIGHT trade, in points of 100 face.
+    pub tick_size_points: f64,
+    /// The cash value of one minimum price increment, per contract.
+    pub tick_value: f64,
+    /// The notional coupon the conversion factor is defined against (0.06 for every
+    /// CBOT Treasury futures contract).
+    pub notional_coupon_rate: f64,
+    /// Shortest deliverable remaining term to maturity, in months.
+    pub deliverable_min_months: u32,
+    /// Longest deliverable remaining term to maturity, in months.
+    pub deliverable_max_months: u32,
+    /// The first calendar day of the delivery month.
+    pub delivery_month_start: CivilDate,
+    /// The first delivery day (first business day of the delivery month).
+    pub first_delivery_date: CivilDate,
+    /// The last day the contract trades.
+    pub last_trading_date: CivilDate,
+    /// The last delivery day.
+    pub last_delivery_date: CivilDate,
+    /// The contract's **standardized** DV01 per contract, in the contract currency per
+    /// basis point, at the contract's own 6% notional yield.
+    ///
+    /// Derived, not published: a futures contract has no constant basis-point value —
+    /// the live figure is the cheapest-to-deliver security's DV01 divided by its
+    /// conversion factor and moves daily with the yield level. This is the stable,
+    /// displayable figure. **A hedge must be sized off the live curve yield**
+    /// (`celnet_refdata::TreasuryFutureSpec::dv01_per_contract`), because this one
+    /// understates the live basis-point value whenever yields are below 6%.
+    pub dv01_per_contract_at_notional_yield: f64,
+    /// Settlement calendar centre labels (at least one).
+    #[serde(default)]
+    pub calendars: Vec<String>,
+}
+
 /// Rates — a vanilla fixed-vs-float interest-rate swap (IRS) definition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VanillaIrsDef {
@@ -296,6 +347,8 @@ pub enum InstrumentFamily {
     Ois(OisDef),
     /// A cash bond.
     Bond(BondDef),
+    /// A listed bond (Treasury) futures contract.
+    BondFuture(BondFutureDef),
 }
 
 impl InstrumentFamily {
@@ -309,6 +362,7 @@ impl InstrumentFamily {
             Self::VanillaIrs(_) => "vanilla_irs",
             Self::Ois(_) => "ois",
             Self::Bond(_) => "bond",
+            Self::BondFuture(_) => "bond_future",
         }
     }
 }
@@ -572,6 +626,55 @@ fn validate_family(id: &str, fam: &InstrumentFamily) -> Result<(), String> {
                 return Err(ctx("coupon_rate must be a finite, non-negative number"));
             }
         }
+        InstrumentFamily::BondFuture(f) => {
+            require(&f.contract_code, || ctx("contract_code is required"))?;
+            require(&f.contract_symbol, || ctx("contract_symbol is required"))?;
+            require(&f.underlying_issuer, || {
+                ctx("underlying_issuer is required")
+            })?;
+            check_calendars(&f.calendars, &ctx)?;
+            for (field, value) in [
+                ("contract_face_value", f.contract_face_value),
+                ("tick_size_points", f.tick_size_points),
+                ("tick_value", f.tick_value),
+            ] {
+                if !(value.is_finite() && value > 0.0) {
+                    return Err(ctx(&format!(
+                        "{field} must be a finite, strictly-positive number"
+                    )));
+                }
+            }
+            if !(f.notional_coupon_rate.is_finite() && f.notional_coupon_rate > 0.0) {
+                return Err(ctx(
+                    "notional_coupon_rate must be a finite, strictly-positive number",
+                ));
+            }
+            // The DV01 sizes every hedge routed at this contract; a non-positive or
+            // non-finite value would silently produce a nonsense contract count.
+            if !(f.dv01_per_contract_at_notional_yield.is_finite()
+                && f.dv01_per_contract_at_notional_yield > 0.0)
+            {
+                return Err(ctx(
+                    "dv01_per_contract_at_notional_yield must be a finite, strictly-positive number",
+                ));
+            }
+            if f.deliverable_min_months == 0 || f.deliverable_max_months < f.deliverable_min_months
+            {
+                return Err(ctx(
+                    "the deliverable maturity window must be non-empty and correctly ordered",
+                ));
+            }
+            for (field, date) in [
+                ("delivery_month_start", f.delivery_month_start),
+                ("first_delivery_date", f.first_delivery_date),
+                ("last_trading_date", f.last_trading_date),
+                ("last_delivery_date", f.last_delivery_date),
+            ] {
+                if !date.is_valid() {
+                    return Err(ctx(&format!("{field} is not a valid civil date")));
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -680,6 +783,74 @@ pub fn government_bond_defs() -> Vec<InstrumentDef> {
         .into_iter()
         .map(gov_bond_to_instrument_def)
         .collect()
+}
+
+/// Map the committed [`celnet_refdata::treasury_futures_universe`] onto instrument
+/// reference-data definitions ready to seed the registry, so the server KNOWS the
+/// listed Treasury futures complex exists and an aggregated book carrying those
+/// contracts resolves a real contract name instead of a bare code.
+///
+/// Each `instrument_id` is the public contract code the LP-SIM feed streams, so a
+/// seeded entry resolves the exact wire id — the same tradeable/quotable symmetry the
+/// government-bond seed relies on. The DV01 carried on the definition is the
+/// **standardized** figure at the contract's 6% notional yield; see
+/// [`BondFutureDef::dv01_per_contract_at_notional_yield`] for why a hedge must not be
+/// sized off it.
+///
+/// A contract whose DV01 will not derive is **skipped**, not seeded with a placeholder:
+/// an instrument advertised as tradeable with a fabricated hedge ratio is worse than
+/// one that is absent.
+#[must_use]
+pub fn treasury_future_defs() -> Vec<InstrumentDef> {
+    celnet_refdata::treasury_futures_universe()
+        .into_iter()
+        .filter_map(treasury_future_to_instrument_def)
+        .collect()
+}
+
+/// Convert one [`celnet_refdata::TreasuryFutureSpec`] into an [`InstrumentDef`] with a
+/// [`InstrumentFamily::BondFuture`] family block, or `None` if its DV01 does not derive.
+fn treasury_future_to_instrument_def(
+    s: celnet_refdata::TreasuryFutureSpec,
+) -> Option<InstrumentDef> {
+    let civil = |d: celnet_refdata::CivilYmd| CivilDate {
+        year: d.year,
+        month: d.month,
+        day: d.day,
+    };
+    let dv01 = s.dv01_at_notional_yield().ok()?;
+    if !(dv01.is_finite() && dv01 > 0.0) {
+        return None;
+    }
+    Some(InstrumentDef {
+        instrument_id: s.instrument_id.clone(),
+        name: s.name.clone(),
+        description: String::new(),
+        currency: s.currency.to_string(),
+        // The contract code is itself the market-standard external cross-ref, so a
+        // caller resolving by ticker finds the contract.
+        external_ids: vec![ExternalId {
+            scheme: "ticker".to_string(),
+            value: s.instrument_id.clone(),
+        }],
+        definition: InstrumentFamily::BondFuture(BondFutureDef {
+            contract_code: s.instrument_id.clone(),
+            contract_symbol: s.terms.symbol.to_string(),
+            underlying_issuer: "US Treasury".to_string(),
+            contract_face_value: s.terms.face_value,
+            tick_size_points: s.terms.tick_size_points,
+            tick_value: s.tick_value(),
+            notional_coupon_rate: celnet_refdata::NOTIONAL_YIELD,
+            deliverable_min_months: s.terms.deliverable_min_months,
+            deliverable_max_months: s.terms.deliverable_max_months,
+            delivery_month_start: civil(s.delivery_month_start),
+            first_delivery_date: civil(s.first_delivery_date),
+            last_trading_date: civil(s.last_trading_date),
+            last_delivery_date: civil(s.last_delivery_date),
+            dv01_per_contract_at_notional_yield: dv01,
+            calendars: s.calendars.iter().map(|c| (*c).to_string()).collect(),
+        }),
+    })
 }
 
 /// Convert one curated [`celnet_refdata::GovBondSpec`] into an [`InstrumentDef`] with a
@@ -1076,6 +1247,51 @@ mod tests {
                 d.instrument_id
             );
         }
+    }
+
+    #[test]
+    fn treasury_future_defs_are_registry_valid_and_disjoint_from_the_bonds() {
+        let futures = treasury_future_defs();
+        // Every listed contract in reference data is seeded — nothing is silently
+        // dropped, because a contract the server does not know is a hedge vehicle the
+        // desk cannot reach.
+        assert_eq!(
+            futures.len(),
+            celnet_refdata::treasury_futures_universe().len(),
+            "a listed contract was dropped from the registry seed"
+        );
+        // They pass the SAME validation the registry enforces at load / admin-write.
+        validate_instruments(&futures).expect("futures defs are registry-valid");
+
+        for d in &futures {
+            let InstrumentFamily::BondFuture(f) = &d.definition else {
+                panic!("{} is not a bond future", d.instrument_id);
+            };
+            assert_eq!(d.currency, "USD");
+            assert_eq!(f.contract_code, d.instrument_id);
+            assert!((f.notional_coupon_rate - 0.06).abs() < 1e-12);
+            // The DV01 that sizes every hedge is present and positive.
+            assert!(
+                f.dv01_per_contract_at_notional_yield > 0.0,
+                "{}: no DV01",
+                d.instrument_id
+            );
+            // ...and it is exactly what reference data derives — the registry never
+            // carries a second, drifting copy of the hedge ratio.
+            let spec = celnet_refdata::future_by_id(&d.instrument_id).expect("resolvable");
+            assert!(
+                (f.dv01_per_contract_at_notional_yield - spec.dv01_at_notional_yield().unwrap())
+                    .abs()
+                    < 1e-12
+            );
+            assert!((f.tick_value - spec.tick_value()).abs() < 1e-12);
+        }
+
+        // Seeding bonds AND futures together stays valid: no id or external-id
+        // collision between a contract code and a CUSIP/ISIN/slug.
+        let mut all = government_bond_defs();
+        all.extend(futures);
+        validate_instruments(&all).expect("the combined seed is registry-valid");
     }
 
     #[test]

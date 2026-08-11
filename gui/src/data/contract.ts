@@ -3729,6 +3729,129 @@ export type HedgeExecutionMode =
 export type HedgePolicyScopeKind = "firm" | "book" | "bucket";
 
 /**
+ * WHAT a size-bearing exit action hedges WITH — the hedge VEHICLE (mirrors
+ * `HedgeVehicleKindEnum`, ordinals self=0 / benchmark=1 / instrument=2 / future=3).
+ *
+ * Until this existed every hedge was implicitly the SAME SECURITY SOLD BACK, which is
+ * exact for a swap or a govvie (the leg/fill DV01 ratio is identically 1 — see
+ * docs/HEDGING-AND-RISK-EXIT §8.2) but is not how a desk hedges a corporate bond: that
+ * is hedged with a BENCHMARK at matching maturity, in practice a Treasury future.
+ *
+ *  - `self`       — the same security sold back (ratio 1). The default; unchanged behaviour.
+ *  - `benchmark`  — resolved from the firm's hedge-vehicle registry by instrument + maturity
+ *                   bucket, so a 9y corp picks up the registry's 7–10y benchmark row.
+ *  - `instrument` — an explicitly NAMED cash instrument from the registry.
+ *  - `future`     — an explicitly NAMED future from the registry, sized in WHOLE contracts.
+ *
+ * A named vehicle (`instrument` / `future`) MUST exist in {@link HedgeConfig.vehicles} —
+ * that registry row is where its DV01-per-unit comes from, and the server rejects a write
+ * naming an unregistered one.
+ */
+export type HedgeVehicleKind = "self" | "benchmark" | "instrument" | "future";
+
+/**
+ * The SIZING of a resolved hedge vehicle — how the engine turned a target DV01 into a
+ * tradeable number of units (mirrors `HedgeVehiclePlanDesc`). Attached to the intent, the
+ * provenance and the standing suggestion so the desk can audit the arithmetic rather than
+ * trust it.
+ *
+ * The plan is deliberately HONEST about its own precision: {@link durationCorrect} is
+ * `false` whenever {@link dv01Basis} is the duration-blind `"exposure-proxy"` (the coarse
+ * `redemption × 1bp` measure of docs/HEDGING-AND-RISK-EXIT §10.1, which treats every bond
+ * as duration 1). A proxy-based size must never be presented as exact.
+ */
+export interface HedgeVehiclePlan {
+  /** The security actually traded to hedge (the future / benchmark / named instrument). */
+  hedgeInstrumentId: string;
+  /** What one unit IS — `"contract"` for a future, `"1mm face"` for cash. */
+  unitLabel: string;
+  /** Whether units must be whole lots (a future cannot trade 318.4 contracts). */
+  wholeUnits: boolean;
+  /** How `dv01PerUnit` was obtained: `"analytic"` / `"annuity-pv01"` / `"exposure-proxy"`. */
+  dv01Basis: string;
+  /** FALSE ⇒ the size came off a duration-BLIND proxy and is approximate. Never hide this. */
+  durationCorrect: boolean;
+  /** The DV01 the hedge is trying to shed. */
+  targetDv01: number;
+  /** The DV01 of one unit of {@link hedgeInstrumentId} (strictly positive). */
+  dv01PerUnit: number;
+  /** `targetDv01 / dv01PerUnit` before any whole-lot rounding. */
+  exactUnits: number;
+  /** The units actually traded — {@link exactUnits} rounded to whole lots when required. */
+  units: number;
+  /** `units × dv01PerUnit` — the DV01 the hedge really removes. */
+  hedgedDv01: number;
+  /**
+   * `targetDv01 − hedgedDv01`. POSITIVE ⇒ rounded DOWN, that much risk is still on the
+   * book (under-hedged); NEGATIVE ⇒ rounded UP, the book is over-hedged by that much.
+   */
+  residualDv01: number;
+  /** The engine's pre-rendered trader line (e.g. "Sell 318 contracts of TY-DEC26"). */
+  summary: string;
+}
+
+/**
+ * One row of the firm's HEDGE-VEHICLE REGISTRY (mirrors `HedgeVehicleDesc`): the mapping
+ * from a class of risk to the instrument the desk hedges it with, and — critically — that
+ * instrument's DV01 per unit, which is the only place a `benchmark` / `instrument` /
+ * `future` vehicle can get its size from.
+ *
+ * The match axes are ANDed and each is optional (empty ⇒ matches anything), so a single
+ * row can be as broad as "any USD bond" or as narrow as one security. The maturity bucket
+ * is half-open `[minMaturityYears, maxMaturityYears)`, which is what makes a BENCHMARK
+ * vehicle resolvable: a 9y corporate falls in the 7–10y row and picks up its future.
+ */
+export interface HedgeVehicleRule {
+  /** Stable registry id (unique across the roster). */
+  id: string;
+  /** Exact-match instrument axis; empty ⇒ any instrument. */
+  instrumentId: string;
+  /** Product-family axis ("BOND" / "OIS" / …); empty ⇒ any product. */
+  product: string;
+  /** Currency axis; empty ⇒ any currency. */
+  ccy: string;
+  /** Inclusive lower bound of the maturity bucket, in years. */
+  minMaturityYears: number;
+  /** EXCLUSIVE upper bound of the maturity bucket, in years. */
+  maxMaturityYears: number;
+  /** The instrument a match hedges WITH. */
+  hedgeInstrumentId: string;
+  /** Whether {@link hedgeInstrumentId} is a future (⇒ sized in whole contracts). */
+  isFuture: boolean;
+  /** DV01 of one unit of {@link hedgeInstrumentId}. Strictly positive. */
+  dv01PerUnit: number;
+  /** What one unit is called ("contract" / "1mm face"). */
+  unitLabel: string;
+}
+
+/**
+ * WHETHER a resolved hedge fires by itself (mirrors `HedgeExitModeEnum`, ordinals
+ * auto=0 / suggest=1).
+ *
+ *  - `auto`    — today's behaviour: a breach resolves the policy and TRADES.
+ *  - `suggest` — the engine measures, resolves the policy and SIZES the hedge, then
+ *                trades nothing and publishes a STANDING {@link HedgeSuggestion} onto the
+ *                risk surface. It is explicitly NOT a confirmation dialog: the row
+ *                survives being ignored and carries its own "Hedge now" action.
+ */
+export type HedgeExitMode = "auto" | "suggest";
+
+/**
+ * One scope→mode binding (mirrors `HedgeExitModeBinding`). Reuses the SAME
+ * {@link HedgeScopeKind} desk/book/instrument axis the warehouse thresholds and the
+ * {@link HedgeLpPanel} bind on, resolved most-specific-wins (instrument > book > desk).
+ * An unbound scope is `auto`.
+ */
+export interface HedgeExitModeBinding {
+  /** What the {@link scopeId} names (desk / book / instrument). */
+  scopeKind: HedgeScopeKind;
+  /** The scope identifier (a desk id / book id / instrument id). */
+  scopeId: string;
+  /** Fire automatically, or raise a standing suggestion. */
+  mode: HedgeExitMode;
+}
+
+/**
  * One exit action — a terminal leaf of a {@link HedgeGraph} (mirrors `ExitActionDesc`,
  * a FLAT `kind` discriminant + the union of every arm's fields; only the fields
  * relevant to `kind` are read). See docs §5.3.
@@ -3752,6 +3875,22 @@ export interface ExitAction {
   internalFirst: boolean;
   /** ESCALATE: the rationale surfaced on the notification. */
   reason: string;
+  /**
+   * WHAT this leaf hedges WITH (mirrors `ExitActionDesc.vehicle_kind`). Read only by the
+   * SIZE-BEARING kinds — `submit_market_order` / `rfq_out` / `split` / `clear_risk` /
+   * `cross_internal` — since `warehouse` / `skew` / `escalate` place no order. An action
+   * authored before the vehicle feature decodes to `"self"`, which is exactly the
+   * behaviour it had (the same security sold back).
+   */
+  vehicleKind: HedgeVehicleKind;
+  /**
+   * The NAMED hedge instrument for `instrument` / `future` vehicles (mirrors
+   * `ExitActionDesc.vehicle_instrument`); empty for `self` / `benchmark` (which name
+   * nothing — `self` IS the position, `benchmark` resolves from the registry). It must be
+   * a {@link HedgeVehicleRule.hedgeInstrumentId} the registry knows; the server rejects
+   * an unregistered one because that row carries its DV01-per-unit.
+   */
+  vehicleInstrument: string;
 }
 
 /**
@@ -3978,6 +4117,12 @@ export interface HedgeProvenance {
    * fills and carry no single parent). Never fabricated.
    */
   parentPositionId?: bigint;
+  /**
+   * How the shed was SIZED in the hedge vehicle actually traded (mirrors
+   * `HedgeProvenance.vehicle_plan`), or `null` for a `self`-vehicle hedge — where the leg
+   * is the same security at a ratio of 1 and there is no unit arithmetic to record.
+   */
+  vehiclePlan: HedgeVehiclePlan | null;
 }
 
 /**
@@ -4023,6 +4168,67 @@ export interface HedgeIntent {
    * would fan to (mirrors `HedgeIntent.lps`, field 16).
    */
   lps: string[];
+  /**
+   * How the shed would be SIZED in the resolved hedge vehicle (mirrors
+   * `HedgeIntent.vehicle_plan`), or `null` for a `self`-vehicle intent.
+   */
+  vehiclePlan: HedgeVehiclePlan | null;
+  /**
+   * Whether this intent FIRED or merely raised a standing suggestion (mirrors
+   * `HedgeIntent.exit_mode`). `suggest` means nothing traded and a
+   * {@link HedgeSuggestion} is now standing on the risk surface.
+   */
+  exitMode: HedgeExitMode;
+}
+
+/**
+ * A STANDING hedge suggestion — the `suggest` exit mode's output (mirrors
+ * `HedgeSuggestion`). The engine measured the breach, resolved the policy and sized the
+ * hedge in its vehicle, then traded NOTHING and published this row.
+ *
+ * It is deliberately NOT a confirmation dialog. A modal interrupts, is dismissed
+ * reflexively, and vanishes with the decision unmade. A standing row survives being
+ * ignored: it stays on the risk surface with its own "Hedge now" (execute) and "Dismiss"
+ * actions until the desk acts on it. Poll it with `listHedgeSuggestions` and act on it
+ * with `executeHedgeSuggestion`.
+ */
+export interface HedgeSuggestion {
+  /** Stable id — the key `executeHedgeSuggestion` acts on. */
+  suggestionId: string;
+  /** The book whose risk raised it. */
+  book: string;
+  /** The instrument whose exposure breached. */
+  instrument: string;
+  /** The owning desk. */
+  desk: string;
+  /** When it was raised (epoch MILLIS, UTC — the wire carries nanos). */
+  raisedAt: number;
+  /** The RAG band at raise ("green"/"amber"/"red"/"breach"). */
+  band: string;
+  /** The signed net risk at raise. */
+  netRisk: number;
+  /** The resolved threshold ("the 100"). */
+  threshold: number;
+  /** `|netRisk| / threshold`. */
+  utilization: number;
+  /** The exit action the policy resolved to, or `null` when absent. */
+  action: ExitAction | null;
+  /** The exact graph path walked — the machine-checkable "why this action". */
+  policyPath: number[];
+  /** The external portion of the sized hedge, in the threshold's metric. */
+  externalSize: number;
+  /** How the hedge would be sized in its vehicle, or `null` for a `self` vehicle. */
+  vehiclePlan: HedgeVehiclePlan | null;
+  /** The headline INSTRUCTION ("Sell 318 contracts of TY-DEC26") — the row's largest text. */
+  headline: string;
+  /** Why the engine raised it (band / policy / flow context). */
+  rationale: string;
+  /** The originating client deal's `position_id`, or `null` when there is no single parent. */
+  parentPositionId: bigint | null;
+  /** The LP set the hedge would target. Empty for internal / no-trade actions. */
+  lps: string[];
+  /** The consolidated mid when the suggestion was raised. */
+  midAtRaise: number;
 }
 
 /** One per-desk enable toggle in the engine config (mirrors `HedgeDeskToggle`). */
@@ -4083,6 +4289,18 @@ export interface HedgeConfig {
    * field 8). Read only by the composite-touching execution modes. Default 0.5.
    */
   compositeSpreadBp: number;
+  /**
+   * The firm's HEDGE-VEHICLE REGISTRY (mirrors `HedgeConfigDesc.vehicles`) — the rows a
+   * `benchmark` vehicle resolves through and the only source of a named vehicle's
+   * DV01-per-unit. Round-trips through the EXISTING `get_hedge_config` /
+   * `set_hedge_config` RPCs; there is no separate CRUD verb.
+   */
+  vehicles: HedgeVehicleRule[];
+  /**
+   * The per-scope AUTO-vs-SUGGEST bindings (mirrors `HedgeConfigDesc.exit_modes`),
+   * resolved most-specific-wins exactly like {@link lpPanels}. An unbound scope is `auto`.
+   */
+  exitModes: HedgeExitModeBinding[];
 }
 
 /**

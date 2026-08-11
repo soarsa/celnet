@@ -693,7 +693,7 @@ fn price_bond_instrument(
 /// Settlement = the curve time-0 date (reference rolled to the next US business day), so
 /// the bond's cashflow-time axis coincides with the discount curve's. `Bond::new`
 /// validates `maturity > settlement` and `redemption > 0`.
-fn bond_contract_from_wire(
+pub(crate) fn bond_contract_from_wire(
     bond: &BondInstrument,
     reference: Date,
 ) -> Result<Bond, RatesPriceError> {

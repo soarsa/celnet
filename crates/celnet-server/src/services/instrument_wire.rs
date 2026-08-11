@@ -15,15 +15,16 @@
 #![allow(clippy::result_large_err)]
 
 use celnet_proto::{
-    BondDef as WireBond, BrokenDate, DepositDef as WireDeposit, ExternalId as WireExternalId,
-    FraDef as WireFra, InstrumentDefDesc, OisDef as WireOis, StirFutureDef as WireStir,
-    VanillaIrsDef as WireIrs, instrument_def_desc::Definition as WireDefinition,
+    BondDef as WireBond, BondFutureDef as WireBondFuture, BrokenDate, DepositDef as WireDeposit,
+    ExternalId as WireExternalId, FraDef as WireFra, InstrumentDefDesc, OisDef as WireOis,
+    StirFutureDef as WireStir, VanillaIrsDef as WireIrs,
+    instrument_def_desc::Definition as WireDefinition,
 };
 use tonic::Status;
 
 use crate::config::reference_data::{
-    BondDef, CivilDate, DepositDef, ExternalId, FraDef, InstrumentDef, InstrumentFamily, OisDef,
-    StirFutureDef, VanillaIrsDef,
+    BondDef, BondFutureDef, CivilDate, DepositDef, ExternalId, FraDef, InstrumentDef,
+    InstrumentFamily, OisDef, StirFutureDef, VanillaIrsDef,
 };
 
 // --- domain → wire ----------------------------------------------------------
@@ -118,6 +119,23 @@ fn family_to_wire(f: &InstrumentFamily) -> WireDefinition {
             maturity_date: Some(date_to_wire(b.maturity_date)),
             redemption: b.redemption,
             calendars: b.calendars.clone(),
+        }),
+        InstrumentFamily::BondFuture(f) => WireDefinition::BondFuture(WireBondFuture {
+            contract_code: f.contract_code.clone(),
+            contract_symbol: f.contract_symbol.clone(),
+            underlying_issuer: f.underlying_issuer.clone(),
+            contract_face_value: f.contract_face_value,
+            tick_size_points: f.tick_size_points,
+            tick_value: f.tick_value,
+            notional_coupon_rate: f.notional_coupon_rate,
+            deliverable_min_months: f.deliverable_min_months,
+            deliverable_max_months: f.deliverable_max_months,
+            delivery_month_start: Some(date_to_wire(f.delivery_month_start)),
+            first_delivery_date: Some(date_to_wire(f.first_delivery_date)),
+            last_trading_date: Some(date_to_wire(f.last_trading_date)),
+            last_delivery_date: Some(date_to_wire(f.last_delivery_date)),
+            dv01_per_contract_at_notional_yield: f.dv01_per_contract_at_notional_yield,
+            calendars: f.calendars.clone(),
         }),
     }
 }
@@ -226,6 +244,32 @@ fn family_from_wire(def: &WireDefinition) -> Result<InstrumentFamily, Status> {
             maturity_date: require_date(b.maturity_date, "bond maturity_date")?,
             redemption: b.redemption,
             calendars: trimmed(&b.calendars),
+        }),
+        WireDefinition::BondFuture(f) => InstrumentFamily::BondFuture(BondFutureDef {
+            contract_code: f.contract_code.trim().to_string(),
+            contract_symbol: f.contract_symbol.trim().to_string(),
+            underlying_issuer: f.underlying_issuer.trim().to_string(),
+            contract_face_value: f.contract_face_value,
+            tick_size_points: f.tick_size_points,
+            tick_value: f.tick_value,
+            notional_coupon_rate: f.notional_coupon_rate,
+            deliverable_min_months: f.deliverable_min_months,
+            deliverable_max_months: f.deliverable_max_months,
+            delivery_month_start: require_date(
+                f.delivery_month_start,
+                "bond future delivery_month_start",
+            )?,
+            first_delivery_date: require_date(
+                f.first_delivery_date,
+                "bond future first_delivery_date",
+            )?,
+            last_trading_date: require_date(f.last_trading_date, "bond future last_trading_date")?,
+            last_delivery_date: require_date(
+                f.last_delivery_date,
+                "bond future last_delivery_date",
+            )?,
+            dv01_per_contract_at_notional_yield: f.dv01_per_contract_at_notional_yield,
+            calendars: trimmed(&f.calendars),
         }),
     })
 }

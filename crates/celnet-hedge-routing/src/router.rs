@@ -11,6 +11,7 @@
 
 use crate::context::HedgeContext;
 use crate::graph::{ExitAction, HedgeError, HedgeGraph, HedgeNode, NodeId};
+use crate::vehicle::HedgeVehicle;
 
 /// The stateless auto-hedge exit-policy resolver.
 #[derive(Clone, Copy, Debug, Default)]
@@ -20,8 +21,12 @@ pub struct HedgeRouter;
 /// reach it (the provenance trail surfaced on `HedgeProvenance.policy_path`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Resolution<'g> {
-    /// The first (and only) exit action for this risk state.
+    /// The first (and only) exit action for this risk state — *what kind* of exit.
     pub action: &'g ExitAction,
+    /// The vehicle that leaf hedges with — *with what*. Always present; a leaf that
+    /// names none carries [`HedgeVehicle::SelfInstrument`] (the same security sold back),
+    /// which is exactly the pre-vehicle behaviour.
+    pub vehicle: &'g HedgeVehicle,
     /// The exact ids visited, in order, ending at the action leaf.
     pub path: Vec<NodeId>,
 }
@@ -49,7 +54,13 @@ impl HedgeRouter {
                 .get(&current)
                 .ok_or(HedgeError::NodeNotFound { node: current })?;
             match node {
-                HedgeNode::Action { exit } => return Ok(Resolution { action: exit, path }),
+                HedgeNode::Action { exit, vehicle } => {
+                    return Ok(Resolution {
+                        action: exit,
+                        vehicle,
+                        path,
+                    });
+                }
                 HedgeNode::Condition {
                     field,
                     op,
@@ -102,7 +113,7 @@ mod tests {
         }
     }
     fn act(exit: ExitAction) -> HedgeNode {
-        HedgeNode::Action { exit }
+        HedgeNode::action(exit)
     }
 
     use crate::field::HedgeField;
@@ -206,6 +217,70 @@ mod tests {
             HedgeRouter::resolve(&g, &other).unwrap().action,
             &ExitAction::Warehouse
         );
+    }
+
+    /// A leaf authored without a vehicle resolves to the self-hedge — the pre-vehicle
+    /// behaviour — while a leaf that names a future resolves to that future, so the
+    /// booking path can size the DV01 ratio against it.
+    #[test]
+    fn resolution_carries_the_leafs_hedge_vehicle() {
+        use crate::vehicle::HedgeVehicle;
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            0,
+            cond(
+                HedgeField::Breached,
+                RouteOp::Eq,
+                RouteValue::Text("false".into()),
+                1,
+                2,
+            ),
+        );
+        nodes.insert(1, act(ExitAction::Warehouse));
+        nodes.insert(
+            2,
+            HedgeNode::action_with(
+                ExitAction::SubmitMarketOrder {
+                    size: HedgeSize::Overflow,
+                    style: ExecStyle::Immediate,
+                },
+                HedgeVehicle::Future {
+                    contract_id: "TY-DEC26".into(),
+                },
+            ),
+        );
+        let g = HedgeGraph { entry: 0, nodes };
+
+        let held = HedgeRouter::resolve(
+            &g,
+            &HedgeContext {
+                breached: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            held.vehicle,
+            &HedgeVehicle::SelfInstrument,
+            "a leaf with no vehicle is the self-hedge"
+        );
+
+        let shed = HedgeRouter::resolve(
+            &g,
+            &HedgeContext {
+                breached: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            shed.vehicle,
+            &HedgeVehicle::Future {
+                contract_id: "TY-DEC26".into()
+            },
+            "the breach leaf hedges into the named future"
+        );
+        assert_eq!(shed.vehicle.named_instrument(), Some("TY-DEC26"));
     }
 
     #[test]

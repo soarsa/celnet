@@ -233,7 +233,8 @@ overflow    = 5,000 − 3,200 = 1,800       → shed 1,800, warehouse 3,200
 
 ## 6. Stage 4 — the exit policy decides *what kind* of exit
 
-The band tells you *how much*. The **exit policy graph** tells you *what to do about it*. It is
+The band tells you *how much*. The **exit policy graph** tells you *what to do about it*, and —
+since §6.4 — *with what instrument* (`§6.4`) and *whether a human pulls the trigger* (`§6.5`). It is
 the same decision-graph primitive as risk routing: `Condition` nodes walking to `Action` leaves,
 authored as data in the GUI, validated as a total function.
 
@@ -274,6 +275,111 @@ Ordered by cost to the firm — the engine always prefers the cheap ones:
 
 `is_external()` is the flag that gates real street orders behind the desk's live-hedging arm —
 and, as §7 shows, it also protects internal-mandate books from being force-shed.
+
+### 6.4 The hedge **vehicle** — *with what* the exit hedges
+
+The eight actions above say **what kind** of exit to take. They deliberately said nothing about
+**which instrument** it trades, because the only answer the engine supported was "the same
+security, sold back" — a self-hedge whose DV01 ratio is identically 1 (§8.2).
+
+That answer is wrong for what a credit desk actually warehouses. **A corporate bond is not
+hedged with itself**: there is no two-way street liquidity in a single corp line. It is hedged
+with a **benchmark at matching maturity** — in practice a government-bond future, a 9-year corp
+against the 10Y contract. So every action **leaf** now also carries a `HedgeVehicle`:
+
+| Vehicle | What it hedges with |
+| --- | --- |
+| `SelfInstrument` | The same security sold back. Ratio identically 1. **The default** — a leaf that names no vehicle, and every policy authored before this existed, behaves EXACTLY as before. |
+| `Benchmark` | Whatever the firm's **vehicle registry** maps this risk to, by instrument and maturity bucket. |
+| `Instrument { id }` | An explicitly named instrument (a specific benchmark bond). |
+| `Future { id }` | An explicitly named futures contract; sizing rounds to whole lots. |
+
+The vehicle lives on `HedgeNode::Action` rather than inside `ExitAction` for two reasons: it
+then applies uniformly to every size-bearing action (`ClearRisk` included, which is a unit
+variant), and a stored graph written before the field existed still deserialises — a missing
+key is simply the default.
+
+#### The registry — which vehicle hedges which risk
+
+`HedgeVehicleRegistry` (persisted in `identity.json` inside `hedge_config`, so it round-trips
+through the existing `GetHedgeConfig`/`SetHedgeConfig` path — no new CRUD surface) is a list of
+rows matched on **instrument · product · ccy · maturity bucket**:
+
+```text
+id                instrument  product  ccy   maturity      → hedges into      DV01/unit  unit
+US-BOND-10Y       (any)       BOND     USD   [7y, 12y)     → TY-DEC26  future  78        contract
+US-BOND-5Y        (any)       BOND     USD   [3y, 7y)      → FV-DEC26  future  42        contract
+```
+
+Resolution is **most-specific-wins** (instrument `4` > product `2` > ccy `1`), tie-broken by
+the **narrowest maturity bucket**, then by id — a total, deterministic function of the rows. A
+9-year corp lands in `[7y, 12y)` and hedges with the 10Y future; a 30-year corp with no 30-year
+row resolves **nothing** rather than silently falling into the 10Y bucket.
+
+The registry is also where a **named** vehicle recovers its `dv01_per_unit` — the ratio's
+denominator. A vehicle named on a leaf but absent from the registry therefore **cannot be
+sized**, and the booking path falls back to the self-hedge (always exact) with a `WARN`, rather
+than trading a guessed quantity. `HedgeGraph::validate` rejects such a leaf up front.
+
+#### The ratio, and the DV01 it must be taken on
+
+```text
+units       = target_DV01 / dv01_per_unit
+units       = round(units)          for a future — you cannot trade 318.47 contracts
+hedged_DV01 = units × dv01_per_unit
+residual    = target_DV01 − hedged_DV01     ← REPORTED, never suppressed
+```
+
+Rounding is to nearest, which minimises `|residual|`; the residual's **sign** records the
+outcome — positive means rounded down and risk remains, negative means rounded up and the desk
+is now short the difference. A target below half a contract yields `units = 0` and the whole
+target as residual: an honest "too small to hedge with this vehicle", not a fabricated part lot.
+
+**The numerator is the part most easily got wrong, so it is labelled.** The book's own
+`rates_linear_exposure` measures a cash bond as `redemption × 1bp` — duration 1 (§10 boundary
+1). A ratio taken off *that* under-hedges a 10-year bond by roughly 8×. So the vehicle sizing
+does **not** read the proxy for a bond it can price: `genuine_position_dv01` computes the
+closed-form analytic DV01 off the bond's own cashflow schedule (`celnet-bond`), at the yield
+implied by the dealt clean price when one is known and at its coupon (the par assumption)
+otherwise. Every plan carries the basis it used:
+
+| `Dv01Basis` | Source | Duration-correct? |
+| --- | --- | --- |
+| `Analytic` | closed-form yield derivative of the instrument's own schedule | yes |
+| `AnnuityPv01` | `notional × years × 1bp` — the standard undiscounted swap-leg PV01 | yes |
+| `ExposureProxy` | the coarse `redemption × 1bp` fallback | **no** |
+
+`duration_correct` rides all the way onto the wire and onto the trader's screen, so a
+proxy-based size is surfaced as approximate and can never be presented as exact.
+
+### 6.5 The exit **mode** — auto, or suggest-then-exit
+
+Orthogonal to *what* and *with what* is **who pulls the trigger**. A `HedgeExitMode` is bound
+per scope, resolved **most-specific-wins** (instrument > book > desk) exactly like the LP panels:
+
+| Mode | Behaviour |
+| --- | --- |
+| `Auto` | Fire on breach, no interaction. **The default** — an unbound scope, and a firm that has configured nothing, behaves exactly as before. |
+| `Suggest` | Do *all* the work — measure, band, resolve the policy, resolve the vehicle, size the ratio, round the lots — then **stop**, and publish a standing suggestion. Nothing trades until a trader fires it. |
+
+`Suggest` is deliberately **not a confirmation dialog**. A modal seizes focus, blocks the
+surface behind it, and takes its information with it when dismissed. A standing suggestion is
+addressed to a `(book, instrument)` cell rather than to whoever happens to be looking, renders
+inline on the risk surface next to the risk it describes, costs nothing to ignore, and is still
+there when the desk comes back. It carries the instruction ("Sell 91 contracts of TY-DEC26"),
+the band and utilisation, the full sizing plan with its honest residual, and the policy path.
+
+**Latest wins per cell.** A later fill on the same `(book, instrument)` *supersedes* the earlier
+suggestion rather than stacking a second one, and the superseded id stops resolving — so a
+client holding a stale suggestion cannot fire a size the book has moved past.
+
+Resolving one is a single verb: **fire** executes the pinned plan on the configured venue and
+books the offsetting leg (§8.2), stamping ordinary `HedgeProvenance`; **dismiss** clears it and
+trades nothing. Both consume the suggestion, so a fired hedge can never fire twice. Dismissing
+hides nothing — the risk stays and the next fill raises the suggestion again.
+
+An explicit `Auto` binding is a real override, not a delete: a book can fire automatically
+underneath a desk-wide `Suggest`. Clearing an override restores inheritance from the wider scope.
 
 ---
 
@@ -387,6 +493,24 @@ bond with a *different* instrument.
 never breaches) and assigns a fresh `position_id`. It does not recurse into `stamp_internalise`,
 so booking a hedge cannot trigger a hedge.
 
+#### 8.2.1 …and when the vehicle is *not* the same security
+
+Under a vehicle hedge (§6.4) the two halves come apart, and it is worth being precise about
+which number is exact and which is an approximation.
+
+**Half one is exact.** The venue is asked for the *vehicle's* security — the future — and the
+size sent is the whole-lot-rounded DV01 ratio. That is a real order for a real instrument, and
+`external_hedged` is scaled down to the DV01 those whole contracts actually remove, so the
+rounding residual is genuinely left on the book rather than being quietly assumed away.
+
+**Half two is a risk-equivalent offset.** The offsetting leg is still constructed in the fill's
+own security, scaled so the book's net falls by exactly the DV01 the vehicle trade removed.
+The **net risk is therefore right** — which is the number the next hedge decision, the RAG band
+and the hard limits all read — but the **instrument-level position detail is not**: the risk
+store shows less of the underlying rather than the underlying plus a short future. That is a
+stated boundary, not a silent approximation (§10 boundary 7), and the provenance carries
+`vehicle_plan.hedge_instrument_id` so the blotter records what was really traded.
+
 > **Failure mode, now instrumented.** If the street fill succeeds but the offsetting leg is
 > *rejected*, that is an operational break, not a no-op: the trade really happened, the book did
 > not reduce, and the next fill would compound risk the blotter already reports as hedged. The
@@ -436,12 +560,21 @@ Read this section before relying on the numbers.
    curve-bootstrapped DV01 is the ADR-0016 **A3** breadth wave. Note this does *not* affect
    hedge-leg correctness (§8.2): the same-security ratio is 1 under any measure.
 
+   It *would* have wrecked the **vehicle** ratio (§6.4), which divides by another
+   instrument's DV01 — so the vehicle sizing deliberately does not read this proxy for a bond
+   it can price, using the analytic DV01 instead and labelling every plan with the basis it
+   used. The proxy still governs the **budget** (the cap, the band, the overflow), so a
+   bond-heavy book's *utilisation* remains understated even though its hedge *size* is now
+   right. Those are two different numbers and only one of them is fixed.
+
 2. **The PV01 proxy is curve-free and undiscounted.** It is an upper bound on the true annuity
    PV01 — conservative for a hard limit, but not a mark.
 
-3. **`Desk`-scoped warehouse thresholds do not bind on the rates booking path.** The resolver
-   supports `Instrument → Book → Desk` precedence, but the rates call site passes an empty desk
-   id, so only instrument- and book-scoped thresholds (and the firm default) actually resolve.
+3. **`Desk`-scoped bindings do not bind on the rates booking path.** The resolvers support
+   `Instrument → Book → Desk` precedence, but the rates call site passes an empty desk id, so
+   only instrument- and book-scoped **warehouse thresholds**, **LP panels** and **exit modes**
+   (plus the firm default) actually resolve there. A desk-scoped `Suggest` binding will not
+   take effect on a rates fill; bind it to the book or the instrument instead.
 
 4. **`ExecStyle::Worked` does not yet slice.** The Almgren–Chriss schedule is modelled in the
    action but a worked order currently executes as a single clip.
@@ -455,7 +588,30 @@ Read this section before relying on the numbers.
    that drifts past a band through *market* movement alone, with no new flow, is not
    re-evaluated until the next fill lands. A breach now unwinds the book's own overflow when a
    fill does arrive (it used to be able to neutralise only the fill itself), so a quiet book
-   still needs one fill — or a manual `ClearRisk` — to shed.
+   still needs one fill — or a manual `ClearRisk` — to shed. **A standing suggestion (§6.5)
+   inherits this**: it is raised by a fill and then sits unchanged. Its size is the size that
+   was right when it was raised; the market may have moved since. Firing it trades that pinned
+   size at whatever price the venue gives now.
+
+7. **A vehicle hedge's offsetting leg is a risk-equivalent, not a futures position.** The rates
+   position model (`RatesInstrument`) has arms for OIS, IRS, FRA and cash bonds — there is no
+   futures arm, and inventing one would ripple through every pricing engine. So a vehicle hedge
+   books its offset in the fill's own security scaled to the DV01 the vehicle trade removed
+   (§8.2.1). **The book's net risk is correct; its instrument breakdown is not** — it shows less
+   of the underlying rather than the underlying plus a short future. The provenance records the
+   instrument actually traded, so the audit trail stays truthful even where the position store
+   is approximate.
+
+8. **`dv01_per_unit` is configured, not derived.** A registry row's DV01 per contract is entered
+   by an administrator and is static until they change it. A real futures DV01 moves with the
+   CTD and the curve. The engine will never *guess* one (an unregistered vehicle refuses to
+   size), but it also does not currently *re-derive* one.
+
+9. **The vehicle ratio uses a par-yield assumption when no dealt price is available.** The
+   analytic bond DV01 is taken at the yield implied by the dealt clean price when the booking
+   path supplied one, and at the bond's own coupon otherwise. Modified duration is only weakly
+   sensitive to the yield level, so the ratio stays sound either way — but it is an assumption,
+   and it is stated here rather than buried.
 
 ---
 
@@ -467,6 +623,12 @@ Read this section before relying on the numbers.
 | Exposure measures | same file — `rates_linear_exposure`, `rates_signed_notional`, `rates_dealt_level` |
 | Warehouse bands and sizing | `crates/celnet-hedge-routing/src/band.rs` |
 | Exit policy graph and actions | `crates/celnet-hedge-routing/src/graph.rs` |
+| Hedge **vehicle**, registry, DV01 ratio | `crates/celnet-hedge-routing/src/vehicle.rs` |
+| Exit **mode** (auto vs suggest) | `crates/celnet-hedge-routing/src/mode.rs` |
+| Standing-suggestion store | `crates/celnet-server/src/services/auto_hedge/suggestion.rs` |
+| Genuine DV01 / maturity / vehicle resolution | `crates/celnet-server/src/services/rates_book.rs` (`genuine_position_dv01`, `hedge_maturity_years`, `resolve_hedge_vehicle`) |
+| Fire / dismiss a suggestion | same file — `resolve_hedge_suggestion` |
+| Live intent broadcast (the RAG board's feed) | `auto_hedge/engine.rs` (`subscribe_intents`) → `ws/mod.rs` per-connection forwarder |
 | Condition fields / risk state | `crates/celnet-hedge-routing/src/{field,context}.rs` |
 | LP include/exclude panel | `crates/celnet-hedge-routing/src/lp_panel.rs` |
 | Venue execution | `crates/celnet-server/src/services/auto_hedge/executor.rs` |
@@ -497,3 +659,15 @@ These are the properties the test suite pins. If you change this subsystem, keep
 6. **Every booked fill carries a real threshold, band, and decision** — never an empty `—`.
 7. **The two exposure measures stay distinct.** Notional rules read notional; the DV01 budget
    reads the PV01 proxy. Never cross them.
+8. **A hedge quantity is never guessed.** A vehicle with no configured `dv01_per_unit` cannot be
+   sized, so the exit falls back to the self-hedge (exact by construction) rather than trading a
+   fabricated contract count.
+9. **A hedge size always declares the DV01 basis it was computed on**, and a size taken off the
+   duration-blind exposure proxy is flagged `duration_correct = false` all the way to the screen.
+10. **Whole-lot rounding is reported, never absorbed.** `residual_dv01` is signed: positive means
+    under-hedged, negative means over-hedged. The book is reduced by what the rounded trade
+    really removed, so the remainder genuinely stays on the book.
+11. **`Suggest` mode trades nothing.** No order, no offsetting leg, no execution record — and no
+    popup. A suggestion is a standing row; ignoring it changes nothing.
+12. **A suggestion fires at most once.** Firing and dismissing share one consume point, and a
+    superseded suggestion's id stops resolving, so a stale size can never be traded.

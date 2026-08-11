@@ -6806,6 +6806,7 @@ fn hedge_provenance_full() -> HedgeProvenance {
         // The effective LP set the RFQ hedge targeted (repeated string — populated edge).
         lps: vec!["LP-A".to_owned(), "LP-B".to_owned()],
         // A per-fill execution record carries the parent position id (the PRESENT edge).
+        vehicle_plan: None,
         parent_position_id: Some(4242),
     }
 }
@@ -6840,6 +6841,7 @@ fn hedge_provenance_no_lp() -> HedgeProvenance {
         // Internal / no-trade fire → no LP targeted (empty repeated edge).
         lps: Vec::new(),
         // A book-level advisory-intent record is not keyed to a fill (the ABSENT edge).
+        vehicle_plan: None,
         parent_position_id: None,
     }
 }
@@ -6909,6 +6911,8 @@ fn hedge_config_full() -> HedgeConfigDesc {
         daily_external_notional_cap: 1_000_000_000.0,
         // The standing hedging LP panels: a book-scoped include+exclude and a desk-scoped
         // exclude-only (the repeated-nested-message edge, each with repeated-string fields).
+        vehicles: Vec::new(),
+        exit_modes: Vec::new(),
         lp_panels: vec![
             HedgeLpPanelDesc {
                 scope_kind: HedgeScopeKindEnum::HedgeScopeBook as i32,
@@ -7016,6 +7020,8 @@ fn set_hedge_config_response_encode_byte_identical() {
 fn hedge_intent_encode_byte_identical() {
     // The advisory shadow-run push frame (encode-only): a nested action + policy_path.
     let intent = HedgeIntent {
+        vehicle_plan: None,
+        exit_mode: 0,
         book: "gm".to_owned(),
         instrument: "EURUSD".to_owned(),
         action: Some(ExitActionDesc {

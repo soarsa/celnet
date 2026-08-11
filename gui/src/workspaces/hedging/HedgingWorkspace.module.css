@@ -999,3 +999,121 @@
   color: #fff;
   background: var(--rag-red, #dc2626);
 }
+
+/* --- standing hedge suggestions (the suggest-then-exit surface) ------------
+ *
+ * A suggestion row is an INSTRUCTION, not a log line, so the hierarchy is inverted
+ * relative to the tables above it: the headline carries the largest weight on the row,
+ * the risk context sits secondary beside a RAG chip, and the caveats are explicit but
+ * quiet — EXCEPT the duration-proxy warning, which is a genuine warning and is tinted
+ * like one. Nothing here is a modal: the row simply stays until it is acted on.
+ */
+.suggestionList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.suggestionRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  min-width: 0;
+}
+.suggestionMain {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.suggestionHeadline {
+  margin: 0;
+  font-size: var(--type-subhead, var(--type-title));
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+  line-height: 1.25;
+}
+.suggestionContext {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+.suggestionBook {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+.suggestionUtil {
+  font-variant-numeric: tabular-nums;
+}
+.suggestionWhen {
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+}
+.suggestionRationale {
+  margin: 0;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  max-width: 80ch;
+}
+.suggestionActions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: none;
+}
+
+.planLine {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg-inset, var(--bg-surface));
+  border: 1px solid var(--border-subtle, var(--border));
+}
+.planFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+.planFact {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.planFactLabel {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+.planFact strong {
+  color: var(--text-primary);
+}
+
+/* The one deliberately loud element on the row: a size computed off a duration-blind
+ * proxy is approximate by construction, and must never read as exact. */
+.proxyWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-emphasis);
+  color: var(--rag-amber, #d97706);
+  border-left: 3px solid var(--rag-amber, #d97706);
+  padding-left: 8px;
+}

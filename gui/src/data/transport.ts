@@ -127,6 +127,7 @@ import type {
   HedgeProvenance,
   HedgeIntent,
   HedgeConfig,
+  HedgeSuggestion,
   RiskTransfer,
   InitiateRiskTransferInput,
   ListRiskTransfersFilter,
@@ -880,12 +881,31 @@ export interface CelnetTransport {
   setHedgeConfig(config: HedgeConfig): Promise<HedgeConfig>;
 
   /**
-   * The live push of advisory hedge INTENTS (the shadow-run projection folded into
-   * the notification/stream infra). `onIntent` fires with each newly-resolved intent
-   * as risk crosses a threshold; the returned disposer unsubscribes. The offline mock
-   * synthesises a ticking stream so the monitor renders without a live server.
+   * The live push of hedge INTENTS. `onIntent` fires with each newly-resolved intent as
+   * risk crosses a threshold; the returned disposer unsubscribes. On the WS transport
+   * this binds the UNSOLICITED `hedge_intent` server frame (no subscribe verb — the
+   * server broadcasts it, exactly like `pricing_control`). The offline mock synthesises
+   * a ticking stream so the monitor renders without a live server.
    */
   streamHedgeIntents(onIntent: (intent: HedgeIntent) => void): () => void;
+
+  /**
+   * AuthService.ListHedgeSuggestions (`hedge`) — the STANDING suggestions raised by the
+   * `suggest` exit mode (newest first), optionally narrowed to one book. A suggestion
+   * is a row on the risk surface, not a dialog: it persists until executed or dismissed.
+   */
+  listHedgeSuggestions(book?: string): Promise<HedgeSuggestion[]>;
+
+  /**
+   * AuthService.ExecuteHedgeSuggestion (`hedge`) — act on one standing suggestion.
+   * `dismiss` false FIRES the sized hedge (resolving to its {@link HedgeProvenance});
+   * `dismiss` true drops the row and trades nothing (resolving to a `null` provenance).
+   * Either way the REMAINING suggestions come back, so the caller replaces its list.
+   */
+  executeHedgeSuggestion(
+    suggestionId: string,
+    dismiss: boolean,
+  ): Promise<{ provenance: HedgeProvenance | null; suggestions: HedgeSuggestion[] }>;
 
   // --- FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md) ------------------
   //

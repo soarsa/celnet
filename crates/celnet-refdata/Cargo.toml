@@ -20,9 +20,15 @@ serde_json.workspace = true
 # Civil-date validation: every spec's coupon/maturity triple is checked against the
 # real Gregorian calendar so a malformed date never reaches the registry.
 time.workspace = true
-
-[dev-dependencies]
-# The oracle for the curated-curve validation tests: every coupon-bearing spec's
-# schedule is rebuilt as a celnet_bond::Bond and round-tripped price<->yield through
-# the real analytics leaf, so the curated data is validated, never asserted plausible.
+# The analytics leaf that DERIVES a Treasury futures contract's DV01 from its
+# published notional-deliverable terms (celnet_bond::dv01 over a real cashflow
+# schedule). The DV01 is the denominator of every futures hedge ratio, so it is
+# computed off the real leaf rather than carried as a hand-typed constant.
+# Points strictly downward — celnet-bond has no reference-data dependency.
 celnet-bond.workspace = true
+# The settlement-centre business-day calendar behind the futures delivery-month
+# dates (first delivery day, last trading day, last delivery day) and the
+# end-of-month-aware month arithmetic the notional deliverable's maturity uses.
+celnet-calendar.workspace = true
+# The frozen `Rate` newtype the analytics leaf takes its yield argument as.
+celnet-types.workspace = true

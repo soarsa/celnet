@@ -33,7 +33,10 @@ use std::sync::{Arc, OnceLock, RwLock};
 use crate::services::consensus::{ConsensusHandle, rates_book_key};
 
 use celnet_acceptance::AcceptanceGraph;
-use celnet_hedge_routing::{HedgeContext, HedgeGraph};
+use celnet_hedge_routing::{
+    Dv01Basis, HedgeContext, HedgeGraph, HedgeRatioPlan, HedgeVehicle, HedgeVehicleRegistry,
+    HedgeVehicleRule, plan_hedge_ratio,
+};
 use celnet_limits::{
     IncrementalTrade, LimitScope, LimitSpec, LimitTree, NonAdditiveExposure, PreTradeDecision,
     PreTradeResult, ScopePath, pre_trade_check,
@@ -308,6 +311,13 @@ pub struct RatesPositionStore {
     /// pseudo-venue). The SAME `Arc` the analytics rollup folds as an `LpFlowSource`; `None` (the
     /// unit-test default) means the attribution call is a no-op.
     hedge_flow: OnceLock<Arc<crate::services::analytics::hedge_flow::HedgeFillFlowLog>>,
+    /// The **standing hedge suggestions** raised under a `Suggest`-mode scope (§6.5) — the
+    /// manual half of suggest-then-exit. A breach in such a scope computes the whole hedge
+    /// (band, action, vehicle, DV01 ratio, whole-lot rounding) and publishes it here
+    /// instead of trading it; the `ExecuteHedgeSuggestion` RPC later fires exactly that
+    /// pinned plan. Always present (an empty store costs nothing) and shared behind an
+    /// `Arc` with the `AuthEdge` RPC handlers.
+    suggestions: Arc<crate::services::auto_hedge::SuggestionStore>,
 }
 
 /// A read view of one booked rates position assembled for a **risk transfer** (§6):
@@ -398,6 +408,7 @@ impl RatesPositionStore {
             trace: OnceLock::new(),
             lp_hedge_source: OnceLock::new(),
             hedge_flow: OnceLock::new(),
+            suggestions: Arc::new(crate::services::auto_hedge::SuggestionStore::new()),
         }
     }
 
@@ -1351,6 +1362,11 @@ impl RatesPositionStore {
             .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
             .unwrap_or(0);
         let ctx = HedgeContext {
+            // The product FAMILY ("BOND"/"OIS"/…) — the axis the hedge-vehicle registry
+            // buckets on alongside maturity, and a rule-condition field in its own right.
+            // It was previously left empty, which made a `product == "BOND"` rule (and now a
+            // product-scoped vehicle row) unable to match anything.
+            product: instrument.clone(),
             instrument_id: instrument,
             execution_instrument_id: execution_instrument,
             ccy: attribution.ccy.clone(),
@@ -1505,6 +1521,14 @@ impl RatesPositionStore {
             .expect("rates internalise lock poisoned")
             .insert(fill.position_id, prov.clone());
 
+        // Does this scope fire by itself, or publish a standing suggestion a trader fires
+        // (§6.5)? Resolved most-specific-wins (instrument > book > desk); an unbound scope is
+        // `Auto`, so a firm that has configured nothing behaves exactly as before. Resolved
+        // HERE, before the trace, because a suggestion must not be traced as a FIRE.
+        let exit_mode = policy
+            .config
+            .resolve_exit_mode(&ctx.desk, &ctx.book, &ctx.instrument_id);
+
         // End-to-end event trace (Analytics pillar C): emit the HEDGE_DECIDED stage (the
         // internalise-vs-shed verdict + RAG band) always, and the HEDGE_FIRED stage when the
         // fill actually sheds risk externally (`external_dv01 > 0`) — the terminal stage of a
@@ -1521,7 +1545,7 @@ impl RatesPositionStore {
                     counterparty: counterparty.clone(),
                     position_id: Some(fill.position_id),
                     detail: Some(format!(
-                        "band={}; {}; edge={:.2}bp; int_dv01={:.1}; ext_dv01={:.1}",
+                        "band={}; {}; edge={:.2}bp; int_dv01={:.1}; ext_dv01={:.1}; mode={}",
                         prov.hedge_band,
                         if prov.internalised {
                             "internalised"
@@ -1531,11 +1555,16 @@ impl RatesPositionStore {
                         prov.edge_bps,
                         prov.internal_dv01,
                         prov.external_dv01,
+                        exit_mode.label(),
                     )),
                     ..Default::default()
                 },
             );
-            if external_dv01 > 0.0 {
+            // A SUGGESTION is not a fire. Under `Suggest` the decision is traced (above) but
+            // the terminal `HEDGE_FIRED` stage is deliberately withheld until the trader
+            // actually fires it — a trace that claimed a fire for an untraded suggestion would
+            // be a fabricated event (guardrail 2).
+            if external_dv01 > 0.0 && exit_mode.fires_automatically() {
                 // The minted hedge id when the engine stamped a book-level intent for this
                 // shed; the per-fill advisory record mints its own id inside `record_execution`
                 // (not returned), so it is absent (honest) rather than fabricated here.
@@ -1584,18 +1613,120 @@ impl RatesPositionStore {
         // decision record `evaluate` already rang (amended in place by its `hedge_id`) rather than
         // appending a second row — otherwise a fired hedge would double-count in the blotter.
         if external_dv01 > 0.0 {
+            // ---- THE HEDGE VEHICLE: with WHAT does this exit hedge? (§6.4) ----------
+            //
+            // The resolved leaf carries the trader's vehicle choice, which rides FLAT on the
+            // action descriptor. A `SelfInstrument` leaf (the default, and every policy
+            // authored before vehicles existed) short-circuits everything below and the path
+            // is byte-identical to what it always was.
+            let vehicle = outcome
+                .intent
+                .action
+                .as_ref()
+                .map(crate::services::auto_hedge::wire::hedge_vehicle_from_wire)
+                .unwrap_or_default();
+            // The GENUINE DV01 of this fill and the basis it came from — NOT the book's
+            // duration-blind exposure proxy, which would mis-size a bond-vs-future ratio by
+            // the bond's whole duration. See `genuine_position_dv01`.
+            let (fill_dv01_genuine, dv01_basis) =
+                genuine_position_dv01(fill, matches!(kind, QuoteKind::Price).then_some(dealt));
+            // The shed as a dimensionless FRACTION of this fill's own risk. Both numerator
+            // and denominator are in the threshold's metric, so the ratio is unit-free and
+            // can be applied to the genuine DV01 (and, later, to the fill's face) without
+            // ever mixing a notional with a PV01. It may exceed 1: a breached book sheds its
+            // OWN overflow, which is what lets auto-hedging unwind a standing position.
+            let shed_fraction = if fill_risk > 0.0 {
+                external_dv01 / fill_risk
+            } else {
+                0.0
+            };
+            // Size the vehicle trade off the genuine DV01:
+            //     units = (fraction × fill_DV01) / vehicle_DV01_per_unit
+            // rounded to whole contracts for a future, with the residual reported.
+            let plan: Option<HedgeRatioPlan> = resolve_hedge_vehicle(
+                &policy.config.vehicles,
+                &vehicle,
+                ctx.execution_instrument_id
+                    .as_deref()
+                    .unwrap_or(&ctx.instrument_id),
+                &ctx.product,
+                &ctx.ccy,
+                hedge_maturity_years(fill),
+            )
+            .and_then(|(rule, whole_units)| {
+                plan_hedge_ratio(
+                    shed_fraction * fill_dv01_genuine,
+                    dv01_basis,
+                    &rule,
+                    whole_units,
+                )
+            });
+            if !vehicle.is_self() && plan.is_none() {
+                // A named vehicle the registry does not know has NO known DV01 per unit, and a
+                // `Benchmark` that matches no bucket has no instrument at all. Either way the
+                // ratio could only be guessed — so fall back to the self-hedge (always exact,
+                // ratio 1) and say loudly why, rather than trading a fabricated size.
+                tracing::warn!(
+                    book,
+                    instrument = %ctx.instrument_id,
+                    vehicle = %vehicle,
+                    "hedge VEHICLE did not resolve against the registry — no DV01 per unit is \
+                     known, so this shed falls back to the self-hedge (the same security sold \
+                     back) rather than trading a guessed size",
+                );
+            }
+            // What the venue is actually asked to trade. A vehicle hedge asks for the
+            // VEHICLE's security (the future / benchmark) — that is the whole point.
+            let execution_instrument = plan.as_ref().map_or_else(
+                || {
+                    ctx.execution_instrument_id
+                        .clone()
+                        .unwrap_or_else(|| ctx.instrument_id.clone())
+                },
+                |p| p.hedge_instrument_id.clone(),
+            );
+            // The externalised size stays denominated in the BUDGET METRIC end to end (the
+            // contracts live on the plan), but is scaled down by whatever whole-lot rounding
+            // actually achieved. That is what makes the rounding residual real: the book
+            // reduces by the DV01 the 318 contracts removed, not by the 318.47 we wanted.
+            let effective_external = plan
+                .as_ref()
+                .map_or(external_dv01, |p| external_dv01 * p.fraction_of_target());
+
+            // ---- SUGGEST vs AUTO: does this fire, or wait for a trader? (§6.5) ------
+            if !exit_mode.fires_automatically() {
+                self.raise_hedge_suggestion(
+                    fill,
+                    &ctx,
+                    book,
+                    &outcome,
+                    &thr_def,
+                    &wh,
+                    book_risk,
+                    utilization,
+                    &prov.hedge_band,
+                    internal_dv01,
+                    effective_external,
+                    fill_risk,
+                    mid,
+                    kind.bp_scale(),
+                    execution_instrument,
+                    plan,
+                    now,
+                );
+                return;
+            }
+
             let req = crate::services::auto_hedge::ExternalHedgeRequest {
                 // The LP panel is asked for the TRADEABLE security, falling back to the family
                 // label only when the cell resolves none. Asking for a family ("BOND") can
                 // never match an aggregated-book instrument, so before this the panel always
                 // missed and every shed backstopped to the synthetic composite — which in turn
-                // left the street-side league table with no fill to attribute.
-                instrument: ctx
-                    .execution_instrument_id
-                    .as_deref()
-                    .unwrap_or(&ctx.instrument_id),
+                // left the street-side league table with no fill to attribute. Under a VEHICLE
+                // hedge this is the vehicle's own security — the future the desk really trades.
+                instrument: &execution_instrument,
                 net_risk: book_risk,
-                size: external_dv01,
+                size: effective_external,
                 mid,
                 bp_scale: kind.bp_scale(),
                 mode: policy.config.execution,
@@ -1651,11 +1782,7 @@ impl RatesPositionStore {
             {
                 // Keyed on the SECURITY actually dealt when the cell resolved one (that is
                 // what the LP quoted), falling back to the family label otherwise.
-                let attributed = ctx
-                    .execution_instrument_id
-                    .clone()
-                    .unwrap_or_else(|| ctx.instrument_id.clone());
-                log.record_fill(lp, attributed, exec.filled, now);
+                log.record_fill(lp, execution_instrument.clone(), exec.filled, now);
             }
             // Build the REALISED execution record: the graph's own (external) action + the fill's
             // real economics, keyed by `parent_position_id` for deal reconciliation. It SUPERSEDES
@@ -1684,6 +1811,12 @@ impl RatesPositionStore {
                 advisory: !exec.is_filled(),
                 lps: outcome.intent.lps.clone(),
                 parent_position_id: Some(fill.position_id),
+                // The VEHICLE sizing, when this shed hedged with something other than the
+                // position's own security: the DV01 ratio, the whole-lot rounding, and the
+                // honest residual. Absent for a self-hedge (ratio identically 1).
+                vehicle_plan: plan
+                    .as_ref()
+                    .map(crate::services::auto_hedge::wire::vehicle_plan_to_wire),
             };
             // EXACTLY ONE ring record per external fill: `evaluate` already rang a book-level
             // DECISION record for this size-bearing external action (it self-rings any non-hold
@@ -1705,6 +1838,262 @@ impl RatesPositionStore {
                 }
             }
         }
+    }
+
+    /// The shared **standing-suggestion** store (§6.5) — read by `ListHedgeSuggestions`,
+    /// consumed by `ExecuteHedgeSuggestion`.
+    #[must_use]
+    pub fn hedge_suggestions(&self) -> &Arc<crate::services::auto_hedge::SuggestionStore> {
+        &self.suggestions
+    }
+
+    /// Publish a **standing suggestion** instead of trading (`Suggest` mode, §6.5).
+    ///
+    /// Everything the automatic path would have computed is already computed by the time we
+    /// get here — the band, the resolved action, the vehicle, the DV01 ratio, the whole-lot
+    /// rounding, the residual. This method does exactly two things with it: renders the
+    /// trader-facing instruction, and pins the execution recipe so firing it later trades
+    /// *that* hedge rather than re-deriving a different one.
+    ///
+    /// Deliberately **no notification, no modal, no interrupt** — the suggestion is
+    /// addressed to a `(book, instrument)` cell and rendered inline on the risk surface.
+    #[allow(clippy::too_many_arguments)] // one call site; the whole decision is threaded through.
+    fn raise_hedge_suggestion(
+        &self,
+        fill: &RatesPosition,
+        ctx: &HedgeContext,
+        book: &str,
+        outcome: &crate::services::auto_hedge::HedgeOutcome,
+        thr_def: &HedgeThresholdDef,
+        wh: &celnet_hedge_routing::WarehouseThreshold,
+        book_risk: f64,
+        utilization: f64,
+        band: &str,
+        internal_crossed: f64,
+        external_size: f64,
+        fill_risk: f64,
+        mid: f64,
+        bp_scale: f64,
+        execution_instrument: String,
+        plan: Option<HedgeRatioPlan>,
+        now: i64,
+    ) {
+        // The instruction, in the desk's own words: which way, how much, of what.
+        //
+        // The side follows the DURATION sign, not the trade sign. `book_risk` here is the
+        // signed linear exposure, whose convention is that a LONG cash bond is NEGATIVE (long
+        // duration nets against a pay-fixed swap — see `rates_linear_exposure`). A hedge
+        // instrument (a benchmark bond or a bond future) is itself long duration when bought,
+        // so shedding a net-long-duration book (`book_risk < 0`) means SELLING the hedge, and
+        // shedding a net-short-duration book (a pay-fixed swap position, `book_risk > 0`)
+        // means BUYING it. Getting this backwards would double the risk rather than remove it.
+        let side = if book_risk < 0.0 { "Sell" } else { "Buy" };
+        let headline = match plan.as_ref() {
+            Some(p) if p.is_tradeable() => format!("{side} {}", p.summary()),
+            // A vehicle whose target rounds to zero whole contracts is honestly untradeable
+            // with that vehicle — say so rather than showing a size of nothing.
+            Some(p) => format!(
+                "No hedge available: {:.2} {} of {} rounds to zero whole lots ({:.1} DV01 stays)",
+                p.exact_units,
+                if p.unit_label.is_empty() {
+                    "unit"
+                } else {
+                    p.unit_label.as_str()
+                },
+                p.hedge_instrument_id,
+                p.residual_dv01,
+            ),
+            None => format!("{side} {external_size:.0} of {execution_instrument} (self-hedge)"),
+        };
+        let mut rationale = format!(
+            "{band} band at {:.0}% of the {:.0} cap · policy resolved {}",
+            utilization * 100.0,
+            wh.cap,
+            outcome
+                .intent
+                .action
+                .as_ref()
+                .map_or("—", |a| exit_action_kind_label(a.kind)),
+        );
+        // The honesty caveat rides ON the suggestion, not just in the payload: a size taken
+        // off the duration-blind exposure proxy must never read as exact.
+        if let Some(p) = plan.as_ref()
+            && !p.basis.is_duration_correct()
+        {
+            rationale.push_str(
+                " · SIZE IS APPROXIMATE: the hedge ratio was computed off the coarse exposure \
+                 proxy (which treats every bond as duration 1), not a genuine DV01",
+            );
+        }
+        let desc = celnet_proto::HedgeSuggestion {
+            suggestion_id: String::new(), // minted by the store
+            book: book.to_owned(),
+            instrument: ctx.instrument_id.clone(),
+            desk: ctx.desk.clone(),
+            raised_at: now,
+            band: band.to_owned(),
+            net_risk: book_risk,
+            threshold: wh.cap,
+            utilization,
+            action: outcome.intent.action.clone(),
+            policy_path: outcome.intent.policy_path.clone(),
+            external_size,
+            vehicle_plan: plan
+                .as_ref()
+                .map(crate::services::auto_hedge::wire::vehicle_plan_to_wire),
+            headline,
+            rationale,
+            parent_position_id: Some(fill.position_id),
+            lps: outcome.intent.lps.clone(),
+            mid_at_raise: mid,
+        };
+        let exec = crate::services::auto_hedge::SuggestionExec {
+            book: book.to_owned(),
+            instrument: ctx.instrument_id.clone(),
+            execution_instrument,
+            net_risk: book_risk,
+            size: external_size,
+            mid,
+            bp_scale,
+            fill: fill.clone(),
+            fill_risk,
+            metric: thr_def.metric.as_i32(),
+            threshold: wh.cap,
+            utilization,
+            band: band.to_owned(),
+            policy_path: outcome.intent.policy_path.clone(),
+            action: outcome.intent.action.clone(),
+            lps: outcome.intent.lps.clone(),
+            internal_crossed,
+            plan,
+        };
+        let raised = self.suggestions.raise(desc, exec);
+        tracing::info!(
+            class = celnet_observability::LogClass::Hedge.label(),
+            book,
+            instrument = %ctx.instrument_id,
+            suggestion_id = %raised.desc.suggestion_id,
+            headline = %raised.desc.headline,
+            external_size,
+            "hedge SUGGESTED (manual exit mode) — nothing traded; standing on the risk surface",
+        );
+    }
+
+    /// Resolve a standing suggestion: **fire** it (execute the pinned hedge on the
+    /// configured venue and book the offsetting leg, exactly as the automatic path would
+    /// have) or **dismiss** it (clear it, trade nothing).
+    ///
+    /// Both paths consume the suggestion, so a fired hedge can never be fired twice.
+    /// Dismissing hides nothing: the risk stays on the book and the next fill on that cell
+    /// raises the suggestion again.
+    ///
+    /// # Errors
+    /// A `suggestion_id` that is unknown or already resolved (a superseded id included) —
+    /// which is the point of superseding: a stale size can never be traded.
+    pub fn resolve_hedge_suggestion(
+        &self,
+        suggestion_id: &str,
+        dismiss: bool,
+    ) -> Result<Option<HedgeProvenance>, String> {
+        let Some(row) = self.suggestions.take(suggestion_id) else {
+            return Err(format!(
+                "hedge suggestion {suggestion_id:?} is unknown, already resolved, or has been \
+                 superseded by a newer suggestion for the same book and instrument"
+            ));
+        };
+        if dismiss {
+            tracing::info!(
+                class = celnet_observability::LogClass::Hedge.label(),
+                book = %row.exec.book,
+                instrument = %row.exec.instrument,
+                suggestion_id,
+                "hedge suggestion DISMISSED — nothing traded; the risk stays on the book",
+            );
+            return Ok(None);
+        }
+        let Some(policy) = self
+            .hedge_policy
+            .read()
+            .expect("rates hedge-policy lock poisoned")
+            .clone()
+        else {
+            return Err("no hedge policy is primed — the engine cannot execute".to_owned());
+        };
+        let e = &row.exec;
+        let req = crate::services::auto_hedge::ExternalHedgeRequest {
+            instrument: &e.execution_instrument,
+            net_risk: e.net_risk,
+            size: e.size,
+            mid: e.mid,
+            bp_scale: e.bp_scale,
+            mode: policy.config.execution,
+            composite_spread_bp: policy.config.composite_spread_bp,
+        };
+        let exec = match self.lp_hedge_source.get() {
+            Some(src) => crate::services::auto_hedge::execute_external(&req, src.as_ref()),
+            None => crate::services::auto_hedge::execute_external(
+                &req,
+                &crate::services::auto_hedge::NoLpSource,
+            ),
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
+            .unwrap_or(0);
+        // Book the offsetting leg so the book's net actually falls — the same half-two of the
+        // exit the automatic path performs (§8.2). `e.size` is already reduced by whole-lot
+        // rounding, so the book reduces by what the vehicle trade really removed and the
+        // rounding residual honestly stays.
+        if exec.is_filled()
+            && e.fill_risk > 0.0
+            && let Some(leg) = offsetting_rates_leg(&e.fill, exec.filled / e.fill_risk)
+            && let Err(status) = self.book_into_risk_book(leg, &e.book)
+        {
+            tracing::error!(
+                book = %e.book,
+                instrument = %e.instrument,
+                parent_position_id = e.fill.position_id,
+                hedged = exec.filled,
+                reason = %status,
+                "fired hedge suggestion FILLED externally but its offsetting leg was REJECTED — \
+                 the book did not reduce; risk and blotter now diverge",
+            );
+        }
+        if exec.venue == Some(crate::services::auto_hedge::HedgeVenue::LpPanel)
+            && let Some(lp) = exec.lp_won.as_deref()
+            && let Some(log) = self.hedge_flow.get()
+        {
+            log.record_fill(lp, e.execution_instrument.clone(), exec.filled, now);
+        }
+        let prov = policy.engine.record_execution(HedgeProvenance {
+            hedge_id: String::new(),
+            book: e.book.clone(),
+            instrument: e.instrument.clone(),
+            fired_at: now,
+            metric: e.metric,
+            threshold: e.threshold,
+            net_risk: e.net_risk,
+            utilization: e.utilization,
+            band: e.band.clone(),
+            policy_path: e.policy_path.clone(),
+            action: e.action.clone(),
+            internal_crossed: e.internal_crossed,
+            external_hedged: exec.filled,
+            residual: exec.residual,
+            hedge_price: exec.hedge_price,
+            mid_at_fire: exec.mid_at_fire,
+            slippage_bp: exec.slippage_bp,
+            lp_won: exec.lp_won.clone(),
+            // A real venue fill is NOT advisory; an honest miss is.
+            advisory: !exec.is_filled(),
+            lps: e.lps.clone(),
+            parent_position_id: Some(e.fill.position_id),
+            vehicle_plan: e
+                .plan
+                .as_ref()
+                .map(crate::services::auto_hedge::wire::vehicle_plan_to_wire),
+        });
+        Ok(Some(prov))
     }
 
     /// The routed book's net DV01 (signed linear PV01 proxy) over the positions currently
@@ -1971,6 +2360,136 @@ fn hedge_execution_instrument(fill: &RatesPosition) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// The **genuine** DV01 of a rates fill, and the basis it was computed on
+/// (`docs/HEDGING-AND-RISK-EXIT.md` §6.4).
+///
+/// This exists because a hedge ratio is only as good as its numerator, and the book's own
+/// [`rates_linear_exposure`] proxy is **not** good enough for one. Its bond arm is
+/// `redemption × 1bp` — every bond treated as though its duration were `1` — so a
+/// `position_DV01 / vehicle_DV01` ratio taken off it is wrong by the bond's actual
+/// duration (a 10-year is roughly 8×). Sizing a real futures hedge off that number would
+/// under-hedge a long-dated bond by a factor of eight and call it done.
+///
+/// So each arm reports the best measure it honestly has, **labelled**:
+///
+/// | Arm | Measure | [`Dv01Basis`] |
+/// | --- | --- | --- |
+/// | Bond | the closed-form analytic yield derivative of its own cashflow schedule (`celnet-bond`), off the yield implied by the dealt clean price when one is known, else its coupon (the par assumption) | `Analytic` |
+/// | OIS / IRS / FRA | `notional × years × 1bp` — the undiscounted fixed-leg annuity, which IS the standard linear PV01 for a swap leg | `AnnuityPv01` |
+/// | anything unconstructable | the coarse exposure proxy | `ExposureProxy` |
+///
+/// The label is never dropped: it rides onto the wire as
+/// `HedgeVehiclePlanDesc.dv01_basis` / `duration_correct`, so a size computed off the
+/// proxy is surfaced as approximate rather than presented as exact (guardrail 2).
+///
+/// `dealt_clean_price` is the bond's dealt CLEAN price per 100 when the booking path
+/// supplied one (the RFQ-accept / FIX-lift paths do; the manual path does not).
+/// Off the pinned pricing core — a handful of closed-form evaluations on the booking tier.
+fn genuine_position_dv01(fill: &RatesPosition, dealt_clean_price: Option<f64>) -> (f64, Dv01Basis) {
+    let proxy = || (rates_linear_exposure(fill).abs(), Dv01Basis::ExposureProxy);
+    let Some(arm) = fill.instrument.as_ref().and_then(|i| i.instrument.as_ref()) else {
+        return (0.0, Dv01Basis::ExposureProxy);
+    };
+    let rates_instrument::Instrument::Bond(bond) = arm else {
+        // A swap/FRA's `notional × years × 1bp` IS the undiscounted annuity PV01 — the
+        // standard linear measure, and duration-correct in shape (the tenor is right
+        // there in the contract). Only the discounting is missing, which makes it a
+        // conservative upper bound rather than a wrong number.
+        return (rates_linear_exposure(fill).abs(), Dv01Basis::AnnuityPv01);
+    };
+    let today = time::OffsetDateTime::now_utc().date();
+    let Ok(contract) = crate::rates_pricing::bond_contract_from_wire(bond, today) else {
+        return proxy();
+    };
+    // Prefer the yield the market actually dealt at: solve it from the dealt clean price
+    // (converted to the contract's own face and made dirty by its accrued). Falling back
+    // to the coupon is the standard par assumption — modified duration is only weakly
+    // sensitive to the yield level, so the ratio stays sound either way, and it is a
+    // stated approximation rather than a fabricated input.
+    let analytic = dealt_clean_price
+        .filter(|p| p.is_finite() && *p > 0.0)
+        .and_then(|clean_pct| {
+            let clean = clean_pct / 100.0 * bond.redemption;
+            let accrued = celnet_bond::accrued_interest(&contract).ok()?;
+            celnet_bond::bond_risk(&contract, clean + accrued)
+                .ok()
+                .map(|r| r.dv01)
+        })
+        .or_else(|| celnet_bond::dv01(&contract, celnet_types::Rate(bond.coupon_rate)).ok());
+    match analytic {
+        Some(d) if d.is_finite() && d > 0.0 => (d, Dv01Basis::Analytic),
+        // The analytic path did not produce a usable number: fall back to the coarse
+        // proxy AND say so, rather than silently presenting a duration-blind size as exact.
+        _ => proxy(),
+    }
+}
+
+/// The fill's **maturity in years** — the axis the hedge-vehicle registry buckets on (a
+/// 9-year corp resolving into the 10Y-future bucket).
+///
+/// A cash bond carries a real maturity date, so this is the exact act/365 span from today.
+/// A swap/FRA carries a tenor rather than a maturity date, so it reports that span. `None`
+/// for a cell with no instrument arm or an unparseable date — a registry row that declares
+/// a maturity bucket then honestly cannot match it (rather than being matched by a
+/// fabricated zero).
+fn hedge_maturity_years(fill: &RatesPosition) -> Option<f64> {
+    let arm = fill
+        .instrument
+        .as_ref()
+        .and_then(|i| i.instrument.as_ref())?;
+    match arm {
+        rates_instrument::Instrument::Ois(o) => Some(f64::from(o.tenor_years)),
+        rates_instrument::Instrument::Irs(i) => Some(f64::from(i.tenor_years)),
+        rates_instrument::Instrument::Fra(f) => {
+            Some(f64::from(f.end_months.saturating_sub(f.start_months)) / 12.0)
+        }
+        rates_instrument::Instrument::Bond(b) => {
+            let m = b.maturity_date.as_ref()?;
+            let month = u8::try_from(m.month)
+                .ok()
+                .and_then(|x| time::Month::try_from(x).ok())?;
+            let day = u8::try_from(m.day).ok()?;
+            let maturity = time::Date::from_calendar_date(m.year, month, day).ok()?;
+            let today = time::OffsetDateTime::now_utc().date();
+            let days = (maturity - today).whole_days();
+            (days > 0).then(|| days as f64 / 365.0)
+        }
+    }
+}
+
+/// Resolve the leaf's [`HedgeVehicle`] onto a concrete registry row (which names the hedge
+/// instrument AND its DV01 per unit) plus whether that vehicle trades in whole lots.
+///
+/// - [`HedgeVehicle::SelfInstrument`] ⇒ `None`: the position hedges itself, ratio
+///   identically `1`, no registry lookup and no sizing needed.
+/// - [`HedgeVehicle::Benchmark`] ⇒ the registry's most-specific match on
+///   `(instrument, product, ccy, maturity)`.
+/// - [`HedgeVehicle::Instrument`] / [`HedgeVehicle::Future`] ⇒ the registry row that names
+///   that hedge instrument, which is where its DV01 per unit comes from.
+///
+/// `None` for a named-but-unregistered vehicle, or a `Benchmark` that matches nothing. The
+/// caller then falls back to the **self-hedge** — never to a guessed DV01 (guardrail 2).
+fn resolve_hedge_vehicle(
+    registry: &HedgeVehicleRegistry,
+    vehicle: &HedgeVehicle,
+    instrument_id: &str,
+    product: &str,
+    ccy: &str,
+    maturity_years: Option<f64>,
+) -> Option<(HedgeVehicleRule, bool)> {
+    let rule = match vehicle {
+        HedgeVehicle::SelfInstrument => return None,
+        HedgeVehicle::Benchmark => registry.resolve(instrument_id, product, ccy, maturity_years)?,
+        HedgeVehicle::Instrument { instrument_id: id }
+        | HedgeVehicle::Future { contract_id: id } => registry.by_hedge_instrument(id)?,
+    };
+    // Whole-lot rounding applies when EITHER the leaf declares a future or the registry
+    // row does — a desk that types a contract id gets contract semantics regardless of how
+    // the row was configured.
+    let whole = rule.is_future || vehicle.is_future();
+    Some((rule.clone(), whole))
 }
 
 fn internalise_instrument_label(fill: &RatesPosition) -> String {
@@ -2461,6 +2980,22 @@ fn rule_covers_cell(rule: &EntitlementRule, entity: u32, book: u32) -> bool {
             Ok(RiskDimension::Book) => s.value == u64::from(book),
             _ => false,
         })
+}
+
+/// A stable, human label for an [`ExitActionKind`](celnet_proto::ExitActionKind) ordinal —
+/// used in a suggestion's rationale so a trader reads "SUBMIT_MARKET_ORDER", not `3`.
+fn exit_action_kind_label(kind: i32) -> &'static str {
+    match celnet_proto::ExitActionKind::try_from(kind) {
+        Ok(celnet_proto::ExitActionKind::ExitActionWarehouse) => "WAREHOUSE",
+        Ok(celnet_proto::ExitActionKind::ExitActionCrossInternal) => "CROSS_INTERNAL",
+        Ok(celnet_proto::ExitActionKind::ExitActionSkew) => "SKEW",
+        Ok(celnet_proto::ExitActionKind::ExitActionSubmitMarketOrder) => "SUBMIT_MARKET_ORDER",
+        Ok(celnet_proto::ExitActionKind::ExitActionRfqOut) => "RFQ_OUT",
+        Ok(celnet_proto::ExitActionKind::ExitActionSplit) => "SPLIT",
+        Ok(celnet_proto::ExitActionKind::ExitActionEscalate) => "ESCALATE",
+        Ok(celnet_proto::ExitActionKind::ExitActionClearRisk) => "CLEAR_RISK",
+        Err(_) => "—",
+    }
 }
 
 #[cfg(test)]
@@ -3316,12 +3851,10 @@ pub(crate) mod tests {
         let mut nodes = std::collections::BTreeMap::new();
         nodes.insert(
             0u32,
-            HedgeNode::Action {
-                exit: ExitAction::SubmitMarketOrder {
-                    size: HedgeSize::Full,
-                    style: ExecStyle::Immediate,
-                },
-            },
+            HedgeNode::action(ExitAction::SubmitMarketOrder {
+                size: HedgeSize::Full,
+                style: ExecStyle::Immediate,
+            }),
         );
         RatesHedgePolicy {
             graph: Some(HedgeGraph { entry: 0, nodes }),
@@ -3432,20 +3965,13 @@ pub(crate) mod tests {
                         on_false: 1,
                     },
                 ),
-                (
-                    1u32,
-                    HedgeNode::Action {
-                        exit: ExitAction::Warehouse,
-                    },
-                ),
+                (1u32, HedgeNode::action(ExitAction::Warehouse)),
                 (
                     2u32,
-                    HedgeNode::Action {
-                        exit: ExitAction::SubmitMarketOrder {
-                            size: HedgeSize::Full,
-                            style: ExecStyle::Immediate,
-                        },
-                    },
+                    HedgeNode::action(ExitAction::SubmitMarketOrder {
+                        size: HedgeSize::Full,
+                        style: ExecStyle::Immediate,
+                    }),
                 ),
             ]),
         };
@@ -4128,5 +4654,576 @@ pub(crate) mod tests {
         assert!(prov.within_tolerance);
         assert!(prov.internalised);
         assert_eq!(prov.hedge_band, "green");
+    }
+
+    // ======================================================================
+    // Hedge VEHICLE + suggest-then-exit (docs/HEDGING-AND-RISK-EXIT.md §6.4/§6.5)
+    // ======================================================================
+
+    /// A ten-year 5% bond maturing on a real date, so the analytic DV01 has a schedule to
+    /// work with (the shared `bond_position` fixture deliberately carries no maturity).
+    fn dated_bond(id: u64, redemption: f64, side: Side, years: i64) -> RatesPosition {
+        let maturity = time::OffsetDateTime::now_utc().date() + time::Duration::days(365 * years);
+        RatesPosition {
+            position_id: id,
+            entity: 1,
+            book: 7,
+            instrument: Some(RatesInstrument {
+                instrument: Some(rates_instrument::Instrument::Bond(BondInstrument {
+                    coupon_rate: 0.05,
+                    coupon_frequency: 0, // annual
+                    day_count: 0,
+                    maturity_date: Some(celnet_proto::BrokenDate {
+                        year: maturity.year(),
+                        month: u32::from(u8::from(maturity.month())),
+                        day: u32::from(maturity.day()),
+                    }),
+                    redemption,
+                    side: side as i32,
+                    instrument_id: "XS-CORP-10Y".to_owned(),
+                    ..Default::default()
+                })),
+            }),
+        }
+    }
+
+    /// **The DV01-proxy problem, pinned.** The book's own exposure proxy measures a bond as
+    /// `redemption × 1bp` — duration 1 — while the genuine analytic DV01 of a ten-year 5%
+    /// bond is roughly EIGHT times that (modified duration ≈ 7.7). A hedge ratio taken off
+    /// the proxy would therefore under-hedge by ~8×, which is exactly why
+    /// `genuine_position_dv01` exists and why the vehicle sizing never reads the proxy for a
+    /// bond it can price.
+    #[test]
+    fn a_ten_year_bonds_genuine_dv01_is_about_eight_times_the_duration_blind_proxy() {
+        let fill = dated_bond(1, 1_000_000.0, Side::Buy, 10);
+        let proxy = rates_linear_exposure(&fill).abs();
+        assert!(
+            (proxy - 100.0).abs() < 1e-9,
+            "the proxy is redemption × 1bp = 100, i.e. duration 1: {proxy}"
+        );
+
+        let (genuine, basis) = genuine_position_dv01(&fill, None);
+        assert_eq!(
+            basis,
+            Dv01Basis::Analytic,
+            "a bond with a real maturity is priced analytically, never off the proxy"
+        );
+        // A 10y 5% annual bond at par: modified duration ≈ 7.72 ⇒ DV01 ≈ 772 per 1mm face.
+        let ratio = genuine / proxy;
+        assert!(
+            (7.0..8.5).contains(&ratio),
+            "the genuine DV01 must be ~8× the proxy for a 10y bond, got {ratio}× \
+             (genuine {genuine}, proxy {proxy})"
+        );
+        assert!(
+            basis.is_duration_correct(),
+            "an analytic DV01 is duration-correct and may be presented as exact"
+        );
+    }
+
+    /// A swap reports the undiscounted annuity PV01 and says so — duration-correct in shape
+    /// (the tenor is in the contract), unlike the bond proxy.
+    #[test]
+    fn a_swaps_dv01_basis_is_the_annuity_pv01_not_the_proxy() {
+        let (dv01, basis) = genuine_position_dv01(&ois(1, 7, 10, 50_000_000.0, Side::Buy), None);
+        assert_eq!(basis, Dv01Basis::AnnuityPv01);
+        assert!(basis.is_duration_correct());
+        assert!((dv01 - 50_000.0).abs() < 1e-6, "notional × 10y × 1bp");
+    }
+
+    /// A bond with no maturity date cannot be priced analytically. It falls back to the
+    /// coarse proxy AND labels itself `ExposureProxy`, so every surface downstream knows the
+    /// size is approximate rather than being told a duration-blind number is exact.
+    #[test]
+    fn an_unpriceable_bond_falls_back_to_the_proxy_and_labels_itself_so() {
+        let (dv01, basis) = genuine_position_dv01(&bond_position(1, 1_000_000.0, Side::Buy), None);
+        assert_eq!(basis, Dv01Basis::ExposureProxy);
+        assert!(
+            !basis.is_duration_correct(),
+            "a proxy-based ratio must never be presented as exact"
+        );
+        assert!((dv01 - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn maturity_years_reads_a_bonds_date_and_a_swaps_tenor() {
+        let bond = hedge_maturity_years(&dated_bond(1, 1_000_000.0, Side::Buy, 9))
+            .expect("a dated bond has a maturity");
+        assert!(
+            (8.9..9.1).contains(&bond),
+            "a 9-year bond must bucket at ~9y, got {bond}"
+        );
+        assert_eq!(
+            hedge_maturity_years(&ois(1, 7, 10, 1.0, Side::Buy)),
+            Some(10.0)
+        );
+        // No instrument arm ⇒ honestly unknown, never a fabricated zero.
+        assert_eq!(
+            hedge_maturity_years(&RatesPosition {
+                position_id: 1,
+                entity: 1,
+                book: 7,
+                instrument: None,
+            }),
+            None
+        );
+    }
+
+    /// The firm registry: US bonds 7–12y hedge into the 10Y future at 78 DV01 a contract.
+    fn ty_registry() -> HedgeVehicleRegistry {
+        HedgeVehicleRegistry::new(vec![HedgeVehicleRule {
+            id: "US-BOND-10Y".into(),
+            product: "BOND".into(),
+            ccy: "USD".into(),
+            min_maturity_years: 7.0,
+            max_maturity_years: 12.0,
+            hedge_instrument_id: "TY-DEC26".into(),
+            is_future: true,
+            dv01_per_unit: 78.0,
+            unit_label: "contract".into(),
+            ..HedgeVehicleRule::default()
+        }])
+    }
+
+    #[test]
+    fn a_benchmark_vehicle_resolves_a_nine_year_corp_into_the_ten_year_future() {
+        let reg = ty_registry();
+        let (rule, whole) = resolve_hedge_vehicle(
+            &reg,
+            &HedgeVehicle::Benchmark,
+            "XS-CORP-9Y",
+            "BOND",
+            "USD",
+            Some(9.0),
+        )
+        .expect("a 9y USD corp resolves the 10Y bucket");
+        assert_eq!(rule.hedge_instrument_id, "TY-DEC26");
+        assert!(whole, "a futures vehicle trades in whole lots");
+    }
+
+    /// A self-hedge never consults the registry — it is the same security sold back, ratio
+    /// identically 1, which is what keeps every pre-existing policy byte-identical.
+    #[test]
+    fn a_self_vehicle_never_consults_the_registry() {
+        assert!(
+            resolve_hedge_vehicle(
+                &ty_registry(),
+                &HedgeVehicle::SelfInstrument,
+                "XS-CORP-9Y",
+                "BOND",
+                "USD",
+                Some(9.0)
+            )
+            .is_none()
+        );
+    }
+
+    /// **Never guess a hedge size.** A vehicle the registry does not know has no DV01 per
+    /// unit, so it cannot be sized at all — resolution refuses, and the booking path falls
+    /// back to the self-hedge rather than trading a fabricated quantity.
+    #[test]
+    fn an_unregistered_named_vehicle_refuses_to_resolve() {
+        assert!(
+            resolve_hedge_vehicle(
+                &ty_registry(),
+                &HedgeVehicle::Future {
+                    contract_id: "GHOST-DEC26".into()
+                },
+                "XS-CORP-9Y",
+                "BOND",
+                "USD",
+                Some(9.0)
+            )
+            .is_none(),
+            "an unregistered contract has no known DV01 — sizing it would be a guess"
+        );
+        // A benchmark that matches no bucket is equally unresolvable.
+        assert!(
+            resolve_hedge_vehicle(
+                &ty_registry(),
+                &HedgeVehicle::Benchmark,
+                "XS-CORP-30Y",
+                "BOND",
+                "USD",
+                Some(30.0)
+            )
+            .is_none()
+        );
+    }
+
+    /// A hedge policy that always sheds externally into the 10Y future, with a registry and
+    /// an optional `Suggest` binding on the routed book.
+    fn vehicle_policy(book: &str, cap: f64, suggest: bool) -> RatesHedgePolicy {
+        use celnet_hedge_routing::{ExecStyle, ExitAction, HedgeNode, HedgeSize, HedgeVehicle};
+        let mut nodes = std::collections::BTreeMap::new();
+        nodes.insert(
+            0u32,
+            HedgeNode::action_with(
+                ExitAction::SubmitMarketOrder {
+                    size: HedgeSize::Full,
+                    style: ExecStyle::Immediate,
+                },
+                HedgeVehicle::Benchmark,
+            ),
+        );
+        let mut base = hedge_policy(book, cap, 0.5);
+        base.config.vehicles = ty_registry();
+        if suggest {
+            base.config.exit_modes = vec![crate::config::hedge_policy::ScopedExitMode {
+                scope_kind: HedgeScopeKind::Book,
+                scope_id: book.to_owned(),
+                mode: celnet_hedge_routing::HedgeExitMode::Suggest,
+            }];
+        }
+        RatesHedgePolicy {
+            graph: Some(HedgeGraph { entry: 0, nodes }),
+            ..base
+        }
+    }
+
+    /// A bond attribution: dealt AT the mid ⇒ zero edge ⇒ below the tolerance floor ⇒ the
+    /// external shed policy backs the whole fill to the street.
+    fn bond_attribution() -> RatesRoutingAttribution {
+        priced_attribution(100.0, 100.0)
+    }
+
+    /// **The headline vehicle behaviour.** A 9-year corp under a `Benchmark` leaf is hedged
+    /// with the 10Y FUTURE — the venue is asked for the contract, the size is the DV01 ratio
+    /// rounded to whole lots, and the rounding residual is reported rather than hidden.
+    #[test]
+    fn a_corp_bond_sheds_into_the_ten_year_future_in_whole_contracts() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let policy = vehicle_policy("wh", 100_000.0, false);
+        let engine = Arc::clone(&policy.engine);
+        store.set_hedge_policy(Some(policy));
+
+        let booked = store
+            .book_with_routing(
+                dated_bond(0, 10_000_000.0, Side::Buy, 9),
+                bond_attribution(),
+            )
+            .expect("books");
+
+        let rec = engine
+            .provenance(None, None)
+            .into_iter()
+            .find(|p| p.parent_position_id == Some(booked.position_id))
+            .expect("a fired vehicle hedge stamps an execution record");
+        let plan = rec
+            .vehicle_plan
+            .expect("a vehicle hedge carries its sizing plan");
+        assert_eq!(
+            plan.hedge_instrument_id, "TY-DEC26",
+            "the corp is hedged with the benchmark future, not with itself"
+        );
+        assert_eq!(plan.unit_label, "contract");
+        assert!(plan.whole_units, "a future trades in whole lots");
+        assert_eq!(
+            plan.units,
+            plan.units.round(),
+            "the traded size is a whole number of contracts, never a part lot"
+        );
+        assert!(
+            (plan.units - plan.exact_units).abs() > 0.0,
+            "the exact ratio is not a whole number here, so rounding really happened"
+        );
+        assert!(
+            (plan.residual_dv01 - (plan.target_dv01 - plan.hedged_dv01)).abs() < 1e-9,
+            "the residual is the honest difference, not a suppressed remainder"
+        );
+        assert_eq!(
+            plan.dv01_basis, "analytic",
+            "the ratio is sized off a GENUINE DV01, never the duration-blind proxy"
+        );
+        assert!(plan.duration_correct);
+        // The ratio really is the genuine DV01 over the contract DV01, not the proxy's.
+        // The proxy would have sized this at `10mm × 1bp / 78 ≈ 12.8` contracts. The genuine
+        // 9-year DV01 is ~7× that, so the honest hedge is ~90 contracts. Sizing off the proxy
+        // would have left roughly seven eighths of the risk unhedged and called it done.
+        let proxy_units = rates_linear_exposure(&booked).abs() / plan.dv01_per_unit;
+        assert!(
+            plan.exact_units > 5.0 * proxy_units,
+            "the genuine-DV01 ratio must dwarf the duration-blind proxy ratio: {} vs {proxy_units}",
+            plan.exact_units
+        );
+        assert!(
+            (60.0..140.0).contains(&plan.exact_units),
+            "a 10mm 9-year corp hedges with ~90 ten-year contracts, got {}",
+            plan.exact_units
+        );
+    }
+
+    /// **Suggest mode trades NOTHING.** The whole decision is computed — band, action,
+    /// vehicle, ratio, rounding — and published as a standing suggestion. No order is
+    /// placed, no offsetting leg is booked, and the book's risk is untouched.
+    #[test]
+    fn suggest_mode_raises_a_standing_suggestion_and_trades_nothing() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let policy = vehicle_policy("wh", 100_000.0, true);
+        let engine = Arc::clone(&policy.engine);
+        store.set_hedge_policy(Some(policy));
+
+        let booked = store
+            .book_with_routing(
+                dated_bond(0, 10_000_000.0, Side::Buy, 9),
+                bond_attribution(),
+            )
+            .expect("books");
+        let net_after_book = store.book_net_dv01("wh");
+
+        // Exactly one standing suggestion, addressed to the (book, instrument) cell.
+        let standing = store.hedge_suggestions().list(None);
+        assert_eq!(standing.len(), 1, "one suggestion per risk cell");
+        let s = &standing[0];
+        assert_eq!(s.book, "wh");
+        assert_eq!(s.instrument, "BOND");
+        assert_eq!(s.parent_position_id, Some(booked.position_id));
+        assert!(
+            s.headline.contains("TY-DEC26"),
+            "the instruction names the vehicle: {}",
+            s.headline
+        );
+        assert!(
+            s.headline.starts_with("Sell"),
+            "reducing a long bond means SELLING the hedge: {}",
+            s.headline
+        );
+        assert!(
+            s.vehicle_plan.is_some(),
+            "the suggestion carries its sizing"
+        );
+
+        // NOTHING traded: no execution record, and the book still holds the whole position.
+        assert!(
+            engine
+                .provenance(None, None)
+                .iter()
+                .all(|p| p.parent_position_id != Some(booked.position_id)),
+            "suggest mode must not stamp an execution record — nothing executed"
+        );
+        assert!(
+            (net_after_book - rates_linear_exposure(&booked)).abs() < 1e-9,
+            "the book still carries the full position — no offsetting leg was booked"
+        );
+    }
+
+    /// Firing a standing suggestion executes the pinned plan and books the offsetting leg,
+    /// so the book genuinely reduces — the same half-two of the exit the automatic path
+    /// performs. Firing twice is impossible: the suggestion is consumed.
+    #[test]
+    fn firing_a_suggestion_executes_it_reduces_the_book_and_consumes_it() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let policy = vehicle_policy("wh", 100_000.0, true);
+        let engine = Arc::clone(&policy.engine);
+        store.set_hedge_policy(Some(policy));
+
+        let booked = store
+            .book_with_routing(
+                dated_bond(0, 10_000_000.0, Side::Buy, 9),
+                bond_attribution(),
+            )
+            .expect("books");
+        let before = store.book_net_dv01("wh");
+        let id = store.hedge_suggestions().list(None)[0]
+            .suggestion_id
+            .clone();
+
+        let prov = store
+            .resolve_hedge_suggestion(&id, false)
+            .expect("firing a standing suggestion succeeds")
+            .expect("a fired hedge stamps provenance");
+        assert_eq!(prov.parent_position_id, Some(booked.position_id));
+        assert!(!prov.advisory, "a live composite fill is not advisory");
+        assert!(prov.external_hedged > 0.0);
+        assert!(
+            prov.vehicle_plan.is_some(),
+            "the fired record carries the vehicle sizing the trader was shown"
+        );
+        assert_eq!(
+            engine
+                .provenance(None, None)
+                .iter()
+                .filter(|p| p.parent_position_id == Some(booked.position_id))
+                .count(),
+            1,
+            "exactly one ring record per fired hedge"
+        );
+
+        // The book actually reduced — a hedge that does not reduce the book is not an exit.
+        let after = store.book_net_dv01("wh");
+        assert!(
+            after.abs() < before.abs(),
+            "the offsetting leg must reduce the book: {before} → {after}"
+        );
+
+        // Consumed: it is gone from the store and cannot be fired again.
+        assert!(store.hedge_suggestions().is_empty());
+        assert!(
+            store.resolve_hedge_suggestion(&id, false).is_err(),
+            "a fired suggestion must never be fireable twice"
+        );
+    }
+
+    /// Dismissing trades nothing and hides nothing: the suggestion clears, but the risk stays
+    /// exactly where it was.
+    #[test]
+    fn dismissing_a_suggestion_clears_it_without_trading() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let policy = vehicle_policy("wh", 100_000.0, true);
+        let engine = Arc::clone(&policy.engine);
+        store.set_hedge_policy(Some(policy));
+        let booked = store
+            .book_with_routing(
+                dated_bond(0, 10_000_000.0, Side::Buy, 9),
+                bond_attribution(),
+            )
+            .expect("books");
+        let before = store.book_net_dv01("wh");
+        let id = store.hedge_suggestions().list(None)[0]
+            .suggestion_id
+            .clone();
+
+        assert_eq!(
+            store
+                .resolve_hedge_suggestion(&id, true)
+                .expect("dismiss succeeds"),
+            None,
+            "a dismiss stamps no provenance — nothing traded"
+        );
+        assert!(store.hedge_suggestions().is_empty());
+        assert!(
+            (store.book_net_dv01("wh") - before).abs() < 1e-12,
+            "the risk stays on the book after a dismiss"
+        );
+        assert!(
+            engine
+                .provenance(None, None)
+                .iter()
+                .all(|p| p.parent_position_id != Some(booked.position_id))
+        );
+    }
+
+    /// **Nothing changes for an existing policy.** A leaf that names no vehicle is the
+    /// self-hedge: the venue is asked for the position's own security, the record carries no
+    /// vehicle plan, and the book reduces exactly as it always did.
+    #[test]
+    fn a_policy_with_no_vehicle_behaves_exactly_as_before() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let policy = external_hedge_policy("wh", 100_000.0, 0.5);
+        let engine = Arc::clone(&policy.engine);
+        store.set_hedge_policy(Some(policy));
+
+        let booked = store
+            .book_with_routing(
+                dated_bond(0, 10_000_000.0, Side::Buy, 9),
+                bond_attribution(),
+            )
+            .expect("books");
+        let rec = engine
+            .provenance(None, None)
+            .into_iter()
+            .find(|p| p.parent_position_id == Some(booked.position_id))
+            .expect("a shed stamps a record");
+        assert!(
+            rec.vehicle_plan.is_none(),
+            "a self-hedge has no vehicle plan — its ratio is identically 1"
+        );
+        assert!(
+            store.hedge_suggestions().is_empty(),
+            "with no exit-mode binding the shed fires automatically, as it always did"
+        );
+        assert!(rec.external_hedged > 0.0);
+    }
+
+    /// A named vehicle the registry does not know cannot be sized, so the shed falls back to
+    /// the self-hedge — a real, exact hedge — rather than trading a guessed contract count.
+    #[test]
+    fn an_unregistered_vehicle_falls_back_to_the_self_hedge_rather_than_guessing() {
+        use celnet_hedge_routing::{ExecStyle, ExitAction, HedgeNode, HedgeSize, HedgeVehicle};
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let mut nodes = std::collections::BTreeMap::new();
+        nodes.insert(
+            0u32,
+            HedgeNode::action_with(
+                ExitAction::SubmitMarketOrder {
+                    size: HedgeSize::Full,
+                    style: ExecStyle::Immediate,
+                },
+                HedgeVehicle::Future {
+                    contract_id: "GHOST-DEC26".into(),
+                },
+            ),
+        );
+        let policy = RatesHedgePolicy {
+            graph: Some(HedgeGraph { entry: 0, nodes }),
+            ..hedge_policy("wh", 100_000.0, 0.5)
+        };
+        let engine = Arc::clone(&policy.engine);
+        store.set_hedge_policy(Some(policy));
+
+        let booked = store
+            .book_with_routing(
+                dated_bond(0, 10_000_000.0, Side::Buy, 9),
+                bond_attribution(),
+            )
+            .expect("books");
+        let rec = engine
+            .provenance(None, None)
+            .into_iter()
+            .find(|p| p.parent_position_id == Some(booked.position_id))
+            .expect("the shed still fires");
+        assert!(
+            rec.vehicle_plan.is_none(),
+            "an unsizeable vehicle produces NO plan — it must not be traded on a guess"
+        );
+        assert!(
+            rec.external_hedged > 0.0,
+            "the shed still happens, as an exact self-hedge"
+        );
+    }
+
+    /// The scoped exit mode resolves most-specific-wins and defaults to `Auto`, so a firm
+    /// that configures nothing keeps firing automatically.
+    #[test]
+    fn exit_mode_resolves_most_specific_wins_and_defaults_to_auto() {
+        use celnet_hedge_routing::HedgeExitMode;
+        let mut cfg = HedgeConfigDef::default();
+        assert_eq!(
+            cfg.resolve_exit_mode("RATES", "wh", "BOND"),
+            HedgeExitMode::Auto,
+            "an unconfigured firm fires automatically, exactly as before"
+        );
+        cfg.upsert_exit_mode(crate::config::hedge_policy::ScopedExitMode {
+            scope_kind: HedgeScopeKind::Desk,
+            scope_id: "RATES".into(),
+            mode: HedgeExitMode::Suggest,
+        });
+        assert_eq!(
+            cfg.resolve_exit_mode("RATES", "wh", "BOND"),
+            HedgeExitMode::Suggest
+        );
+        // A more specific book binding wins over the desk one.
+        cfg.upsert_exit_mode(crate::config::hedge_policy::ScopedExitMode {
+            scope_kind: HedgeScopeKind::Book,
+            scope_id: "wh".into(),
+            mode: HedgeExitMode::Auto,
+        });
+        assert_eq!(
+            cfg.resolve_exit_mode("RATES", "wh", "BOND"),
+            HedgeExitMode::Auto,
+            "an explicit book-level Auto overrides a desk-wide Suggest"
+        );
+        // Clearing that override restores inheritance from the wider desk scope.
+        cfg.remove_exit_mode(HedgeScopeKind::Book, "wh");
+        assert_eq!(
+            cfg.resolve_exit_mode("RATES", "wh", "BOND"),
+            HedgeExitMode::Suggest
+        );
     }
 }

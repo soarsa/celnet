@@ -619,6 +619,149 @@ const ENTRY_LIST: readonly HelpEntry[] = [
     keywords: ["wizard", "exit policy", "rule", "scenario", "analyse", "flow", "suggest", "threshold", "net notional", "net dv01", "warehouse", "flatten", "back-to-back", "tiered", "internalise", "guided"],
     tourId: "hedge-rule-wizard",
   },
+  {
+    id: "concept.hedge-vehicle",
+    category: "concept",
+    title: "Hedge vehicle — what a rule trades",
+    purpose: "Choose what an exit action hedges WITH, not just what kind of exit it is.",
+    howItWorks:
+      "Every size-bearing exit leaf (Submit market order, RFQ out, Split, Clear risk, Cross internal) now says WITH WHAT as well as WHAT. SELF sells the same security back: leg and fill are the identical instrument, so their DV01 ratio is identically 1 under any duration measure — exact, with no registry, no duration model and no residual. That is the right answer for a swap or a govvie, and it is the default, so every rule authored before this existed keeps behaving exactly as it did. It is NOT how a corporate bond is hedged. A corp is hedged with a benchmark at matching maturity, in practice a Treasury future, and the moment the hedge instrument differs from the position that ratio stops being 1 — the size then needs a DV01 per unit. BENCHMARK resolves the instrument from the hedge-vehicle registry by instrument + maturity bucket. INSTRUMENT and FUTURE name one explicitly; a FUTURE is sized in whole contracts, so it always rounds. A named vehicle must be a registry row, because that row is where the DV01 per unit comes from — the server rejects one it cannot price. Warehouse, Skew and Escalate place no order, so they carry no vehicle at all.",
+    example: {
+      scenario: "A 9y USD corporate is 138% of its DV01 budget; the shed target is 24,840 DV01.",
+      rows: [
+        { label: "Self", value: "sell back the same bond — ratio 1, exact, no residual" },
+        { label: "Benchmark", value: "the 7–10y USD registry row resolves to TY-DEC26" },
+        { label: "DV01 per unit", value: "78 per contract (from that registry row)" },
+        { label: "Exact units", value: "24,840 / 78 = 318.46 contracts" },
+        { label: "Traded", value: "318 contracts (whole lots) ⇒ 24,804 DV01 hedged" },
+        { label: "Residual", value: "+36 DV01 — rounded down, still on the book" },
+      ],
+      takeaway:
+        "Self is exact by construction; any other vehicle needs the registry's DV01 per unit and leaves a rounding residual you should read the sign of.",
+    },
+    howToConfigure: [
+      "Open Hedging Rules → Exit Policy and edit (or create) a rule.",
+      "Pick a size-bearing exit action — the “Hedge with” picker appears beneath it.",
+      "Leave it on Same security (self) to keep today's exact behaviour.",
+      "Choose Benchmark to resolve by maturity bucket, or Named instrument / Named future to pin one.",
+      "For a named vehicle, pick from the list — it offers exactly the registered hedge instruments.",
+      "If the list is empty, add the vehicle first under Hedging Rules → Vehicles.",
+    ],
+    whenToUse:
+      "Reach for Benchmark or Future the moment a book holds risk that is not economically hedgeable with itself — corporates, illiquid credit, anything where selling the line back would move the market or is simply not possible.",
+    risks:
+      "A non-self vehicle is only as good as its DV01 per unit: a stale or wrong registry row mis-sizes every hedge that resolves through it. A future rounds to whole contracts, so there is always a residual — read its sign. And a size computed off the coarse bond exposure proxy is approximate, which the suggestion surface flags explicitly.",
+    keywords: [
+      "vehicle", "hedge with", "benchmark", "future", "contract", "self", "same security", "corporate bond",
+      "treasury future", "dv01 per unit", "maturity bucket", "ratio", "exit action",
+    ],
+  },
+  {
+    id: "concept.hedge-vehicle-registry",
+    category: "concept",
+    title: "Hedge-vehicle registry",
+    purpose: "Define what each class of risk is hedged with — and the DV01 per unit that sizes it.",
+    howItWorks:
+      "The registry is the firm's roster of hedge vehicles. Each row matches on three ANDed axes — instrument, product, currency, each optional (empty ⇒ matches anything) — plus a half-open maturity bucket [min, max) in years, and names the instrument a match hedges WITH. It carries that instrument's DV01 per unit and what one unit IS (a “contract” for a future, “1mm face” for cash). The maturity bucket is what makes a BENCHMARK vehicle resolvable: a 9y corporate falls into the 7–10y row and picks up its future. The DV01 per unit is the divisor that turns a target DV01 into tradeable units, so it is the reason a named vehicle must be registered at all — an unregistered instrument has no size. The roster round-trips through the same engine-config save as the LP panels; there is no separate CRUD step.",
+    example: {
+      scenario: "Four rows covering USD corporates, GBP gilts and USD swaps.",
+      rows: [
+        { label: "USD BOND 7–10y", value: "→ TY-DEC26, future, 78 DV01/contract" },
+        { label: "USD BOND 2–5y", value: "→ FV-DEC26, future, 42 DV01/contract" },
+        { label: "GBP BOND 3–7y", value: "→ G-MAR27, future, 64 DV01/contract" },
+        { label: "USD OIS any", value: "→ USD-SOFR-OIS-5Y, cash, 480 DV01 per 1mm face" },
+        { label: "Unset bucket", value: "min = max = 0 ⇒ any maturity" },
+      ],
+      takeaway: "One row per (asset class × maturity bucket); the DV01 per unit is the number that does the work.",
+    },
+    howToConfigure: [
+      "Open Hedging Rules → Vehicles.",
+      "Press “+ Add hedge vehicle” and give it a unique id.",
+      "Narrow the match as far as you need — leave instrument / product / currency empty for “any”.",
+      "Set the maturity bucket [min, max) in years; leave both at 0 for any maturity.",
+      "Name the hedge instrument and tick “Future” if it trades in whole contracts (this also sets the unit label).",
+      "Enter the DV01 per unit — it must be greater than zero, or nothing can be sized off the row.",
+      "Save; the row is committed with the rest of the engine config.",
+    ],
+    whenToUse:
+      "Before authoring any rule that hedges with a Benchmark, Named instrument or Named future — those vehicles cannot resolve or size without a row here.",
+    risks:
+      "The DV01 per unit is entered, not derived, so it drifts as the benchmark rolls — review it when contracts roll or the curve moves materially. Overlapping maturity buckets make which row wins ambiguous; keep them disjoint. Deleting a row that a live rule names leaves that rule unpriceable and the server will reject it on the next save.",
+    keywords: [
+      "registry", "vehicle", "roster", "dv01 per unit", "maturity bucket", "benchmark", "future", "contract",
+      "unit label", "hedge instrument", "product", "currency", "match",
+    ],
+  },
+  {
+    id: "concept.hedge-exit-mode",
+    category: "concept",
+    title: "Exit mode — auto vs suggest",
+    purpose: "Decide whether a resolved hedge fires by itself, or waits for you as a standing row.",
+    howItWorks:
+      "AUTO is the existing behaviour: a breach resolves the exit policy and trades. SUGGEST changes only the last step — the engine still measures the book, still resolves the policy and still SIZES the hedge in its vehicle, then trades nothing and publishes a STANDING suggestion onto Risk → Hedge flows with a “Hedge now” button beside it. It is deliberately NOT a confirmation dialog: nothing pops up, nothing interrupts, and the row is not lost if you ignore it. That is the point — a modal is dismissed reflexively and takes the decision with it, whereas a standing row waits until someone acts on it. Bindings use the same desk / book / instrument scoping and the same most-specific-wins resolution (instrument > book > desk) as the warehouse thresholds and the LP panels. An unbound scope is Auto.",
+    example: {
+      scenario: "The credit book is bound to SUGGEST; the rates book is left on AUTO.",
+      rows: [
+        { label: "Rates book breaches", value: "policy resolves → hedge TRADES immediately" },
+        { label: "Credit book breaches", value: "policy resolves, hedge is sized — nothing trades" },
+        { label: "What you see", value: "a standing row on Risk → Hedge flows: “Sell 318 contracts of TY-DEC26”" },
+        { label: "Hedge now", value: "fires the sized hedge — no confirmation step" },
+        { label: "Dismiss", value: "drops the row and trades nothing" },
+        { label: "Ignore it", value: "the row stays; nothing is lost" },
+      ],
+      takeaway: "Suggest buys a human check WITHOUT a popup — the deliberation happens on the row, not in a dialog.",
+    },
+    howToConfigure: [
+      "Open Hedging Rules → Exit mode.",
+      "Press “+ Bind a scope” and pick desk, book or instrument, then its id.",
+      "Choose Auto (fire on breach) or Suggest (raise a standing row).",
+      "Save; the binding is committed with the rest of the engine config.",
+      "Watch the standing rows under Risk → Hedge flows → Suggestions.",
+    ],
+    whenToUse:
+      "Use Suggest where a hedge deserves a human eye before it goes out — a benchmark-future hedge on an illiquid corporate, an unusually large clip, or a book you are still calibrating. Keep Auto where the flow is routine and latency matters.",
+    risks:
+      "A suggestion does NOT hedge: risk keeps running until someone acts on the row, so a Suggest-scoped book needs someone watching it. The sized numbers are a snapshot at raise time — the mid and the exposure move afterwards. And Suggest is orthogonal to the execution mode: Advisory still trades nothing even when you press Hedge now.",
+    keywords: [
+      "exit mode", "auto", "suggest", "standing", "suggestion", "no popup", "no dialog", "hedge now",
+      "dismiss", "scope", "desk", "book", "instrument", "most-specific",
+    ],
+  },
+  {
+    id: "concept.hedge-suggestion",
+    category: "concept",
+    title: "How to read a hedge suggestion",
+    purpose: "Understand the instruction, the sizing arithmetic, and the residual before you press Hedge now.",
+    howItWorks:
+      "A suggestion row leads with the INSTRUCTION — “Sell 318 contracts of TY-DEC26” — because that is the thing you would do. Beneath it sits the risk context (RAG band, book · instrument, utilisation, when it was raised) and the engine's rationale. If the hedge uses a vehicle other than the position itself, the row also shows the sizing: the TARGET DV01, the DV01 per unit, the EXACT units before rounding, the units that will actually TRADE, and the RESIDUAL. Read the residual's sign, because it is easy to read backwards: it is target minus hedged, so “rounded down, 36 DV01 still on the book” means you remain under-hedged by 36, while “rounded up, over-hedged by 31 DV01” means the whole-lot rounding took off more than the target. When the size was computed off the duration-blind exposure proxy — the coarse measure that treats every bond as duration 1 — the row carries a prominent APPROXIMATE warning. That size is not exact and must not be traded as though it were.",
+    example: {
+      scenario: "A standing suggestion on the credit book, raised at a breach of 138% of budget.",
+      rows: [
+        { label: "Headline", value: "Sell 318 contracts of TY-DEC26" },
+        { label: "Context", value: "BREACH · fi-credit-emea · XS2034-ACME-4H · 138% of budget" },
+        { label: "Target / per unit", value: "24,840 DV01 target; 78 DV01 per contract" },
+        { label: "Exact vs traded", value: "318.46 exact → 318 contracts traded" },
+        { label: "Residual", value: "rounded down, 36 DV01 still on the book" },
+        { label: "Warning", value: "shown when the size came off the duration-blind exposure proxy" },
+      ],
+      takeaway: "The headline is what to do; the residual and the warning are what it will NOT do.",
+    },
+    howToConfigure: [
+      "Open Risk → Hedge flows; standing suggestions sit at the top under “Suggestions”.",
+      "Read the headline, then check the residual's wording — under-hedged or over-hedged.",
+      "If the approximate-size warning is present, verify the size against your own duration before acting.",
+      "Press “Hedge now” to fire it, or “Dismiss” to drop it. Neither asks for confirmation.",
+      "A rejected hedge restores the row and shows the reason inline — the suggestion is never lost.",
+    ],
+    whenToUse:
+      "Whenever a Suggest-scoped book breaches. Treat the board as a to-do list: a row that is still there is risk that is still unhedged.",
+    risks:
+      "The numbers are a snapshot at raise time — an old row may be sized off a stale mid and exposure. A whole-lot vehicle always leaves a residual, so a book hedged this way is never exactly flat. And an approximate (proxy-sized) hedge can be materially wrong on a long-duration bond, where the proxy understates the true DV01 several-fold.",
+    keywords: [
+      "suggestion", "standing", "headline", "residual", "rounded", "over-hedged", "under-hedged",
+      "approximate", "proxy", "duration", "hedge now", "dismiss", "hedge flows", "read",
+    ],
+  },
 ];
 
 /** The registry keyed by id (built once from the ordered list). */

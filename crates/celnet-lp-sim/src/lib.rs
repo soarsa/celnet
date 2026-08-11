@@ -76,10 +76,12 @@
 
 pub mod books;
 pub mod fleet;
+pub mod futures;
 pub mod lp;
 pub mod lpsim;
 pub mod net;
 pub mod price;
+pub mod quoted;
 mod rng;
 pub mod universe;
 
@@ -87,14 +89,17 @@ pub use books::{
     BookScope, BookView, StreamDiff, StreamKey, StreamPlan, resolve_from_descs, resolve_plan,
 };
 pub use fleet::{FleetConfig, FleetInstrument, fleet, into_feeds};
+pub use futures::{FuturesContract, futures_lines, load_futures_universe};
 pub use lp::{Fault, InstrumentModel, LpParams, SimLp};
 pub use lpsim::{
     BondComposite, DEFAULT_LP_NAME, LpQuoteSnapshot, LpSimConfig, build_fleet, composite_for,
+    quotable_lines,
 };
 pub use net::{BookFeedOptions, FaultSchedule, LoginCredentials, run_book_aware_feed};
 pub use price::{MidSource, YieldModel};
+pub use quoted::QuotedLine;
 pub use universe::{
-    SecurityType, TreasuryBond, load_coupon_universe, load_curated_universe,
+    SecurityType, TreasuryBond, bond_lines, load_coupon_universe, load_curated_universe,
     load_government_universe, load_universe, parse_universe,
 };
 

@@ -20,6 +20,7 @@
 
 pub mod engine;
 pub mod executor;
+pub mod suggestion;
 pub mod wire;
 
 pub use engine::{AutoHedgeEngine, HedgeOutcome, PROVENANCE_RING_CAPACITY};
@@ -28,3 +29,4 @@ pub use executor::{
     HedgeLeg, HedgeVenue, LedgerExecutor, LpFill, LpHedgeSource, NoLpSource, composite_hedge_price,
     execute_external,
 };
+pub use suggestion::{StandingSuggestion, SuggestionExec, SuggestionStore};

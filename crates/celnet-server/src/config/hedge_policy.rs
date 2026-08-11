@@ -15,7 +15,10 @@
 //!
 //! `docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4 / §8.4.
 
-use celnet_hedge_routing::{HedgeLpPanel, LimitMetric, WarehouseThreshold};
+use celnet_hedge_routing::{
+    HedgeExitMode, HedgeLpPanel, HedgeVehicleRegistry, HedgeVehicleRule, LimitMetric,
+    WarehouseThreshold,
+};
 use serde::{Deserialize, Serialize};
 
 /// Persistence-serde helper for `f64` fields that can legitimately hold a **non-finite**
@@ -505,6 +508,33 @@ impl ScopedLpPanel {
     }
 }
 
+/// A **scoped exit-mode binding**: whether exits in this desk / book / instrument fire
+/// automatically or publish a standing suggestion a trader fires
+/// (`docs/HEDGING-AND-RISK-EXIT.md` §6.5).
+///
+/// Resolves **most-specific-wins** (instrument > book > desk), the identical precedence
+/// [`ScopedLpPanel`] uses — so a firm binds `SUGGEST` to one credit book while the rest of
+/// the estate keeps firing automatically. An unbound scope is
+/// [`HedgeExitMode::Auto`], which is exactly the historical behaviour.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopedExitMode {
+    /// What the bound `scope_id` names (desk / book / instrument).
+    pub scope_kind: HedgeScopeKind,
+    /// The desk / book / instrument id this mode binds to.
+    pub scope_id: String,
+    /// Fire automatically, or suggest and wait.
+    #[serde(default)]
+    pub mode: HedgeExitMode,
+}
+
+impl ScopedExitMode {
+    /// Whether two bindings address the same scope (kind + id) — the upsert key.
+    #[must_use]
+    pub fn same_scope(&self, other: &ScopedExitMode) -> bool {
+        self.scope_kind == other.scope_kind && self.scope_id == other.scope_id
+    }
+}
+
 /// One per-desk enable toggle in the engine config.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HedgeDeskToggle {
@@ -557,6 +587,19 @@ pub struct HedgeConfigDef {
     /// An additive serde-default list, so an existing `identity.json` loads unchanged.
     #[serde(default)]
     pub lp_panels: Vec<ScopedLpPanel>,
+    /// The firm's **hedge-vehicle registry** — which vehicle hedges which risk, resolved
+    /// by instrument and **maturity bucket** (`docs/HEDGING-AND-RISK-EXIT.md` §6.4). This
+    /// is where a `BENCHMARK` leaf finds its hedge instrument, and where an explicitly
+    /// named `INSTRUMENT`/`FUTURE` vehicle finds its **DV01 per unit** — the ratio's
+    /// denominator. A vehicle absent from here cannot be sized, and the booking path
+    /// falls back to the self-hedge rather than trading a guessed quantity (guardrail 2).
+    /// An additive serde-default list, so an existing `identity.json` loads unchanged.
+    #[serde(default)]
+    pub vehicles: HedgeVehicleRegistry,
+    /// The scoped **suggest-vs-auto** exit modes (§6.5). Empty ⇒ `Auto` everywhere, i.e.
+    /// the historical fire-on-breach behaviour. Additive serde-default.
+    #[serde(default)]
+    pub exit_modes: Vec<ScopedExitMode>,
     /// The minimum dealer-captured **edge** (basis points) a booked fill must clear to be
     /// internalised (warehoused) rather than handed back to the street as an advisory
     /// external back-to-back (§6): a fill dealt within this floor of the engine reference
@@ -596,6 +639,8 @@ impl Default for HedgeConfigDef {
             max_hedges_per_interval: 0,
             daily_external_notional_cap: 0.0,
             lp_panels: Vec::new(),
+            vehicles: HedgeVehicleRegistry::default(),
+            exit_modes: Vec::new(),
             min_edge_bps: default_min_edge_bps(),
         }
     }
@@ -637,6 +682,64 @@ impl HedgeConfigDef {
             .or_else(|| by(HedgeScopeKind::Book, book))
             .or_else(|| by(HedgeScopeKind::Desk, desk))
             .map(|p| &p.panel)
+    }
+
+    /// Resolve the **exit mode** for a `(desk, book, instrument)` risk state,
+    /// **most-specific-wins** (instrument > book > desk) — the identical precedence
+    /// [`Self::resolve_lp_panel`] uses. An unbound scope is
+    /// [`HedgeExitMode::Auto`], so a firm that has configured nothing keeps firing
+    /// automatically exactly as it always did.
+    #[must_use]
+    pub fn resolve_exit_mode(&self, desk: &str, book: &str, instrument: &str) -> HedgeExitMode {
+        let by = |kind: HedgeScopeKind, id: &str| {
+            self.exit_modes
+                .iter()
+                .find(move |m| m.scope_kind == kind && m.scope_id == id)
+        };
+        by(HedgeScopeKind::Instrument, instrument)
+            .or_else(|| by(HedgeScopeKind::Book, book))
+            .or_else(|| by(HedgeScopeKind::Desk, desk))
+            .map_or(HedgeExitMode::Auto, |m| m.mode)
+    }
+
+    /// Upsert one exit-mode binding by scope (kind + id).
+    ///
+    /// An explicit [`HedgeExitMode::Auto`] binding is **kept**, not treated as a delete: it
+    /// is a real override that lets a book fire automatically underneath a desk-wide
+    /// `Suggest`. (Removal is [`Self::remove_exit_mode`] — the operator's explicit "clear
+    /// this override" gesture, which restores inheritance from the wider scope.)
+    pub fn upsert_exit_mode(&mut self, entry: ScopedExitMode) {
+        self.exit_modes.retain(|m| !m.same_scope(&entry));
+        self.exit_modes.push(entry);
+    }
+
+    /// Clear one scope's exit-mode override, so it inherits from the next-wider scope again.
+    pub fn remove_exit_mode(&mut self, scope_kind: HedgeScopeKind, scope_id: &str) {
+        self.exit_modes
+            .retain(|m| !(m.scope_kind == scope_kind && m.scope_id == scope_id));
+    }
+
+    /// The hedge-instrument ids the vehicle registry knows — the set
+    /// [`HedgeGraph::validate`](celnet_hedge_routing::HedgeGraph::validate) checks a
+    /// leaf's explicitly named vehicle against, so a rule can never name a vehicle whose
+    /// DV01 per unit the firm has not configured.
+    #[must_use]
+    pub fn known_vehicles(&self) -> std::collections::BTreeSet<String> {
+        self.vehicles
+            .rules
+            .iter()
+            .filter(|r| r.validate().is_ok())
+            .map(|r| r.hedge_instrument_id.clone())
+            .collect()
+    }
+
+    /// Upsert one vehicle-registry row by id; an empty `hedge_instrument_id` **removes**
+    /// the row (the operator's delete gesture).
+    pub fn upsert_vehicle(&mut self, entry: HedgeVehicleRule) {
+        self.vehicles.rules.retain(|r| r.id != entry.id);
+        if !entry.hedge_instrument_id.trim().is_empty() {
+            self.vehicles.rules.push(entry);
+        }
     }
 
     /// Upsert one LP panel by scope (kind + id). A panel that is **unrestricted** (empty

@@ -82,13 +82,113 @@ pub enum Fault {
 }
 
 /// One instrument an LP makes a market in, paired with the mid source that prices
-/// it.
+/// it and the quoting conventions of that instrument's market.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InstrumentModel {
     /// The instrument key this model quotes.
     pub instrument: Instrument,
     /// How the LP forms its ground-truth mid for the instrument.
     pub mid: MidSource,
+    /// A multiplier on the LP's [`half_spread`](LpParams::half_spread) for this
+    /// instrument, so one LP can quote markets whose natural width differs by an order
+    /// of magnitude — a cash bond's couple of basis points versus a listed future's
+    /// single minimum price increment. `1.0` uses the LP's own half-spread.
+    pub spread_scale: f64,
+    /// A multiplier on the LP's directional [`skew`](LpParams::skew) for this
+    /// instrument — how far this member's market leans away from the panel's centre.
+    ///
+    /// Carried separately from [`spread_scale`](Self::spread_scale) because the two
+    /// are not proportional across market structures. On a listed venue every market
+    /// maker quotes essentially the same one- or two-tick market and competes on size
+    /// and queue position, so the lean must stay a small fraction of the half-spread
+    /// or the panel's best bid would print through its best offer — a crossed
+    /// composite, which the RFQ resolver rejects outright.
+    pub lean_scale: f64,
+    /// The minimum price increment this instrument trades on, if any. The bid is
+    /// snapped **down** to the grid and the offer **up**, which is what an
+    /// exchange-listed market maker shows and can never invert a two-way. `None` for
+    /// an off-grid OTC instrument.
+    pub tick: Option<f64>,
+    /// Whether the panel shares one stochastic draw (and one re-quote cadence) for
+    /// this instrument instead of each member drawing its own.
+    ///
+    /// This is the difference between an OTC market and a listed one. Bilateral cash
+    /// dealers each form their own view, so per-member noise is the right model. On an
+    /// exchange every market maker is looking at the *same* order book and re-quotes
+    /// off the same price update, so the market moves as one and the members differ
+    /// only by their deliberate lean and inventory position.
+    ///
+    /// It is also what keeps a listed composite fillable. Independent per-member
+    /// draws displace the members' mids by the instrument's DV01 times the yield
+    /// jitter — on a listed contract that is many minimum price increments, far more
+    /// than the tick-wide spread, so the panel's best bid routinely prints through its
+    /// best offer and the composite comes out **crossed**. A crossed line is rejected
+    /// by the server's RFQ resolver, so the hedge it exists to fill never fills.
+    pub common_tick_noise: bool,
+}
+
+/// The shared re-quote cadence for a listed instrument: the panel steps its common
+/// stochastic draw together rather than on each member's own dispersed cadence,
+/// because an exchange price update reaches every market maker at once.
+const LISTED_TICK_NANOS: i64 = 250_000_000;
+
+/// The seed and venue label the shared listed-market draw is keyed on, so every
+/// member of the panel samples the identical value for a given (instrument, tick).
+const SHARED_MARKET_SEED: u64 = 0x4C49_5354_4544_0001;
+
+/// The venue key of the shared listed-market draw (a label, not a real connection).
+static SHARED_MARKET_VENUE: std::sync::LazyLock<VenueId> =
+    std::sync::LazyLock::new(|| VenueId::new("LISTED-MARKET"));
+
+impl InstrumentModel {
+    /// A model quoting `instrument` off `mid` with the LP's own spread and skew, off
+    /// any price grid — the OTC default.
+    #[must_use]
+    pub fn new(instrument: Instrument, mid: MidSource) -> Self {
+        Self {
+            instrument,
+            mid,
+            spread_scale: 1.0,
+            lean_scale: 1.0,
+            tick: None,
+            common_tick_noise: false,
+        }
+    }
+
+    /// This model with an exchange-style quoting shape: the half-spread scaled by
+    /// `spread_scale`, the directional lean by `lean_scale`, quotes snapped to a
+    /// `tick` grid, and — when `tick` is set — the panel's stochastic draw shared, so
+    /// the listed market moves as one (see
+    /// [`common_tick_noise`](Self::common_tick_noise)).
+    #[must_use]
+    pub fn with_quote_shape(
+        mut self,
+        spread_scale: f64,
+        lean_scale: f64,
+        tick: Option<f64>,
+    ) -> Self {
+        self.spread_scale = spread_scale;
+        self.lean_scale = lean_scale;
+        self.common_tick_noise = tick.is_some();
+        self.tick = tick;
+        self
+    }
+
+    /// A configured multiplier, guarding a non-finite or non-positive value back to
+    /// `1.0` (a degenerate scale would collapse or invert a two-way rather than
+    /// merely quoting it oddly).
+    fn scale(configured: f64) -> f64 {
+        if configured.is_finite() && configured > 0.0 {
+            configured
+        } else {
+            1.0
+        }
+    }
+
+    /// The usable price grid for this instrument, if it has one.
+    fn grid(&self) -> Option<f64> {
+        self.tick.filter(|t| t.is_finite() && *t > 0.0)
+    }
 }
 
 /// A deterministic-seeded simulated liquidity provider. Implements
@@ -130,10 +230,7 @@ impl SimLp {
             VenueId::new(venue),
             0,
             params,
-            vec![InstrumentModel {
-                instrument,
-                mid: MidSource::Fixed(mid),
-            }],
+            vec![InstrumentModel::new(instrument, MidSource::Fixed(mid))],
         )
     }
 
@@ -166,11 +263,21 @@ impl SimLp {
     /// The seeded per-tick noise for a stochastic mid at logical `t_nanos`
     /// (`0.0` for a constant ladder mid, which needs no draw).
     fn noise_at(&self, model: &InstrumentModel, t_nanos: i64) -> f64 {
-        if model.mid.is_stochastic() {
+        if !model.mid.is_stochastic() {
+            return 0.0;
+        }
+        if model.common_tick_noise {
+            // A listed market: one draw on one cadence for the whole panel.
+            let tick = t_nanos.div_euclid(LISTED_TICK_NANOS);
+            seeded_unit(
+                SHARED_MARKET_SEED,
+                &SHARED_MARKET_VENUE,
+                &model.instrument,
+                tick,
+            )
+        } else {
             let tick = t_nanos.div_euclid(self.params.tick_nanos.max(1));
             seeded_unit(self.seed, &self.venue, &model.instrument, tick)
-        } else {
-            0.0
         }
     }
 }
@@ -200,12 +307,23 @@ impl VenueFeed for SimLp {
             mid += shift;
         }
 
-        let leaned = mid + self.params.skew;
+        // The instrument's market conventions rescale the LP's quoting knobs, then
+        // (for an exchange-listed instrument) snap the two-way onto its price grid:
+        // bid down, offer up — never inverting the quote.
+        let leaned = mid + self.params.skew * InstrumentModel::scale(model.lean_scale);
+        let half = self.params.half_spread * InstrumentModel::scale(model.spread_scale);
+        let (bid, offer) = match model.grid() {
+            Some(tick) => (
+                ((leaned - half) / tick).floor() * tick,
+                ((leaned + half) / tick).ceil() * tick,
+            ),
+            None => (leaned - half, leaned + half),
+        };
         Some(VenueQuote {
             venue: self.venue.clone(),
             instrument: instrument.clone(),
-            bid: leaned - self.params.half_spread,
-            offer: leaned + self.params.half_spread,
+            bid,
+            offer,
             bid_size: self.params.size,
             offer_size: self.params.size,
             ts,
@@ -252,10 +370,10 @@ mod tests {
             VenueId::new(venue),
             seed,
             LpParams::tight(),
-            vec![InstrumentModel {
-                instrument: instr(),
-                mid: MidSource::MeanRevertingYield(model),
-            }],
+            vec![InstrumentModel::new(
+                instr(),
+                MidSource::MeanRevertingYield(model),
+            )],
         )
     }
 
@@ -389,5 +507,162 @@ mod tests {
             assert!(p < prev, "price not decreasing at y={y}: {p} !< {prev}");
             prev = p;
         }
+    }
+}
+
+#[cfg(test)]
+mod quote_shape_tests {
+    use super::*;
+    use crate::price::MidSource;
+    use celnet_types::{Ccy, CcyPair, Tenor};
+
+    fn instr(tag: &str) -> Instrument {
+        let _ = tag;
+        Instrument::new(CcyPair::new(Ccy::EUR, Ccy::USD), Tenor::Years(5))
+    }
+
+    /// A tick-gridded model snaps the bid down and the offer up, so a member's own
+    /// two-way lands on the grid and is never inverted, however tight the spread.
+    #[test]
+    fn a_gridded_model_snaps_the_two_way_onto_its_grid() {
+        let tick = 1.0 / 64.0;
+        let model = InstrumentModel::new(instr("f"), MidSource::Fixed(110.4013)).with_quote_shape(
+            1.0,
+            1.0,
+            Some(tick),
+        );
+        let params = LpParams {
+            half_spread: tick / 2.0,
+            skew: 0.0,
+            ..LpParams::tight()
+        };
+        let lp = SimLp::new(VenueId::new("LP-1"), 7, params, vec![model]);
+        let q = lp.top_of_book(&instr("f"), 0).expect("quotes");
+
+        for px in [q.bid, q.offer] {
+            let ticks = px / tick;
+            assert!((ticks - ticks.round()).abs() < 1e-9, "{px} off the grid");
+        }
+        assert!(q.bid <= q.offer, "a snapped two-way is never inverted");
+        assert!(
+            q.bid <= 110.4013 && q.offer >= 110.4013,
+            "the mid is inside"
+        );
+        // One or two ticks wide — a listed market, not a cash-bond spread.
+        let width = (q.offer - q.bid) / tick;
+        assert!((1.0..=2.0).contains(&width.round()), "{width} ticks wide");
+    }
+
+    /// The spread and lean multipliers act independently, so a listed line can quote
+    /// a tick-wide market while keeping members' leans a small fraction of it.
+    #[test]
+    fn spread_and_lean_scale_independently() {
+        let base = LpParams {
+            half_spread: 0.02,
+            skew: 0.008,
+            ..LpParams::tight()
+        };
+        let model = InstrumentModel::new(instr("x"), MidSource::Fixed(100.0))
+            .with_quote_shape(0.25, 0.05, None);
+        let lp = SimLp::new(VenueId::new("LP-2"), 1, base, vec![model]);
+        let q = lp.top_of_book(&instr("x"), 0).expect("quotes");
+        // half-spread 0.02 x 0.25 = 0.005; lean 0.008 x 0.05 = 0.0004.
+        assert!(((q.offer - q.bid) / 2.0 - 0.005).abs() < 1e-12);
+        assert!(((q.bid + q.offer) / 2.0 - 100.0004).abs() < 1e-12);
+    }
+
+    /// A degenerate (non-finite or non-positive) scale falls back to the LP's own
+    /// parameters rather than collapsing or inverting the quote.
+    #[test]
+    fn a_degenerate_scale_falls_back_to_the_lp_parameters() {
+        for bad in [0.0, -1.0, f64::NAN] {
+            let model = InstrumentModel::new(instr("y"), MidSource::Fixed(100.0))
+                .with_quote_shape(bad, bad, None);
+            let lp = SimLp::new(
+                VenueId::new("LP-3"),
+                1,
+                LpParams {
+                    half_spread: 0.02,
+                    ..LpParams::tight()
+                },
+                vec![model],
+            );
+            let q = lp.top_of_book(&instr("y"), 0).expect("quotes");
+            assert!(
+                ((q.offer - q.bid) / 2.0 - 0.02).abs() < 1e-12,
+                "bad = {bad}"
+            );
+        }
+    }
+
+    /// A listed line shares ONE stochastic draw across the panel — two members with
+    /// different seeds, venues and refresh cadences see the identical mid. This is
+    /// what stops a tick-wide listed composite from coming out crossed.
+    #[test]
+    fn a_listed_line_moves_the_whole_panel_together() {
+        let yield_model = crate::price::YieldModel {
+            bond: celnet_bond::Bond::new(
+                time::Date::from_calendar_date(2026, time::Month::June, 1).unwrap(),
+                time::Date::from_calendar_date(2033, time::Month::September, 1).unwrap(),
+                0.06,
+                celnet_bond::PaymentFrequency::SemiAnnual,
+                celnet_bond::AccrualBasis::Thirty360BondBasis,
+                100.0,
+            )
+            .unwrap(),
+            long_run_yield: 0.042,
+            initial_yield: 0.042,
+            reversion_per_sec: 0.02,
+            perturbation: 3.0e-4,
+        };
+        let listed = |seed: u64, venue: &str, cadence: i64| {
+            let model =
+                InstrumentModel::new(instr("z"), MidSource::MeanRevertingYield(yield_model))
+                    .with_quote_shape(1.0, 1.0, Some(1.0 / 64.0));
+            SimLp::new(
+                VenueId::new(venue),
+                seed,
+                LpParams {
+                    skew: 0.0,
+                    tick_nanos: cadence,
+                    ..LpParams::tight()
+                },
+                vec![model],
+            )
+        };
+        let a = listed(1, "LP-A", 100_000_000);
+        let b = listed(999, "LP-B", 600_000_000);
+        for t in [0_i64, 400_000_000, 3_000_000_000, 9_100_000_000] {
+            let qa = a.top_of_book(&instr("z"), t).expect("quotes");
+            let qb = b.top_of_book(&instr("z"), t).expect("quotes");
+            assert!(
+                (qa.bid - qb.bid).abs() < 1e-12 && (qa.offer - qb.offer).abs() < 1e-12,
+                "listed members diverged at t={t}: {qa:?} vs {qb:?}"
+            );
+        }
+
+        // An OTC line (no grid) keeps the per-member draw — the members DO differ.
+        let otc = |seed: u64, venue: &str| {
+            SimLp::new(
+                VenueId::new(venue),
+                seed,
+                LpParams {
+                    skew: 0.0,
+                    ..LpParams::tight()
+                },
+                vec![InstrumentModel::new(
+                    instr("z"),
+                    MidSource::MeanRevertingYield(yield_model),
+                )],
+            )
+        };
+        let c = otc(1, "LP-A");
+        let d = otc(999, "LP-B");
+        let qc = c.top_of_book(&instr("z"), 400_000_000).expect("quotes");
+        let qd = d.top_of_book(&instr("z"), 400_000_000).expect("quotes");
+        assert!(
+            (qc.bid - qd.bid).abs() > 1e-9,
+            "OTC members should form independent views"
+        );
     }
 }

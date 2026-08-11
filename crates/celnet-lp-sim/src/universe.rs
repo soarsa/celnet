@@ -228,6 +228,34 @@ impl TreasuryBond {
         })
     }
 
+    /// The [`QuotedLine`](crate::quoted::QuotedLine) this bond streams as: its
+    /// canonical identity, engine key and reference-seeded stochastic yield model,
+    /// with the cash market's quoting conventions (the LP's own spread and skew, off
+    /// any price grid — a cash bond is quoted freely, not on an exchange tick).
+    ///
+    /// Returns `None` when the bond cannot be modelled at `settlement` — exactly the
+    /// cases [`yield_model`](Self::yield_model) rejects.
+    #[must_use]
+    pub fn to_line(
+        &self,
+        settlement: BrokenDate,
+        reversion_per_sec: f64,
+        perturbation: f64,
+    ) -> Option<crate::quoted::QuotedLine> {
+        let model = self.yield_model(settlement, reversion_per_sec, perturbation)?;
+        Some(crate::quoted::QuotedLine {
+            instrument_id: self.instrument_id.clone(),
+            display_name: self.display_name(),
+            identity: format!("{} / {}", self.isin, self.cusip),
+            instrument: self.engine_instrument(),
+            model,
+            spread_scale: 1.0,
+            lean_scale: 1.0,
+            yield_dispersion: None,
+            tick: None,
+        })
+    }
+
     /// Rebuild this security's real cashflow schedule as a [`celnet_bond::Bond`]
     /// valued at `settlement`, so the stochastic feed prices off the REAL analytics
     /// leaf (never a fabricated handle).
@@ -486,6 +514,23 @@ pub fn load_government_universe(include_bills: bool) -> Vec<TreasuryBond> {
     };
     universe.extend(load_curated_universe());
     universe
+}
+
+/// Build the [`QuotedLine`](crate::quoted::QuotedLine)s for a loaded cash-bond
+/// universe (see [`TreasuryBond::to_line`]). Bonds with no solvable reference yield
+/// at `settlement` — e.g. a deep-discount Bill the coupon-bond solver cannot bracket
+/// — are dropped, never quoted off a fabricated level.
+#[must_use]
+pub fn bond_lines(
+    bonds: &[TreasuryBond],
+    settlement: BrokenDate,
+    reversion_per_sec: f64,
+    perturbation: f64,
+) -> Vec<crate::quoted::QuotedLine> {
+    bonds
+        .iter()
+        .filter_map(|b| b.to_line(settlement, reversion_per_sec, perturbation))
+        .collect()
 }
 
 /// Parse a Treasury-universe JSON document into validated [`TreasuryBond`]s.

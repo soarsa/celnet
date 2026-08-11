@@ -72,6 +72,9 @@ function makeApp() {
         label: "mock",
         listRiskBooks: vi.fn(async () => []),
         getHedgePolicyGraph: vi.fn(async () => null),
+        // The Exit Policy tab loads the engine config for the leaf editor's hedge-VEHICLE
+        // picker (a named vehicle must be a registry row).
+        getHedgeConfig: vi.fn(async () => ({ vehicles: [], exitModes: [] })),
         updateHedgePolicyGraph,
       },
       auth: {

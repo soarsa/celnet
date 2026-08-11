@@ -189,10 +189,14 @@ pub fn calibration_instrument(
         InstrumentFamily::VanillaIrs(d) => {
             vanilla_irs_instrument(d, quote, value_date, &def.instrument_id)
         }
-        InstrumentFamily::Bond(_) => Err(CurveCalibrationError::NotCalibratable {
-            instrument_id: def.instrument_id.clone(),
-            family: "bond",
-        }),
+        // A listed bond future is a hedge vehicle, not a curve pillar: it is priced
+        // off the curve (through its deliverable), not used to build one.
+        InstrumentFamily::BondFuture(_) | InstrumentFamily::Bond(_) => {
+            Err(CurveCalibrationError::NotCalibratable {
+                instrument_id: def.instrument_id.clone(),
+                family: def.definition.kind(),
+            })
+        }
     }
 }
 

@@ -17,7 +17,7 @@
 
 use celnet_aggregation::{ConsolidatedBook, ExclusionReason, VenueFeed};
 use celnet_lp_sim::{
-    Fault, LpSimConfig, TreasuryBond, build_fleet, into_feeds, load_coupon_universe,
+    Fault, LpSimConfig, QuotedLine, build_fleet, into_feeds, load_coupon_universe,
 };
 
 const S: i64 = 1_000_000_000;
@@ -35,13 +35,10 @@ fn cfg() -> LpSimConfig {
 
 /// Pick a handful of modellable coupon Treasuries (ones with a solvable reference
 /// yield at the config settlement) so the panel actually quotes them.
-fn selection(cfg: &LpSimConfig) -> Vec<TreasuryBond> {
+fn selection(cfg: &LpSimConfig) -> Vec<QuotedLine> {
     load_coupon_universe()
         .into_iter()
-        .filter(|b| {
-            b.yield_model(cfg.settlement, cfg.reversion_per_sec, cfg.perturbation)
-                .is_some()
-        })
+        .filter_map(|b| b.to_line(cfg.settlement, cfg.reversion_per_sec, cfg.perturbation))
         .take(6)
         .collect()
 }
@@ -61,7 +58,7 @@ fn lp_sim_consolidates_real_treasuries_to_the_analytic_bbo() {
     let ccfg = cfg.consolidation();
     let mut checked = 0;
     for bond in &bonds {
-        let instr = bond.engine_instrument();
+        let instr = bond.instrument.clone();
         // Analytic ground truth from the members' own top-of-book at NOW.
         let quotes: Vec<_> = feeds
             .iter()
@@ -71,7 +68,7 @@ fn lp_sim_consolidates_real_treasuries_to_the_analytic_bbo() {
             quotes.len(),
             cfg.members,
             "every member quotes {}",
-            bond.cusip
+            bond.instrument_id
         );
         let want_bid = quotes
             .iter()
@@ -111,20 +108,20 @@ fn lp_sim_consolidates_real_treasuries_to_the_analytic_bbo() {
             book.best_bid.to_bits(),
             want_bid.to_bits(),
             "best bid for {}",
-            bond.cusip
+            bond.instrument_id
         );
         assert_eq!(
             book.best_offer.to_bits(),
             want_offer.to_bits(),
             "best offer for {}",
-            bond.cusip
+            bond.instrument_id
         );
         // Composite mid inside the surviving-member envelope (convex combination).
         assert!(
             book.composite_mid >= min_mid && book.composite_mid <= max_mid,
             "composite mid {} outside [{min_mid}, {max_mid}] for {}",
             book.composite_mid,
-            bond.cusip
+            bond.instrument_id
         );
         assert!((0.0..=1.0).contains(&book.confidence));
         // Prices are oracle-anchored near par (a Treasury trades close to 100).
@@ -132,7 +129,7 @@ fn lp_sim_consolidates_real_treasuries_to_the_analytic_bbo() {
             book.composite_mid > 50.0 && book.composite_mid < 160.0,
             "composite mid {} not a sane Treasury price for {}",
             book.composite_mid,
-            bond.cusip
+            bond.instrument_id
         );
         checked += 1;
     }
@@ -144,7 +141,7 @@ fn a_stale_lp_sim_member_drops_out_of_the_composite() {
     let cfg = cfg();
     let bonds = selection(&cfg);
     let bond = bonds.first().cloned().expect("a modellable bond");
-    let instr = bond.engine_instrument();
+    let instr = bond.instrument.clone();
 
     // Build the panel, then freeze the last member's feed 200 s ago (past cutoff).
     let mut lps = build_fleet(&cfg, &bonds);

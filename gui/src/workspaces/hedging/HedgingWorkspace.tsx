@@ -1,12 +1,18 @@
 /**
  * HedgingWorkspace — the trader-facing AUTO-HEDGE RULES / CONFIG surface
  * (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md §5, §8). Authoring-only —
- * four tabs:
+ * six tabs, which together answer WHEN / WHAT KIND / WITH WHAT / WHETHER TO FIRE:
  *
  *   • Exit Policy — the drag-and-drop exit-policy graph editor (the SAME risk-routing
  *     decision-graph building blocks, with an {@link ExitActionEditor} leaf instead of
  *     a book target) + a live "what would fire" trace.
  *   • Thresholds — the per-scope warehouse-threshold ("the 100") config.
+ *   • Vehicles — the firm's hedge-vehicle registry ({@link HedgeVehicleRegistry}): what
+ *     each class of risk is hedged WITH, and the DV01-per-unit that sizes it. A corporate
+ *     bond is not hedged with itself; this is where its benchmark future comes from.
+ *   • Exit mode — the per-scope AUTO-vs-SUGGEST bindings ({@link ExitModeConfig}). SUGGEST
+ *     sizes the hedge and raises a STANDING row on the risk panel instead of trading; it
+ *     is deliberately not a confirmation dialog.
  *   • LP Panels — the standing hedge LP-panel roster ({@link LpPanelConfig}).
  *   • Execution mode — the engine kill-switch / advisory-vs-live execution-mode /
  *     rate-guard controls ({@link HedgeConfigControl}).
@@ -58,13 +64,15 @@ import { HedgeConflictPanel } from "./HedgeConflictPanel";
 import { HedgeRuleEditor } from "./HedgeRuleEditor";
 import { HedgeRulesTable } from "./HedgeRulesTable";
 import { HedgeTracePanel } from "./HedgeTracePanel";
+import { ExitModeConfig } from "./ExitModeConfig";
+import { HedgeVehicleRegistry } from "./HedgeVehicleRegistry";
 import { LpPanelConfig } from "./LpPanelConfig";
 import { SetupWizard } from "./SetupWizard/SetupWizard";
 import { ThresholdConfig } from "./ThresholdConfig";
 import styles from "./HedgingWorkspace.module.css";
-import type { HedgeLpPanel } from "../../data/contract";
+import type { HedgeExitModeBinding, HedgeLpPanel, HedgeVehicleRule } from "../../data/contract";
 
-type Tab = "policy" | "thresholds" | "lp-panels" | "execution";
+type Tab = "policy" | "thresholds" | "vehicles" | "exit-mode" | "lp-panels" | "execution";
 type Mode = { kind: "list" } | { kind: "editor"; index: number | null; draft: HedgeRule };
 type SaveState =
   | { kind: "idle" }
@@ -152,6 +160,24 @@ export function HedgingWorkspace(): React.ReactElement {
           </button>
           <button
             type="button"
+            className={tab === "vehicles" ? styles.tabActive : styles.tab}
+            aria-pressed={tab === "vehicles"}
+            data-testid="tab-vehicles"
+            onClick={() => setTab("vehicles")}
+          >
+            Vehicles
+          </button>
+          <button
+            type="button"
+            className={tab === "exit-mode" ? styles.tabActive : styles.tab}
+            aria-pressed={tab === "exit-mode"}
+            data-testid="tab-exit-mode"
+            onClick={() => setTab("exit-mode")}
+          >
+            Exit mode
+          </button>
+          <button
+            type="button"
             className={tab === "lp-panels" ? styles.tabActive : styles.tab}
             aria-pressed={tab === "lp-panels"}
             data-testid="tab-lp-panels"
@@ -173,6 +199,8 @@ export function HedgingWorkspace(): React.ReactElement {
 
       {tab === "policy" && <PolicyTab app={app} readOnly={readOnly} />}
       {tab === "thresholds" && <ThresholdsTab app={app} readOnly={readOnly} />}
+      {tab === "vehicles" && <VehiclesTab app={app} readOnly={readOnly} />}
+      {tab === "exit-mode" && <ExitModeTab app={app} readOnly={readOnly} />}
       {tab === "lp-panels" && <LpPanelsTab app={app} readOnly={readOnly} />}
       {tab === "execution" && <ExecutionTab app={app} readOnly={readOnly} />}
 
@@ -202,6 +230,10 @@ function PolicyTab({
   const [scopeKind, setScopeKind] = useState<HedgePolicyScopeKind>("firm");
   const [scopeId, setScopeId] = useState<string>("");
   const [books, setBooks] = useState<RiskBook[]>([]);
+  // The hedge-vehicle registry backs the leaf editor's vehicle picker: a NAMED vehicle
+  // must be a registry row (that row carries its DV01-per-unit), so the picker offers
+  // exactly these and nothing else rather than free text the server would reject.
+  const [vehicles, setVehicles] = useState<HedgeVehicleRule[]>([]);
   const [hasScopedPolicy, setHasScopedPolicy] = useState(false);
   const [ruleWizardOpen, setRuleWizardOpen] = useState(false);
   const scopeReady = scopeKind === "firm" || scopeId !== "";
@@ -220,6 +252,10 @@ function PolicyTab({
     void app.transport
       .listRiskBooks()
       .then((b) => !cancelled && setBooks(b))
+      .catch(() => undefined);
+    void app.transport
+      .getHedgeConfig()
+      .then((c) => !cancelled && setVehicles(c.vehicles))
       .catch(() => undefined);
     return () => {
       cancelled = true;
@@ -432,6 +468,7 @@ function PolicyTab({
         readOnly={readOnly}
         instrumentOptions={INSTRUMENT_OPTIONS}
         lpOptions={LP_OPTIONS}
+        vehicles={vehicles}
         onSave={onEditorSave}
         onCancel={() => setMode({ kind: "list" })}
         seedHint={activeSeed?.hint ?? null}
@@ -671,15 +708,28 @@ function ThresholdsTab({
   );
 }
 
-// --- LP Panels tab ----------------------------------------------------------
+// --- the shared HedgeConfig-editing tab shell -------------------------------
 
-function LpPanelsTab({
-  app,
-  readOnly,
-}: {
-  app: ReturnType<typeof useApp>;
-  readOnly: boolean;
-}): React.ReactElement {
+/**
+ * Load the engine {@link HedgeConfig} once and commit patches to it OPTIMISTICALLY: the
+ * edit shows immediately, and a server rejection (an unknown LP id, an unregistered hedge
+ * vehicle, an empty effective set) reverts the store and surfaces the message — the store
+ * is left UNCHANGED on rejection, so the reverted value is the true one.
+ *
+ * Three tabs (LP Panels, Vehicles, Exit mode) all edit disjoint slices of the SAME config
+ * message through the SAME `get_hedge_config` / `set_hedge_config` pair, so they share this
+ * shell rather than each re-deriving the load / optimistic-commit / revert dance.
+ */
+function useHedgeConfigTab(
+  app: ReturnType<typeof useApp>,
+  rejectionNoun: string,
+): {
+  config: HedgeConfig | null;
+  busy: boolean;
+  loadError: string | null;
+  saveError: string | null;
+  commit: (patch: Partial<HedgeConfig>) => void;
+} {
   const [config, setConfig] = useState<HedgeConfig | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -696,14 +746,12 @@ function LpPanelsTab({
     };
   }, [app.transport]);
 
-  const onCommit = useCallback(
-    (panels: HedgeLpPanel[]): void => {
+  const commit = useCallback(
+    (patch: Partial<HedgeConfig>): void => {
       if (config === null) return;
-      const next: HedgeConfig = { ...config, lpPanels: panels };
-      setBusy(true);
-      // Optimistic: reflect the edit immediately; on a server rejection (unknown id /
-      // empty effective set) the store is LEFT UNCHANGED, so we revert + surface it.
       const prev = config;
+      const next: HedgeConfig = { ...config, ...patch };
+      setBusy(true);
       setConfig(next);
       void app.transport
         .setHedgeConfig(next)
@@ -713,12 +761,26 @@ function LpPanelsTab({
         })
         .catch((e: unknown) => {
           setConfig(prev);
-          setSaveError(e instanceof Error ? e.message : "the server rejected the LP panel");
+          setSaveError(e instanceof Error ? e.message : `the server rejected the ${rejectionNoun}`);
         })
         .finally(() => setBusy(false));
     },
-    [app.transport, config],
+    [app.transport, config, rejectionNoun],
   );
+
+  return { config, busy, loadError, saveError, commit };
+}
+
+// --- LP Panels tab ----------------------------------------------------------
+
+function LpPanelsTab({
+  app,
+  readOnly,
+}: {
+  app: ReturnType<typeof useApp>;
+  readOnly: boolean;
+}): React.ReactElement {
+  const { config, busy, loadError, saveError, commit } = useHedgeConfigTab(app, "LP panel");
 
   return (
     <div className={styles.singleTab}>
@@ -733,7 +795,78 @@ function LpPanelsTab({
           readOnly={readOnly}
           busy={busy}
           saveError={saveError}
-          onCommit={onCommit}
+          onCommit={(lpPanels: HedgeLpPanel[]) => commit({ lpPanels })}
+        />
+      )}
+    </div>
+  );
+}
+
+// --- Vehicles tab -----------------------------------------------------------
+
+/**
+ * VehiclesTab — the firm's hedge-vehicle registry ({@link HedgeVehicleRegistry}): what
+ * each class of risk is hedged WITH, and the DV01-per-unit that turns a target DV01 into
+ * tradeable units. A rule's named vehicle must be a row here.
+ */
+function VehiclesTab({
+  app,
+  readOnly,
+}: {
+  app: ReturnType<typeof useApp>;
+  readOnly: boolean;
+}): React.ReactElement {
+  const { config, busy, loadError, saveError, commit } = useHedgeConfigTab(app, "hedge vehicle");
+
+  return (
+    <div className={styles.singleTab}>
+      {loadError !== null && (
+        <p className={styles.errorText} role="alert">
+          {loadError}
+        </p>
+      )}
+      {config !== null && (
+        <HedgeVehicleRegistry
+          vehicles={config.vehicles}
+          readOnly={readOnly}
+          busy={busy}
+          saveError={saveError}
+          onCommit={(vehicles: HedgeVehicleRule[]) => commit({ vehicles })}
+        />
+      )}
+    </div>
+  );
+}
+
+// --- Exit mode tab ----------------------------------------------------------
+
+/**
+ * ExitModeTab — the per-scope AUTO-vs-SUGGEST bindings ({@link ExitModeConfig}). SUGGEST
+ * means the sized hedge lands as a STANDING row on Risk → Hedge flows, never as a popup.
+ */
+function ExitModeTab({
+  app,
+  readOnly,
+}: {
+  app: ReturnType<typeof useApp>;
+  readOnly: boolean;
+}): React.ReactElement {
+  const { config, busy, loadError, saveError, commit } = useHedgeConfigTab(app, "exit-mode binding");
+
+  return (
+    <div className={styles.singleTab}>
+      {loadError !== null && (
+        <p className={styles.errorText} role="alert">
+          {loadError}
+        </p>
+      )}
+      {config !== null && (
+        <ExitModeConfig
+          bindings={config.exitModes}
+          readOnly={readOnly}
+          busy={busy}
+          saveError={saveError}
+          onCommit={(exitModes: HedgeExitModeBinding[]) => commit({ exitModes })}
         />
       )}
     </div>

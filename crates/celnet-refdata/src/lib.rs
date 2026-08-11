@@ -1,6 +1,8 @@
-//! `celnet-refdata` — the single source of truth for CelNet's curated **government-bond
+//! `celnet-refdata` — the single source of truth for CelNet's curated **government
 //! static reference data**: the on-the-run government curves the platform ships with,
-//! as vendor-neutral, fully-specified [`GovBondSpec`] records.
+//! as vendor-neutral, fully-specified [`GovBondSpec`] records, plus the listed
+//! **Treasury futures** contracts ([`TreasuryFutureSpec`]) an interest-rate hedge is
+//! expressed in.
 //!
 //! # What this crate is
 //!
@@ -33,13 +35,31 @@
 //! a real calendar date, and — asserted in this crate's oracle test — every
 //! coupon-bearing schedule round-trips price↔yield through the real `celnet_bond`
 //! leaf, so the curated data is verified, not merely plausible.
+//!
+//! # The futures complex
+//!
+//! [`treasury_futures_universe`] emits the listed CBOT US Treasury futures contracts
+//! (2-Year, 5-Year, 10-Year, Ultra 10-Year, Bond, Ultra Bond) for the committed
+//! quarterly cycle. A corporate bond is hedged with a benchmark future sized by the
+//! DV01 ratio `portfolio_DV01 / contract_DV01`, so every contract carries a **derived**
+//! DV01 per contract — computed from its published notional-deliverable terms through
+//! the same `celnet_bond` leaf, never hand-typed. Read the docs on
+//! [`TreasuryFutureSpec::dv01_per_contract`] before relying on that number: it depends
+//! on the yield you evaluate it at, and it is explicit about what is and is not
+//! modelled.
 
 mod curated;
+mod futures;
 mod isin;
 mod model;
 mod treasury;
 
 pub use curated::curated_universe;
+pub use futures::{
+    ContractTerms, DeliveryConvention, FutureSpecError, LISTED_CONTRACT_MONTHS, LISTED_CYCLE_START,
+    NOTIONAL_YIELD, TREASURY_FUTURES_TERMS, TreasuryFutureSpec, contracts_for_delivery_month,
+    treasury_futures_universe,
+};
 pub use isin::{build as build_isin, check_digit, is_well_formed};
 pub use model::{CivilYmd, GovBondSpec};
 pub use treasury::{TREASURY_UNIVERSE_JSON, parse as parse_treasury_universe, treasury_universe};
@@ -85,6 +105,31 @@ pub fn spec_by_id(id: &str) -> Option<&'static GovBondSpec> {
         return None;
     }
     IDENTITY_INDEX.get(id)
+}
+
+/// The committed listed Treasury-futures universe indexed by `instrument_id` (the
+/// public contract code, e.g. `ZNZ26`), built once. The SAME records
+/// [`treasury_futures_universe`] emits.
+static FUTURES_INDEX: std::sync::LazyLock<
+    std::collections::HashMap<String, futures::TreasuryFutureSpec>,
+> = std::sync::LazyLock::new(|| {
+    treasury_futures_universe()
+        .into_iter()
+        .map(|s| (s.instrument_id.clone(), s))
+        .collect()
+});
+
+/// Resolve one listed [`TreasuryFutureSpec`] by its canonical `instrument_id` (the
+/// contract code). Returns `None` for a code outside the committed listed cycle —
+/// the caller then has no hedge vehicle rather than a fabricated one. O(1), backed
+/// by a process-wide cached index.
+#[must_use]
+pub fn future_by_id(id: &str) -> Option<&'static TreasuryFutureSpec> {
+    let id = id.trim();
+    if id.is_empty() {
+        return None;
+    }
+    FUTURES_INDEX.get(id)
 }
 
 #[cfg(test)]

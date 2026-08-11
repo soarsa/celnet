@@ -52,6 +52,7 @@ import type {
   HedgeProvenance,
   HedgeIntent,
   HedgeConfig,
+  HedgeSuggestion,
   RiskTransfer,
   RiskTransferProvenance,
   TransferLeg,
@@ -2121,6 +2122,8 @@ export class MockTransport implements CelnetTransport {
           lps: [],
           internalFirst: false,
           reason: "",
+          vehicleKind: "self",
+          vehicleInstrument: "",
         },
       },
       {
@@ -2147,6 +2150,8 @@ export class MockTransport implements CelnetTransport {
           lps: [],
           internalFirst: false,
           reason: "",
+          vehicleKind: "self",
+          vehicleInstrument: "",
         },
       },
       {
@@ -2173,6 +2178,8 @@ export class MockTransport implements CelnetTransport {
           lps: [],
           internalFirst: false,
           reason: "",
+          vehicleKind: "self",
+          vehicleInstrument: "",
         },
       },
       {
@@ -2188,6 +2195,8 @@ export class MockTransport implements CelnetTransport {
           lps: ["LP-1", "LP-2"],
           internalFirst: true,
           reason: "",
+          vehicleKind: "self",
+          vehicleInstrument: "",
         },
       },
     ],
@@ -2271,7 +2280,220 @@ export class MockTransport implements CelnetTransport {
       { scopeKind: "book", scopeId: "fi-rates-emea", include: ["LP-1", "LP-2", "LP-3"], exclude: ["LP-2"] },
       { scopeKind: "desk", scopeId: "emea", include: [], exclude: ["LP-4"] },
     ],
+    // The hedge-VEHICLE registry. A govvie is hedged with itself (ratio 1, exact); a
+    // CORPORATE is not — it is hedged with the benchmark future at matching maturity, so
+    // the maturity buckets below are what a `benchmark` vehicle resolves through and the
+    // DV01-per-unit is what a named vehicle sizes off.
+    vehicles: [
+      {
+        id: "us-corp-7-10y",
+        instrumentId: "",
+        product: "BOND",
+        ccy: "USD",
+        minMaturityYears: 7,
+        maxMaturityYears: 10,
+        hedgeInstrumentId: "TY-DEC26",
+        isFuture: true,
+        dv01PerUnit: 78,
+        unitLabel: "contract",
+      },
+      {
+        id: "us-corp-2-5y",
+        instrumentId: "",
+        product: "BOND",
+        ccy: "USD",
+        minMaturityYears: 2,
+        maxMaturityYears: 5,
+        hedgeInstrumentId: "FV-DEC26",
+        isFuture: true,
+        dv01PerUnit: 42,
+        unitLabel: "contract",
+      },
+      {
+        id: "uk-gilt-3-7y",
+        instrumentId: "",
+        product: "BOND",
+        ccy: "GBP",
+        minMaturityYears: 3,
+        maxMaturityYears: 7,
+        hedgeInstrumentId: "G-MAR27",
+        isFuture: true,
+        dv01PerUnit: 64,
+        unitLabel: "contract",
+      },
+      {
+        id: "usd-ois-any",
+        instrumentId: "",
+        product: "OIS",
+        ccy: "USD",
+        minMaturityYears: 0,
+        maxMaturityYears: 0,
+        hedgeInstrumentId: "USD-SOFR-OIS-5Y",
+        isFuture: false,
+        dv01PerUnit: 480,
+        unitLabel: "1mm face",
+      },
+    ],
+    // AUTO everywhere except the corporate-credit book, which SUGGESTS: the desk wants to
+    // eyeball a benchmark-future hedge before it goes out.
+    exitModes: [{ scopeKind: "book", scopeId: "fi-credit-emea", mode: "suggest" }],
   };
+
+  /**
+   * The STANDING hedge suggestions raised by the `suggest` exit mode — a genuine
+   * in-memory store, not a stub: `executeHedgeSuggestion` really removes the acted-on row
+   * and (when firing) appends a real provenance record to {@link mockHedgeProvenance}.
+   *
+   * Seeded with the three cases the surface must render honestly:
+   *   1. a 9y CORPORATE hedged with 318 contracts of the 10Y future, rounded DOWN so
+   *      36 DV01 is still on the book — and sized off the duration-BLIND exposure proxy,
+   *      so it carries the approximate-size warning;
+   *   2. an OIS hedged with a named cash vehicle off a real annuity PV01 — exact, no
+   *      residual, no warning;
+   *   3. a gilt hedged with a future rounded UP, i.e. over-hedged by 31 DV01.
+   */
+  private mockHedgeSuggestions: HedgeSuggestion[] = [
+    {
+      suggestionId: "SUG-0003",
+      book: "fi-credit-emea",
+      instrument: "XS2034-ACME-4H",
+      desk: "emea",
+      raisedAt: Date.now() - 45_000,
+      band: "breach",
+      netRisk: 24_840,
+      threshold: 18_000,
+      utilization: 1.38,
+      action: {
+        kind: "submit_market_order",
+        instrument: "",
+        size: { kind: "overflow", fixed: 0 },
+        skewBp: null,
+        toEdge: false,
+        style: "immediate",
+        lps: [],
+        internalFirst: false,
+        reason: "",
+        vehicleKind: "future",
+        vehicleInstrument: "TY-DEC26",
+      },
+      policyPath: [0, 2, 3],
+      externalSize: 24_840,
+      vehiclePlan: {
+        hedgeInstrumentId: "TY-DEC26",
+        unitLabel: "contract",
+        wholeUnits: true,
+        // The bond arm's exposure measure is `redemption × 1bp` — duration-BLIND — so a
+        // size derived from it is approximate and must say so (docs §10.1).
+        dv01Basis: "exposure-proxy",
+        durationCorrect: false,
+        targetDv01: 24_840,
+        dv01PerUnit: 78,
+        exactUnits: 24_840 / 78,
+        units: 318,
+        hedgedDv01: 318 * 78,
+        residualDv01: 24_840 - 318 * 78,
+        summary: "Sell 318 contracts of TY-DEC26",
+      },
+      headline: "Sell 318 contracts of TY-DEC26",
+      rationale:
+        "Corporate 9y is 138% of its DV01 budget. A corp is not hedged with itself — the 7–10y benchmark row resolves to the 10Y future.",
+      parentPositionId: 8_814n,
+      lps: ["LP-1", "LP-3"],
+      midAtRaise: 111.42,
+    },
+    {
+      suggestionId: "SUG-0002",
+      book: "fi-rates-emea",
+      instrument: "OIS-5Y",
+      desk: "emea",
+      raisedAt: Date.now() - 130_000,
+      band: "red",
+      netRisk: -12_500,
+      threshold: 14_000,
+      utilization: 0.89,
+      action: {
+        kind: "split",
+        instrument: "",
+        size: { kind: "overflow", fixed: 0 },
+        skewBp: null,
+        toEdge: false,
+        style: "worked",
+        lps: [],
+        internalFirst: true,
+        reason: "",
+        vehicleKind: "instrument",
+        vehicleInstrument: "USD-SOFR-OIS-5Y",
+      },
+      policyPath: [0, 2, 4, 6],
+      externalSize: 12_500,
+      vehiclePlan: {
+        hedgeInstrumentId: "USD-SOFR-OIS-5Y",
+        unitLabel: "1mm face",
+        wholeUnits: false,
+        dv01Basis: "annuity-pv01",
+        durationCorrect: true,
+        targetDv01: 12_500,
+        dv01PerUnit: 480,
+        exactUnits: 12_500 / 480,
+        units: 12_500 / 480,
+        hedgedDv01: 12_500,
+        residualDv01: 0,
+        summary: "Pay fixed 26.04mm of USD-SOFR-OIS-5Y",
+      },
+      headline: "Pay fixed 26.04mm of USD-SOFR-OIS-5Y",
+      rationale:
+        "Receive-fixed inventory at 89% of budget. Net internally first, then work the residual on the panel.",
+      parentPositionId: null,
+      lps: ["LP-1", "LP-2", "LP-3"],
+      midAtRaise: 3.812,
+    },
+    {
+      suggestionId: "SUG-0001",
+      book: "fi-credit-emea",
+      instrument: "UKT-4T-2031",
+      desk: "emea",
+      raisedAt: Date.now() - 320_000,
+      band: "breach",
+      netRisk: 8_993,
+      threshold: 6_500,
+      utilization: 1.38,
+      action: {
+        kind: "clear_risk",
+        instrument: "",
+        size: { kind: "overflow", fixed: 0 },
+        skewBp: null,
+        toEdge: false,
+        style: "immediate",
+        lps: [],
+        internalFirst: false,
+        reason: "",
+        vehicleKind: "benchmark",
+        vehicleInstrument: "",
+      },
+      policyPath: [0, 2, 5],
+      externalSize: 8_993,
+      vehiclePlan: {
+        hedgeInstrumentId: "G-MAR27",
+        unitLabel: "contract",
+        wholeUnits: true,
+        dv01Basis: "analytic",
+        durationCorrect: true,
+        targetDv01: 8_993,
+        dv01PerUnit: 64,
+        exactUnits: 8_993 / 64,
+        units: 141,
+        hedgedDv01: 141 * 64,
+        residualDv01: 8_993 - 141 * 64,
+        summary: "Sell 141 contracts of G-MAR27",
+      },
+      headline: "Sell 141 contracts of G-MAR27",
+      rationale:
+        "Gilt 5y past the hard band. The 3–7y GBP benchmark row resolves to the March gilt future.",
+      parentPositionId: 8_802n,
+      lps: ["LP-1", "LP-3"],
+      midAtRaise: 96.18,
+    },
+  ];
 
   /** The growing fired-hedge provenance log (newest appended; monitor shows newest first). */
   private readonly mockHedgeProvenance: HedgeProvenance[] = [];
@@ -4039,6 +4261,66 @@ export class MockTransport implements CelnetTransport {
       .map((p) => cloneJson(p));
   }
 
+  async listHedgeSuggestions(book?: string): Promise<HedgeSuggestion[]> {
+    return this.mockHedgeSuggestions
+      .filter((s) => (book === undefined || book.length === 0 ? true : s.book === book))
+      .slice()
+      .sort((a, b) => b.raisedAt - a.raisedAt)
+      .map((s) => cloneJson(s));
+  }
+
+  /**
+   * Act on one standing suggestion. A DISMISS drops the row and trades nothing (null
+   * provenance); an EXECUTE fires the sized hedge, which stamps a real provenance record
+   * carrying the suggestion's own vehicle plan — so the fired row on the monitor shows
+   * exactly the arithmetic the trader agreed to. Either way the REMAINING suggestions
+   * come back, mirroring the server reply.
+   */
+  async executeHedgeSuggestion(
+    suggestionId: string,
+    dismiss: boolean,
+  ): Promise<{ provenance: HedgeProvenance | null; suggestions: HedgeSuggestion[] }> {
+    const idx = this.mockHedgeSuggestions.findIndex((s) => s.suggestionId === suggestionId);
+    if (idx < 0) throw new Error(`no standing hedge suggestion ${suggestionId}`);
+    const [taken] = this.mockHedgeSuggestions.splice(idx, 1);
+    if (taken === undefined) throw new Error(`no standing hedge suggestion ${suggestionId}`);
+
+    let provenance: HedgeProvenance | null = null;
+    if (!dismiss) {
+      const sign = taken.netRisk >= 0 ? 1 : -1;
+      const spreadBp = this.mockHedgeConfig.compositeSpreadBp;
+      provenance = {
+        hedgeId: `H-${taken.suggestionId}`,
+        book: taken.book,
+        instrument: taken.instrument,
+        firedAt: Date.now(),
+        metric: "dv01",
+        threshold: taken.threshold,
+        netRisk: taken.netRisk,
+        utilization: taken.utilization,
+        band: taken.band,
+        policyPath: [...taken.policyPath],
+        action: taken.action === null ? null : cloneJson(taken.action),
+        internalCrossed: 0,
+        externalHedged: taken.vehiclePlan?.hedgedDv01 ?? taken.externalSize,
+        residual: Math.max(0, taken.vehiclePlan?.residualDv01 ?? 0),
+        hedgePrice: taken.midAtRaise + (sign * taken.midAtRaise * spreadBp) / 10_000,
+        midAtFire: taken.midAtRaise,
+        slippageBp: sign * spreadBp,
+        lpWon: taken.lps[0] ?? "COMPOSITE",
+        advisory: false,
+        lps: [...taken.lps],
+        vehiclePlan: taken.vehiclePlan === null ? null : cloneJson(taken.vehiclePlan),
+      };
+      if (taken.parentPositionId !== null) provenance.parentPositionId = taken.parentPositionId;
+      this.pushHedgeProvenance(provenance);
+    }
+    return {
+      provenance: provenance === null ? null : cloneJson(provenance),
+      suggestions: this.mockHedgeSuggestions.map((s) => cloneJson(s)),
+    };
+  }
+
   async getHedgeConfig(): Promise<HedgeConfig> {
     return cloneJson(this.mockHedgeConfig);
   }
@@ -4173,6 +4455,12 @@ export class MockTransport implements CelnetTransport {
       policyPath: trace.path,
       reason: `${band} · ${kind}`,
       lps: targetedLps,
+      // The synthesised decisions run under the AUTO mode and hedge with the SAME
+      // security (the `self` vehicle), which genuinely carries no unit arithmetic — so
+      // the plan is honestly absent rather than an invented one. The SUGGEST mode's
+      // standing rows, which DO carry vehicle plans, live in `mockHedgeSuggestions`.
+      vehiclePlan: null,
+      exitMode: "auto",
     };
     // Mirror the server invariant: a WAREHOUSE (hold) decision books nothing and
     // stamps NO provenance row — only a real (internal-cross / external) hedge does.
@@ -4200,6 +4488,7 @@ export class MockTransport implements CelnetTransport {
             lpWon,
             advisory,
             lps: targetedLps,
+            vehiclePlan: null,
           };
     return { intent, provenance };
   }
@@ -5912,6 +6201,9 @@ export class MockTransport implements CelnetTransport {
           advisory: true,
           lps: [mockCounterpartyFor(s.counterpartyIdx + 1), mockCounterpartyFor(s.counterpartyIdx + 2)],
           parentPositionId: s.positionId,
+          // A `self`-vehicle shed: the same security sold back, ratio 1, so there is
+          // genuinely no unit arithmetic to record.
+          vehiclePlan: null,
         });
       }
     }

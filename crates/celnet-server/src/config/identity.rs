@@ -43,7 +43,7 @@ use super::hedge_policy::{
 
 use super::reference_data::{
     self, ExternalScheme, InstrumentDef, ensure_seed_instruments, government_bond_defs,
-    validate_instruments,
+    treasury_future_defs, validate_instruments,
 };
 
 /// Env var naming the identity JSON file. Absent ⇒ [`DEFAULT_CONFIG_PATH`].
@@ -1464,8 +1464,11 @@ impl IdentityStore {
         ensure_seed_instruments(&mut self.instruments)
     }
 
-    /// **Additively** ensure the curated government-bond reference universe (US
-    /// Treasuries + UK gilts + EUR govvies from [`government_bond_defs`]) is present,
+    /// **Additively** ensure the curated government reference universe — the cash
+    /// bonds (US Treasuries + UK gilts + EUR govvies from [`government_bond_defs`])
+    /// **and** the listed Treasury futures complex (from [`treasury_future_defs`],
+    /// the benchmark hedge vehicles an interest-rate exposure is transferred into) —
+    /// is present,
     /// adding only the definitions whose `instrument_id` is not already registered and
     /// whose external ids do not collide with an existing entry; report `true` when any
     /// were added (the caller should persist). Unlike [`ensure_seed_instruments`], this
@@ -1486,7 +1489,10 @@ impl IdentityStore {
             .map(|e| (e.scheme.to_ascii_lowercase(), e.value.to_ascii_lowercase()))
             .collect();
         let mut added = 0usize;
-        for def in government_bond_defs() {
+        for def in government_bond_defs()
+            .into_iter()
+            .chain(treasury_future_defs())
+        {
             if have_ids.contains(&def.instrument_id.to_ascii_lowercase()) {
                 continue;
             }
@@ -2481,14 +2487,16 @@ impl IdentityStore {
     pub fn check_hedge_policy_graph(&self, graph: &HedgeGraph) -> Result<(), String> {
         let instruments = self.known_hedge_instruments();
         let lps = self.known_hedge_lps();
-        graph.validate(&instruments, &lps).map_err(|errs| {
-            let joined = errs
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("; ");
-            format!("hedge policy graph is invalid: {joined}")
-        })
+        graph
+            .validate(&instruments, &lps, &self.hedge_config.known_vehicles())
+            .map_err(|errs| {
+                let joined = errs
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                format!("hedge policy graph is invalid: {joined}")
+            })
     }
 
     /// The configured warehouse thresholds (§4), in insertion order.
@@ -2549,14 +2557,41 @@ impl IdentityStore {
         }
     }
 
+    /// Validate the config's **hedge-vehicle registry** (`docs/HEDGING-AND-RISK-EXIT.md`
+    /// §6.4), collecting every defect at once.
+    ///
+    /// This is a write-time gate rather than a fire-time one on purpose. A row with a
+    /// non-positive `dv01_per_unit` or an empty hedge instrument can never be resolved, so a
+    /// leaf pointing at it would silently fall back to the self-hedge — a trader would
+    /// configure a futures hedge, see no error, and get a different hedge. Rejecting on write
+    /// is the only place that failure is visible.
+    ///
+    /// # Errors
+    /// Any row with a missing id / hedge instrument, a non-positive DV01 per unit, an
+    /// inverted maturity bucket, or a duplicated id.
+    pub fn check_hedge_vehicles(config: &HedgeConfigDef) -> Result<(), String> {
+        config.vehicles.validate().map_err(|errs| {
+            format!(
+                "hedge vehicle registry is invalid: {}",
+                errs.iter()
+                    .map(std::string::ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            )
+        })
+    }
+
     /// Replace the auto-hedge engine config after validating its LP panels against the
-    /// live known-LP registry ([`check_hedge_lp_panels`](Self::check_hedge_lp_panels)).
+    /// live known-LP registry ([`check_hedge_lp_panels`](Self::check_hedge_lp_panels)) and
+    /// its hedge-vehicle registry ([`check_hedge_vehicles`](Self::check_hedge_vehicles)).
     /// On any defect the store is left unchanged.
     ///
     /// # Errors
-    /// A panel naming an unknown LP, or resolving to an empty effective set.
+    /// A panel naming an unknown LP or resolving to an empty effective set, or a
+    /// vehicle-registry row that could never be sized.
     pub fn set_hedge_config(&mut self, config: HedgeConfigDef) -> Result<(), String> {
         self.check_hedge_lp_panels(&config)?;
+        Self::check_hedge_vehicles(&config)?;
         self.hedge_config = config;
         Ok(())
     }
@@ -2982,12 +3017,14 @@ pub fn default_hedge_policy_graph() -> HedgeGraph {
     nodes.insert(
         1u32,
         HedgeNode::Action {
+            vehicle: celnet_hedge_routing::HedgeVehicle::SelfInstrument,
             exit: ExitAction::Warehouse,
         },
     );
     nodes.insert(
         2u32,
         HedgeNode::Action {
+            vehicle: celnet_hedge_routing::HedgeVehicle::SelfInstrument,
             exit: ExitAction::SubmitMarketOrder {
                 size: HedgeSize::Overflow,
                 style: ExecStyle::Immediate,
@@ -3855,6 +3892,7 @@ mod tests {
             nodes.insert(
                 0u32,
                 HedgeNode::Action {
+                    vehicle: celnet_hedge_routing::HedgeVehicle::SelfInstrument,
                     exit: ExitAction::Escalate {
                         reason: reason.to_owned(),
                     },
@@ -3936,6 +3974,7 @@ mod tests {
             nodes.insert(
                 0,
                 HedgeNode::Action {
+                    vehicle: celnet_hedge_routing::HedgeVehicle::SelfInstrument,
                     exit: ExitAction::Warehouse,
                 },
             );
@@ -3953,6 +3992,7 @@ mod tests {
             nodes.insert(
                 0,
                 HedgeNode::Action {
+                    vehicle: celnet_hedge_routing::HedgeVehicle::SelfInstrument,
                     exit: ExitAction::CrossInternal {
                         instrument: "GHOST".into(),
                         max_size: HedgeSize::Overflow,
@@ -3980,6 +4020,7 @@ mod tests {
             nodes.insert(
                 0,
                 HedgeNode::Action {
+                    vehicle: celnet_hedge_routing::HedgeVehicle::SelfInstrument,
                     exit: ExitAction::CrossInternal {
                         instrument: known,
                         max_size: HedgeSize::Overflow,
@@ -3991,6 +4032,52 @@ mod tests {
         store
             .set_hedge_policy_graph(cross_known)
             .expect("a cross against a seeded instrument is valid");
+    }
+
+    /// A vehicle-registry row that could never be sized is refused ON WRITE, not silently
+    /// ignored at fire time — otherwise a trader configures a futures hedge, sees no error,
+    /// and quietly gets a self-hedge instead.
+    #[test]
+    fn set_hedge_config_rejects_an_unsizeable_vehicle_row() {
+        use celnet_hedge_routing::{HedgeVehicleRegistry, HedgeVehicleRule};
+        let mut store = IdentityStore::default();
+        let bad = HedgeConfigDef {
+            vehicles: HedgeVehicleRegistry::new(vec![HedgeVehicleRule {
+                id: "R1".into(),
+                hedge_instrument_id: "TY-DEC26".into(),
+                // A zero DV01 per unit is a division by zero waiting to happen — the ratio
+                // could only ever be fabricated.
+                dv01_per_unit: 0.0,
+                ..HedgeVehicleRule::default()
+            }]),
+            ..HedgeConfigDef::default()
+        };
+        let err = store.set_hedge_config(bad).unwrap_err();
+        assert!(err.contains("vehicle registry"), "{err}");
+        assert!(
+            store.hedge_config().vehicles.is_empty(),
+            "a rejected write leaves the store unchanged"
+        );
+
+        // The same row with a real DV01 is accepted and round-trips.
+        let good = HedgeConfigDef {
+            vehicles: HedgeVehicleRegistry::new(vec![HedgeVehicleRule {
+                id: "R1".into(),
+                product: "BOND".into(),
+                min_maturity_years: 7.0,
+                max_maturity_years: 12.0,
+                hedge_instrument_id: "TY-DEC26".into(),
+                is_future: true,
+                dv01_per_unit: 78.0,
+                unit_label: "contract".into(),
+                ..HedgeVehicleRule::default()
+            }]),
+            ..HedgeConfigDef::default()
+        };
+        store
+            .set_hedge_config(good)
+            .expect("a well-formed registry is accepted");
+        assert_eq!(store.hedge_config().known_vehicles().len(), 1);
     }
 
     #[test]

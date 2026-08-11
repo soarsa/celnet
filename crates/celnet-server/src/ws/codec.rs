@@ -4593,6 +4593,13 @@ fn exit_action_desc_to_json(a: &ExitActionDesc) -> Value {
     m.insert("lps".to_string(), json!(a.lps));
     m.insert("internal_first".to_string(), json!(a.internal_first));
     m.insert("reason".to_string(), json!(a.reason));
+    // WITH WHAT this leaf hedges. `SELF` (ordinal 0) is the proto default, so a leaf
+    // authored before vehicles existed encodes exactly as it always did.
+    m.insert("vehicle_kind".to_string(), json!(a.vehicle_kind));
+    m.insert(
+        "vehicle_instrument".to_string(),
+        json!(a.vehicle_instrument),
+    );
     Value::Object(m)
 }
 
@@ -4611,6 +4618,10 @@ fn exit_action_desc_from_json(v: &Value) -> Result<ExitActionDesc> {
         lps: string_array(o, "lps"),
         internal_first: bool_or_false(o, "internal_first"),
         reason: string_or_empty(o, "reason"),
+        // An absent `vehicle_kind` decodes to `0` = SELF, so a stored graph written before
+        // vehicles existed round-trips to the historical self-hedge.
+        vehicle_kind: enum_or_zero(o, "vehicle_kind"),
+        vehicle_instrument: string_or_empty(o, "vehicle_instrument"),
     })
 }
 
@@ -4771,6 +4782,121 @@ fn hedge_provenance_to_json(p: &HedgeProvenance) -> Value {
     if let Some(parent) = p.parent_position_id {
         m.insert("parent_position_id".to_string(), json!(parent));
     }
+    // The VEHICLE sizing (DV01 ratio, whole-lot rounding, honest residual) when the shed
+    // hedged with something other than the position's own security. Presence-tracked, so an
+    // absent plan is OMITTED rather than rendered as an empty object.
+    if let Some(plan) = &p.vehicle_plan {
+        m.insert(
+            "vehicle_plan".to_string(),
+            hedge_vehicle_plan_desc_to_json(plan),
+        );
+    }
+    Value::Object(m)
+}
+
+/// A sized VEHICLE hedge → JSON (encode-only). Every field always emits; `dv01_basis`
+/// and `duration_correct` are the honesty pair a surface reads before presenting the
+/// size as exact.
+fn hedge_vehicle_plan_desc_to_json(p: &celnet_proto::HedgeVehiclePlanDesc) -> Value {
+    json!({
+        "hedge_instrument_id": p.hedge_instrument_id,
+        "unit_label": p.unit_label,
+        "whole_units": p.whole_units,
+        "dv01_basis": p.dv01_basis,
+        "duration_correct": p.duration_correct,
+        "target_dv01": p.target_dv01,
+        "dv01_per_unit": p.dv01_per_unit,
+        "exact_units": p.exact_units,
+        "units": p.units,
+        "hedged_dv01": p.hedged_dv01,
+        "residual_dv01": p.residual_dv01,
+        "summary": p.summary,
+    })
+}
+
+/// One hedge-vehicle registry row → JSON.
+fn hedge_vehicle_desc_to_json(r: &celnet_proto::HedgeVehicleDesc) -> Value {
+    json!({
+        "id": r.id,
+        "instrument_id": r.instrument_id,
+        "product": r.product,
+        "ccy": r.ccy,
+        "min_maturity_years": r.min_maturity_years,
+        "max_maturity_years": r.max_maturity_years,
+        "hedge_instrument_id": r.hedge_instrument_id,
+        "is_future": r.is_future,
+        "dv01_per_unit": r.dv01_per_unit,
+        "unit_label": r.unit_label,
+    })
+}
+
+/// One hedge-vehicle registry row ← JSON.
+fn hedge_vehicle_desc_from_json(v: &Value) -> Result<celnet_proto::HedgeVehicleDesc> {
+    let o = obj(v, "vehicle")?;
+    Ok(celnet_proto::HedgeVehicleDesc {
+        id: string_or_empty(o, "id"),
+        instrument_id: string_or_empty(o, "instrument_id"),
+        product: string_or_empty(o, "product"),
+        ccy: string_or_empty(o, "ccy"),
+        min_maturity_years: f64_or_zero(o, "min_maturity_years"),
+        max_maturity_years: f64_or_zero(o, "max_maturity_years"),
+        hedge_instrument_id: string_or_empty(o, "hedge_instrument_id"),
+        is_future: bool_or_false(o, "is_future"),
+        dv01_per_unit: f64_or_zero(o, "dv01_per_unit"),
+        unit_label: string_or_empty(o, "unit_label"),
+    })
+}
+
+/// One scoped SUGGEST-vs-AUTO exit-mode binding → JSON.
+fn hedge_exit_mode_binding_to_json(b: &celnet_proto::HedgeExitModeBinding) -> Value {
+    json!({
+        "scope_kind": b.scope_kind,
+        "scope_id": b.scope_id,
+        "mode": b.mode,
+    })
+}
+
+/// One scoped exit-mode binding ← JSON (an absent `mode` decodes to `0` = AUTO).
+fn hedge_exit_mode_binding_from_json(v: &Value) -> Result<celnet_proto::HedgeExitModeBinding> {
+    let o = obj(v, "exit_mode")?;
+    Ok(celnet_proto::HedgeExitModeBinding {
+        scope_kind: enum_or_zero(o, "scope_kind"),
+        scope_id: string_or_empty(o, "scope_id"),
+        mode: enum_or_zero(o, "mode"),
+    })
+}
+
+/// A standing hedge suggestion → JSON (encode-only; a server read, never decoded).
+fn hedge_suggestion_to_json(s: &celnet_proto::HedgeSuggestion) -> Value {
+    let mut m = Map::new();
+    m.insert("suggestion_id".to_string(), json!(s.suggestion_id));
+    m.insert("book".to_string(), json!(s.book));
+    m.insert("instrument".to_string(), json!(s.instrument));
+    m.insert("desk".to_string(), json!(s.desk));
+    m.insert("raised_at".to_string(), json!(s.raised_at));
+    m.insert("band".to_string(), json!(s.band));
+    m.insert("net_risk".to_string(), json!(s.net_risk));
+    m.insert("threshold".to_string(), json!(s.threshold));
+    m.insert("utilization".to_string(), json!(s.utilization));
+    m.insert(
+        "action".to_string(),
+        json!(s.action.as_ref().map(exit_action_desc_to_json)),
+    );
+    m.insert("policy_path".to_string(), json!(s.policy_path));
+    m.insert("external_size".to_string(), json!(s.external_size));
+    if let Some(plan) = &s.vehicle_plan {
+        m.insert(
+            "vehicle_plan".to_string(),
+            hedge_vehicle_plan_desc_to_json(plan),
+        );
+    }
+    m.insert("headline".to_string(), json!(s.headline));
+    m.insert("rationale".to_string(), json!(s.rationale));
+    if let Some(parent) = s.parent_position_id {
+        m.insert("parent_position_id".to_string(), json!(parent));
+    }
+    m.insert("lps".to_string(), json!(s.lps));
+    m.insert("mid_at_raise".to_string(), json!(s.mid_at_raise));
     Value::Object(m)
 }
 
@@ -4795,6 +4921,8 @@ fn hedge_intent_to_json(i: &HedgeIntent) -> Value {
         "policy_path": i.policy_path,
         "reason": i.reason,
         "lps": i.lps,
+        "vehicle_plan": i.vehicle_plan.as_ref().map(hedge_vehicle_plan_desc_to_json),
+        "exit_mode": i.exit_mode,
     })
 }
 
@@ -4849,6 +4977,13 @@ fn hedge_config_desc_to_json(c: &HedgeConfigDesc) -> Value {
             c.lp_panels.iter().map(hedge_lp_panel_desc_to_json).collect(),
         ),
         "composite_spread_bp": c.composite_spread_bp,
+        "vehicles": Value::Array(c.vehicles.iter().map(hedge_vehicle_desc_to_json).collect()),
+        "exit_modes": Value::Array(
+            c.exit_modes
+                .iter()
+                .map(hedge_exit_mode_binding_to_json)
+                .collect(),
+        ),
     })
 }
 
@@ -4874,6 +5009,22 @@ fn hedge_config_desc_from_json(v: &Value) -> Result<HedgeConfigDesc> {
                 .collect::<Result<Vec<_>>>()
         },
     )?;
+    let vehicles = o.get("vehicles").and_then(Value::as_array).map_or_else(
+        || Ok(Vec::new()),
+        |arr| {
+            arr.iter()
+                .map(hedge_vehicle_desc_from_json)
+                .collect::<Result<Vec<_>>>()
+        },
+    )?;
+    let exit_modes = o.get("exit_modes").and_then(Value::as_array).map_or_else(
+        || Ok(Vec::new()),
+        |arr| {
+            arr.iter()
+                .map(hedge_exit_mode_binding_from_json)
+                .collect::<Result<Vec<_>>>()
+        },
+    )?;
     Ok(HedgeConfigDesc {
         kill_switch: bool_or_false(o, "kill_switch"),
         execution: enum_or_zero(o, "execution"),
@@ -4883,6 +5034,50 @@ fn hedge_config_desc_from_json(v: &Value) -> Result<HedgeConfigDesc> {
         daily_external_notional_cap: f64_or_zero(o, "daily_external_notional_cap"),
         lp_panels,
         composite_spread_bp: f64_or_zero(o, "composite_spread_bp"),
+        vehicles,
+        exit_modes,
+    })
+}
+
+// --- standing hedge suggestions (suggest-then-exit, §6.5) -------------------
+
+pub(super) fn list_hedge_suggestions_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<celnet_proto::ListHedgeSuggestionsRequest> {
+    Ok(celnet_proto::ListHedgeSuggestionsRequest {
+        session_token: string_field(o, "session_token")?,
+        book: string_or_empty(o, "book"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_hedge_suggestions_response_to_json(
+    r: &celnet_proto::ListHedgeSuggestionsResponse,
+) -> Value {
+    json!({
+        "suggestions": Value::Array(r.suggestions.iter().map(hedge_suggestion_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn execute_hedge_suggestion_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<celnet_proto::ExecuteHedgeSuggestionRequest> {
+    Ok(celnet_proto::ExecuteHedgeSuggestionRequest {
+        session_token: string_field(o, "session_token")?,
+        suggestion_id: string_field(o, "suggestion_id")?,
+        dismiss: bool_or_false(o, "dismiss"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn execute_hedge_suggestion_response_to_json(
+    r: &celnet_proto::ExecuteHedgeSuggestionResponse,
+) -> Value {
+    json!({
+        "provenance": r.provenance.as_ref().map(hedge_provenance_to_json),
+        "suggestions": Value::Array(r.suggestions.iter().map(hedge_suggestion_to_json).collect()),
+        "correlation_id": r.correlation_id,
     })
 }
 
@@ -5263,7 +5458,49 @@ fn family_to_json(def: &InstrumentDefinition) -> (&'static str, Value) {
                 "redemption": b.redemption, "calendars": b.calendars,
             }),
         ),
+        InstrumentDefinition::BondFuture(f) => (
+            "bond_future",
+            json!({
+                "contract_code": f.contract_code,
+                "contract_symbol": f.contract_symbol,
+                "underlying_issuer": f.underlying_issuer,
+                "contract_face_value": f.contract_face_value,
+                "tick_size_points": f.tick_size_points,
+                "tick_value": f.tick_value,
+                "notional_coupon_rate": f.notional_coupon_rate,
+                "deliverable_min_months": f.deliverable_min_months,
+                "deliverable_max_months": f.deliverable_max_months,
+                "delivery_month_start": f.delivery_month_start.as_ref().map(broken_date_to_json),
+                "first_delivery_date": f.first_delivery_date.as_ref().map(broken_date_to_json),
+                "last_trading_date": f.last_trading_date.as_ref().map(broken_date_to_json),
+                "last_delivery_date": f.last_delivery_date.as_ref().map(broken_date_to_json),
+                "dv01_per_contract_at_notional_yield": f.dv01_per_contract_at_notional_yield,
+                "calendars": f.calendars,
+            }),
+        ),
     }
+}
+
+fn bond_future_from_json(v: &Value) -> Result<celnet_proto::BondFutureDef> {
+    let o = obj(v, "bond_future")?;
+    Ok(celnet_proto::BondFutureDef {
+        contract_code: string_field(o, "contract_code")?,
+        contract_symbol: opt_string(o, "contract_symbol").unwrap_or_default(),
+        underlying_issuer: opt_string(o, "underlying_issuer").unwrap_or_default(),
+        contract_face_value: opt_f64(o, "contract_face_value").unwrap_or(0.0),
+        tick_size_points: opt_f64(o, "tick_size_points").unwrap_or(0.0),
+        tick_value: opt_f64(o, "tick_value").unwrap_or(0.0),
+        notional_coupon_rate: opt_f64(o, "notional_coupon_rate").unwrap_or(0.0),
+        deliverable_min_months: opt_u32(o, "deliverable_min_months").unwrap_or(0),
+        deliverable_max_months: opt_u32(o, "deliverable_max_months").unwrap_or(0),
+        delivery_month_start: opt_broken_date(o, "delivery_month_start")?,
+        first_delivery_date: opt_broken_date(o, "first_delivery_date")?,
+        last_trading_date: opt_broken_date(o, "last_trading_date")?,
+        last_delivery_date: opt_broken_date(o, "last_delivery_date")?,
+        dv01_per_contract_at_notional_yield: opt_f64(o, "dv01_per_contract_at_notional_yield")
+            .unwrap_or(0.0),
+        calendars: string_array(o, "calendars"),
+    })
 }
 
 fn deposit_from_json(v: &Value) -> Result<celnet_proto::DepositDef> {
@@ -5379,6 +5616,10 @@ fn family_from_json(o: &Map<String, Value>) -> Result<Option<InstrumentDefinitio
         Ok(Some(InstrumentDefinition::Ois(ois_def_from_json(
             &o["ois"],
         )?)))
+    } else if o.contains_key("bond_future") {
+        Ok(Some(InstrumentDefinition::BondFuture(
+            bond_future_from_json(&o["bond_future"])?,
+        )))
     } else if o.contains_key("bond") {
         Ok(Some(InstrumentDefinition::Bond(bond_from_json(
             &o["bond"],

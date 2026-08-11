@@ -27,6 +27,16 @@
 //! - [`ExitAction`] — the terminal leaves: the exit vocabulary the graph resolves
 //!   to (`WAREHOUSE`, `CROSS_INTERNAL`, `SKEW`, `SUBMIT_MARKET_ORDER`, `RFQ_OUT`,
 //!   `SPLIT`, `ESCALATE`).
+//! - [`HedgeVehicle`] — **with what** a size-bearing leaf hedges: the same security
+//!   sold back ([`HedgeVehicle::SelfInstrument`], the default and the historical
+//!   behaviour), a named instrument, a named future, or whatever the firm's
+//!   [`HedgeVehicleRegistry`] maps this risk to by instrument + **maturity bucket** (the
+//!   "hedge a 9-year corp with the 10Y future" rule). Sized by the real DV01 ratio
+//!   ([`plan_hedge_ratio`]), rounded to whole contracts for a future with the residual
+//!   reported rather than hidden.
+//! - [`HedgeExitMode`] — whether a resolved exit **fires by itself**
+//!   ([`HedgeExitMode::Auto`], the default) or **publishes a standing suggestion** a
+//!   trader fires ([`HedgeExitMode::Suggest`]) — no popup, no confirmation dialog.
 //! - [`HedgeLpPanel`] — the standing include/exclude liquidity-provider selection an
 //!   external exit action fans to, and its pure resolver
 //!   ([`HedgeLpPanel::effective_lps`]) that turns include/exclude into the **effective
@@ -64,14 +74,21 @@ mod context;
 mod field;
 mod graph;
 mod lp_panel;
+mod mode;
 mod router;
+mod vehicle;
 
 pub use band::{HedgeSizing, NettingSplit, WarehouseThreshold, netting_split};
 pub use context::HedgeContext;
 pub use field::{HedgeField, HedgeFieldKind};
 pub use graph::{ExecStyle, ExitAction, HedgeError, HedgeGraph, HedgeNode, HedgeSize, NodeId};
 pub use lp_panel::{HedgeLpPanel, LpPanelError};
-pub use router::HedgeRouter;
+pub use mode::HedgeExitMode;
+pub use router::{HedgeRouter, Resolution};
+pub use vehicle::{
+    Dv01Basis, HedgeRatioPlan, HedgeVehicle, HedgeVehicleError, HedgeVehicleRegistry,
+    HedgeVehicleRule, plan_hedge_ratio,
+};
 
 // Re-export the condition vocabulary reused verbatim from risk routing, so a
 // consumer builds a hedge condition from one import surface without also

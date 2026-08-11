@@ -440,6 +440,38 @@ async fn serve_connection(tcp: TcpStream, services: WsServices) {
         }
     });
 
+    // The per-connection LIVE HEDGE-INTENT forwarder. Every resolved hedge decision the
+    // booking path makes is published onto the engine's broadcast channel; this task drains
+    // it onto the socket as `{"type":"hedge_intent", …}` frames, which is what feeds the
+    // risk surface's per-book RAG board and its standing-suggestion section.
+    //
+    // Before this existed the intent was computed and then discarded — nothing ever
+    // published it — so the board derived from a stream that produced no frames and read
+    // "Waiting for the first risk-state tick…" indefinitely. Unsolicited like the
+    // `pricing_control` forwarder (no subscribe verb); bounded-queue offload
+    // (`CLAUDE.md` §11), never the pinned pricing core. A LAGGED receiver resumes at the
+    // newest state rather than back-pressuring the publisher; the task ends when the
+    // outbound channel closes (socket gone) or is aborted on teardown.
+    let hedge_intent_tx = out_tx.clone();
+    let mut hi_rx = services.auth.auto_hedge().subscribe_intents();
+    let hedge_intent_task = tokio::spawn(async move {
+        loop {
+            match hi_rx.recv().await {
+                Ok(intent) => {
+                    let frame =
+                        codec::tagged("hedge_intent", codec::hedge_intent_push_to_json(&intent));
+                    if hedge_intent_tx.send(Outbound::Frame(frame)).await.is_err() {
+                        break;
+                    }
+                }
+                // Lagged: this socket fell behind the bounded channel. Skip the backlog and
+                // resume at the newest state — a slow client never stalls risk decisions.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+
     // The writer task: serialize every outbound frame to a WS text message. Forwards
     // both the request/response replies (`out_rx`) and the RFS server messages
     // (`rfs_out_rx`), closing the socket when both dry up.
@@ -550,8 +582,12 @@ async fn serve_connection(tcp: TcpStream, services: WsServices) {
     // Stop the pricing-control forwarder so its outbound-sender clone drops and the
     // writer can drain to completion.
     pricing_control_task.abort();
+    // Stop the hedge-intent forwarder so its outbound-sender clone drops and the writer can
+    // drain to completion.
+    hedge_intent_task.abort();
     let _ = rfs_task.await;
     let _ = pricing_control_task.await;
+    let _ = hedge_intent_task.await;
     let _ = writer.await;
     drop(guard);
 }
@@ -1553,6 +1589,26 @@ async fn handle_unary(
                 services.auth.update_hedge_threshold(Request::new(req)),
                 "hedge_threshold_updated",
                 generated_codec::encode_update_hedge_threshold_response
+            )
+        }
+        // The standing hedge SUGGESTIONS (suggest-then-exit, `docs/HEDGING-AND-RISK-EXIT.md`
+        // §6.5): read what a `Suggest`-mode scope computed but deliberately did not trade,
+        // and fire or dismiss one. These run on the hand codec (the descriptor-driven
+        // generated codec is a staged migration of the pre-existing surface).
+        "list_hedge_suggestions" => {
+            let req = decode!(codec::list_hedge_suggestions_request_from_json(o));
+            call!(
+                services.auth.list_hedge_suggestions(Request::new(req)),
+                "hedge_suggestions",
+                codec::list_hedge_suggestions_response_to_json
+            )
+        }
+        "execute_hedge_suggestion" => {
+            let req = decode!(codec::execute_hedge_suggestion_request_from_json(o));
+            call!(
+                services.auth.execute_hedge_suggestion(Request::new(req)),
+                "hedge_suggestion_executed",
+                codec::execute_hedge_suggestion_response_to_json
             )
         }
         "list_hedge_provenance" => {

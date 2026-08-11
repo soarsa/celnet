@@ -21,6 +21,7 @@ use celnet_types::BrokenDate;
 
 use crate::lp::{InstrumentModel, LpParams, SimLp};
 use crate::price::MidSource;
+use crate::quoted::QuotedLine;
 use crate::rng::{child_seed, seeded_unit, unit01};
 use crate::universe::TreasuryBond;
 
@@ -119,22 +120,44 @@ impl LpSimConfig {
     }
 }
 
-/// Build the `LP-SIM` panel: one [`SimLp`] per member, each quoting every bond in
-/// `bonds` that can be modelled at the config's settlement (a stochastic
-/// reference-seeded yield). Bonds with no solvable reference yield (e.g. Bills the
-/// coupon solver cannot bracket) are skipped. Reproducible for a fixed
-/// `(config, bonds)`.
+/// The full set of [`QuotedLine`]s the sim can price for `cfg`: every cash bond in
+/// `bonds` that models at the config's settlement, followed by every listed Treasury
+/// futures contract anchored to that same cash curve.
+///
+/// This is the sim's **quotable** universe, and it is deliberately built from the
+/// same `celnet-refdata` sources the server seeds its **tradeable** registry from —
+/// an instrument that is tradeable but not quotable never reaches an aggregated book
+/// (see the [`crate::quoted`] module docs).
 #[must_use]
-pub fn build_fleet(cfg: &LpSimConfig, bonds: &[TreasuryBond]) -> Vec<SimLp> {
-    // The stochastic yield-model template per bond, built once (oracle-anchored).
-    let templated: Vec<(&TreasuryBond, crate::price::YieldModel)> = bonds
-        .iter()
-        .filter_map(|b| {
-            b.yield_model(cfg.settlement, cfg.reversion_per_sec, cfg.perturbation)
-                .map(|m| (b, m))
-        })
-        .collect();
+pub fn quotable_lines(cfg: &LpSimConfig, bonds: &[TreasuryBond]) -> Vec<QuotedLine> {
+    let mut lines = crate::universe::bond_lines(
+        bonds,
+        cfg.settlement,
+        cfg.reversion_per_sec,
+        cfg.perturbation,
+    );
+    let contracts = crate::futures::load_futures_universe(bonds, cfg.settlement);
+    lines.extend(crate::futures::futures_lines(
+        &contracts,
+        cfg.half_spread,
+        cfg.skew_step,
+        cfg.reversion_per_sec,
+        cfg.perturbation,
+    ));
+    lines
+}
 
+/// Build the `LP-SIM` panel: one [`SimLp`] per member, each quoting every
+/// [`QuotedLine`] it is given (a stochastic reference-seeded yield, priced through
+/// the real analytics leaf). Reproducible for a fixed `(config, lines)`.
+///
+/// Each instrument carries its own market's quoting conventions
+/// ([`QuotedLine::spread_scale`] / [`QuotedLine::lean_scale`] /
+/// [`QuotedLine::yield_dispersion`] / [`QuotedLine::tick`]), so one panel quotes cash
+/// bonds a couple of basis points wide and listed futures one or two minimum price
+/// increments wide, on the exchange's grid.
+#[must_use]
+pub fn build_fleet(cfg: &LpSimConfig, lines: &[QuotedLine]) -> Vec<SimLp> {
     let n = cfg.members.max(1);
     let centre = (n as f64 - 1.0) / 2.0;
     (0..n)
@@ -143,19 +166,20 @@ pub fn build_fleet(cfg: &LpSimConfig, bonds: &[TreasuryBond]) -> Vec<SimLp> {
             let lp_seed = child_seed(cfg.seed, i);
             let skew = (i as f64 - centre) * cfg.skew_step;
 
-            let books = templated
+            let books = lines
                 .iter()
-                .map(|(bond, template)| {
-                    let instrument = bond.engine_instrument();
+                .map(|line| {
+                    let instrument = line.instrument.clone();
                     // Disperse this member's initial yield around the reference,
                     // keyed the same way the runtime tick noise is (tick 0).
                     let u = seeded_unit(lp_seed, &venue, &instrument, 0);
-                    let mut model = *template;
-                    model.initial_yield += cfg.yield_dispersion * u;
-                    InstrumentModel {
-                        instrument,
-                        mid: MidSource::MeanRevertingYield(model),
-                    }
+                    let mut model = line.model;
+                    // A line may carry its own dispersion (a listed instrument sizes
+                    // it in ticks off its own DV01); otherwise the fleet's cash default.
+                    model.initial_yield +=
+                        line.yield_dispersion.unwrap_or(cfg.yield_dispersion) * u;
+                    InstrumentModel::new(instrument, MidSource::MeanRevertingYield(model))
+                        .with_quote_shape(line.spread_scale, line.lean_scale, line.tick)
                 })
                 .collect();
 
@@ -203,7 +227,7 @@ fn member_params(cfg: &LpSimConfig, lp_seed: u64, skew: f64) -> LpParams {
     }
 }
 
-/// One bond's consolidated composite plus the bond identity a subscriber renders.
+/// One instrument's consolidated composite plus the identity a subscriber renders.
 #[derive(Debug, Clone)]
 pub struct BondComposite {
     /// The consolidated book from the real engine.
@@ -212,19 +236,19 @@ pub struct BondComposite {
     pub rendered: String,
 }
 
-/// Consolidate the panel for `bond` at `now_nanos` and render the composite as a
-/// subscriber-facing line: the bond identity (name + ISIN + CUSIP), the composite
+/// Consolidate the panel for `line` at `now_nanos` and render the composite as a
+/// subscriber-facing line: the instrument identity (name + cross-refs), the composite
 /// best bid/offer + size, the confidence, and each contributing LP's mid.
 ///
 /// # Errors
 /// Propagates [`ConsolidationError`] (e.g. every member excluded / no market).
 pub fn composite_for(
     feeds: &[Box<dyn celnet_aggregation::VenueFeed>],
-    bond: &TreasuryBond,
+    line: &QuotedLine,
     now_nanos: i64,
     cfg: &ConsolidationConfig,
 ) -> Result<BondComposite, ConsolidationError> {
-    let book = ConsolidatedBook::consolidate(feeds, &bond.engine_instrument(), now_nanos, cfg)?;
+    let book = ConsolidatedBook::consolidate(feeds, &line.instrument, now_nanos, cfg)?;
     let legs: Vec<String> = book
         .contributions
         .iter()
@@ -237,11 +261,10 @@ pub fn composite_for(
         })
         .collect();
     let rendered = format!(
-        "{name} [{isin} / {cusip}]  bid {bid:.4} x{bsz:.0}  offer {offer:.4} x{osz:.0}  \
+        "{name} [{identity}]  bid {bid:.4} x{bsz:.0}  offer {offer:.4} x{osz:.0}  \
          mid {mid:.4}  conf {conf:.2}  [{legs}]",
-        name = bond.display_name(),
-        isin = bond.isin,
-        cusip = bond.cusip,
+        name = line.display_name,
+        identity = line.identity,
         bid = book.best_bid,
         bsz = book.best_bid_size,
         offer = book.best_offer,
@@ -253,7 +276,7 @@ pub fn composite_for(
     Ok(BondComposite { book, rendered })
 }
 
-/// A quote snapshot for one member on one bond at an instant — the shape an LP
+/// A quote snapshot for one member on one instrument at an instant — the shape an LP
 /// pushes to a server ingest (`lp_name`, `instrument_id`, two-way, ts). Exposed so
 /// the binary can also emit the raw per-LP wire view, and to make the mapping from
 /// a [`VenueQuote`] to the canonical `instrument_id` explicit.
@@ -261,7 +284,8 @@ pub fn composite_for(
 pub struct LpQuoteSnapshot {
     /// The LP connection name (venue id).
     pub lp_name: String,
-    /// The canonical server `instrument_id` (the bond's CUSIP).
+    /// The canonical server `instrument_id` (a bond's CUSIP / slug, or a futures
+    /// contract code).
     pub instrument_id: String,
     /// Bid / offer per 100 face and firm sizes.
     pub bid: f64,
@@ -276,13 +300,13 @@ pub struct LpQuoteSnapshot {
 }
 
 impl LpQuoteSnapshot {
-    /// Build a snapshot from a member's [`VenueQuote`] and the bond it prices — the
-    /// bridge that stamps the canonical `instrument_id` (CUSIP) onto the wire view.
+    /// Build a snapshot from a member's [`VenueQuote`] and the line it prices — the
+    /// bridge that stamps the canonical `instrument_id` onto the wire view.
     #[must_use]
-    pub fn from_quote(q: &VenueQuote, bond: &TreasuryBond) -> Self {
+    pub fn from_quote(q: &VenueQuote, line: &QuotedLine) -> Self {
         Self {
             lp_name: q.venue.as_str().to_string(),
-            instrument_id: bond.instrument_id().to_string(),
+            instrument_id: line.instrument_id.clone(),
             bid: q.bid,
             offer: q.offer,
             bid_size: q.bid_size,

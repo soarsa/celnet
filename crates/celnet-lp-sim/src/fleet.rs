@@ -71,10 +71,10 @@ pub fn fleet(seed: u64, cfg: &FleetConfig) -> Vec<SimLp> {
                     let u = seeded_unit(lp_seed, &venue, &fi.instrument, 0);
                     let mut model = fi.template;
                     model.initial_yield += cfg.yield_dispersion * u;
-                    InstrumentModel {
-                        instrument: fi.instrument.clone(),
-                        mid: MidSource::MeanRevertingYield(model),
-                    }
+                    InstrumentModel::new(
+                        fi.instrument.clone(),
+                        MidSource::MeanRevertingYield(model),
+                    )
                 })
                 .collect();
 

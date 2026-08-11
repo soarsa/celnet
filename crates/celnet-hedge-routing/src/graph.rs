@@ -11,6 +11,7 @@
 //! a GUI can surface them all at once, mirroring `RiskRoutingGraph::validate`.
 
 use crate::field::HedgeField;
+use crate::vehicle::HedgeVehicle;
 use celnet_risk_routing::{FieldKind, RouteOp, RouteValue};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -162,11 +163,43 @@ pub enum HedgeNode {
         /// Successor when the condition does not hold.
         on_false: NodeId,
     },
-    /// A terminal leaf: the risk state resolves to this exit action.
+    /// A terminal leaf: the risk state resolves to this exit action, hedged with this
+    /// vehicle.
     Action {
-        /// The exit action to fire.
+        /// The exit action to fire — *what kind* of exit.
         exit: ExitAction,
+        /// *With what* the exit hedges — the vehicle
+        /// ([`docs/HEDGING-AND-RISK-EXIT.md`] §6.4). Defaults to
+        /// [`HedgeVehicle::SelfInstrument`] (the same security sold back), so a leaf
+        /// authored before vehicles existed — and every leaf in a persisted
+        /// `identity.json` that carries no `vehicle` key — behaves EXACTLY as it did.
+        ///
+        /// It lives on the NODE rather than inside [`ExitAction`] for two reasons: it
+        /// then applies uniformly to every size-bearing action (including the unit-variant
+        /// `ClearRisk`), and a stored graph written before this field existed still
+        /// deserialises, because a missing key is simply the default.
+        #[serde(default)]
+        vehicle: HedgeVehicle,
     },
+}
+
+impl HedgeNode {
+    /// A terminal leaf firing `exit` with the default self-hedge vehicle — the
+    /// constructor for every call site that does not care about the vehicle (and the
+    /// exact behaviour those call sites had before vehicles existed).
+    #[must_use]
+    pub fn action(exit: ExitAction) -> Self {
+        HedgeNode::Action {
+            exit,
+            vehicle: HedgeVehicle::SelfInstrument,
+        }
+    }
+
+    /// A terminal leaf firing `exit` hedged with `vehicle`.
+    #[must_use]
+    pub fn action_with(exit: ExitAction, vehicle: HedgeVehicle) -> Self {
+        HedgeNode::Action { exit, vehicle }
+    }
 }
 
 /// A validation or resolution defect. [`HedgeGraph::validate`] returns a `Vec` of
@@ -232,6 +265,19 @@ pub enum HedgeError {
         /// The node holding the empty panel.
         node: NodeId,
     },
+    /// A leaf names a hedge **vehicle** the firm's vehicle registry does not know, so its
+    /// DV01 per unit is unknown and the hedge could only be sized by guessing.
+    UnknownHedgeVehicle {
+        /// The node holding the bad vehicle.
+        node: NodeId,
+        /// The unregistered hedge instrument id.
+        vehicle: String,
+    },
+    /// A leaf names a hedge vehicle with an EMPTY instrument id.
+    EmptyHedgeVehicle {
+        /// The node holding the empty vehicle.
+        node: NodeId,
+    },
 }
 
 impl fmt::Display for HedgeError {
@@ -265,6 +311,14 @@ impl fmt::Display for HedgeError {
             }
             HedgeError::EmptyRfqPanel { node } => {
                 write!(f, "node {node}: RFQ_OUT names no LPs")
+            }
+            HedgeError::UnknownHedgeVehicle { node, vehicle } => write!(
+                f,
+                "node {node}: hedge vehicle {vehicle:?} is not in the vehicle registry, so its \
+                 DV01 per unit is unknown and the hedge could not be sized"
+            ),
+            HedgeError::EmptyHedgeVehicle { node } => {
+                write!(f, "node {node}: the hedge vehicle names no instrument")
             }
         }
     }
@@ -363,11 +417,20 @@ impl HedgeGraph {
     /// cycle reachable from `entry`; any condition whose operator is invalid for
     /// its field kind or whose value variant is inconsistent with the operator;
     /// any `CrossInternal` naming an unknown aggregation instrument; any `RfqOut`
-    /// with an empty panel or an unknown/disabled LP.
+    /// with an empty panel or an unknown/disabled LP; and any leaf naming a hedge
+    /// **vehicle** absent from `known_vehicles` (an unregistered vehicle has no known
+    /// DV01 per unit, so its hedge could only be sized by guessing — guardrail 2).
+    ///
+    /// `known_vehicles` is the set of hedge-instrument ids the firm's
+    /// [`HedgeVehicleRegistry`](crate::HedgeVehicleRegistry) names. A
+    /// [`HedgeVehicle::SelfInstrument`] leaf needs no entry (it hedges the position's own
+    /// security, ratio `1`), and a [`HedgeVehicle::Benchmark`] leaf defers to the registry
+    /// at fire time, so neither is checked here.
     pub fn validate(
         &self,
         known_instruments: &BTreeSet<String>,
         known_lps: &BTreeSet<String>,
+        known_vehicles: &BTreeSet<String>,
     ) -> Result<(), Vec<HedgeError>> {
         let mut errors = Vec::new();
 
@@ -403,8 +466,9 @@ impl HedgeGraph {
                         });
                     }
                 }
-                HedgeNode::Action { exit } => {
+                HedgeNode::Action { exit, vehicle } => {
                     Self::validate_action(id, exit, known_instruments, known_lps, &mut errors);
+                    Self::validate_vehicle(id, vehicle, known_vehicles, &mut errors);
                 }
             }
         }
@@ -455,6 +519,30 @@ impl HedgeGraph {
             _ => {}
         }
     }
+
+    /// Validate one leaf's hedge **vehicle** against the registry's known hedge
+    /// instruments. Only an EXPLICITLY NAMED vehicle is checked: `SelfInstrument` hedges
+    /// the position's own security (no registry entry needed, ratio `1`) and `Benchmark`
+    /// resolves against the registry at fire time by instrument + maturity, falling back
+    /// to the self-hedge when nothing matches.
+    fn validate_vehicle(
+        id: NodeId,
+        vehicle: &HedgeVehicle,
+        known_vehicles: &BTreeSet<String>,
+        errors: &mut Vec<HedgeError>,
+    ) {
+        let Some(named) = vehicle.named_instrument() else {
+            return;
+        };
+        if named.trim().is_empty() {
+            errors.push(HedgeError::EmptyHedgeVehicle { node: id });
+        } else if !known_vehicles.contains(named) {
+            errors.push(HedgeError::UnknownHedgeVehicle {
+                node: id,
+                vehicle: named.to_owned(),
+            });
+        }
+    }
 }
 
 #[cfg(test)]
@@ -482,7 +570,15 @@ mod tests {
     }
 
     fn act(exit: ExitAction) -> HedgeNode {
-        HedgeNode::Action { exit }
+        HedgeNode::action(exit)
+    }
+
+    /// The hedge-instrument ids the firm's vehicle registry knows.
+    fn vehicles() -> BTreeSet<String> {
+        ["TY-DEC26", "FV-DEC26"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     }
 
     /// A minimal valid graph: `breached == false ? WAREHOUSE : SUBMIT_MARKET_ORDER`.
@@ -511,7 +607,11 @@ mod tests {
 
     #[test]
     fn valid_graph_passes() {
-        assert!(valid_graph().validate(&instruments(), &lps()).is_ok());
+        assert!(
+            valid_graph()
+                .validate(&instruments(), &lps(), &vehicles())
+                .is_ok()
+        );
     }
 
     /// A hedge graph carrying a `counterparty == "X"` condition validates and survives the
@@ -542,7 +642,7 @@ mod tests {
         let g = HedgeGraph { entry: 0, nodes };
 
         // A counterparty condition is a well-formed graph (String field, Eq operator).
-        assert!(g.validate(&instruments(), &lps()).is_ok());
+        assert!(g.validate(&instruments(), &lps(), &vehicles()).is_ok());
 
         // Persist (serde_json String) → reload — the on-disk `identity.json` path.
         let json = serde_json::to_string(&g).expect("serialize must not fail");
@@ -558,7 +658,7 @@ mod tests {
     fn missing_entry_rejected() {
         let mut g = valid_graph();
         g.entry = 99;
-        let errs = g.validate(&instruments(), &lps()).unwrap_err();
+        let errs = g.validate(&instruments(), &lps(), &vehicles()).unwrap_err();
         assert!(errs.contains(&HedgeError::MissingEntry { entry: 99 }));
     }
 
@@ -575,7 +675,7 @@ mod tests {
                 77,
             ),
         );
-        let errs = g.validate(&instruments(), &lps()).unwrap_err();
+        let errs = g.validate(&instruments(), &lps(), &vehicles()).unwrap_err();
         assert!(errs.contains(&HedgeError::DanglingEdge { from: 0, to: 77 }));
     }
 
@@ -589,7 +689,7 @@ mod tests {
                 max_size: HedgeSize::Overflow,
             }),
         );
-        let errs = g.validate(&instruments(), &lps()).unwrap_err();
+        let errs = g.validate(&instruments(), &lps(), &vehicles()).unwrap_err();
         assert!(errs.contains(&HedgeError::UnknownInstrument {
             node: 2,
             instrument: "GHOST".into(),
@@ -606,7 +706,7 @@ mod tests {
                 size: HedgeSize::Overflow,
             }),
         );
-        let errs = g.validate(&instruments(), &lps()).unwrap_err();
+        let errs = g.validate(&instruments(), &lps(), &vehicles()).unwrap_err();
         assert!(errs.contains(&HedgeError::UnknownLp {
             node: 2,
             lp: "LP-9".into(),
@@ -623,7 +723,7 @@ mod tests {
                 size: HedgeSize::Overflow,
             }),
         );
-        let errs = g.validate(&instruments(), &lps()).unwrap_err();
+        let errs = g.validate(&instruments(), &lps(), &vehicles()).unwrap_err();
         assert!(errs.contains(&HedgeError::EmptyRfqPanel { node: 2 }));
     }
 
@@ -641,7 +741,7 @@ mod tests {
                 2,
             ),
         );
-        let errs = g.validate(&instruments(), &lps()).unwrap_err();
+        let errs = g.validate(&instruments(), &lps(), &vehicles()).unwrap_err();
         assert!(errs.contains(&HedgeError::OpNotValidForField {
             node: 0,
             field: HedgeField::Breached,
@@ -663,7 +763,7 @@ mod tests {
                 2,
             ),
         );
-        let errs = g.validate(&instruments(), &lps()).unwrap_err();
+        let errs = g.validate(&instruments(), &lps(), &vehicles()).unwrap_err();
         assert!(errs.contains(&HedgeError::ValueTypeMismatch {
             node: 0,
             field: HedgeField::Overflow,
@@ -696,7 +796,7 @@ mod tests {
         );
         nodes.insert(2, act(ExitAction::Warehouse));
         let g = HedgeGraph { entry: 0, nodes };
-        let errs = g.validate(&instruments(), &lps()).unwrap_err();
+        let errs = g.validate(&instruments(), &lps(), &vehicles()).unwrap_err();
         assert!(errs.contains(&HedgeError::Cycle));
     }
 
@@ -722,7 +822,7 @@ mod tests {
             }),
         );
         let g = HedgeGraph { entry: 0, nodes };
-        let errs = g.validate(&instruments(), &lps()).unwrap_err();
+        let errs = g.validate(&instruments(), &lps(), &vehicles()).unwrap_err();
         assert!(errs.len() >= 3, "expected multiple errors, got {errs:?}");
     }
 
@@ -771,7 +871,7 @@ mod tests {
     fn clear_risk_leaf_validates_and_round_trips() {
         let mut g = valid_graph();
         g.nodes.insert(2, act(ExitAction::ClearRisk));
-        assert!(g.validate(&instruments(), &lps()).is_ok());
+        assert!(g.validate(&instruments(), &lps(), &vehicles()).is_ok());
         let json = serde_json::to_string(&g).expect("serialize");
         assert!(json.contains("ClearRisk"), "{json}");
         let back: HedgeGraph = serde_json::from_str(&json).expect("reload");

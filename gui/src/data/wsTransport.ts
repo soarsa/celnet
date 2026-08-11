@@ -54,6 +54,7 @@ import type {
   HedgeProvenance,
   HedgeIntent,
   HedgeConfig,
+  HedgeSuggestion,
   RiskTransfer,
   InitiateRiskTransferInput,
   ListRiskTransfersFilter,
@@ -302,6 +303,11 @@ import {
   getHedgeConfigRequestToWire,
   hedgeConfigResponseFromWire,
   setHedgeConfigRequestToWire,
+  hedgeIntentFromWire,
+  listHedgeSuggestionsRequestToWire,
+  hedgeSuggestionsResponseFromWire,
+  executeHedgeSuggestionRequestToWire,
+  executeHedgeSuggestionResponseFromWire,
   initiateRiskTransferRequestToWire,
   acceptRiskTransferRequestToWire,
   rejectRiskTransferRequestToWire,
@@ -470,6 +476,15 @@ class WsConnection {
    * dispatched purely by frame `type` (like `notification`).
    */
   private readonly pricingControlSubs = new Map<symbol, (frame: WireObject) => void>();
+  /**
+   * Live `hedge_intent` push handlers, keyed by an opaque token. Like
+   * `pricing_control` this is an UNSOLICITED server→client broadcast with NO subscribe
+   * verb — the auto-hedge engine emits one frame per resolved risk state — so handlers
+   * are dispatched purely by frame `type`. Nothing is cached: an intent is an EVENT at a
+   * point in time, not a current state, so replaying a stale one to a late subscriber
+   * would put a risk reading on screen that is no longer true.
+   */
+  private readonly hedgeIntentSubs = new Map<symbol, (frame: WireObject) => void>();
   /**
    * The last-seen `pricing_control` frame, cached so a subscriber that registers
    * AFTER the connect-time push (the common case — React mounts after the socket
@@ -657,6 +672,14 @@ class WsConnection {
       for (const cb of this.pricingControlSubs.values()) cb(frame);
       return;
     }
+    // The auto-hedge engine's intent push (server → all clients, unsolicited): one frame
+    // per resolved risk state, carrying the HedgeIntent fields FLAT beside `type`. It has
+    // no `correlation_id` (it is not a reply) so it never matches a waiter — dispatched
+    // purely by `type`, exactly like `pricing_control`.
+    if (type === "hedge_intent") {
+      for (const cb of this.hedgeIntentSubs.values()) cb(frame);
+      return;
+    }
     // Some contract reply messages do not carry a `correlation_id` — the `smile`,
     // `mark_surface_response`, `scenario_response` and `reject_ack` proto messages
     // have no correlation field, so the server cannot echo one. Match such a reply
@@ -804,6 +827,20 @@ class WsConnection {
     if (this.lastPricingControl) onFrame(this.lastPricingControl);
     return () => {
       this.pricingControlSubs.delete(key);
+    };
+  }
+
+  /**
+   * Register a `hedge_intent` push handler. There is NO subscribe verb — the server
+   * broadcasts each resolved intent to every connected client — so this only wires the
+   * handler and returns a disposer that unregisters it. Unlike `pricing_control` no
+   * frame is replayed on registration: an intent is a point-in-time event, not state.
+   */
+  subscribeHedgeIntents(onFrame: (frame: WireObject) => void): () => void {
+    const key = Symbol("hedge-intent-sub");
+    this.hedgeIntentSubs.set(key, onFrame);
+    return () => {
+      this.hedgeIntentSubs.delete(key);
     };
   }
 
@@ -2454,14 +2491,33 @@ export class WsTransport implements CelnetTransport {
     return hedgeConfigResponseFromWire(reply);
   }
 
-  streamHedgeIntents(_onIntent: (intent: HedgeIntent) => void): () => void {
-    // The advisory-intent stream is folded into the server's notification/stream
-    // infra (not the WS request/response mirror), and intents are also queryable as
-    // advisory `HedgeProvenance` records via {@link listHedgeProvenance}. Until the
-    // intent push is mirrored onto this WS channel, the live transport registers no
-    // live source and returns a no-op disposer; the monitor still renders fired
-    // provenance via the poll. The offline mock supplies the live-feeling stream.
-    return () => undefined;
+  streamHedgeIntents(onIntent: (intent: HedgeIntent) => void): () => void {
+    // The engine's intent push is an UNSOLICITED `hedge_intent` frame on this same WS
+    // connection (the `pricing_control` pattern — broadcast, no subscribe verb), carrying
+    // the HedgeIntent fields FLAT beside `type`. Decoding the frame itself is therefore
+    // exactly `hedgeIntentFromWire`; the extra `type` key is ignored by the decoder.
+    return this.conn.subscribeHedgeIntents((frame) => onIntent(hedgeIntentFromWire(frame)));
+  }
+
+  async listHedgeSuggestions(book?: string): Promise<HedgeSuggestion[]> {
+    const reply = await this.conn.request(
+      "list_hedge_suggestions",
+      listHedgeSuggestionsRequestToWire(book),
+      "hedge_suggestions",
+    );
+    return hedgeSuggestionsResponseFromWire(reply);
+  }
+
+  async executeHedgeSuggestion(
+    suggestionId: string,
+    dismiss: boolean,
+  ): Promise<{ provenance: HedgeProvenance | null; suggestions: HedgeSuggestion[] }> {
+    const reply = await this.conn.request(
+      "execute_hedge_suggestion",
+      executeHedgeSuggestionRequestToWire(suggestionId, dismiss),
+      "hedge_suggestion_executed",
+    );
+    return executeHedgeSuggestionResponseFromWire(reply);
   }
 
   // --- FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md) -----------------

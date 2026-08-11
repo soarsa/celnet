@@ -63,6 +63,8 @@ const fullAction: ExitAction = {
   lps: ["LP-1", "LP-3"],
   internalFirst: true,
   reason: "big residual",
+  vehicleKind: "future",
+  vehicleInstrument: "TY-DEC26",
 };
 
 describe("hedge enum ordinals (byte-parity with the proto)", () => {
@@ -254,6 +256,7 @@ describe("provenance + intent round-trip", () => {
     lpWon: "LP-2",
     advisory: true,
     lps: ["LP-1", "LP-3"],
+    vehiclePlan: null,
   };
 
   it("round-trips a provenance with lp_won present", () => {
@@ -306,6 +309,8 @@ describe("provenance + intent round-trip", () => {
       policyPath: [0, 2, 4, 5],
       reason: "red · cross_internal",
       lps: [],
+      vehiclePlan: null,
+      exitMode: "auto",
     };
     expect(hedgeIntentFromWire(hedgeIntentToWire(intent))).toEqual(intent);
   });
@@ -327,6 +332,8 @@ describe("provenance + intent round-trip", () => {
       policyPath: [0, 3],
       reason: "breach · rfq_out",
       lps: ["LP-1", "LP-2", "LP-4"],
+      vehiclePlan: null,
+      exitMode: "auto",
     };
     const wire = hedgeIntentToWire(intent);
     expect(wire["lps"]).toEqual(["LP-1", "LP-2", "LP-4"]);
@@ -369,6 +376,8 @@ describe("engine config round-trip", () => {
       dailyExternalNotionalCap: 2_000_000_000,
       lpPanels: [],
       compositeSpreadBp: 0.5,
+      vehicles: [],
+      exitModes: [],
     };
     const wire = hedgeConfigToWire(c);
     expect(wire["kill_switch"]).toBe(false);
@@ -391,6 +400,8 @@ describe("engine config round-trip", () => {
         { scopeKind: "desk", scopeId: "emea", include: [], exclude: ["LP-4"] },
       ],
       compositeSpreadBp: 1.25,
+      vehicles: [],
+      exitModes: [],
     };
     const wire = hedgeConfigToWire(c);
     expect(Array.isArray(wire["lp_panels"])).toBe(true);

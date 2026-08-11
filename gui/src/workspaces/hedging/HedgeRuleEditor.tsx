@@ -8,7 +8,13 @@
  */
 import { useMemo, useState } from "react";
 
-import type { ExitAction, HedgeField, RouteOp, RouteValue } from "../../data/contract";
+import type {
+  ExitAction,
+  HedgeField,
+  HedgeVehicleRule,
+  RouteOp,
+  RouteValue,
+} from "../../data/contract";
 import {
   BREACHED_VALUES,
   HEDGE_CCY_VALUES,
@@ -33,6 +39,11 @@ interface HedgeRuleEditorProps {
   readOnly: boolean;
   instrumentOptions: readonly string[];
   lpOptions: readonly string[];
+  /**
+   * The firm's hedge-vehicle registry — the legal NAMED vehicles for a size-bearing leaf
+   * (each row carries the DV01-per-unit its size is computed from). Absent ⇒ empty.
+   */
+  vehicles?: readonly HedgeVehicleRule[];
   onSave: (rule: HedgeRule) => void;
   onCancel: () => void;
   /**
@@ -66,6 +77,7 @@ export function HedgeRuleEditor({
   readOnly,
   instrumentOptions,
   lpOptions,
+  vehicles = [],
   onSave,
   onCancel,
   seedHint = null,
@@ -185,6 +197,7 @@ export function HedgeRuleEditor({
                 readOnly={readOnly}
                 instrumentOptions={instrumentOptions}
                 lpOptions={lpOptions}
+                vehicles={vehicles}
                 onChange={setAction}
               />
             </section>

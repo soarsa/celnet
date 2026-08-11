@@ -5301,6 +5301,84 @@ message ExitActionDesc {
   bool internal_first = 8;
   // ESCALATE: the rationale surfaced on the notification.
   string reason = 9;
+  // WITH WHAT this leaf hedges (mirrors `celnet_hedge_routing::HedgeVehicle`, which
+  // lives on the graph NODE rather than inside the action enum so it applies uniformly
+  // to every size-bearing action, `ClearRisk` included). `SELF` (the proto default) is
+  // the same security sold back — DV01 ratio identically 1, the historical behaviour.
+  HedgeVehicleKindEnum vehicle_kind = 10;
+  // The hedge instrument this leaf names, for `INSTRUMENT` / `FUTURE`. Empty for
+  // `SELF` (the position's own security) and `BENCHMARK` (resolved from the firm's
+  // vehicle registry by instrument + maturity bucket at fire time).
+  string vehicle_instrument = 11;
+}
+
+// WITH WHAT a size-bearing exit action hedges (mirrors
+// `celnet_hedge_routing::HedgeVehicle`). A corporate bond is not hedged with itself —
+// it is hedged with a benchmark at matching maturity, in practice a government-bond
+// future. `SELF` is the proto-default so a policy authored before vehicles existed is
+// unchanged.
+enum HedgeVehicleKindEnum {
+  // The same security sold back. DV01 ratio identically 1; needs no registry entry.
+  HEDGE_VEHICLE_SELF = 0;
+  // Whatever the firm's hedge-vehicle registry maps this risk to, resolved by
+  // instrument + maturity bucket (a 9y corp → the 10Y future).
+  HEDGE_VEHICLE_BENCHMARK = 1;
+  // An explicitly named instrument (must be registered so its DV01/unit is known).
+  HEDGE_VEHICLE_INSTRUMENT = 2;
+  // An explicitly named futures contract; sizing rounds to whole lots.
+  HEDGE_VEHICLE_FUTURE = 3;
+}
+
+// Whether a resolved exit fires by itself or waits for a trader (mirrors
+// `celnet_hedge_routing::HedgeExitMode`). Deliberately NOT a confirmation dialog:
+// `SUGGEST` publishes a STANDING suggestion onto the risk surface that survives being
+// ignored, where a modal would interrupt and then vanish.
+enum HedgeExitModeEnum {
+  // Fire on breach with no interaction — the historical behaviour, and the default.
+  HEDGE_EXIT_MODE_AUTO = 0;
+  // Compute everything, trade nothing; publish a standing suggestion a trader fires.
+  HEDGE_EXIT_MODE_SUGGEST = 1;
+}
+
+// One row of the firm's hedge-vehicle registry: "risk matching this shape hedges into
+// THAT instrument, whose DV01 per unit is THIS" (mirrors
+// `celnet_hedge_routing::HedgeVehicleRule`). Resolution is most-specific-wins
+// (instrument > product > ccy), tie-broken by the narrowest maturity bucket.
+message HedgeVehicleDesc {
+  // Stable row id (the CRUD key and the final tie-break).
+  string id = 1;
+  // Match on the risk cell's executable security id, exactly. Empty ⇒ matches any.
+  string instrument_id = 2;
+  // Match on the product family ("BOND"/"OIS"/…). Empty ⇒ matches any.
+  string product = 3;
+  // Match on the currency. Empty ⇒ matches any.
+  string ccy = 4;
+  // The maturity bucket's inclusive lower bound, in years.
+  double min_maturity_years = 5;
+  // The maturity bucket's exclusive upper bound, in years. `min=7,max=12` is the
+  // "10Y bucket" that catches a 9-year corporate bond.
+  double max_maturity_years = 6;
+  // The instrument this risk hedges into — the id the LP panel is asked for.
+  string hedge_instrument_id = 7;
+  // Whether that instrument is a futures contract (⇒ whole-lot rounding).
+  bool is_future = 8;
+  // The DV01 of ONE unit of the hedge instrument (one futures contract / one quoted
+  // unit of a benchmark). Strictly positive — a hedge is never sized against a guess.
+  double dv01_per_unit = 9;
+  // The unit's human label ("contract", "1mm face").
+  string unit_label = 10;
+}
+
+// One scoped exit-mode binding: whether exits in this scope fire automatically or
+// publish a standing suggestion. Resolved most-specific-wins (instrument > book > desk),
+// exactly like the hedging LP panels; an unbound scope is AUTO.
+message HedgeExitModeBinding {
+  // What the scope_id names (desk / book / instrument).
+  HedgeScopeKindEnum scope_kind = 1;
+  // The scope identifier.
+  string scope_id = 2;
+  // The mode for that scope.
+  HedgeExitModeEnum mode = 3;
 }
 
 // The kind of exit action (mirrors `celnet_hedge_routing::ExitAction`'s variants).
@@ -5471,6 +5549,52 @@ message HedgeProvenance {
   // the book-level advisory-intent records the policy engine stamps on a threshold breach
   // (those are keyed by book, not a single fill). Presence-tracked.
   optional uint64 parent_position_id = 21;
+  // The VEHICLE hedge this fire was sized as, when the policy leaf chose to hedge with
+  // something other than the position's own security (a benchmark / a future). Carries
+  // the DV01 ratio, the whole-contract rounding and the honest residual. Absent for a
+  // self-hedge, whose ratio is identically 1 and needs no plan.
+  optional HedgeVehiclePlanDesc vehicle_plan = 22;
+}
+
+// How a VEHICLE hedge was sized: the DV01 ratio, what it rounds to, and what is
+// honestly left over (mirrors `celnet_hedge_routing::HedgeRatioPlan`).
+//
+//     units = position_DV01 / hedge_instrument_DV01_per_unit
+//
+// rounded to whole contracts for a future — you cannot trade 318.47 lots — with the
+// rounding residual REPORTED rather than hidden.
+message HedgeVehiclePlanDesc {
+  // The instrument actually traded.
+  string hedge_instrument_id = 1;
+  // The unit's human label ("contract", "1mm face").
+  string unit_label = 2;
+  // Whether the vehicle trades in whole lots (a future).
+  bool whole_units = 3;
+  // Which measure `target_dv01` was computed on: "analytic" (a genuine closed-form
+  // yield derivative), "annuity-pv01" (an undiscounted swap annuity), or
+  // "exposure-proxy" (the firm's duration-BLIND pre-trade proxy).
+  string dv01_basis = 4;
+  // Whether a ratio on that basis is duration-correct. FALSE for "exposure-proxy",
+  // whose bond arm treats every bond as duration 1 — such a size must be surfaced as
+  // approximate, never presented as exact.
+  bool duration_correct = 5;
+  // The DV01 the desk wants to remove (non-negative; the direction is the position's).
+  double target_dv01 = 6;
+  // The DV01 of one unit of the vehicle.
+  double dv01_per_unit = 7;
+  // The unrounded ratio `target_dv01 / dv01_per_unit`.
+  double exact_units = 8;
+  // The tradeable quantity — `exact_units` rounded to the nearest whole lot when
+  // `whole_units`. Zero when the target is below half a contract (an honest "too small
+  // to hedge with this vehicle", never a fabricated part lot).
+  double units = 9;
+  // The DV01 actually removed: `units × dv01_per_unit`.
+  double hedged_dv01 = 10;
+  // `target_dv01 − hedged_dv01`. POSITIVE ⇒ under-hedged (rounded down, risk remains);
+  // NEGATIVE ⇒ over-hedged (rounded up). Never suppressed.
+  double residual_dv01 = 11;
+  // A one-line trader-facing rendering of the above.
+  string summary = 12;
 }
 
 // The advisory shadow-run projection of one hedge decision — what the engine WOULD
@@ -5512,6 +5636,100 @@ message HedgeIntent {
   // Empty for internal / no-trade actions. Lets a desk see which LPs an advisory hedge
   // would fan to before it arms live.
   repeated string lps = 16;
+  // The VEHICLE hedge this intent would place, when the policy leaf hedges with
+  // something other than the position's own security. Absent for a self-hedge.
+  optional HedgeVehiclePlanDesc vehicle_plan = 17;
+  // Whether this scope fires automatically or only publishes a standing suggestion.
+  HedgeExitModeEnum exit_mode = 18;
+}
+
+// A STANDING hedge suggestion — the manual half of suggest-then-exit. The engine has
+// measured the risk, resolved the policy and sized the vehicle, and has deliberately
+// traded NOTHING because the scope's exit mode is `SUGGEST`. The suggestion sits on the
+// risk surface next to the risk it refers to until a trader fires or dismisses it.
+//
+// This is NOT a confirmation dialog: no modal is raised, nothing is blocked, and
+// ignoring it leaves it exactly where it was.
+message HedgeSuggestion {
+  // Stable id (the fire / dismiss key).
+  string suggestion_id = 1;
+  // The book carrying the risk.
+  string book = 2;
+  // The instrument (family label) the risk is measured on.
+  string instrument = 3;
+  // The owning desk.
+  string desk = 4;
+  // When the suggestion was raised (epoch nanos, UTC).
+  int64 raised_at = 5;
+  // The RAG band at the time ("green"/"amber"/"red"/"breach").
+  string band = 6;
+  // The signed net risk in the budget metric.
+  double net_risk = 7;
+  // The resolved warehouse threshold.
+  double threshold = 8;
+  // `|net_risk| / threshold`.
+  double utilization = 9;
+  // The exit action the policy resolved (including its vehicle choice).
+  ExitActionDesc action = 10;
+  // The exact graph path walked — the machine-checkable "why this suggestion".
+  repeated uint32 policy_path = 11;
+  // The external shed the policy sized, in the budget metric's native units.
+  double external_size = 12;
+  // How that shed sizes as a VEHICLE trade. Absent for a self-hedge (ratio 1).
+  optional HedgeVehiclePlanDesc vehicle_plan = 13;
+  // The trader-facing instruction — "Sell 318 contracts of TY-DEC26".
+  string headline = 14;
+  // Why it was raised (band / action / policy summary), and any honesty caveat (e.g.
+  // that the DV01 basis is the duration-blind proxy).
+  string rationale = 15;
+  // The booked position whose fill raised this suggestion (the reconciliation key).
+  optional uint64 parent_position_id = 16;
+  // The effective LP set the hedge would fan to.
+  repeated string lps = 17;
+  // The reference mid captured when the suggestion was raised — what the hedge would
+  // price off if fired now. Zero when none was available.
+  double mid_at_raise = 18;
+}
+
+// List the standing hedge suggestions (gated `hedge` × asset), newest first.
+message ListHedgeSuggestionsRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // Optional book filter.
+  string book = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The standing suggestions.
+message ListHedgeSuggestionsResponse {
+  // The suggestions, newest first.
+  repeated HedgeSuggestion suggestions = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Resolve one standing suggestion: FIRE it (execute the sized hedge on the configured
+// venue and book the offsetting leg) or DISMISS it (clear it, trade nothing).
+message ExecuteHedgeSuggestionRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // The suggestion to resolve.
+  string suggestion_id = 2;
+  // When true, clear the suggestion WITHOUT trading. The risk stays on the book and the
+  // next fill re-raises the suggestion — dismissing hides nothing.
+  bool dismiss = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+// The outcome of resolving a suggestion.
+message ExecuteHedgeSuggestionResponse {
+  // The provenance of the hedge that fired; absent on a dismiss, or when the venue
+  // returned an honest miss (nothing filled ⇒ nothing is claimed to have traded).
+  optional HedgeProvenance provenance = 1;
+  // The suggestions that remain standing after this call.
+  repeated HedgeSuggestion suggestions = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
 }
 
 // One per-desk enable toggle in the engine config.
@@ -5563,6 +5781,13 @@ message HedgeConfigDesc {
   // The spread (bp) applied to the Agg Book COMPOSITE mid when a hedge fills on the
   // composite venue (the `COMPOSITE` mode / the `LP_PANEL_THEN_COMPOSITE` fallback).
   double composite_spread_bp = 8;
+  // The firm's HEDGE-VEHICLE REGISTRY: which vehicle hedges which risk, by instrument
+  // and maturity bucket. Empty ⇒ a `BENCHMARK` leaf resolves nothing and falls back to
+  // the self-hedge (never a fabricated vehicle). Additive; an unset list is empty.
+  repeated HedgeVehicleDesc vehicles = 9;
+  // The scoped SUGGEST-vs-AUTO exit-mode bindings. Empty ⇒ AUTO everywhere, i.e. the
+  // historical fire-on-breach behaviour.
+  repeated HedgeExitModeBinding exit_modes = 10;
 }
 
 // Read a scoped hedge policy graph (gated `hedge` × asset). Absent until defined.
@@ -7036,7 +7261,55 @@ message InstrumentDefDesc {
     OisDef ois = 10;
     // A cash bond.
     BondDef bond = 11;
+    // A listed bond (Treasury) futures contract.
+    BondFutureDef bond_future = 12;
   }
+}
+
+// Rates — a listed **bond (Treasury) futures** contract: the benchmark hedge vehicle
+// an interest-rate exposure is transferred into. Every field is a published contract
+// term (CBOT rulebook chapters 18/19/20/21/26/40) except `dv01_per_contract_at_notional_yield`,
+// which is derived — see its comment.
+message BondFutureDef {
+  // The listed contract code (product symbol + delivery-month letter + two-digit
+  // year, e.g. `ZNZ26`); required.
+  string contract_code = 1;
+  // The product symbol without the delivery month (`ZT`/`ZF`/`ZN`/`TN`/`ZB`/`UB`).
+  string contract_symbol = 2;
+  // The issuer of the deliverable securities, e.g. `US Treasury`.
+  string underlying_issuer = 3;
+  // Face value at maturity of the deliverable, per contract (e.g. 100000).
+  double contract_face_value = 4;
+  // The minimum price increment for an OUTRIGHT trade, in points of 100 face.
+  double tick_size_points = 5;
+  // The cash value of one minimum price increment, per contract.
+  double tick_value = 6;
+  // The notional coupon the contract's conversion factor is defined against
+  // (0.06 = 6% for every CBOT Treasury futures contract).
+  double notional_coupon_rate = 7;
+  // Shortest remaining term to maturity, in months, a deliverable security may have.
+  uint32 deliverable_min_months = 8;
+  // Longest remaining term to maturity, in months, a deliverable security may have.
+  uint32 deliverable_max_months = 9;
+  // The first calendar day of the delivery month — the date the rulebook measures a
+  // deliverable's remaining term from.
+  BrokenDate delivery_month_start = 10;
+  // The first delivery day (first business day of the delivery month).
+  BrokenDate first_delivery_date = 11;
+  // The last day the contract trades.
+  BrokenDate last_trading_date = 12;
+  // The last delivery day.
+  BrokenDate last_delivery_date = 13;
+  // The contract's STANDARDIZED DV01 per contract, in the contract currency per basis
+  // point, evaluated at the contract's own 6% notional yield. DERIVED, not published:
+  // a futures contract has no constant basis-point value — the live figure is the
+  // cheapest-to-deliver security's DV01 divided by its conversion factor and moves
+  // daily. This field is the stable, displayable figure; a hedge must be sized off the
+  // live curve yield instead (it understates the live value whenever yields are
+  // below 6%).
+  double dv01_per_contract_at_notional_yield = 14;
+  // Settlement calendar centre labels (at least one).
+  repeated string calendars = 15;
 }
 
 // List the instrument definitions in the registry (any authenticated caller —
@@ -7410,6 +7683,8 @@ service AuthService {
   rpc ListHedgeProvenance(ListHedgeProvenanceRequest) returns (ListHedgeProvenanceResponse);
   rpc GetHedgeConfig(GetHedgeConfigRequest) returns (GetHedgeConfigResponse);
   rpc SetHedgeConfig(SetHedgeConfigRequest) returns (SetHedgeConfigResponse);
+  rpc ListHedgeSuggestions(ListHedgeSuggestionsRequest) returns (ListHedgeSuggestionsResponse);
+  rpc ExecuteHedgeSuggestion(ExecuteHedgeSuggestionRequest) returns (ExecuteHedgeSuggestionResponse);
   // Incoming-quote acceptance (the third trader-configurable rule engine —
   // `celnet-acceptance`). Read / replace the firm-wide acceptance decision graph that
   // gates whether an inbound counterparty lift is ACCEPTED, REJECTED, or HELD for
