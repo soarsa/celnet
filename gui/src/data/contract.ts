@@ -3388,8 +3388,12 @@ export interface FeaturePipeline {
  *  - `2` PRODUCT_SPLIT: bonds price off the book, OIS off the curve.
  *  - `3` CURVE_ANCHORED_BOOK_SKEW: curve backbone with the mid pulled `bookSkewWeight`
  *    ∈ [0,1] toward the composite (and the composite's half-spread).
+ *  - `4` COMPOSITE_ONLY: price ONLY off the composite and DECLINE when no enabled book
+ *    can source the instrument — never fall back to the curve. The mode for a venue
+ *    quoting as agent of consolidated liquidity, where a two-way it cannot source is a
+ *    market it does not actually have.
  */
-export type PricingSourceMode = 0 | 1 | 2 | 3;
+export type PricingSourceMode = 0 | 1 | 2 | 3 | 4;
 
 /**
  * The dealer last-look policy for a streamed-quote lift when the market moved

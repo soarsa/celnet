@@ -47,6 +47,8 @@
 //!
 //!   Fixed income (--asset fi):
 //!   --curve SYMBOL       curve symbol (e.g. USD-OIS)     (default USD-OIS)
+//!   --intent rfs|rfq     request a STREAM for a size (rfs), or a one-shot
+//!                          snapshot (rfq)                            (default rfs)
 //!   --tenor YEARS        OIS tenor in whole years (>= 1) (default 5)
 //!   --notional AMOUNT|mix  notional (> 0), or `mix` to rotate 100k…30m per stream
 //!                          request (one-shot uses the fixed value)   (default 10000000)
@@ -194,7 +196,8 @@ fn print_help() -> ! {
         "fix_rfq_client — FIX 4.4 RFQ price-taker (rates OIS or FX option)\n\n\
          Flags (all optional; sensible defaults dial the demo edge):\n  \
          --asset fi|fx|esp (fi)   --addr HOST:PORT (127.0.0.1:9099)\n  \
-         fi:  --curve USD-OIS  --tenor 5  --notional 10000000|mix  --side pay|receive|two-way|mix\n  \
+         fi:  --curve USD-OIS  --tenor 5  --notional 10000000|mix  --side pay|receive|two-way|mix\n       \
+         --intent rfs|rfq (rfs = request a stream for a size)\n  \
          fx:  --pair EURUSD  --type call|put  --strike 1.10  --expiry-years 1.0\n       \
          --side observe|buy|sell  --settlement deliverable|ndf  --exercise european|american\n  \
          esp: --grpc-addr http://127.0.0.1:50051  --esp-instruments 15  --seed 0x5EED1234\n       \
@@ -284,7 +287,10 @@ fn parse_args() -> Args {
     let mut manual_tenor = 15_u32;
     let mut manual_security = String::from(DEFAULT_MANUAL_SECURITY);
     let mut lift_every = 0_u64;
-    let mut stream = false;
+    // The fixed-income leg defaults to RFS: a request for a STREAM **for a size**, which
+    // is what a real rates price-taker sends and what lets the venue's tiering act on the
+    // requested quantity. `--intent rfq` still selects the one-shot snapshot.
+    let mut stream = true;
     let mut stream_hold_ms = DEFAULT_STREAM_HOLD_MS;
     let mut grpc_addr = String::from("http://127.0.0.1:50051");
     let mut esp_instruments = DEFAULT_ESP_INSTRUMENTS;

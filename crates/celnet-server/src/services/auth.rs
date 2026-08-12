@@ -3578,6 +3578,7 @@ fn pricing_source_mode_to_wire(mode: PricingSourceMode) -> i32 {
         PricingSourceMode::CurveAnchoredBookSkew => {
             celnet_proto::PricingSourceMode::CurveAnchoredBookSkew
         }
+        PricingSourceMode::CompositeOnly => celnet_proto::PricingSourceMode::CompositeOnly,
     };
     wire as i32
 }
@@ -3589,6 +3590,7 @@ fn pricing_source_mode_from_wire(value: i32) -> PricingSourceMode {
     match celnet_proto::PricingSourceMode::try_from(value) {
         Ok(celnet_proto::PricingSourceMode::CurveOnly) => PricingSourceMode::CurveOnly,
         Ok(celnet_proto::PricingSourceMode::ProductSplit) => PricingSourceMode::ProductSplit,
+        Ok(celnet_proto::PricingSourceMode::CompositeOnly) => PricingSourceMode::CompositeOnly,
         Ok(celnet_proto::PricingSourceMode::CurveAnchoredBookSkew) => {
             PricingSourceMode::CurveAnchoredBookSkew
         }

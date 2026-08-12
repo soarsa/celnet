@@ -18,7 +18,7 @@
 
 use celnet_aggregation::Instrument;
 
-use crate::price::YieldModel;
+use crate::price::MidSource;
 
 /// One instrument the simulator can stream a two-way for.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,9 +35,13 @@ pub struct QuotedLine {
     /// The aggregation engine's asset-agnostic key. Injective over `instrument_id`,
     /// so two distinct instruments never consolidate onto one line.
     pub instrument: Instrument,
-    /// The seeded mean-reverting-yield model whose sampled yield is priced to this
-    /// instrument's quoted price through the real `celnet-bond` analytics leaf.
-    pub model: YieldModel,
+    /// How this line's ground-truth mid is formed. A cash bond / listed future uses
+    /// the seeded mean-reverting **yield** priced through the real `celnet-bond`
+    /// analytics leaf; a swap/OIS curve point uses the seeded mean-reverting **par
+    /// rate** quoted directly (an OIS market quotes a rate, not a price per 100).
+    /// Keeping the mid polymorphic here is what lets one line type — and therefore one
+    /// aggregated book — carry both quoting conventions.
+    pub mid: MidSource,
     /// A multiplier on the quoting LP's half-spread for this instrument. Markets
     /// quote in very different units: a cash bond's two-way is a couple of basis
     /// points of a ~100 price handle, whereas a Treasury future trades a single

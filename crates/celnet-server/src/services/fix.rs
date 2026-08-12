@@ -213,11 +213,36 @@ enum RfsLine {
 }
 
 impl RfsLine {
-    /// Whether this line is a cash bond (the product the [`PricingSourceMode::ProductSplit`]
-    /// policy routes to the composite).
-    fn is_bond(&self) -> bool {
-        matches!(self, RfsLine::Bond { .. })
+    /// The aggregated-book product arm of this line — how its composite key is spelled
+    /// and which [`PricingSourceMode::ProductSplit`] branch it takes.
+    fn composite_kind(&self) -> CompositeLineKind {
+        match self {
+            RfsLine::Bond { .. } => CompositeLineKind::Bond,
+            RfsLine::Ois { tenor_years } => CompositeLineKind::Swap {
+                tenor_years: *tenor_years,
+            },
+        }
     }
+}
+
+/// Which product arm a priced line belongs to, for the purposes of resolving its
+/// aggregated-book composite.
+///
+/// This is not merely a bond/not-bond flag: the two arms have genuinely different book
+/// **identities**. A cash bond is published by its LPs under a standalone id (a CUSIP or
+/// a govvie slug) that the FIX client sends verbatim as `Symbol(55)`. A swap curve point
+/// has no standalone id at all — a bare curve symbol is shared by every tenor on the
+/// curve — so its identity is the curve plus the tenor, which is why this arm carries
+/// the tenor. See [`FixSession::composite_id_for`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompositeLineKind {
+    /// A cash bond: keyed by its own `instrument_id` (the FIX symbol).
+    Bond,
+    /// A swap / OIS curve point at `tenor_years`: keyed by curve symbol + tenor.
+    Swap {
+        /// The whole-year tenor along the curve.
+        tenor_years: u32,
+    },
 }
 
 /// The shared, immutable pricing context every FIX session on this edge prices and
@@ -1063,16 +1088,22 @@ impl FixSession {
         // pricing failure (engine `Err`), distinct from an off-the-run tenor. The gated-in
         // price is sourced under this session's [`PricingSourceMode`]: the aggregated-book
         // composite drives the INITIAL quote (not just the RFS re-price) when the policy
-        // selects it and a book covers the symbol, else the live curve. For a plain OIS
-        // curve no book covers it, so every fallback mode resolves to the curve — an
-        // ungrouped/`CurveOnly` session is byte-identical to before.
+        // selects it and a book covers the curve point, else the live curve. The swap arm
+        // resolves its composite by curve symbol + TENOR (`USD-OIS-5Y`) — the id a
+        // liquidity panel streams each point of the curve under — so a book-fed OIS RFS is
+        // priced off real consolidated liquidity and tiered by the client's pricing group.
         let priced = if is_known_rates_symbol(&rfq.symbol)
             && self.ctx.auto_quote.tenors.contains(&rfq.tenor_years)
             && rfq.notional <= self.ctx.auto_quote.max_notional
         {
-            self.priced_under_policy(&rfq.symbol, rfq.notional, false, || {
-                rates_line(frame, Some(intent), curve).ok()
-            })
+            self.priced_under_policy(
+                &rfq.symbol,
+                rfq.notional,
+                CompositeLineKind::Swap {
+                    tenor_years: rfq.tenor_years,
+                },
+                || rates_line(frame, Some(intent), curve).ok(),
+            )
         } else {
             None
         };
@@ -1092,21 +1123,20 @@ impl FixSession {
     /// off the book's RAW consolidated composite through its own effective RFS/RFQ pipeline
     /// (`share_pipeline ? esp : rfq`); an ungrouped one receives the book-default composite.
     ///
-    /// Returns `None` when no hub is wired, no enabled book covers `symbol`, or the
-    /// composite is degenerate — the RFS ticker then falls back to the standalone P0 demo
-    /// re-price, so an instrument no book covers (e.g. a plain OIS curve) and the legacy
-    /// env seed stay byte-identical. Runs on the FIX **session ticker task**, never the
-    /// pinned zero-alloc pricer, so the composite/pipeline lookup (which takes the hub
-    /// read locks) respects guardrail 11.
-    fn composite_two_way(&self, symbol: &[u8], size: f64) -> Option<PricedLine> {
+    /// `instrument_id` is the **canonical book identity** of the line, already derived by
+    /// the caller ([`Self::composite_id_for`]): a cash bond's CUSIP / govvie slug is the
+    /// FIX `Symbol(55)` verbatim, whereas a swap curve point is the tenor-qualified
+    /// `USD-OIS-5Y` — a bare curve symbol would consolidate every point of the curve onto
+    /// one book line and quote a 10-year request off 2-year liquidity.
+    ///
+    /// Returns `None` when no hub is wired, no enabled book covers the id, or the
+    /// composite is degenerate. What the caller does with that is the session's
+    /// [`PricingSourceMode`]: every mode except [`PricingSourceMode::CompositeOnly`]
+    /// falls back to the internal curve, and `CompositeOnly` declines. Runs on the FIX
+    /// **session ticker task**, never the pinned zero-alloc pricer, so the
+    /// composite/pipeline lookup (which takes the hub read locks) respects guardrail 11.
+    fn composite_two_way(&self, instrument_id: &str, size: f64) -> Option<PricedLine> {
         let hub = self.ctx.aggregation_hub.as_ref()?;
-        // Key off the FIX `Symbol(55)` TRIMMED — the book publishes each line under the
-        // canonical `instrument_id` the LP fed (a bond's CUSIP / a govvie slug), and the
-        // FIX client sends that same id as the symbol; the only benign divergence is
-        // padding whitespace, which we strip here so a covered book is actually found.
-        // (There is no case-fold: CUSIPs are case-significant and slugs are lower-case,
-        // so folding could conflate distinct ids.)
-        let instrument_id = std::str::from_utf8(symbol).ok()?.trim();
         let resolver = hub.pricing_groups();
         let desk = self.ctx.desk.trim();
         let comp = match resolver
@@ -1135,11 +1165,34 @@ impl FixSession {
                     connection_id = %self.ctx.connection_id,
                     instrument_id,
                     reason = hub.diagnose_composite_miss(instrument_id).label(),
-                    "no aggregated-book composite for FIX symbol — falling back to curve",
+                    "no aggregated-book composite for FIX symbol",
                 );
                 None
             }
         }
+    }
+
+    /// The canonical aggregated-book identity for a line, i.e. the key
+    /// [`Self::composite_two_way`] resolves a composite by.
+    ///
+    /// A cash bond is published by its LPs under the very id the FIX client sends as
+    /// `Symbol(55)` (a CUSIP or a govvie slug), so the symbol is the key — trimmed,
+    /// because a fixed-width FIX field is routinely space-padded and the padding is the
+    /// only benign divergence. There is no case fold: CUSIPs are case-significant and
+    /// slugs lower-case, so folding could conflate distinct ids.
+    ///
+    /// A **swap/OIS curve point** has no such standalone id: its identity is the curve
+    /// plus the tenor, spelled by [`celnet_refdata::swap_instrument_id`] — the same
+    /// function the liquidity providers stream under, which is what makes the two sides
+    /// join. Returns `None` for a symbol that is not valid UTF-8.
+    fn composite_id_for(symbol: &[u8], line: CompositeLineKind) -> Option<String> {
+        let symbol = std::str::from_utf8(symbol).ok()?.trim();
+        Some(match line {
+            CompositeLineKind::Bond => symbol.to_string(),
+            CompositeLineKind::Swap { tenor_years } => {
+                celnet_refdata::swap_instrument_id(symbol, tenor_years)
+            }
+        })
     }
 
     /// This connection's resolved **pricing-source policy** `(mode, book_skew_weight)`:
@@ -1206,35 +1259,65 @@ impl FixSession {
 
     /// Price a rates/bond line under this session's [`PricingSourceMode`], the seam that
     /// makes the aggregated book drive the price **from the initial quote** — not just the
-    /// RFS re-price tick. `curve_line` is the internal-curve two-way (lazily evaluated, so
-    /// a mode that never needs the curve never prices it); `is_bond` selects the product
-    /// arm for [`PricingSourceMode::ProductSplit`]. Returns `None` only when the selected
-    /// source(s) all fail to produce a well-formed two-way (e.g. an unpriceable tenor with
-    /// no covering book) — the caller then declines/quotes nothing, never a fabricated
-    /// price. Runs on the async FIX edge, never the pinned pricer (guardrail 11).
+    /// RFS re-price tick.
+    ///
+    /// `line` is the product arm — it both selects the
+    /// [`PricingSourceMode::ProductSplit`] branch and determines how the composite key is
+    /// spelled (a swap point is tenor-qualified; see [`Self::composite_id_for`]).
+    /// `curve_line` is the internal-curve two-way, lazily evaluated so a mode that never
+    /// needs the curve never prices it — which is what lets `CompositeOnly` decline
+    /// without ever consulting an internal mark.
+    ///
+    /// Returns `None` when the selected source(s) fail to produce a well-formed two-way:
+    /// an unpriceable tenor with no covering book, or a `CompositeOnly` session whose
+    /// book cannot source the instrument. The caller then declines and quotes nothing —
+    /// never a fabricated price. Runs on the async FIX edge, never the pinned pricer
+    /// (guardrail 11).
     fn priced_under_policy(
         &self,
         symbol: &[u8],
         size: f64,
-        is_bond: bool,
+        line: CompositeLineKind,
         curve_line: impl FnOnce() -> Option<PricedLine>,
     ) -> Option<PricedLine> {
         let (mode, weight) = self.pricing_policy();
+        let is_bond = matches!(line, CompositeLineKind::Bond);
+        // Resolve the composite lazily and at most once — a mode that never consults the
+        // book must not pay for the id derivation or take the hub read locks.
+        let composite = |s: &Self| {
+            Self::composite_id_for(symbol, line).and_then(|id| s.composite_two_way(&id, size))
+        };
         match mode {
             PricingSourceMode::CurveOnly => curve_line(),
-            PricingSourceMode::CompositeFirstCurveFallback => {
-                self.composite_two_way(symbol, size).or_else(curve_line)
+            PricingSourceMode::CompositeFirstCurveFallback => composite(self).or_else(curve_line),
+            PricingSourceMode::CompositeOnly => {
+                let priced = composite(self);
+                if priced.is_none() {
+                    // An explicit, observable refusal — NOT a silent miss that degrades to
+                    // an internal mark. A venue configured to quote as an agent of real
+                    // consolidated liquidity has no market here, and says so.
+                    tracing::info!(
+                        class = celnet_observability::LogClass::Pricing.label(),
+                        connection_id = %self.ctx.connection_id,
+                        symbol = %String::from_utf8_lossy(symbol),
+                        size,
+                        mode = mode.as_str(),
+                        "declining rates request: no aggregated-book composite and \
+                         composite-only policy forbids an internal-curve fallback",
+                    );
+                }
+                priced
             }
             PricingSourceMode::ProductSplit => {
                 if is_bond {
-                    self.composite_two_way(symbol, size).or_else(curve_line)
+                    composite(self).or_else(curve_line)
                 } else {
                     curve_line()
                 }
             }
             PricingSourceMode::CurveAnchoredBookSkew => {
                 let curve = curve_line();
-                match (self.composite_two_way(symbol, size), curve) {
+                match (composite(self), curve) {
                     // Both present: curve backbone, mid skewed `weight` of the way toward
                     // the composite, spread taken from the (real-liquidity) composite.
                     (Some(comp), Some(curve)) => {
@@ -1313,9 +1396,11 @@ impl FixSession {
             // retained line inputs. A tick that cannot price (e.g. a re-marked curve now
             // missing this tenor) skips this symbol, leaving its existing live token intact
             // rather than blanking the stream.
-            let Some(priced) = self.priced_under_policy(&symbol, notional, line.is_bond(), || {
-                curve_line_for(&line, &curve, notional)
-            }) else {
+            let Some(priced) =
+                self.priced_under_policy(&symbol, notional, line.composite_kind(), || {
+                    curve_line_for(&line, &curve, notional)
+                })
+            else {
                 continue;
             };
             self.emit_md_snapshot(st, &md_req_id, &symbol, &priced, request_id, &mut frames);
@@ -1519,9 +1604,7 @@ impl FixSession {
         let curve = self.live_rates_curve();
         // Decode the single instrument block. `SecurityType(167)=BOND` selects the cash-bond
         // arm (the family an aggregated book covers); every other request is the OIS arm.
-        let (line, notional, is_bond, record) = if frame.get(167)
-            == Some(dialect_rates::SEC_TYPE_BOND)
-        {
+        let (line, notional, record) = if frame.get(167) == Some(dialect_rates::SEC_TYPE_BOND) {
             let Ok((instrument, notional)) = dialect_rates::decode_bond_instrument(frame) else {
                 return;
             };
@@ -1535,7 +1618,7 @@ impl FixSession {
             let line = RfsLine::Bond {
                 instrument: Box::new(instrument),
             };
-            (line, notional, true, MdRecord::Bond(rfq))
+            (line, notional, MdRecord::Bond(rfq))
         } else {
             let Ok((tenor_years, notional, side)) = dialect_rates::decode_ois_instrument(frame)
             else {
@@ -1550,20 +1633,23 @@ impl FixSession {
                 subscription: dialect_rates::SubscriptionRequest::Subscribe,
             };
             let line = RfsLine::Ois { tenor_years };
-            (line, notional, false, MdRecord::Ois(rfq))
+            (line, notional, MdRecord::Ois(rfq))
         };
         // Price the initial line under this session's pricing-source policy — the SAME path
         // the streaming ticker uses ([`Self::priced_under_policy`] + [`curve_line_for`]):
-        // the aggregated-book composite where a book covers the instrument, else the live
-        // curve re-priced from the decoded line inputs. A priceable line is auto-quoted
+        // the aggregated-book composite where a book covers the instrument (a bond by its
+        // own id, a swap point by curve+tenor), else the live curve re-priced from the
+        // decoded line inputs — unless the policy is `CompositeOnly`, which declines
+        // rather than fall back. A priceable line is auto-quoted
         // (QUOTED desk row + initial snapshot); an unpriceable one routes to a human
         // (PENDING, no snapshot until the book/curve can price it).
-        let admission = match self.priced_under_policy(&symbol, notional, is_bond, || {
-            curve_line_for(&line, &curve, notional)
-        }) {
-            Some(priced) => RatesAdmission::Auto(priced),
-            None => RatesAdmission::Manual(ManualInterventionReason::PricingFailure),
-        };
+        let admission =
+            match self.priced_under_policy(&symbol, notional, line.composite_kind(), || {
+                curve_line_for(&line, &curve, notional)
+            }) {
+                Some(priced) => RatesAdmission::Auto(priced),
+                None => RatesAdmission::Manual(ManualInterventionReason::PricingFailure),
+            };
         let counterparty = self.display_counterparty(frame);
         // Record the desk-inbox row first (its id rides the stream so a lift books a deal).
         let request_id = match &record {
@@ -1728,14 +1814,14 @@ impl FixSession {
         // routine route): over the cap ⇒ routed quietly to the desk; within the cap and
         // priceable ⇒ auto-quote; within the cap but the engine cannot price it (e.g. a
         // maturity that does not resolve) ⇒ an ALERT-worthy pricing failure. The gated-in
-        // price is sourced under this session's [`PricingSourceMode`]: a bond is the arm an
-        // aggregated book actually covers, so the composite drives the INITIAL quote (not
-        // just the RFS re-price) when the policy selects it and a book covers the symbol,
-        // else the live curve.
+        // price is sourced under this session's [`PricingSourceMode`]: the composite drives
+        // the INITIAL quote (not just the RFS re-price) when the policy selects it and a
+        // book covers the symbol, else the live curve — or an explicit decline under
+        // `CompositeOnly`.
         let admission = if rfq.notional > self.ctx.auto_quote.max_notional {
             RatesAdmission::RoutedToDesk
         } else {
-            match self.priced_under_policy(symbol, rfq.notional, true, || {
+            match self.priced_under_policy(symbol, rfq.notional, CompositeLineKind::Bond, || {
                 bond_line(frame, Some(intent), &curve).ok()
             }) {
                 Some(priced) => RatesAdmission::Auto(priced),
@@ -2852,6 +2938,320 @@ mod tests {
         hub
     }
 
+    /// A hub carrying a **swap/OIS curve** in the aggregated book — the 5-year point fed
+    /// by one LP under the canonical tenor-qualified id `USD-OIS-5Y`, and NOTHING at the
+    /// 10-year point (so an uncovered tenor can be distinguished from an uncovered curve).
+    ///
+    /// Two pricing groups bind to it:
+    /// * `conn-tiered` — a Flat ±`half_spread_bps` tier under the platform-default
+    ///   composite-first mode;
+    /// * `conn-book-only` — [`PricingSourceMode::CompositeOnly`], the venue that must
+    ///   never quote a market it cannot source from the book.
+    ///
+    /// `half_spread_bps` is a parameter so a test can prove the outbound two-way actually
+    /// MOVES with the tiering configuration rather than merely differing from the raw once.
+    fn ois_book_hub(half_spread_bps: f64) -> Arc<crate::services::aggregation::AggregationHub> {
+        use crate::config::identity::{
+            AggregatedBookDef, AggregationParams, IdentityStore, PricingGroupDef, Scope,
+        };
+        use celnet_tiering::{
+            FeaturePipeline, Guardrails, PricingFeature, SpreadUnit, StalePolicy, StrategySpec,
+            TieringConfig,
+        };
+        const HUB_NOW: i64 = 1_700_000_000_000_000_000;
+        let guardrails = Guardrails::new(0.0, 1_000.0, 1_000.0, 1e-9);
+        let tier = FeaturePipeline::new(
+            vec![PricingFeature::Tiering {
+                config: TieringConfig {
+                    unit: SpreadUnit::PriceBps,
+                    strategies: vec![StrategySpec::FlatMarkup {
+                        half_spread: half_spread_bps,
+                    }],
+                    guardrails,
+                    stale_policy: StalePolicy::Suppress,
+                },
+            }],
+            guardrails,
+        );
+        let hub =
+            crate::services::aggregation::AggregationHub::new(crate::clock::Clock::manual(HUB_NOW));
+        let mut store = IdentityStore::default();
+        store.aggregated_books.push(AggregatedBookDef {
+            id: "swap-book".to_string(),
+            name: "swap-book".to_string(),
+            member_connection_ids: vec!["LP-1".to_string()],
+            // Scoped to the 5y point ONLY — the 10y point is deliberately uncovered.
+            instrument_scope: Scope::Explicit(vec![OIS_5Y_ID.to_string()]),
+            params: AggregationParams {
+                staleness_tau_ms: 30_000,
+                max_quote_age_ms: 86_400_000,
+                divergence_gating: false,
+                min_contributors: 1,
+                depth_levels: 1,
+            },
+            enabled: true,
+        });
+        let group = |id: &str, conn: &str, mode: PricingSourceMode| PricingGroupDef {
+            id: id.to_string(),
+            name: id.to_uppercase(),
+            description: String::new(),
+            member_connection_ids: vec![conn.to_string()],
+            member_user_ids: vec![],
+            member_desks: vec![],
+            esp_pipeline: tier.clone(),
+            rfq_pipeline: tier.clone(),
+            share_pipeline: false,
+            pricing_source_mode: mode,
+            book_skew_weight: DEFAULT_BOOK_SKEW_WEIGHT,
+            last_look_mode: LastLookMode::default(),
+            last_look_tolerance_bps: DEFAULT_LAST_LOOK_TOLERANCE_BPS,
+            async_giveback_pct: DEFAULT_ASYNC_GIVEBACK_PCT,
+            enabled: true,
+        };
+        store.pricing_groups.push(group(
+            "grp-tiered",
+            "conn-tiered",
+            PricingSourceMode::default(),
+        ));
+        store.pricing_groups.push(group(
+            "grp-book-only",
+            "conn-book-only",
+            PricingSourceMode::CompositeOnly,
+        ));
+        hub.reconcile(&store);
+        // The LP's two-way on the 5y point, quoted as a PAR RATE in percent (an OIS is
+        // quoted as a rate, never as a price per 100 face).
+        assert!(
+            hub.ingest(&celnet_proto::LpQuote {
+                lp_name: "LP-1".to_string(),
+                instrument_id: OIS_5Y_ID.to_string(),
+                bid: OIS_5Y_RAW_BID,
+                offer: OIS_5Y_RAW_OFFER,
+                bid_size: 25_000_000.0,
+                offer_size: 25_000_000.0,
+                ts_nanos: HUB_NOW,
+            }),
+            "the 5y OIS point ingested into the swap book"
+        );
+        hub
+    }
+
+    /// The canonical book id of the 5-year USD OIS point — spelled by the SHARED refdata
+    /// function, so this test breaks if the server and the LP side ever disagree.
+    const OIS_5Y_ID: &str = "USD-OIS-5Y";
+    const OIS_5Y_RAW_BID: f64 = 3.90;
+    const OIS_5Y_RAW_OFFER: f64 = 3.94;
+
+    /// The venue's swap composite key must be the SHARED refdata spelling — if these two
+    /// ever drift, an LP streams under one id and the venue looks up another, and the book
+    /// silently reads as unfed.
+    #[test]
+    fn the_swap_composite_key_is_the_shared_refdata_identity() {
+        assert_eq!(celnet_refdata::swap_instrument_id("USD-OIS", 5), OIS_5Y_ID);
+        assert_eq!(
+            FixSession::composite_id_for(b"USD-OIS", CompositeLineKind::Swap { tenor_years: 5 })
+                .as_deref(),
+            Some(OIS_5Y_ID),
+        );
+        // A space-padded fixed-width FIX symbol resolves to the same id.
+        assert_eq!(
+            FixSession::composite_id_for(b"  USD-OIS ", CompositeLineKind::Swap { tenor_years: 5 })
+                .as_deref(),
+            Some(OIS_5Y_ID),
+        );
+        // A bond keys on its symbol verbatim (trimmed), NOT tenor-qualified.
+        assert_eq!(
+            FixSession::composite_id_for(b"BND-5Y ", CompositeLineKind::Bond).as_deref(),
+            Some("BND-5Y"),
+        );
+        // Distinct tenors are distinct book lines — the whole reason the tenor is in the
+        // key. A tenor-less key would quote a 10y request off 2y liquidity.
+        assert_ne!(
+            FixSession::composite_id_for(b"USD-OIS", CompositeLineKind::Swap { tenor_years: 5 }),
+            FixSession::composite_id_for(b"USD-OIS", CompositeLineKind::Swap { tenor_years: 10 }),
+        );
+    }
+
+    /// **The behaviour the rates RFS exists for**: an OIS request for a SIZE is priced off
+    /// the internal aggregated-book composite, and the outbound two-way MOVES with the
+    /// client's pricing-group tiering — which is the entire point of quoting a size.
+    ///
+    /// Raw composite 3.90/3.94 (mid 3.92, par rate in percent). A Flat ±`b` price-bps tier
+    /// widens each side of the composite mid by `b × 0.01` in the quoted unit — and the
+    /// quoted unit here is percent, so one price-bp is exactly one basis point of RATE.
+    /// The tiered market is therefore strictly wider than the raw one and widens further
+    /// as `b` grows.
+    #[tokio::test]
+    async fn ois_rfs_for_a_size_prices_off_the_composite_and_moves_with_tiering() {
+        const SIZE: f64 = 25_000_000.0;
+        let raw_mid = f64::midpoint(OIS_5Y_RAW_BID, OIS_5Y_RAW_OFFER);
+
+        // An UNGROUPED connection receives the book's raw consolidated composite.
+        let plain = stream_session("conn-plain", Some(ois_book_hub(50.0)));
+        let raw = plain
+            .composite_two_way(OIS_5Y_ID, SIZE)
+            .expect("the covered 5y OIS point prices off the composite");
+        assert!(
+            (raw.bid - OIS_5Y_RAW_BID).abs() < 1e-9 && (raw.offer - OIS_5Y_RAW_OFFER).abs() < 1e-9,
+            "ungrouped must receive the RAW composite, got {}/{}",
+            raw.bid,
+            raw.offer
+        );
+        assert!(
+            (raw.size - SIZE).abs() < 1e-9,
+            "the requested size rides the quote"
+        );
+
+        // A GROUPED connection receives its group's tier applied to that same composite.
+        let mut widths = Vec::new();
+        // 0.25 / 0.5 / 1.0 bp of rate — realistic OIS dealer tiers.
+        for bps in [0.25_f64, 0.5, 1.0] {
+            let tiered_session = stream_session("conn-tiered", Some(ois_book_hub(bps)));
+            let tiered = tiered_session
+                .composite_two_way(OIS_5Y_ID, SIZE)
+                .expect("a covered instrument prices off the composite");
+
+            // The tier is applied to the composite, not to some internal curve level: the
+            // tiered market still straddles the composite mid.
+            let tiered_mid = f64::midpoint(tiered.bid, tiered.offer);
+            assert!(
+                (tiered_mid - raw_mid).abs() < 1e-6,
+                "tiered mid {tiered_mid} must sit on the composite mid {raw_mid}"
+            );
+            // A Flat ±bps tier widens each side off the composite mid by bps × 0.01 in the
+            // quoted unit (the same contract the cash-bond seam asserts: mid 99.55 with a
+            // Flat ±50 tier ⇒ 99.05/100.05).
+            let expected_half = bps * 0.01;
+            assert!(
+                (raw_mid - tiered.bid - expected_half).abs() < 1e-6,
+                "bid at {bps} bps: got {}, want {}",
+                tiered.bid,
+                raw_mid - expected_half
+            );
+            assert!(
+                (tiered.offer - raw_mid - expected_half).abs() < 1e-6,
+                "offer at {bps} bps: got {}, want {}",
+                tiered.offer,
+                raw_mid + expected_half
+            );
+            widths.push(tiered.offer - tiered.bid);
+        }
+
+        // The quote genuinely TRACKS the configuration — not merely "differs from raw".
+        assert!(
+            widths[0] < widths[1] && widths[1] < widths[2],
+            "the outbound two-way must widen monotonically with the tier: {widths:?}"
+        );
+        // A Flat markup REPLACES the composite's own width with the group's own two-way
+        // around the composite mid (it does not add to it), so the outbound width is the
+        // configured tier exactly — and differs from the raw composite width.
+        let raw_width = raw.offer - raw.bid;
+        for (w, bps) in widths.iter().zip([0.25_f64, 0.5, 1.0]) {
+            assert!(
+                (w - 2.0 * bps * 0.01).abs() < 1e-6,
+                "outbound width at {bps} bps: got {w}"
+            );
+            assert!(
+                (w - raw_width).abs() > 1e-6,
+                "the tiered market must differ from the raw composite width {raw_width}"
+            );
+        }
+    }
+
+    /// **The honesty bar**: a curve point the aggregated book cannot source is DECLINED
+    /// under [`PricingSourceMode::CompositeOnly`] — it is never quoted off the internal
+    /// curve. A venue quoting a price it cannot source is a fabricated market.
+    ///
+    /// The curve closure is instrumented to prove the decline is a genuine refusal and not
+    /// an accidental curve failure: under `CompositeOnly` the internal curve must never
+    /// even be consulted.
+    #[tokio::test]
+    async fn an_uncovered_ois_tenor_is_declined_under_composite_only() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        const SIZE: f64 = 25_000_000.0;
+        // A curve that would happily price ANY tenor — so a fallback, if one existed,
+        // would visibly succeed rather than fail for unrelated reasons.
+        let curve_calls = AtomicUsize::new(0);
+        let always_priceable = || {
+            curve_calls.fetch_add(1, Ordering::Relaxed);
+            Some(PricedLine {
+                bid: 3.00,
+                offer: 3.10,
+                size: SIZE,
+            })
+        };
+
+        let session = stream_session("conn-book-only", Some(ois_book_hub(50.0)));
+
+        // The 10y point is NOT in the book's scope ⇒ declined outright.
+        let declined = session.priced_under_policy(
+            b"USD-OIS",
+            SIZE,
+            CompositeLineKind::Swap { tenor_years: 10 },
+            always_priceable,
+        );
+        assert!(
+            declined.is_none(),
+            "an instrument absent from the book must be DECLINED, not quoted from a \
+             fallback — got {:?}",
+            declined.map(|p| (p.bid, p.offer))
+        );
+        assert_eq!(
+            curve_calls.load(Ordering::Relaxed),
+            0,
+            "a composite-only session must never consult the internal curve"
+        );
+
+        // The COVERED 5y point on the same session still prices — proving the decline is
+        // about sourcing, not a blanket refusal.
+        let priced = session
+            .priced_under_policy(
+                b"USD-OIS",
+                SIZE,
+                CompositeLineKind::Swap { tenor_years: 5 },
+                always_priceable,
+            )
+            .expect("the covered 5y point prices off the composite");
+        assert!(
+            priced.bid < priced.offer && priced.bid > 0.0,
+            "a sourced two-way is well formed: {}/{}",
+            priced.bid,
+            priced.offer
+        );
+        assert_eq!(
+            curve_calls.load(Ordering::Relaxed),
+            0,
+            "a composite-only session never prices off the curve, even when it succeeds"
+        );
+    }
+
+    /// The contrast case that makes the previous test meaningful: on the platform-DEFAULT
+    /// composite-first mode the very same uncovered tenor DOES fall back to the internal
+    /// curve. The decline is a property of the configured policy, not an accident.
+    #[tokio::test]
+    async fn an_uncovered_ois_tenor_falls_back_to_the_curve_under_composite_first() {
+        const SIZE: f64 = 25_000_000.0;
+        let session = stream_session("conn-tiered", Some(ois_book_hub(50.0)));
+        let priced = session.priced_under_policy(
+            b"USD-OIS",
+            SIZE,
+            CompositeLineKind::Swap { tenor_years: 10 },
+            || {
+                Some(PricedLine {
+                    bid: 3.00,
+                    offer: 3.10,
+                    size: SIZE,
+                })
+            },
+        );
+        let priced = priced.expect("composite-first falls back to the curve");
+        assert!(
+            (priced.bid - 3.00).abs() < 1e-9,
+            "the fallback is the curve line, got {}",
+            priced.bid
+        );
+    }
+
     /// A hub whose pricing group binds connection `conn-async` to a market-data last-look
     /// policy of [`LastLookMode::Async`] with a 50% giveback — so a favorable lift on that
     /// session is improved half-way toward the current price. No aggregated book / pipeline
@@ -2949,7 +3349,7 @@ mod tests {
         // Grouped connection ⇒ the group's Flat ±50 tier off the RAW mid 99.55.
         let grouped = stream_session("conn-grouped", Some(Arc::clone(&hub)));
         let g = grouped
-            .composite_two_way(b"BND-5Y", 5_000_000.0)
+            .composite_two_way("BND-5Y", 5_000_000.0)
             .expect("a covered instrument prices off the composite");
         assert!((g.bid - 99.05).abs() < 1e-9, "grouped bid={}", g.bid);
         assert!((g.offer - 100.05).abs() < 1e-9, "grouped offer={}", g.offer);
@@ -2958,7 +3358,7 @@ mod tests {
         // Ungrouped connection ⇒ the RAW composite verbatim (tiering is group-only).
         let plain = stream_session("conn-plain", Some(Arc::clone(&hub)));
         let p = plain
-            .composite_two_way(b"BND-5Y", 5_000_000.0)
+            .composite_two_way("BND-5Y", 5_000_000.0)
             .expect("a covered instrument prices off the composite");
         assert!((p.bid - 99.50).abs() < 1e-9, "ungrouped bid={}", p.bid);
         assert!(
@@ -2973,16 +3373,18 @@ mod tests {
             "grouped tier must differ from the raw composite"
         );
 
-        // An instrument NO book covers falls back (None) — the ticker keeps the P0 demo
-        // re-price for it (e.g. a plain OIS curve), so nothing regresses.
+        // A key NO book covers yields no composite. Note this is the BARE curve symbol,
+        // which is deliberately never a book key: a swap point is keyed by curve + tenor
+        // (`USD-OIS-5Y`), so a tenor-less lookup must miss rather than collapse the whole
+        // curve onto one line.
         assert!(
-            plain.composite_two_way(b"USD-OIS", 5_000_000.0).is_none(),
+            plain.composite_two_way("USD-OIS", 5_000_000.0).is_none(),
             "an uncovered instrument yields no composite (standalone fallback)"
         );
 
         // No hub wired ⇒ always None (the legacy env seed / tests stay byte-identical).
         let no_hub = stream_session("conn-grouped", None);
-        assert!(no_hub.composite_two_way(b"BND-5Y", 5_000_000.0).is_none());
+        assert!(no_hub.composite_two_way("BND-5Y", 5_000_000.0).is_none());
     }
 
     /// A small, auto-quotable OIS Subscribe RFQ (within the clip cap + on-the-run) for

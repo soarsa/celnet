@@ -539,10 +539,12 @@ impl AggregatedBookEdit {
 /// [`CompositeFirstCurveFallback`](Self::CompositeFirstCurveFallback). That is the
 /// **least-surprising** default: it preserves and generalizes the existing RFS
 /// composite-first re-price (a `CurveOnly` default would *regress* a book-fed stream back
-/// to the curve), removes the historical quote-#1-curve vs quote-#2-composite
-/// discontinuity, and — because no aggregated book covers a plain OIS curve — leaves the
-/// OIS arm curve-priced exactly as before. Only instruments a book actually covers (cash
-/// bonds) move to the book-driven price.
+/// to the curve) and removes the historical quote-#1-curve vs quote-#2-composite
+/// discontinuity. Every instrument a book actually covers takes the book-driven price —
+/// which now includes the swap curve points (keyed by curve symbol + tenor, e.g.
+/// `USD-OIS-5Y`), not only cash bonds; an instrument no book covers still resolves to the
+/// curve under this mode. A venue that must never quote a market it cannot source from the
+/// book selects [`PricingSourceMode::CompositeOnly`] instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PricingSourceMode {
@@ -559,6 +561,17 @@ pub enum PricingSourceMode {
     /// Curve backbone with the mid skewed toward the composite where a book exists — see
     /// [`PricingGroupDef::book_skew_weight`] for the exact blend.
     CurveAnchoredBookSkew,
+    /// **Composite or nothing**: price only off the aggregated-book composite, and
+    /// DECLINE when no enabled book can source the instrument — never fall back to the
+    /// internal curve.
+    ///
+    /// This is the mode for a venue that quotes as an agent of real, consolidated
+    /// liquidity: a two-way it cannot source from the book is a market it does not
+    /// actually have, and publishing one anyway is a fabricated market that will not
+    /// stand behind its own fill. The other modes' curve fallback is a legitimate,
+    /// explicitly-configured choice for a venue that warehouses its own risk on an
+    /// internal mark; this one is for a venue that does not.
+    CompositeOnly,
 }
 
 impl PricingSourceMode {
@@ -570,6 +583,7 @@ impl PricingSourceMode {
             PricingSourceMode::CurveOnly => "curve_only",
             PricingSourceMode::ProductSplit => "product_split",
             PricingSourceMode::CurveAnchoredBookSkew => "curve_anchored_book_skew",
+            PricingSourceMode::CompositeOnly => "composite_only",
         }
     }
 }

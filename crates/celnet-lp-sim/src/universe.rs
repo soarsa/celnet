@@ -3,7 +3,8 @@
 //! Parses the committed US-Treasury securities-master snapshot (267 CUSIPs with
 //! auction/quote prices) into typed [`TreasuryBond`] records, and — via
 //! [`load_curated_universe`] / [`load_government_universe`] — extends the priced set
-//! with the curated non-US govvies (UK gilts + EUR govvies) from
+//! with the curated non-US cash bonds (UK gilts, EUR govvies, and the EUR corporate
+//! complex) from
 //! [`celnet_refdata::curated_universe`], so the whole
 //! [`celnet_refdata::government_universe`] the server seeds also streams a real price.
 //! Each record maps onto the two identities the rest of the stack keys on:
@@ -94,7 +95,8 @@ impl SecurityType {
 ///
 /// Covers the whole [`celnet_refdata`] government universe: US Treasuries (parsed
 /// from the embedded snapshot, priced off the snapshot's real ask/bid, CUSIP
-/// identity) **and** the curated non-US govvies (UK gilts + EUR govvies, built from a
+/// identity) **and** the curated non-US cash bonds (UK gilts, EUR govvies and EUR
+/// corporates, built from a
 /// [`celnet_refdata::GovBondSpec`] via [`TreasuryBond::from_gov_spec`], slug identity,
 /// seeded at par). Built only by the loaders from validated inputs, so every field
 /// here is known-good: the ISIN passes its check digit, both prices are finite and in
@@ -109,7 +111,8 @@ pub struct TreasuryBond {
     /// The pricing/settlement currency — the currency leg of the engine key. `USD`
     /// for Treasuries; `GBP`/`EUR` for the curated non-US govvies.
     pub currency: Ccy,
-    /// The region label (`us` / `uk` / `de` / `fr` / `it`).
+    /// The region label (`us` / `uk` / `de` / `fr` / `it` for sovereigns, `eu` for the
+    /// EUR corporate complex).
     pub region: &'static str,
     /// A pre-built friendly blotter/GUI name for the curated non-US govvies (their
     /// `GovBondSpec.name`); `None` for a Treasury, whose display name is composed
@@ -305,7 +308,7 @@ impl TreasuryBond {
             display_name: self.display_name(),
             identity: format!("{} / {}", self.isin, self.cusip),
             instrument: self.engine_instrument(),
-            model,
+            mid: crate::price::MidSource::MeanRevertingYield(model),
             spread_scale: 1.0,
             lean_scale: budget.lean_scale,
             yield_dispersion: Some(budget.yield_dispersion),
@@ -539,8 +542,9 @@ pub fn load_coupon_universe() -> Vec<TreasuryBond> {
         .collect()
 }
 
-/// The curated **non-US** government reference bonds — UK gilts + EUR govvies (DE /
-/// FR / IT) — from [`celnet_refdata::curated_universe`], each built into a real
+/// The curated **non-US** cash reference bonds — UK gilts, EUR govvies (DE / FR / IT)
+/// and the EUR corporate complex — from [`celnet_refdata::curated_universe`], each
+/// built into a real
 /// [`celnet_bond::Bond`] schedule and seeded at par (see
 /// [`TreasuryBond::from_gov_spec`]). All are coupon-bearing fixed govvies. Any spec
 /// not modellable (unrecognised currency, bad date, unmappable frequency) is dropped.

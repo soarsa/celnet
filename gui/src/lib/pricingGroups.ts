@@ -72,7 +72,7 @@ export const AXE_SIDE_LABEL: Record<AxeSide, string> = {
 // --- pricing-source policy (how the raw rates/bond price is sourced) ----------
 
 /** The pricing-source modes, in wire (enum) order — the selector's option order. */
-export const PRICING_SOURCE_MODES: readonly PricingSourceMode[] = [0, 1, 2, 3];
+export const PRICING_SOURCE_MODES: readonly PricingSourceMode[] = [0, 1, 2, 3, 4];
 
 /** Trader-language label for each pricing-source mode (the selector option text). */
 export const PRICING_SOURCE_MODE_LABEL: Record<PricingSourceMode, string> = {
@@ -80,6 +80,7 @@ export const PRICING_SOURCE_MODE_LABEL: Record<PricingSourceMode, string> = {
   1: "Curve only",
   2: "Product split — bonds off book, OIS off curve",
   3: "Curve-anchored + book skew",
+  4: "Composite only — decline when the book cannot source it",
 };
 
 /** A one-line explanation of each mode (rendered as helper text under the selector). */
@@ -88,6 +89,7 @@ export const PRICING_SOURCE_MODE_HINT: Record<PricingSourceMode, string> = {
   1: "Always price off the bootstrapped curve, ignoring the aggregated book.",
   2: "Bonds price off the aggregated book; OIS prices off the curve.",
   3: "Curve backbone with the mid pulled toward the composite by the book-skew weight.",
+  4: "Quote ONLY what the aggregated book can source, and decline otherwise — never invent a price off the curve. Choose this when the desk quotes as agent of real consolidated liquidity rather than warehousing risk on an internal mark.",
 };
 
 /** The server's default book-skew weight (shown when the group has no stored value). */

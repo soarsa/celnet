@@ -4577,6 +4577,9 @@ enum PricingSourceMode {
   // Curve backbone, mid skewed toward the composite where a book exists (blend weight
   // `book_skew_weight`).
   PRICING_SOURCE_MODE_CURVE_ANCHORED_BOOK_SKEW = 3;
+  // Composite ONLY: price off the aggregated-book composite, and decline when no
+  // enabled book covers the instrument (never falls back to the internal curve).
+  PRICING_SOURCE_MODE_COMPOSITE_ONLY = 4;
 }
 
 // How this pricing group treats the FAVORABLE side of a market-data (ESP) last-look:

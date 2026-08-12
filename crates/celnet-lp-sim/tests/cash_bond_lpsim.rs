@@ -81,11 +81,14 @@ fn cfg(members: usize) -> LpSimConfig {
 }
 
 /// The cash-bond lines of the sim's quotable set (the listed contracts, which quote on
-/// a tick grid, are covered by `futures_lpsim.rs`).
+/// a tick grid, are covered by `futures_lpsim.rs`; the swap/OIS curve points, which are
+/// also off-grid but quote a par RATE with no bond or DV01 behind them, are covered by
+/// `celnet_lp_sim::ois`). Selecting on the mid arm — not on `tick.is_none()` — is what
+/// keeps this a cash-bond test now that an off-grid line is no longer necessarily a bond.
 fn cash_lines(cfg: &LpSimConfig) -> Vec<QuotedLine> {
     quotable_lines(cfg, &load_government_universe(false))
         .into_iter()
-        .filter(|l| l.tick.is_none())
+        .filter(|l| l.tick.is_none() && l.mid.yield_model().is_some())
         .collect()
 }
 
@@ -106,15 +109,16 @@ fn every_cash_line_budgets_its_dispersion_inside_the_tightest_half_spread() {
             line.instrument_id
         );
         let half_spread = cfg.half_spread * line.spread_scale;
+        let model = line
+            .mid
+            .yield_model()
+            .unwrap_or_else(|| panic!("{}: not a bond-yield line", line.instrument_id));
 
         // The bond's own DV01 per 100 face, from the real analytics leaf — the
         // conversion between the yield the model is driven in and the price the
         // crossing happens in.
-        let dv01 = celnet_bond::dv01(
-            &line.model.bond,
-            celnet_types::Rate(line.model.initial_yield),
-        )
-        .unwrap_or_else(|e| panic!("{}: no DV01: {e}", line.instrument_id));
+        let dv01 = celnet_bond::dv01(&model.bond, celnet_types::Rate(model.initial_yield))
+            .unwrap_or_else(|e| panic!("{}: no DV01: {e}", line.instrument_id));
         assert!(dv01 > 0.0, "{}: non-positive DV01", line.instrument_id);
         let to_price = |y: f64| y * dv01 / 1.0e-4;
 

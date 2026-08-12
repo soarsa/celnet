@@ -29,6 +29,7 @@
 #   tail -f deploy/fix-sim-run/{fi,fx}/log/fix-sim.log  # watch each leg of a both run
 #
 # Env overrides (defaults match group_vars/all.yml celnet_env FIX settings):
+#   FIXSIM_INTENT (rfs)      # rfs = request a stream for a size (default); rfq = snapshot
 #   FIXSIM_ASSET (fi)        # fi = fixed income / OIS rates (default); fx = FX options;
 #                            # both = drive fi AND fx concurrently (two daemons)
 #   FIXSIM_HOST (127.0.0.1)  FIXSIM_PORT (fi:56002 / fx:56001)
@@ -74,9 +75,19 @@ else
   FIXSIM_SENDER="${FIXSIM_SENDER:-CELER_FXO}"
   FIXSIM_TARGET="${FIXSIM_TARGET:-CELNET}"
 fi
-# Fixed-income RFQ shape (whole-year OIS tenor, notional in ccy units).
+# Fixed-income request shape (whole-year OIS tenor, notional in ccy units).
 FIXSIM_CURVE="${FIXSIM_CURVE:-USD-OIS}"
 FIXSIM_TENOR="${FIXSIM_TENOR:-5}"
+# Request intent: "rfs" (default) asks the venue for a STREAM **for a size**, which is
+# what a real rates price-taker sends and what lets the venue's pricing-group tiering act
+# on the requested quantity; the venue prices it off the internal aggregated-book
+# composite for `<curve>-<tenor>Y` (e.g. USD-OIS-5Y). "rfq" selects the one-shot snapshot.
+FIXSIM_INTENT="${FIXSIM_INTENT:-rfs}"
+case "$FIXSIM_INTENT" in
+  rfs|stream|subscribe) FIXSIM_INTENT="rfs" ;;
+  rfq|snapshot)         FIXSIM_INTENT="rfq" ;;
+  *) echo "[fix-sim] ERROR: FIXSIM_INTENT must be rfs|rfq, got '$FIXSIM_INTENT'" >&2; exit 2 ;;
+esac
 # Notional: default "mix" so a STREAM rotates a realistic clip ladder (100k…30m) per
 # request — booked deals (and their DV01 on the risk dashboard) get a varied size spread
 # instead of one repeated 10m clip. Set a number to pin a fixed notional; a one-shot
@@ -317,6 +328,7 @@ build_client_args() {
     --sender "$FIXSIM_SENDER" --target "$FIXSIM_TARGET" --req-id "FIXSIM-$(date +%s)")
   if [ "$FIXSIM_ASSET" = "fi" ]; then
     CLIENT_ARGS+=(--asset fi --curve "$FIXSIM_CURVE" --tenor "$FIXSIM_TENOR" \
+      --intent "$FIXSIM_INTENT" \
       --notional "$FIXSIM_NOTIONAL" --side "$FIXSIM_SIDE" \
       --manual-every "$FIXSIM_MANUAL_EVERY" --manual-tenor "$RATES_MANUAL_TENOR" \
       --manual-security "$FIXSIM_MANUAL_SECURITY" \

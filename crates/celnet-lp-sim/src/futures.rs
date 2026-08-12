@@ -221,7 +221,7 @@ impl FuturesContract {
             display_name: self.spec.name.clone(),
             identity: self.spec.instrument_id.clone(),
             instrument: self.engine_instrument(),
-            model,
+            mid: crate::price::MidSource::MeanRevertingYield(model),
             spread_scale: ratio(HALF_SPREAD_TICKS * tick, base_half_spread),
             lean_scale: ratio(LEAN_TICKS * tick / PANEL_HALF_WIDTH_STEPS, base_skew_step),
             yield_dispersion: Some(yield_dispersion),
@@ -465,7 +465,7 @@ mod tests {
                 c.instrument_id()
             );
 
-            let px = line.model.clean_price_at(1_000_000_000, 0.0);
+            let px = line.mid.mid_at(1_000_000_000, 0.0);
             assert!(
                 px.is_finite() && px > 0.0,
                 "{}: bad model price {px}",
