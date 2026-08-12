@@ -110,6 +110,7 @@ describe("risk-routing codec — RiskBook", () => {
       description: "EMEA vanilla sub-book",
       limits: { maxNetNotional: 4e8, maxGrossNotional: null, maxDv01: null },
       enabled: true,
+      assetClass: "fx_options",
     };
     expect(riskBookDescFromWire(riskBookSpecToWire(b))).toEqual(b);
   });
@@ -123,6 +124,7 @@ describe("risk-routing codec — RiskBook", () => {
       description: "",
       limits: null,
       enabled: false,
+      assetClass: "fx_options",
     };
     const w = riskBookSpecToWire(b);
     expect("parent_id" in w).toBe(false);

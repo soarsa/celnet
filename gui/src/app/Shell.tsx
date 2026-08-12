@@ -221,7 +221,15 @@ export function Shell(): React.ReactElement {
     // Admin, Analytics and Hedging are cross-asset ops/analytics/risk-exit tabs with
     // NO license concept (`licensed` only ranges over CapabilityAsset), so they never
     // enter the gated-upsell state — only the trading domains do.
-    if (d !== "admin" && d !== "analytics" && d !== "hedging" && !licensed(d)) return "gated-upsell";
+    if (
+      d !== "admin" &&
+      d !== "analytics" &&
+      d !== "hedging" &&
+      d !== "risk" &&
+      !licensed(d)
+    ) {
+      return "gated-upsell";
+    }
     return "present";
   };
   const domainTabs = DOMAINS.map((d) => ({ def: d, state: domainStateOf(d.id) })).filter(

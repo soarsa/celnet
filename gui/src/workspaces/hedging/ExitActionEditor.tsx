@@ -35,6 +35,7 @@ import {
 import rr from "../riskrouting/RiskRoutingWorkspace.module.css";
 
 import { HelpButton } from "../../components/HelpButton";
+import { MagnitudeField } from "../../components/MagnitudeField";
 import { NumberField } from "../../components/NumberField";
 
 const SIZE_KINDS: readonly HedgeSizeKind[] = ["overflow", "full", "fixed"];
@@ -180,12 +181,15 @@ function SizeEditor({
       {size.kind === "fixed" && (
         <label className={rr.editorField}>
           <span className={rr.fieldLabel}>Fixed amount</span>
-          <NumberField
+          <MagnitudeField
             className={rr.input}
+            allowBlank={false}
             value={size.fixed}
             disabled={readOnly}
             data-testid="exit-size-fixed"
-            onChange={(e) => onChange({ ...size, fixed: Number(e.target.value) })}
+            onCommit={(v) => {
+              if (v !== null) onChange({ ...size, fixed: v });
+            }}
           />
         </label>
       )}

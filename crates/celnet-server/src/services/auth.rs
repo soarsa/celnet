@@ -3578,6 +3578,7 @@ fn pricing_source_mode_to_wire(mode: PricingSourceMode) -> i32 {
         PricingSourceMode::CurveAnchoredBookSkew => {
             celnet_proto::PricingSourceMode::CurveAnchoredBookSkew
         }
+        PricingSourceMode::CompositeOnly => celnet_proto::PricingSourceMode::CompositeOnly,
     };
     wire as i32
 }
@@ -3589,6 +3590,7 @@ fn pricing_source_mode_from_wire(value: i32) -> PricingSourceMode {
     match celnet_proto::PricingSourceMode::try_from(value) {
         Ok(celnet_proto::PricingSourceMode::CurveOnly) => PricingSourceMode::CurveOnly,
         Ok(celnet_proto::PricingSourceMode::ProductSplit) => PricingSourceMode::ProductSplit,
+        Ok(celnet_proto::PricingSourceMode::CompositeOnly) => PricingSourceMode::CompositeOnly,
         Ok(celnet_proto::PricingSourceMode::CurveAnchoredBookSkew) => {
             PricingSourceMode::CurveAnchoredBookSkew
         }
@@ -3710,6 +3712,7 @@ fn risk_book_to_wire(def: &RiskBookDef) -> RiskBookDesc {
         description: def.description.clone(),
         limits: def.limits.as_ref().map(risk_limits_to_wire),
         enabled: def.enabled,
+        asset_class: def.asset_class.clone(),
     }
 }
 
@@ -3724,6 +3727,7 @@ fn risk_book_spec_parts(spec: RiskBookSpec) -> RiskBookEdit {
         desk_id: spec.desk_id.filter(|s| !s.is_empty()),
         description: spec.description,
         limits: spec.limits.map(risk_limits_from_wire),
+        asset_class: spec.asset_class,
         enabled: spec.enabled,
     }
 }
@@ -4794,6 +4798,7 @@ mod tests {
                     desk_id: None,
                     description: String::new(),
                     limits: None,
+                    asset_class: "fixed_income".to_string(),
                     enabled: true,
                 }),
                 correlation_id: None,

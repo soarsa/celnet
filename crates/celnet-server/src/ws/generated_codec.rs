@@ -172,7 +172,7 @@ use celnet_proto::{
     ExitActionDesc, GetHedgeConfigRequest, GetHedgeConfigResponse, GetHedgePolicyGraphRequest,
     GetHedgePolicyGraphResponse, HedgeConditionDesc, HedgeConfigDesc, HedgeDeskToggle,
     HedgeExitModeBinding, HedgeGraphDesc, HedgeIntent, HedgeLpPanelDesc, HedgeNodeDesc,
-    HedgeProvenance, HedgeSizeDesc, HedgeVehicleDesc, HedgeVehiclePlanDesc,
+    HedgeProvenance, HedgeSizeDesc, HedgeVehicleDesc, HedgeVehiclePlanDesc, HedgingModelBinding,
     ListHedgeProvenanceRequest, ListHedgeProvenanceResponse, ListHedgeThresholdsRequest,
     ListHedgeThresholdsResponse, SetHedgeConfigRequest, SetHedgeConfigResponse,
     UpdateHedgePolicyGraphRequest, UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdRequest,
@@ -6383,6 +6383,9 @@ impl WireBuilder for RiskBookSpec {
             "description" => self.description = string_or_empty(value),
             "limits" => self.limits = opt_msg::<RiskLimitsDesc>(value, "limits")?,
             "enabled" => self.enabled = bool_or_false(value),
+            // Absent ⇒ "" (the proto3 scalar default), which the store rejects as an
+            // unknown asset class — mirrors the hand codec exactly.
+            "asset_class" => self.asset_class = string_or_empty(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -6625,6 +6628,24 @@ impl WireBuilder for HedgeVehicleDesc {
     }
 }
 
+impl WireBuilder for HedgingModelBinding {
+    const MESSAGE: &'static str = "HedgingModelBinding";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "scope_kind" => self.scope_kind = enum_or_zero(value),
+            "scope_id" => self.scope_id = string_or_empty(value),
+            // An absent `model` decodes to `0` = CUSTOM — the escape hatch that keeps
+            // the desk's authored graph, never a derived posture.
+            "model" => self.model = enum_or_zero(value),
+            // A non-positive budget means INHERIT the scope's configured threshold,
+            // so an absent value can never fabricate a cap.
+            "dv01_budget" => self.dv01_budget = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for HedgeExitModeBinding {
     const MESSAGE: &'static str = "HedgeExitModeBinding";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -6816,6 +6837,9 @@ impl WireBuilder for HedgeConfigDesc {
             }
             "composite_spread_bp" => self.composite_spread_bp = f64_or_zero(value),
             "vehicles" => self.vehicles = opt_repeated::<HedgeVehicleDesc>(value, "vehicles")?,
+            "hedging_models" => {
+                self.hedging_models = opt_repeated::<HedgingModelBinding>(value, "hedging_models")?;
+            }
             "exit_modes" => {
                 self.exit_modes = opt_repeated::<HedgeExitModeBinding>(value, "exit_modes")?;
             }
@@ -8653,6 +8677,7 @@ impl WireAdapter for RiskBookDesc {
             // hand codec's `.map(..)` yields null too).
             "limits" => self.limits.as_ref().map(|l| WireVal::Msg(l)),
             "enabled" => Some(WireVal::Bool(self.enabled)),
+            "asset_class" => Some(WireVal::Str(&self.asset_class)),
             _ => None,
         }
     }
@@ -9103,6 +9128,18 @@ impl WireAdapter for HedgeVehicleDesc {
     }
 }
 
+impl WireAdapter for HedgingModelBinding {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "scope_kind" => Some(WireVal::Enum(self.scope_kind)),
+            "scope_id" => Some(WireVal::Str(&self.scope_id)),
+            "model" => Some(WireVal::Enum(self.model)),
+            "dv01_budget" => Some(WireVal::F64(self.dv01_budget)),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for HedgeExitModeBinding {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -9362,6 +9399,12 @@ impl WireAdapter for HedgeConfigDesc {
             )),
             "exit_modes" => Some(WireVal::RepeatedMsg(
                 self.exit_modes
+                    .iter()
+                    .map(|m| m as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "hedging_models" => Some(WireVal::RepeatedMsg(
+                self.hedging_models
                     .iter()
                     .map(|m| m as &dyn WireAdapter)
                     .collect(),

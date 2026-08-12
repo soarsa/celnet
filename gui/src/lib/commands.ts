@@ -192,7 +192,7 @@ export const RAIL: readonly {
    * any served asset). Admin holds `grant_all`, so admins see every viewCap surface;
    * `can` is permissive signed-out, so pre-login discovery is unchanged.
    */
-  viewCap?: { action: CapabilityAction; asset: CapabilityAsset };
+  viewCap?: { action: CapabilityAction; asset: CapabilityAsset | readonly CapabilityAsset[] };
 }[] = [
   // Trading capabilities — class chosen by scope/underlier + lens INSIDE the pane.
   // Ticket (Price) is FX-only: FI is booked/streamed through the Streaming hub +
@@ -235,7 +235,11 @@ export const RAIL: readonly {
   // resolving to this host (see {@link CONSOLIDATED_WORKSPACE_ALIAS}) — no rail row of
   // their own. USER-FACING name "Risk"; the wire type stays `RiskBookDef` (UI-only
   // rename — see docs/FI-BOOK-CONCEPTS.md).
-  { id: "riskdashboard", glyph: "◉", label: "Risk", subtitle: "Dashboard · portfolios · routing · acceptance · positions · quotes · deals", section: "risk", assets: ["fixed_income"], viewCap: { action: "risk_manage", asset: "fixed_income" } },
+  // Firm-wide risk management, hoisted to its own top-level tab ({@link RISK_WORKSPACES}).
+  // Cross-asset now that a portfolio declares the franchise it buckets, so it serves BOTH
+  // classes and its viewCap is an any-of over both — `risk_manage` on EITHER reveals the
+  // row, matching `domainAccessible("risk")` so the tab and the rail agree.
+  { id: "riskdashboard", glyph: "◉", label: "Risk", subtitle: "Dashboard · portfolios · routing · acceptance · positions · quotes · deals", section: "risk", assets: CAPABILITY_ASSETS, viewCap: { action: "risk_manage", asset: CAPABILITY_ASSETS } },
   // Auto-Hedging (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md): the
   // trader-composed EXIT-POLICY graph (internalise below the threshold, hedge the
   // overflow above), the warehouse-threshold config, and the live hedge monitor.
@@ -518,6 +522,18 @@ export const HEDGING_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>
 ]);
 
 /**
+ * Workspaces belonging to the cross-cutting **Risk** top-level tab. Risk portfolios,
+ * routing, acceptance, positions and the blotters are a FIRM-WIDE risk-management
+ * function, not an FX or FI trading screen — and now that each portfolio declares the
+ * franchise whose risk it holds (`RiskBook.assetClass`), the surface can carry both
+ * franchises without netting vega into a DV01 roll-up. So it is hoisted OUT of the FI
+ * rail to sit beside Hedging, exactly as auto-hedging was.
+ */
+export const RISK_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>([
+  "riskdashboard",
+]);
+
+/**
  * Per-domain rail memberships WITHDRAWN from a cross-asset row even though it
  * serves that asset — a per-domain CONSOLIDATION override (the inverse of the
  * {@link ANALYTICS_WORKSPACES} / {@link HEDGING_WORKSPACES} hoists, which FORCE a
@@ -608,7 +624,14 @@ export function workspaceAccessible(id: WorkspaceId, auth: NavAuth): boolean {
     // pre-login discovery. Placed BEFORE the ADMIN_ONLY branch so a delegated admin
     // surface is no longer trapped by the hard isAdmin-only gate.
     if (auth.isAdmin) return true;
-    const holds = auth.can(viewCap.action, viewCap.asset);
+    // `asset` may be a LIST (any-of): a firm-wide management surface like Risk serves
+    // both franchises, so holding the capability on EITHER reveals it. Without this the
+    // Risk tab would be reachable while its rail row stayed hidden for a single-franchise
+    // manager — a present tab over an empty rail.
+    const capAssets: readonly CapabilityAsset[] = Array.isArray(viewCap.asset)
+      ? viewCap.asset
+      : [viewCap.asset as CapabilityAsset];
+    const holds = capAssets.some((a) => auth.can(viewCap.action, a));
     if (ADMIN_ONLY_WORKSPACES.has(resolvedId)) return auth.signedIn === true && holds;
     return holds;
   }
@@ -658,7 +681,7 @@ export function firstAccessibleWorkspace(
  * `"hedging"` is the cross-cutting auto-hedge tab; `"analytics"` the cross-asset
  * client-flow tab; `"admin"` the ops tab.
  */
-export type Domain = CapabilityAsset | "hedging" | "analytics" | "admin";
+export type Domain = CapabilityAsset | "risk" | "hedging" | "analytics" | "admin";
 
 /**
  * The top-level domain tabs, in bar order. The two trading tabs lead; the
@@ -669,6 +692,7 @@ export type Domain = CapabilityAsset | "hedging" | "analytics" | "admin";
 export const DOMAINS: readonly { id: Domain; label: string }[] = [
   { id: "fx_options", label: "FX Options" },
   { id: "fixed_income", label: "Fixed Income" },
+  { id: "risk", label: "Risk" },
   { id: "hedging", label: "Hedging Rules" },
   { id: "analytics", label: "Analytics" },
   { id: "admin", label: "Administration" },
@@ -684,7 +708,13 @@ export const DOMAINS: readonly { id: Domain; label: string }[] = [
  * single-asset row under its one tab.
  */
 export function workspaceDomains(id: WorkspaceId): readonly Domain[] {
-  if (HEDGING_WORKSPACES.has(id)) return ["hedging"];
+  // A consolidated ALIAS inherits its host's domain, so resolve before the hoist checks:
+  // `acceptance` / `riskrouting` / `riskbooks` are tabs OF `riskdashboard`, and a
+  // deep-link to one must land on the same tab the host lives under. Without this the
+  // alias would fall through to its served assets and re-appear under the trading tabs.
+  const hostId = CONSOLIDATED_WORKSPACE_ALIAS[id] ?? id;
+  if (RISK_WORKSPACES.has(hostId)) return ["risk"];
+  if (HEDGING_WORKSPACES.has(hostId)) return ["hedging"];
   if (ANALYTICS_WORKSPACES.has(id)) return ["analytics"];
   if (ADMIN_ONLY_WORKSPACES.has(id)) return ["admin"];
   const assets = workspaceAssets(id);
@@ -713,6 +743,12 @@ export function domainAccessible(domain: Domain, auth: NavAuth): boolean {
   // (see {@link workspaceAccessible}), preserving the isAdmin-gated pre-login posture.
   if (domain === "admin") {
     return railForDomain("admin").some((r) => workspaceAccessible(r.id, auth));
+  }
+  // Risk is firm-wide: `risk_manage` on EITHER franchise reaches the tab, mirroring the
+  // portfolio pane's own two-tier gate (see RiskBooksWorkspace) — an FX-only risk manager
+  // must not be locked out by an FI-only check now that portfolios carry a class.
+  if (domain === "risk") {
+    return auth.can("risk_manage", "fixed_income") || auth.can("risk_manage", "fx_options");
   }
   if (domain === "hedging") return auth.can("hedge", "fixed_income");
   if (domain === "analytics") {

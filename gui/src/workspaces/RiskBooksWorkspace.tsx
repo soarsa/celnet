@@ -9,25 +9,52 @@
  * {@link RiskLimits}, tag an owning desk, and re-parent (a client-side acyclic
  * guard forbids parenting a portfolio under itself or a descendant).
  *
- * Gating: the risk-portfolio RPCs gate on the granular `risk_manage·fixed_income`
- * capability server-side (docs/PERMISSIONS-GRANULAR-REVIEW.md §4 — a firm risk-control
- * authority distinct from super-admin, so a desk/risk lead manages portfolios WITHOUT
- * full Administer). Edit affordances mirror it: `readOnly = !can("risk_manage",
- * "fixed_income")`. The whole surface is rail-hidden from anyone lacking the cap, so a
- * non-admin without it never reaches the pane. The firm-wide routing GRAPH that maps
- * fills to leaf books is edited on the flow-canvas surface, not here.
+ * Each portfolio declares the ASSET CLASS whose risk it holds ({@link RiskBook.assetClass}):
+ * vega and DV01 are not commensurable, so a tree holds ONE franchise and a sub-portfolio
+ * inherits its parent's (server-validated). That tag is what lets this be a single
+ * firm-wide surface rather than one screen per asset.
+ *
+ * Gating: the risk-portfolio RPCs gate on the granular `risk_manage` capability
+ * server-side (docs/PERMISSIONS-GRANULAR-REVIEW.md §4 — a firm risk-control authority
+ * distinct from super-admin, so a desk/risk lead manages portfolios WITHOUT full
+ * Administer). Edit affordances mirror it in TWO tiers: reaching the pane needs
+ * `risk_manage` on EITHER class (`readOnly`), while editing a particular portfolio needs
+ * it on THAT portfolio's class (`draftReadOnly`) — so a single-franchise risk manager
+ * sees the whole firm tree but can only edit their own side. The firm-wide routing GRAPH
+ * that maps fills to leaf books is edited on the flow-canvas surface, not here.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
-import type { DeskDesc, RiskBook, RiskLimits } from "../data/contract";
+import { MAGNITUDE_HELP, MagnitudeField } from "../components/MagnitudeField";
+import type {
+  CapabilityAsset,
+  DeskDesc,
+  HedgeConfig,
+  HedgingModel,
+  RiskBook,
+  RiskLimits,
+} from "../data/contract";
+import {
+  explainRiskModel,
+  HEDGING_MODEL_HINT,
+  HEDGING_MODEL_LABEL,
+  HEDGING_MODELS,
+  modelUsesBudget,
+  resolveRiskModel,
+} from "../lib/riskModel";
 import { notifyRiskRoutingChanged } from "../lib/routingGuard";
 import styles from "./RiskBooksWorkspace.module.css";
 
-/** A fresh blank book draft for the Create flow (id blank ⇒ server mints from name). */
-function blankBook(parentId: string | null): RiskBook {
+/**
+ * A fresh blank book draft for the Create flow (id blank ⇒ server mints from name).
+ * `assetClass` is explicit rather than defaulted: a sub-book MUST hold its parent's
+ * franchise (the server rejects a tree that changes class mid-branch), and a top-level
+ * book takes the franchise the trader is currently looking at.
+ */
+function blankBook(parentId: string | null, assetClass: CapabilityAsset): RiskBook {
   return {
     id: "",
     name: "",
@@ -36,6 +63,7 @@ function blankBook(parentId: string | null): RiskBook {
     description: "",
     limits: null,
     enabled: true,
+    assetClass,
   };
 }
 
@@ -100,19 +128,6 @@ function subtreeIds(books: readonly RiskBook[], id: string): Set<string> {
   return out;
 }
 
-/** Parse a limits number field: blank ⇒ null (uncapped); otherwise a finite number. */
-function parseCap(raw: string): number | null {
-  const t = raw.trim();
-  if (t.length === 0) return null;
-  const n = Number(t);
-  return Number.isFinite(n) ? n : null;
-}
-
-/** Render a cap for an input value: null ⇒ blank. */
-function capValue(n: number | null): string {
-  return n === null ? "" : String(n);
-}
-
 const compact = (n: number): string =>
   new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(n);
 
@@ -124,8 +139,14 @@ export function RiskBooksWorkspace(): React.ReactElement {
   // Risk-portfolio editing is gated on the granular risk_manage·FI capability (not
   // super-admin) — see the header note. The owning-desk picker below still needs the
   // Administer-gated desk roster, so it stays isAdmin-fetched (optional metadata).
-  const canManageRisk = auth.can("risk_manage", "fixed_income");
-  const readOnly = !canManageRisk;
+  // Portfolios are now per-franchise, so reaching the surface needs `risk_manage` on
+  // EITHER class — gating the whole screen on FI would lock an FX risk manager out of
+  // their own books. Editing a PARTICULAR book is gated on that book's own class below,
+  // so a single-franchise manager sees the whole tree but can only edit their side.
+  const canManageAnyRisk =
+    auth.can("risk_manage", "fixed_income") || auth.can("risk_manage", "fx_options");
+  const canManageClass = (cls: CapabilityAsset): boolean => auth.can("risk_manage", cls);
+  const readOnly = !canManageAnyRisk;
 
   const [books, setBooks] = useState<RiskBook[]>([]);
   const [desks, setDesks] = useState<DeskDesc[]>([]);
@@ -134,6 +155,61 @@ export function RiskBooksWorkspace(): React.ReactElement {
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<RiskBook | null>(null);
   const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
+  // The firm hedge config carries the per-scope RISK-MODEL bindings. It is loaded here
+  // (not just on the Hedging surface) because the model is a property of how a PORTFOLIO
+  // runs, and a trader editing the portfolio must see and set it in one place.
+  const [hedgeConfig, setHedgeConfig] = useState<HedgeConfig | null>(null);
+  const [modelState, setModelState] = useState<SaveState>({ kind: "idle" });
+  // The EDITOR is gated on the open book's own franchise: a manager entitled to one
+  // class can see the whole firm-wide tree but may only edit their side of it.
+  const draftReadOnly = readOnly || (draft !== null && !canManageClass(draft.assetClass));
+
+  // The posture actually governing the open portfolio, resolved most-specific-wins
+  // (instrument > book > desk) so the trader sees the EFFECTIVE model, not just whatever
+  // happens to be bound at this one scope.
+  const resolvedModel = useMemo(
+    () =>
+      draft === null || hedgeConfig === null
+        ? null
+        : resolveRiskModel(hedgeConfig.hedgingModels, {
+            deskId: draft.deskId,
+            bookId: draft.id,
+          }),
+    [draft, hedgeConfig],
+  );
+
+  /**
+   * Bind (or re-bind) this PORTFOLIO's risk model. Writes a `book`-scoped binding and
+   * round-trips the whole hedge config through the existing set_hedge_config RPC — there
+   * is deliberately no separate CRUD verb for bindings.
+   */
+  const applyModel = useCallback(
+    async (model: HedgingModel, dv01Budget: number): Promise<void> => {
+      if (hedgeConfig === null || draft === null || draft.id === "") return;
+      setModelState({ kind: "saving" });
+      const others = hedgeConfig.hedgingModels.filter(
+        (b) => !(b.scopeKind === "book" && b.scopeId.toLowerCase() === draft.id.toLowerCase()),
+      );
+      const next: HedgeConfig = {
+        ...hedgeConfig,
+        hedgingModels: [
+          ...others,
+          { scopeKind: "book", scopeId: draft.id, model, dv01Budget },
+        ],
+      };
+      try {
+        await app.transport.setHedgeConfig(next);
+        setHedgeConfig(next);
+        setModelState({ kind: "ok", message: "Risk model saved." });
+      } catch (e: unknown) {
+        setModelState({
+          kind: "error",
+          message: e instanceof Error ? e.message : "the server rejected the risk model",
+        });
+      }
+    },
+    [app.transport, draft, hedgeConfig],
+  );
 
   const reload = useCallback(async (): Promise<RiskBook[]> => {
     const list = await app.transport.listRiskBooks();
@@ -165,6 +241,28 @@ export function RiskBooksWorkspace(): React.ReactElement {
       cancelled = true;
     };
   }, [reload, signedIn]);
+
+  // The firm hedge config (for the risk-model bindings). Failure is non-fatal: the
+  // portfolio editor still works, the model control just reports itself unavailable
+  // rather than silently rendering "Custom" over an unknown posture.
+  useEffect(() => {
+    if (!signedIn) {
+      setHedgeConfig(null);
+      return;
+    }
+    let cancelled = false;
+    void app.transport
+      .getHedgeConfig()
+      .then((c) => {
+        if (!cancelled) setHedgeConfig(c);
+      })
+      .catch(() => {
+        if (!cancelled) setHedgeConfig(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [app.transport, signedIn]);
 
   // Desk roster for the owning-desk picker — an admin-gated RPC, fetched for admins.
   useEffect(() => {
@@ -205,15 +303,38 @@ export function RiskBooksWorkspace(): React.ReactElement {
     setSaveState({ kind: "idle" });
   }, []);
 
-  const startCreate = useCallback((parentId: string | null): void => {
-    setCreating(true);
-    setSelectedId(null);
-    setDraft(blankBook(parentId));
-    setSaveState({ kind: "idle" });
-  }, []);
+  const startCreate = useCallback(
+    (parentId: string | null): void => {
+      setCreating(true);
+      setSelectedId(null);
+      // A sub-book INHERITS its parent's franchise (the server rejects a tree that
+      // changes class mid-branch, so offering a choice here would only manufacture a
+      // rejection); a top-level book takes the franchise currently on screen.
+      const parent = parentId === null ? undefined : books.find((b) => b.id === parentId);
+      const cls: CapabilityAsset =
+        parent?.assetClass ?? (app.activeDomain === "fx_options" ? "fx_options" : "fixed_income");
+      setDraft(blankBook(parentId, cls));
+      setSaveState({ kind: "idle" });
+    },
+    [books, app.activeDomain],
+  );
 
   const patch = useCallback((p: Partial<RiskBook>): void => {
     setDraft((d) => (d ? { ...d, ...p } : d));
+  }, []);
+
+  // Which limit fields currently hold an entry that failed to parse. A limit
+  // the trader mistyped must never be saved as "uncapped" — the permissive
+  // direction — so Save is blocked until the entry is fixed or cleared.
+  const [invalidLimits, setInvalidLimits] = useState<ReadonlySet<string>>(new Set());
+  const setLimitValidity = useCallback((key: string, valid: boolean): void => {
+    setInvalidLimits((prev) => {
+      if (valid === !prev.has(key)) return prev;
+      const next = new Set(prev);
+      if (valid) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }, []);
 
   const patchLimits = useCallback((p: Partial<RiskLimits>): void => {
@@ -239,6 +360,13 @@ export function RiskBooksWorkspace(): React.ReactElement {
       setSaveState({ kind: "error", message: "a portfolio name is required" });
       return;
     }
+    if (invalidLimits.size > 0) {
+      setSaveState({
+        kind: "error",
+        message: "fix the highlighted pre-trade limit before saving",
+      });
+      return;
+    }
     setSaveState({ kind: "saving" });
     try {
       const saved = creating
@@ -257,7 +385,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
         message: e instanceof Error ? e.message : "failed to save the risk portfolio",
       });
     }
-  }, [draft, creating, app.transport, reload]);
+  }, [draft, creating, invalidLimits, app.transport, reload]);
 
   const remove = useCallback(async (): Promise<void> => {
     if (!selectedBook) return;
@@ -280,7 +408,10 @@ export function RiskBooksWorkspace(): React.ReactElement {
   const parentOptions = useMemo(() => {
     if (!draft) return books;
     const excluded = draft.id ? subtreeIds(books, draft.id) : new Set<string>();
-    return books.filter((b) => !excluded.has(b.id));
+    // Only SAME-FRANCHISE portfolios are offerable parents: the server rejects a tree
+    // that changes asset class mid-branch, so listing the other franchise here would
+    // only let the trader build a selection that cannot be saved.
+    return books.filter((b) => !excluded.has(b.id) && b.assetClass === draft.assetClass);
   }, [books, draft]);
 
   const deskName = useCallback(
@@ -370,7 +501,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
                 <input
                   className={styles.input}
                   value={draft.name}
-                  disabled={readOnly}
+                  disabled={draftReadOnly}
                   onChange={(e) => patch({ name: e.target.value })}
                   placeholder="e.g. FX EMEA Vanilla"
                 />
@@ -381,7 +512,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
                 <input
                   className={styles.input}
                   value={draft.description}
-                  disabled={readOnly}
+                  disabled={draftReadOnly}
                   onChange={(e) => patch({ description: e.target.value })}
                   placeholder="What this portfolio is for"
                 />
@@ -393,7 +524,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
                   <select
                     className={styles.input}
                     value={draft.parentId ?? ""}
-                    disabled={readOnly}
+                    disabled={draftReadOnly}
                     onChange={(e) => patch({ parentId: e.target.value === "" ? null : e.target.value })}
                   >
                     <option value="">(top-level)</option>
@@ -410,7 +541,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
                   <select
                     className={styles.input}
                     value={draft.deskId ?? ""}
-                    disabled={readOnly}
+                    disabled={draftReadOnly}
                     onChange={(e) => patch({ deskId: e.target.value === "" ? null : e.target.value })}
                   >
                     <option value="">(unowned)</option>
@@ -421,46 +552,147 @@ export function RiskBooksWorkspace(): React.ReactElement {
                     ))}
                   </select>
                 </label>
+
+                <label className={styles.field}>
+                  <span className={styles.label}>Asset class</span>
+                  <select
+                    className={styles.input}
+                    value={draft.assetClass}
+                    // A sub-portfolio INHERITS its parent's franchise — the server rejects
+                    // a tree that changes class mid-branch, so the control is locked rather
+                    // than offering a choice that could only be refused.
+                    disabled={draftReadOnly || draft.parentId !== null}
+                    onChange={(e) => patch({ assetClass: e.target.value as CapabilityAsset })}
+                  >
+                    <option value="fixed_income">Fixed Income</option>
+                    <option value="fx_options">FX Options</option>
+                  </select>
+                  <span className={styles.hint}>
+                    {draft.parentId !== null
+                      ? "Inherited from the parent portfolio."
+                      : "The franchise this portfolio buckets. Vega and DV01 do not net, so a portfolio tree holds one class."}
+                  </span>
+                </label>
               </div>
+
+              {/*
+                RISK MODEL — how this portfolio manages the risk it holds. Saved
+                separately from the portfolio definition (it lives on the firm hedge
+                config as a `book`-scoped binding), so it applies immediately on change
+                rather than waiting for "Save changes".
+              */}
+              {draft.id !== "" && (
+                <fieldset className={styles.limits} disabled={draftReadOnly}>
+                  <legend>Risk model</legend>
+                  {hedgeConfig === null ? (
+                    <span className={styles.hint}>
+                      The hedge configuration could not be loaded, so this portfolio&apos;s risk
+                      model is unknown. It is not being reported as Custom — that would claim a
+                      posture we cannot currently read.
+                    </span>
+                  ) : (
+                    <>
+                      <label className={`${styles.field} ${styles.fieldWide}`}>
+                        <span className={styles.label}>How this portfolio manages risk</span>
+                        <select
+                          className={styles.input}
+                          value={resolvedModel?.model ?? 0}
+                          onChange={(e) => {
+                            const m = Number(e.target.value) as HedgingModel;
+                            void applyModel(m, modelUsesBudget(m) ? (resolvedModel?.budget ?? 0) : 0);
+                          }}
+                        >
+                          {HEDGING_MODELS.map((m) => (
+                            <option key={m} value={m}>
+                              {HEDGING_MODEL_LABEL[m]}
+                            </option>
+                          ))}
+                        </select>
+                        <span className={styles.hint}>
+                          {HEDGING_MODEL_HINT[resolvedModel?.model ?? 0]}
+                        </span>
+                      </label>
+
+                      {modelUsesBudget(resolvedModel?.model ?? 0) && (
+                        <label className={`${styles.field} ${styles.fieldWide}`}>
+                          <span className={styles.label}>DV01 warehouse budget</span>
+                          <MagnitudeField
+                            value={resolvedModel?.budget ?? null}
+                            disabled={draftReadOnly}
+                            onCommit={(v) => {
+                              void applyModel(2, v ?? 0);
+                            }}
+                          />
+                          <span className={styles.hint}>
+                            How much DV01 this portfolio warehouses before it shivers risk out to
+                            the street. Leave blank to inherit the scope&apos;s configured warehouse
+                            threshold — blank means inherit, NOT a budget of zero. {MAGNITUDE_HELP}
+                          </span>
+                        </label>
+                      )}
+
+                      {/*
+                        The resolution trace. Most-specific-wins across desk / book /
+                        instrument means the effective posture is not inferable from any
+                        single control — so state plainly which scope won and why.
+                      */}
+                      {resolvedModel !== null && (
+                        <p className={styles.hint} data-testid="risk-model-resolution">
+                          {explainRiskModel(resolvedModel, draft.id)}
+                        </p>
+                      )}
+                      {modelState.kind === "error" && (
+                        <p className={styles.error} role="alert">
+                          {modelState.message}
+                        </p>
+                      )}
+                      {modelState.kind === "ok" && (
+                        <p className={styles.hint}>{modelState.message}</p>
+                      )}
+                    </>
+                  )}
+                </fieldset>
+              )}
 
               <label className={styles.checkField}>
                 <input
                   type="checkbox"
                   checked={draft.enabled}
-                  disabled={readOnly}
+                  disabled={draftReadOnly}
                   onChange={(e) => patch({ enabled: e.target.checked })}
                 />
                 <span>Enabled (only enabled portfolios are valid routing targets)</span>
               </label>
 
-              <fieldset className={styles.limits} disabled={readOnly}>
+              <fieldset className={styles.limits} disabled={draftReadOnly}>
                 <legend className={styles.label}>Pre-trade limits (blank ⇒ uncapped)</legend>
+                <p className={styles.hint}>{MAGNITUDE_HELP}</p>
                 <div className={styles.row}>
                   <label className={styles.field}>
                     <span className={styles.subLabel}>Max net notional</span>
-                    <input
+                    <MagnitudeField
                       className={styles.input}
-                      inputMode="decimal"
-                      value={capValue(draft.limits?.maxNetNotional ?? null)}
-                      onChange={(e) => patchLimits({ maxNetNotional: parseCap(e.target.value) })}
+                      value={draft.limits?.maxNetNotional ?? null}
+                      onCommit={(v) => patchLimits({ maxNetNotional: v })}
+                      onValidityChange={(ok) => setLimitValidity("maxNetNotional", ok)}
                     />
                   </label>
                   <label className={styles.field}>
                     <span className={styles.subLabel}>Max gross notional</span>
-                    <input
+                    <MagnitudeField
                       className={styles.input}
-                      inputMode="decimal"
-                      value={capValue(draft.limits?.maxGrossNotional ?? null)}
-                      onChange={(e) => patchLimits({ maxGrossNotional: parseCap(e.target.value) })}
+                      value={draft.limits?.maxGrossNotional ?? null}
+                      onCommit={(v) => patchLimits({ maxGrossNotional: v })}
+                      onValidityChange={(ok) => setLimitValidity("maxGrossNotional", ok)}
                     />
                   </label>
                   <label className={styles.field}>
                     <span className={styles.subLabel}>Max DV01</span>
-                    <input
+                    <MagnitudeField
                       className={styles.input}
-                      inputMode="decimal"
-                      value={capValue(draft.limits?.maxDv01 ?? null)}
-                      onChange={(e) => patchLimits({ maxDv01: parseCap(e.target.value) })}
+                      value={draft.limits?.maxDv01 ?? null}
+                      onCommit={(v) => patchLimits({ maxDv01: v })}
+                      onValidityChange={(ok) => setLimitValidity("maxDv01", ok)}
                     />
                   </label>
                 </div>
@@ -485,7 +717,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
                 </dl>
               )}
 
-              {!readOnly && (
+              {!draftReadOnly && (
                 <div className={styles.actions}>
                   <Button onClick={() => void save()} disabled={saveState.kind === "saving"}>
                     {creating ? "Create portfolio" : "Save changes"}

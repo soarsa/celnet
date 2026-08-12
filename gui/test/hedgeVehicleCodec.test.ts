@@ -222,6 +222,7 @@ describe("config carries the registry + the exit-mode bindings", () => {
         },
       ],
       exitModes: [{ scopeKind: "book", scopeId: "fi-credit-emea", mode: "suggest" }],
+      hedgingModels: [],
     };
     const wire = hedgeConfigToWire(c);
     expect((wire["vehicles"] as unknown[]).length).toBe(1);

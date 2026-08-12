@@ -3388,8 +3388,12 @@ export interface FeaturePipeline {
  *  - `2` PRODUCT_SPLIT: bonds price off the book, OIS off the curve.
  *  - `3` CURVE_ANCHORED_BOOK_SKEW: curve backbone with the mid pulled `bookSkewWeight`
  *    ∈ [0,1] toward the composite (and the composite's half-spread).
+ *  - `4` COMPOSITE_ONLY: price ONLY off the composite and DECLINE when no enabled book
+ *    can source the instrument — never fall back to the curve. The mode for a venue
+ *    quoting as agent of consolidated liquidity, where a two-way it cannot source is a
+ *    market it does not actually have.
  */
-export type PricingSourceMode = 0 | 1 | 2 | 3;
+export type PricingSourceMode = 0 | 1 | 2 | 3 | 4;
 
 /**
  * The dealer last-look policy for a streamed-quote lift when the market moved
@@ -3514,6 +3518,13 @@ export interface RiskBook {
   limits: RiskLimits | null;
   /** Whether the book is active. Only enabled books are valid routing targets. */
   enabled: boolean;
+  /**
+   * The asset class whose risk this portfolio holds. A portfolio buckets ONE
+   * franchise — vega and DV01 are not commensurable, so a tree holds a single class
+   * and a sub-book must match its parent (server-validated). This is what lets the
+   * risk surface be firm-wide while still splitting the tree per franchise.
+   */
+  assetClass: CapabilityAsset;
 }
 
 /**
@@ -3849,6 +3860,45 @@ export interface HedgeExitModeBinding {
   scopeId: string;
   /** Fire automatically, or raise a standing suggestion. */
   mode: HedgeExitMode;
+}
+
+/**
+ * The RISK MODEL a scope runs — the trader-facing posture that resolves to an
+ * exit-policy graph (mirrors `celnet.wire.HedgingModelEnum`, wire integer tags).
+ * A CONTROL over the existing primitives, not a second engine: each model derives an
+ * ordinary hedge graph from the same node/action vocabulary a trader could author.
+ *  - `0` CUSTOM (default, escape hatch): the scope's own authored exit-policy graph
+ *    governs — exactly the historical behaviour, and what an unbound scope means.
+ *  - `1` BACK_TO_BACK: hedge every fill straight out on the street; warehouse nothing.
+ *    Spread capture only, no directional carry.
+ *  - `2` INTERNALISE_TO_DV01: warehouse client flow against a DV01 budget, let opposing
+ *    flow net off, and shed only the overflow above the band edge.
+ */
+export type HedgingModel = 0 | 1 | 2;
+
+/**
+ * One scoped risk-model binding (mirrors `HedgingModelBinding`). Resolved
+ * MOST-SPECIFIC-WINS — instrument > book > desk — so a firm can run one toxic book
+ * back-to-back while the rest of the estate warehouses.
+ */
+export interface HedgingModelBinding {
+  /** What the {@link scopeId} names (desk / book / instrument). */
+  scopeKind: HedgeScopeKind;
+  /** The scope identifier (a desk id / risk-portfolio id / instrument id). */
+  scopeId: string;
+  /** The posture for that scope. */
+  model: HedgingModel;
+  /**
+   * The DV01 warehouse budget — the level this scope warehouses up to before shedding.
+   * Read ONLY under `INTERNALISE_TO_DV01` (back-to-back warehouses nothing; `CUSTOM`
+   * takes its budget from the configured warehouse threshold).
+   *
+   * A non-positive value means **inherit** the scope's configured threshold, so binding
+   * a model never silently invents a cap. When positive it overrides only the cap and
+   * the metric — amber / red / target / clip / ramp still come from the resolved
+   * threshold, so a desk that tuned its bands keeps them.
+   */
+  dv01Budget: number;
 }
 
 /**
@@ -4301,6 +4351,12 @@ export interface HedgeConfig {
    * resolved most-specific-wins exactly like {@link lpPanels}. An unbound scope is `auto`.
    */
   exitModes: HedgeExitModeBinding[];
+  /**
+   * The per-scope RISK-MODEL bindings (mirrors `HedgeConfigDesc.hedging_models`),
+   * resolved most-specific-wins exactly like {@link lpPanels} and {@link exitModes}.
+   * An unbound scope is `CUSTOM` — its authored graph governs, unchanged.
+   */
+  hedgingModels: HedgingModelBinding[];
 }
 
 /**

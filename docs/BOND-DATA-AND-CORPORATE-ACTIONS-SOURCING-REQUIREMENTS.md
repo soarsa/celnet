@@ -1,12 +1,28 @@
 # Bond Data & Corporate-Actions Sourcing — Requirements / Design
 
-> Status: **requirements + design for review** (2026-07-30). No code yet. Grounds a NEW
-> Celnet **data-sourcing / ingestion** capability on the existing reference-data, bond/rates
-> pricing, booking/position and aggregation seams (file:line cited below, current as of this
-> doc). Vendor-neutral naming throughout (guardrail 8). OSS-only / free + academically-grounded
-> methodology, with commercial sources named **reference-only** and a documented open fallback
-> (guardrail 7). Off the pinned zero-alloc pricing hot core (guardrail 11). No mocks /
-> placeholders / `todo!()` (guardrail 2).
+> Status: **requirements + design** (2026-07-30) — **PARTIALLY BUILT; amended 2026-08-12.**
+> Grounds the Celnet **data-sourcing / ingestion** capability on the existing reference-data,
+> bond/rates pricing, booking/position and aggregation seams (file:line cited below, current as of
+> the original doc). Vendor-neutral naming throughout (guardrail 8). OSS-only / free +
+> academically-grounded methodology, with commercial sources named **reference-only** and a
+> documented open fallback (guardrail 7). Off the pinned zero-alloc pricing hot core
+> (guardrail 11). No mocks / placeholders / `todo!()` (guardrail 2).
+>
+> **⚠ As-built amendment (2026-08-12) — the original "No code yet" is no longer true.**
+> **P1 shipped in full** (`celnet-corpactions` + `celnet-refstore` crates, plus a
+> `CorporateActionsService` and a GUI workspace); **P3 shipped partially** (the
+> announce→elect→confirm→apply→reverse lifecycle and the position-effect apply exist; the
+> MT 564 / `seev.*` message parsers do **not**); **P2 shipped only as `GovvieSource`** (deterministic
+> INTR+REDM derived from the curated universe — no pull adapters for FiscalData/DMO/H.15/ECB/GLEIF/
+> OpenFIGI); **P4 did NOT ship** — an applied corporate action still never reaches the live pricer.
+> The §11 open item *"crate boundary: evolve `celnet-refdata` vs a new `celnet-refstore`"* is
+> **resolved as built**: both exist — `celnet-refdata` stayed the static OSS seed, `celnet-refstore`
+> became the mastered golden store.
+> **The as-built reconciliation, the seven remaining gaps (including the unwired P4 seam) and the
+> phased plan to close them now live in
+> [`CORPORATE-ACTION-MONITOR-GAP-ANALYSIS.md`](CORPORATE-ACTION-MONITOR-GAP-ANALYSIS.md).**
+> This doc remains the source of truth for **sourcing** (standards, open-vs-commercial verdict,
+> identifiers, canonical data model); that doc owns **as-built state and the pricing wire-up**.
 
 ## 0. Scope — the DATA layer that `ANALYTICS-REQUIREMENTS.md` §10 assumed
 
@@ -487,6 +503,13 @@ hedging, and position/inventory correctness.
 ---
 
 ## 10. Phased plan & crate/workstream breakdown (parallel-safe, disjoint files)
+
+> **Status as of 2026-08-12** (see the header amendment): **P0 ✅** · **P1 ✅ shipped** ·
+> **P2 ⚠ partial** (only `GovvieSource`; no open pull adapters) · **P3 ⚠ partial** (lifecycle +
+> apply shipped; MT 564 / `seev.*` parsers absent) · **P4 ❌ NOT shipped** (the applied CA never
+> reaches the live pricer — this is gap **G1** in
+> [`CORPORATE-ACTION-MONITOR-GAP-ANALYSIS.md`](CORPORATE-ACTION-MONITOR-GAP-ANALYSIS.md) §2, and
+> its **CA-P1** is the phase that closes it) · **P5 ❌ NOT shipped**.
 
 - **P0 — this spec + ADRs.** Confirm §11 open items. ADRs: the `celnet-refdata` static→mastered
   evolution (or a new `celnet-refstore`); the `celnet-corpactions` crate boundary; the

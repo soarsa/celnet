@@ -46,6 +46,7 @@ import { RiskTransferInboxWorkspace } from "./RiskTransferInboxWorkspace";
 import { RiskTransferAuditWorkspace } from "./RiskTransferAuditWorkspace";
 import styles from "./RiskTransferWorkspace.module.css";
 
+import { MagnitudeField } from "../../components/MagnitudeField";
 import { NumberField } from "../../components/NumberField";
 
 /** The tab the consolidated Risk Transfer surface shows: the initiate ticket
@@ -162,7 +163,9 @@ function RiskTransferTicketPanel(): React.ReactElement {
   const [targetBookId, setTargetBookId] = useState("");
   const [targetTrader, setTargetTrader] = useState("");
   const [quantityFull, setQuantityFull] = useState(true);
-  const [partialInput, setPartialInput] = useState("");
+  // Held as a parsed number: MagnitudeField refuses to commit anything that is
+  // not one, so this can never hold a half-typed or nonsense quantity.
+  const [partialInput, setPartialInput] = useState<number | null>(null);
   const [basis, setBasis] = useState<TransferPriceBasis>("MID");
   const [agreedInput, setAgreedInput] = useState(String(PAR_MARK));
   const [reason, setReason] = useState("");
@@ -253,7 +256,7 @@ function RiskTransferTicketPanel(): React.ReactElement {
     [selectedLines],
   );
 
-  const partialNotional = quantityFull ? null : Number(partialInput);
+  const partialNotional = quantityFull ? null : partialInput;
   const agreedPrice = basis === "AGREED" ? Number(agreedInput) : null;
 
   const preview = useMemo(
@@ -294,8 +297,8 @@ function RiskTransferTicketPanel(): React.ReactElement {
 
   // The validation gate the submit button + form share (also enforced server-side).
   const partialValid =
-    quantityFull || (partialInput.trim().length > 0 && Number(partialInput) > 0 &&
-      Number(partialInput) <= Math.abs(selectedTotal) + 1e-6);
+    quantityFull ||
+    (partialInput !== null && partialInput > 0 && partialInput <= Math.abs(selectedTotal) + 1e-6);
   const agreedValid =
     basis !== "AGREED" || (agreedInput.trim().length > 0 && Number.isFinite(Number(agreedInput)) &&
       reason.trim().length > 0);
@@ -332,7 +335,7 @@ function RiskTransferTicketPanel(): React.ReactElement {
             positionIds: [],
           },
           quantityFull,
-          partialNotional: quantityFull ? null : Number(partialInput),
+          partialNotional: quantityFull ? null : partialInput,
           priceBasis: basis,
           agreedPrice: basis === "AGREED" ? Number(agreedInput) : null,
           reason,
@@ -535,14 +538,13 @@ function RiskTransferTicketPanel(): React.ReactElement {
               <span className={styles.fieldLabel}>
                 Notional to move (max {fmtCompact(Math.abs(selectedTotal))})
               </span>
-              <NumberField
+              <MagnitudeField
                 className={styles.input}
                 min={0}
                 max={Math.abs(selectedTotal)}
                 value={partialInput}
-                onChange={(e) => setPartialInput(e.target.value)}
+                onCommit={setPartialInput}
                 data-testid="xfer-partial"
-                aria-invalid={!partialValid}
               />
             </label>
           )}

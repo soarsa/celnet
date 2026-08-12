@@ -4577,6 +4577,9 @@ enum PricingSourceMode {
   // Curve backbone, mid skewed toward the composite where a book exists (blend weight
   // `book_skew_weight`).
   PRICING_SOURCE_MODE_CURVE_ANCHORED_BOOK_SKEW = 3;
+  // Composite ONLY: price off the aggregated-book composite, and decline when no
+  // enabled book covers the instrument (never falls back to the internal curve).
+  PRICING_SOURCE_MODE_COMPOSITE_ONLY = 4;
 }
 
 // How this pricing group treats the FAVORABLE side of a market-data (ESP) last-look:
@@ -5036,6 +5039,11 @@ message RiskBookDesc {
   optional RiskLimitsDesc limits = 6;
   // Whether the book is active. Only enabled books are valid routing targets.
   bool enabled = 7;
+  // The asset class whose risk this portfolio holds ("fx_options" / "fixed_income").
+  // A portfolio buckets ONE franchise: vega and DV01 are not commensurable, so a tree
+  // holds a single class and a sub-book must match its parent. This is what lets the
+  // risk surface be firm-wide while still splitting the tree per franchise.
+  string asset_class = 8;
 }
 
 // The editable fields of a risk book (the create/update payload). The server-minted
@@ -5057,6 +5065,10 @@ message RiskBookSpec {
   optional RiskLimitsDesc limits = 6;
   // Whether the book is active.
   bool enabled = 7;
+  // The asset class whose risk this portfolio holds ("fx_options" / "fixed_income").
+  // Rejected by the store when it is not a known class, so an omitted value fails
+  // loud rather than silently landing the book in a default franchise.
+  string asset_class = 8;
 }
 
 // List the risk books (admin only — risk-routing config is an admin risk-management
@@ -5340,6 +5352,22 @@ enum HedgeExitModeEnum {
   HEDGE_EXIT_MODE_SUGGEST = 1;
 }
 
+// HOW a scope manages risk — the trader-facing posture (mirrors
+// `celnet_hedge_routing::HedgingModel`). This is a CONTROL that RESOLVES TO the
+// existing exit-policy primitives, not a second engine: back-to-back is a catch-all
+// `SUBMIT_MARKET_ORDER { size: FULL }` leaf and internalisation is the two-node
+// warehouse-vs-overflow graph, both built from the same node/action vocabulary a
+// trader would otherwise hand-author. `CUSTOM` is the default and the escape hatch.
+enum HedgingModelEnum {
+  // The scope's own authored exit-policy graph governs — the default, and exactly
+  // the historical behaviour. An unbound scope, and an unknown ordinal, mean this.
+  HEDGING_MODEL_CUSTOM = 0;
+  // Back-to-back: hedge every fill straight out; warehouse nothing.
+  HEDGING_MODEL_BACK_TO_BACK = 1;
+  // Warehouse client flow against a DV01 budget; shed only the band-edge overflow.
+  HEDGING_MODEL_INTERNALISE_TO_DV01 = 2;
+}
+
 // One row of the firm's hedge-vehicle registry: "risk matching this shape hedges into
 // THAT instrument, whose DV01 per unit is THIS" (mirrors
 // `celnet_hedge_routing::HedgeVehicleRule`). Resolution is most-specific-wins
@@ -5379,6 +5407,25 @@ message HedgeExitModeBinding {
   string scope_id = 2;
   // The mode for that scope.
   HedgeExitModeEnum mode = 3;
+}
+
+// One scoped HEDGING-MODEL binding: how this desk / book / instrument manages risk.
+// Resolved most-specific-wins (instrument > book > desk), exactly like the hedging LP
+// panels and the exit modes; an unbound scope is CUSTOM (the authored graph governs).
+message HedgingModelBinding {
+  // What the scope_id names (desk / book / instrument).
+  HedgeScopeKindEnum scope_kind = 1;
+  // The scope identifier.
+  string scope_id = 2;
+  // The posture for that scope.
+  HedgingModelEnum model = 3;
+  // The DV01 warehouse budget — the "100" this scope warehouses up to. Read ONLY
+  // under INTERNALISE_TO_DV01 (back-to-back warehouses nothing; CUSTOM takes its
+  // budget from the configured warehouse threshold). A non-positive value means
+  // INHERIT the scope's configured threshold, so a model never invents a cap. When
+  // positive it overrides only the cap + metric; amber / red / target / clips / ramp
+  // still come from the resolved threshold.
+  double dv01_budget = 4;
 }
 
 // The kind of exit action (mirrors `celnet_hedge_routing::ExitAction`'s variants).
@@ -5789,6 +5836,10 @@ message HedgeConfigDesc {
   // The scoped SUGGEST-vs-AUTO exit-mode bindings. Empty ⇒ AUTO everywhere, i.e. the
   // historical fire-on-breach behaviour.
   repeated HedgeExitModeBinding exit_modes = 10;
+  // The scoped HEDGING-MODEL bindings — how each scope manages risk (back-to-back vs
+  // warehouse-to-a-DV01-budget). Empty ⇒ CUSTOM everywhere, i.e. every scope resolves
+  // its authored exit-policy graph exactly as it always did.
+  repeated HedgingModelBinding hedging_models = 11;
 }
 
 // Read a scoped hedge policy graph (gated `hedge` × asset). Absent until defined.

@@ -248,6 +248,43 @@ since §6.4 — *with what instrument* (`§6.4`) and *whether a human pulls the 
 the same decision-graph primitive as risk routing: `Condition` nodes walking to `Action` leaves,
 authored as data in the GUI, validated as a total function.
 
+### 6.0 The hedging model — picking a posture instead of authoring a graph
+
+Authoring a graph is the powerful path, not the common one. Most desks want one of two
+postures, and saying so should not require drawing a decision tree. A **hedging model** is
+that shorthand:
+
+| Model | Meaning | Derived graph |
+| --- | --- | --- |
+| `Custom` | The scope's own authored graph governs. The default, and the escape hatch. | *(none — the authored graph is used unchanged)* |
+| `BackToBack` | Every fill goes straight out to the street; nothing is warehoused. | one unconditional `SubmitMarketOrder{Full, Immediate}` leaf |
+| `InternaliseToDv01` | Warehouse client flow against a DV01 budget, let opposing flow net off, shed only the overflow. | `breached == false ? Warehouse : SubmitMarketOrder{Overflow}` |
+
+A model is a **control over the existing spine, not a second engine.** A bound, non-`Custom`
+model *derives* an ordinary `HedgeGraph` from the same node vocabulary a trader would have
+authored by hand, and the booking path hands it to the same evaluator, at the same point,
+producing the same provenance. Nothing else about the six stages changes. This matters for
+auditability: there is one decision path to reason about, not two.
+
+**Scope precedence is the same as everything else here** — instrument → book → desk,
+most-specific-wins, identical to the LP panels and the exit modes (`§6.5`). An unbound scope is
+`Custom`, so a firm that never binds a model behaves exactly as it did before models existed.
+An *explicit* `Custom` binding is kept rather than treated as a delete: it is how one book
+keeps its bespoke authored graph underneath a desk-wide `BackToBack`.
+
+**The DV01 budget.** `InternaliseToDv01` carries the "100" the scope warehouses up to. When
+positive it overrides the resolved threshold's cap **and forces the metric to DV01** — otherwise
+the budget would be silently measured against whatever metric the threshold happened to carry
+(notional, say), which is a different number in different units. The amber / red / target /
+clip / ramp settings still come from the resolved threshold, so a desk that tuned its bands
+keeps them. A blank budget inherits the configured threshold unchanged: binding a model never
+invents a cap the operator did not ask for.
+
+> **Boundary.** On the rates booking path a fill does not carry its desk, so a `Desk`-scoped
+> binding cannot match there — the same limitation the threshold resolution already has
+> (`§10`). `Instrument` and `Book` bindings, the two a trader actually configures, resolve
+> normally.
+
 ### 6.1 Policy scope precedence
 
 A fill's governing graph is the most specific one: its own **Book** policy → the nearest

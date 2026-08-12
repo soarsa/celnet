@@ -398,6 +398,7 @@ mod tests {
             desk_id: None,
             description: String::new(),
             limits,
+            asset_class: crate::config::identity::default_risk_book_asset_class(),
             enabled: true,
         }
     }
@@ -524,6 +525,7 @@ mod tests {
                 desk_id: None,
                 description: String::new(),
                 limits: None,
+                asset_class: crate::config::identity::default_risk_book_asset_class(),
                 enabled: true,
             })
             .expect("create parent");
@@ -534,6 +536,7 @@ mod tests {
                 desk_id: None,
                 description: String::new(),
                 limits: None,
+                asset_class: crate::config::identity::default_risk_book_asset_class(),
                 enabled: true,
             })
             .expect("create child");

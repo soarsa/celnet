@@ -1269,19 +1269,41 @@ mod tests {
     }
 
     #[test]
-    fn refdata_universe_covers_every_shipped_region_as_government() {
+    fn refdata_universe_covers_every_shipped_region_with_a_known_sub_asset_type() {
         // The download taxonomy lives in celnet_refdata (keyed by instrument_id), not on
-        // the registry entry. Guarantee its coverage at that source of truth: every
-        // shipped govvie is tagged `government` and every region we advertise is present.
+        // the registry entry. Guarantee its coverage at that source of truth: every shipped
+        // bond carries a RECOGNISED sub-asset type and a region, and every region we
+        // advertise is present.
+        //
+        // The universe is no longer sovereign-only — it ships the EUR corporate complex
+        // alongside the govvies — so this asserts a CLOSED SET rather than a single value.
+        // The closed set is the point: a new taxonomy label added upstream without a
+        // decision about how it is priced, bucketed and hedged must fail here rather than
+        // flow through as an unclassified bond.
         let mut regions = std::collections::HashSet::new();
+        let mut sub_types = std::collections::HashSet::new();
         for s in celnet_refdata::government_universe() {
-            assert_eq!(s.sub_asset_type, "government", "{}", s.instrument_id);
+            assert!(
+                s.sub_asset_type == "government" || s.sub_asset_type == "corporate",
+                "{} carries an unrecognised sub-asset type {:?}",
+                s.instrument_id,
+                s.sub_asset_type
+            );
             assert!(!s.region.is_empty(), "{} has no region", s.instrument_id);
             regions.insert(s.region.to_string());
+            sub_types.insert(s.sub_asset_type);
         }
         for r in ["us", "uk", "de", "fr", "it"] {
             assert!(regions.contains(r), "no {r} government bonds mapped");
         }
+        assert!(
+            regions.contains("eu"),
+            "no EUR corporate bonds mapped — the credit complex is missing"
+        );
+        // Both halves are actually present: a universe that silently lost either one would
+        // otherwise still satisfy every assertion above.
+        assert!(sub_types.contains("government"));
+        assert!(sub_types.contains("corporate"));
     }
 
     #[test]

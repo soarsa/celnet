@@ -37,6 +37,7 @@ import {
 } from "../lib/soundKit";
 import styles from "./SettingsPanel.module.css";
 
+import { MagnitudeField } from "./MagnitudeField";
 import { NumberField } from "../components/NumberField";
 
 /** Build hashes that are not real git identities — a dev/undefined build. */
@@ -452,15 +453,15 @@ export function SettingsPanel(): React.ReactElement {
                 Min notional
               </label>
               <span className={styles.numWrap}>
-                <NumberField
+                <MagnitudeField
                   id={`${titleId}-minqty`}
                   min={0}
                   step={1000000}
+                  allowBlank={false}
                   value={settings.minQty}
                   className={styles.numInput}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    update({ minQty: Number.isFinite(v) && v > 0 ? v : 0 });
+                  onCommit={(v) => {
+                    if (v !== null) update({ minQty: v });
                   }}
                 />
                 <span className={styles.numEcho}>≥ {fmtCompact(settings.minQty)}</span>

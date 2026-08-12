@@ -1357,7 +1357,7 @@ impl RatesPositionStore {
         // measures), else the firm graph. No policy at any scope ⇒ the default
         // warehouse-hold-vs-advisory-shed graph, so every booked fill stamps a decision.
         let fallback_graph;
-        let (graph, bucket_root) = match policy.select_scoped_graph(book) {
+        let (authored_graph, bucket_root) = match policy.select_scoped_graph(book) {
             Some((g, root)) => (g, root),
             None => {
                 fallback_graph = default_hedge_policy_graph();
@@ -1381,8 +1381,43 @@ impl RatesPositionStore {
         // For a `Bucket` policy the "100" is the bucket root's threshold and the risk state is
         // the subtree roll-up; otherwise it is the fill's own book.
         let scope_book: &str = bucket_root.as_deref().unwrap_or(book);
-        let thr_def = resolve_hedge_threshold(&policy.thresholds, "", scope_book, &instrument)
+        // The scoped HEDGING MODEL governing this fill — *how* the scope manages risk
+        // (back-to-back / warehouse-to-a-DV01-budget / the desk's own authored graph), resolved
+        // most-specific-wins exactly as the panels and exit modes are. A bound, non-`Custom`
+        // model DERIVES an ordinary graph from the same node vocabulary a trader would have
+        // authored by hand, and it is handed to the same evaluator below — the model is a
+        // control over the existing spine, never a second engine.
+        //
+        // The desk operand is `""` for the same reason `resolve_hedge_threshold` passes `""`
+        // here: a rates fill does not carry its desk at this point, so a `Desk`-scoped binding
+        // cannot match on this path (`docs/HEDGING-AND-RISK-EXIT.md` §10). `Instrument` and
+        // `Book` bindings — the two a trader actually configures — resolve normally.
+        let model_binding = policy
+            .config
+            .resolve_hedging_model("", scope_book, &instrument);
+        let derived_graph;
+        let graph = match model_binding.and_then(|b| b.model.derived_graph()) {
+            Some(g) => {
+                derived_graph = g;
+                &derived_graph
+            }
+            // `Custom`, or nothing bound at any scope ⇒ the authored graph governs, i.e.
+            // byte-identical behaviour to before a model was ever bindable.
+            None => authored_graph,
+        };
+        let mut thr_def = resolve_hedge_threshold(&policy.thresholds, "", scope_book, &instrument)
             .unwrap_or_else(default_warehouse_threshold_def);
+        // A positive DV01 budget on an `InternaliseToDv01` binding IS the "100" this scope
+        // warehouses up to, so it overrides the resolved cap and forces the metric to DV01 —
+        // otherwise the budget would be silently measured against whatever metric the
+        // threshold happened to carry. Everything else (amber / red / target / clip / ramp)
+        // still comes from the resolved threshold, so a desk that tuned its bands keeps them.
+        // A blank budget yields `None` and changes nothing — binding a model never invents a
+        // cap the operator did not ask for.
+        if let Some(budget) = model_binding.and_then(|b| b.effective_budget()) {
+            thr_def.cap = budget;
+            thr_def.metric = HedgeMetric::Dv01;
+        }
         let wh = thr_def.to_threshold();
 
         // The risk state the warehouse cap is measured against (signed linear PV01 proxy): the
@@ -4749,6 +4784,109 @@ pub(crate) mod tests {
         assert_eq!(prov.external_dv01, 0.0);
         assert!((prov.edge_bps - 5.0).abs() < 1e-6);
         assert_eq!(prov.hedge_band, "green");
+    }
+
+    /// The scoped **hedging model** actually governs the live booking path — it is a control,
+    /// not inert config.
+    ///
+    /// The fill, the threshold and the graph are IDENTICAL to
+    /// [`internalise_within_tolerance_under_cap_is_fully_internalised`], which warehouses it
+    /// (5,000 DV01 against a 100,000 cap ⇒ green). Binding `BackToBack` at `Book` scope must
+    /// flip that same fill to a full external shed, because back-to-back consults no budget.
+    /// If the binding were ignored the fill would still be internalised, so this fails loudly
+    /// on a regression that leaves the model resolved-but-unused.
+    #[test]
+    fn a_bound_back_to_back_model_overrides_the_authored_graph() {
+        use crate::config::hedge_policy::ScopedHedgingModel;
+        use celnet_hedge_routing::HedgingModel;
+
+        let baseline = RatesPositionStore::new();
+        baseline.set_routing(Some(single_book_graph("wh")));
+        baseline.set_hedge_policy(Some(hedge_policy("wh", 100_000.0, 0.5)));
+        let base_prov = baseline
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0400, 0.0405))
+            .ok()
+            .and_then(|b| baseline.internalise_of(b.position_id))
+            .expect("baseline stamps");
+        assert!(
+            base_prov.internalised && base_prov.external_dv01 == 0.0,
+            "precondition: this fill warehouses under the authored graph"
+        );
+
+        let mut policy = hedge_policy("wh", 100_000.0, 0.5);
+        policy.config.hedging_models = vec![ScopedHedgingModel {
+            scope_kind: HedgeScopeKind::Book,
+            scope_id: "wh".into(),
+            model: HedgingModel::BackToBack,
+            dv01_budget: 0.0,
+        }];
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        store.set_hedge_policy(Some(policy));
+        let prov = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0400, 0.0405))
+            .ok()
+            .and_then(|b| store.internalise_of(b.position_id))
+            .expect("a priced fill under a hedge policy is stamped");
+
+        assert!(
+            !prov.internalised,
+            "back-to-back warehouses nothing, so the fill is not internalised"
+        );
+        assert!(
+            (prov.external_dv01 - 5000.0).abs() < 1e-6,
+            "the whole 5,000 DV01 pays the street, not {}",
+            prov.external_dv01
+        );
+        assert_eq!(prov.internal_dv01, 0.0);
+    }
+
+    /// A bound `InternaliseToDv01` budget IS the cap the fill is measured against — it
+    /// overrides the resolved threshold rather than sitting beside it.
+    ///
+    /// Same 5,000-DV01 fill, same 100,000 threshold (green, warehoused). A 4,000 budget puts
+    /// the same fill OVER its cap, so the overflow above the band edge must be shed. A blank
+    /// budget must change nothing at all — binding a model may not invent a cap.
+    #[test]
+    fn a_bound_dv01_budget_overrides_the_resolved_threshold_cap() {
+        use crate::config::hedge_policy::ScopedHedgingModel;
+        use celnet_hedge_routing::HedgingModel;
+
+        let with_budget = |dv01_budget: f64| {
+            let mut policy = hedge_policy("wh", 100_000.0, 0.5);
+            policy.config.hedging_models = vec![ScopedHedgingModel {
+                scope_kind: HedgeScopeKind::Book,
+                scope_id: "wh".into(),
+                model: HedgingModel::InternaliseToDv01,
+                dv01_budget,
+            }];
+            let store = RatesPositionStore::new();
+            store.set_routing(Some(single_book_graph("wh")));
+            store.set_hedge_policy(Some(policy));
+            store
+                .book_with_routing(position(0, 1, 10), priced_attribution(0.0400, 0.0405))
+                .ok()
+                .and_then(|b| store.internalise_of(b.position_id))
+                .expect("stamps")
+        };
+
+        let tight = with_budget(4_000.0);
+        assert!(
+            tight.external_dv01 > 0.0,
+            "5,000 DV01 against a bound 4,000 budget is over cap and must shed the overflow"
+        );
+        assert_ne!(
+            tight.hedge_band, "green",
+            "over its bound budget the band cannot read green"
+        );
+
+        // Blank budget ⇒ inherit the configured 100,000 threshold ⇒ green + warehoused.
+        let blank = with_budget(0.0);
+        assert_eq!(blank.hedge_band, "green");
+        assert_eq!(
+            blank.external_dv01, 0.0,
+            "a blank budget must inherit the threshold, never invent a cap"
+        );
     }
 
     /// REGRESSION (the notional-operand fix): a book whose signed FACE NOTIONAL is large

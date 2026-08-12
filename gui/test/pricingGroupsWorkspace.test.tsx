@@ -246,6 +246,35 @@ describe("PricingGroupsWorkspace — pricing-source control", () => {
     expect("book_skew_weight" in wire).toBe(false);
   });
 
+  it("offers composite-only (mode 4) and persists it on the wire", async () => {
+    const createPricingGroup = vi.fn(async (g: PricingGroup) => ({ ...g, id: "GROUP-CO" }));
+    state.app = makeApp({ user: admin, isAdmin: true, groups: [], createPricingGroup });
+    render(<PricingGroupsWorkspace />);
+    fireEvent.click(await screen.findByRole("button", { name: /New pricing group/i }));
+    const dialog = await screen.findByRole("dialog");
+
+    const select = within(dialog).getByRole("combobox", { name: /Pricing source/ });
+    // The strict never-fabricate mode must be REACHABLE from the picker — the server has
+    // supported wire tag 4 while the GUI union stopped at 3, so no trader could select it.
+    expect(within(select).getByRole("option", { name: /Composite only/i })).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText(/^Name/), { target: { value: "GROUP-CO" } });
+    fireEvent.change(select, { target: { value: "4" } });
+    // Composite-only is not the skew mode, so the weight control stays hidden.
+    expect(within(dialog).queryByRole("slider")).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: /Create group/i }));
+    });
+
+    await waitFor(() => expect(createPricingGroup).toHaveBeenCalledTimes(1));
+    const saved = createPricingGroup.mock.calls[0]![0] as PricingGroup;
+    expect(saved.pricingSourceMode).toBe(4);
+    const wire = pricingGroupSpecToWire(saved);
+    expect(wire["pricing_source_mode"]).toBe(4);
+    expect("book_skew_weight" in wire).toBe(false);
+  });
+
   it("carries book_skew_weight on the write for mode 3 once the slider is moved", async () => {
     const createPricingGroup = vi.fn(async (g: PricingGroup) => ({ ...g, id: "GROUP-SKEW" }));
     state.app = makeApp({ user: admin, isAdmin: true, groups: [], createPricingGroup });

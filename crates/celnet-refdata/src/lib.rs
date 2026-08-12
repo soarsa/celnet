@@ -63,6 +63,7 @@ mod curated;
 mod futures;
 mod isin;
 mod model;
+mod swaps;
 mod treasury;
 
 pub use crosswalk::{
@@ -72,10 +73,11 @@ pub use curated::curated_universe;
 pub use futures::{
     ContractTerms, DeliveryConvention, FutureSpecError, LISTED_CONTRACT_MONTHS, LISTED_CYCLE_START,
     NOTIONAL_YIELD, TREASURY_FUTURES_TERMS, TreasuryFutureSpec, contracts_for_delivery_month,
-    treasury_futures_universe,
+    front_contract, front_contracts, listed_universe_on, treasury_futures_universe,
 };
 pub use isin::{build as build_isin, check_digit, is_well_formed};
 pub use model::{CivilYmd, GovBondSpec};
+pub use swaps::{ON_THE_RUN_SWAP_TENORS, is_on_the_run_swap_tenor, swap_instrument_id};
 pub use treasury::{TREASURY_UNIVERSE_JSON, parse as parse_treasury_universe, treasury_universe};
 
 /// The full curated government-bond universe: every US Treasury from the embedded
@@ -196,14 +198,23 @@ mod tests {
         // US (≥200 from the snapshot) + the 30 curated non-US points.
         assert!(u.len() >= 230, "combined universe too small: {}", u.len());
 
-        for region in ["us", "uk", "de", "fr", "it"] {
+        for region in ["us", "uk", "de", "fr", "it", "eu"] {
             assert!(
                 u.iter().any(|s| s.region == region),
                 "no {region} bonds in the universe"
             );
         }
-        // Every Phase-1 record is a government bond.
-        assert!(u.iter().all(|s| s.sub_asset_type == "government"));
+        // Every record is a cash bond of a KNOWN sub-asset type — sovereign or credit.
+        // The distinction is load-bearing: a corporate mislabelled `government` would be
+        // filtered into the govvie screens and bucketed as sovereign risk.
+        assert!(
+            u.iter()
+                .all(|s| s.sub_asset_type == "government" || s.sub_asset_type == "corporate")
+        );
+        assert!(
+            u.iter().any(|s| s.sub_asset_type == "corporate"),
+            "the EUR corporate complex must be present"
+        );
 
         // instrument_id and ISIN are unique across the WHOLE universe — the server
         // keys the registry by instrument_id and cross-refs by ISIN, so a collision

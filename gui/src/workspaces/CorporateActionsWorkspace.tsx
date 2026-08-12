@@ -32,7 +32,7 @@ import { useCorporateActions } from "../hooks/useCorporateActions";
 import admin from "./AdminWorkspace.module.css";
 import styles from "./CorporateActionsWorkspace.module.css";
 
-import { NumberField } from "../components/NumberField";
+import { MagnitudeField } from "../components/MagnitudeField";
 
 /** A dash when a date/value is empty. */
 function dash(value: string): React.ReactElement | string {
@@ -68,7 +68,9 @@ export function CorporateActionsWorkspace(): React.ReactElement {
   const [flows, setFlows] = useState<InstrumentScheduleFlow[] | null>(null);
   const [poolFactor, setPoolFactor] = useState<number>(1);
   const [scheduleInstrumentId, setScheduleInstrumentId] = useState<string | null>(null);
-  const [heldFace, setHeldFace] = useState<string>("1000000");
+  // A parsed face amount: MagnitudeField never commits an unparseable entry, so
+  // the apply path below can no longer receive a silently-coerced NaN.
+  const [heldFace, setHeldFace] = useState<number | null>(1_000_000);
   const [actionError, setActionError] = useState<string | null>(null);
   const [applyNote, setApplyNote] = useState<string | null>(null);
 
@@ -116,8 +118,8 @@ export function CorporateActionsWorkspace(): React.ReactElement {
   const runApply = async (ca: CorporateAction): Promise<void> => {
     setActionError(null);
     setApplyNote(null);
-    const face = Number(heldFace);
-    if (!Number.isFinite(face) || face <= 0) {
+    const face = heldFace;
+    if (face === null || !Number.isFinite(face) || face <= 0) {
       setActionError("Enter a positive held face to apply the corporate action.");
       return;
     }
@@ -308,12 +310,12 @@ export function CorporateActionsWorkspace(): React.ReactElement {
             <div className={styles.lifecycle}>
               <label className={styles.faceField}>
                 <span>Held face</span>
-                <NumberField
+                <MagnitudeField
                   min={0}
                   step={100000}
                   value={heldFace}
                   data-testid="ca-heldface"
-                  onChange={(e) => setHeldFace(e.target.value)}
+                  onCommit={setHeldFace}
                   disabled={!canRefdata}
                 />
               </label>

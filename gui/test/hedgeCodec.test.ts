@@ -378,6 +378,7 @@ describe("engine config round-trip", () => {
       compositeSpreadBp: 0.5,
       vehicles: [],
       exitModes: [],
+      hedgingModels: [],
     };
     const wire = hedgeConfigToWire(c);
     expect(wire["kill_switch"]).toBe(false);
@@ -402,6 +403,7 @@ describe("engine config round-trip", () => {
       compositeSpreadBp: 1.25,
       vehicles: [],
       exitModes: [],
+      hedgingModels: [],
     };
     const wire = hedgeConfigToWire(c);
     expect(Array.isArray(wire["lp_panels"])).toBe(true);

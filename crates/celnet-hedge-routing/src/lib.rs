@@ -34,6 +34,15 @@
 //!   "hedge a 9-year corp with the 10Y future" rule). Sized by the real DV01 ratio
 //!   ([`plan_hedge_ratio`]), rounded to whole contracts for a future with the residual
 //!   reported rather than hidden.
+//! - [`HedgingModel`] — **how a scope manages risk**, as a first-class trader choice
+//!   rather than a graph to hand-author: back-to-back ([`HedgingModel::BackToBack`])
+//!   or warehouse-to-a-DV01-budget ([`HedgingModel::InternaliseToDv01`]). It is a
+//!   *control*, not a second engine — [`HedgingModel::derived_graph`] **resolves to**
+//!   the same [`HedgeGraph`] primitives above (a `SubmitMarketOrder { size: Full }`
+//!   catch-all, or the warehouse-vs-overflow graph), so there is exactly one
+//!   evaluator, one sizing routine and one provenance ring.
+//!   [`HedgingModel::Custom`] is the default and the escape hatch: the desk's own
+//!   authored graph governs, exactly as before.
 //! - [`HedgeExitMode`] — whether a resolved exit **fires by itself**
 //!   ([`HedgeExitMode::Auto`], the default) or **publishes a standing suggestion** a
 //!   trader fires ([`HedgeExitMode::Suggest`]) — no popup, no confirmation dialog.
@@ -75,6 +84,7 @@ mod field;
 mod graph;
 mod lp_panel;
 mod mode;
+mod model;
 mod router;
 mod vehicle;
 
@@ -84,6 +94,7 @@ pub use field::{HedgeField, HedgeFieldKind};
 pub use graph::{ExecStyle, ExitAction, HedgeError, HedgeGraph, HedgeNode, HedgeSize, NodeId};
 pub use lp_panel::{HedgeLpPanel, LpPanelError};
 pub use mode::HedgeExitMode;
+pub use model::HedgingModel;
 pub use router::{HedgeRouter, Resolution};
 pub use vehicle::{
     Dv01Basis, HedgeRatioPlan, HedgeVehicle, HedgeVehicleError, HedgeVehicleRegistry,

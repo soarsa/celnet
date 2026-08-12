@@ -17,6 +17,20 @@
           {{ celnet_release_name | default(
                lookup('pipe', 'git -C ' ~ playbook_dir ~ '/.. rev-parse --short HEAD')
                ~ '-' ~ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ')) }}
+    # Re-render the on-box control scripts from their templates on EVERY release, before
+    # anything runs them. A deploy that never reasserts them lets a hand edit on the box
+    # outrank the repository indefinitely: `FIXSIM_ESP="0"` typed on the box to park the
+    # ESP leg silently beat `celnet_fixsim_esp_enabled: true` in group_vars through every
+    # subsequent deploy, and the bond/corporate ESP stream stayed dark while the repo, the
+    # inventory and the operator all read as "enabled". Idempotent — an unchanged template
+    # reports `ok`, so only genuine drift shows up as `changed`.
+    #
+    # Unprivileged: the deploy runs AS `celnet_user`, which already owns these files, so
+    # the `owner`/`group` assertions in the task file are a no-op here.
+    - name: Re-render the on-box control scripts (defeat hand-edit drift)
+      ansible.builtin.import_role:
+        name: celnet_provision
+        tasks_from: control_scripts
   roles:
     - role: celnet_release
   post_tasks:
@@ -44,14 +58,12 @@
       ansible.builtin.stat:
         path: "{{ celnet_bin_dir }}/fixsimctl"
       register: celnet_fixsimctl_bin
-    # Use the primitive stop+start verbs (present in every fixsimctl version) rather than
-    # the newer 'restart' verb: deploy.yml does NOT re-provision the control script (that's
-    # the provision role), so the on-box fixsimctl may predate 'restart'. stop||true + start
-    # is skew-proof and the launcher self-sweeps stray sims, so it converges cleanly.
-    - name: (Re)start the FIX RFQ/RFS client simulator via fixsimctl (skew-proof stop+start)
-      ansible.builtin.shell: >-
-        "{{ celnet_bin_dir }}/fixsimctl" stop || true;
-        "{{ celnet_bin_dir }}/fixsimctl" start
+    # `restart` is safe to call directly now that the pre_task above re-renders fixsimctl
+    # from its template on every release: the on-box script is guaranteed to be the one in
+    # this repository, so it cannot predate a verb this playbook uses. (It previously used
+    # stop||true + start precisely because the on-box copy could be arbitrarily old.)
+    - name: (Re)start the FIX RFQ/RFS client simulator via fixsimctl
+      ansible.builtin.command: "{{ celnet_bin_dir }}/fixsimctl restart"
       changed_when: true
       when:
         - celnet_fixsim_enabled | default(true) | bool

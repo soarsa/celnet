@@ -3,7 +3,8 @@
 //! Parses the committed US-Treasury securities-master snapshot (267 CUSIPs with
 //! auction/quote prices) into typed [`TreasuryBond`] records, and — via
 //! [`load_curated_universe`] / [`load_government_universe`] — extends the priced set
-//! with the curated non-US govvies (UK gilts + EUR govvies) from
+//! with the curated non-US cash bonds (UK gilts, EUR govvies, and the EUR corporate
+//! complex) from
 //! [`celnet_refdata::curated_universe`], so the whole
 //! [`celnet_refdata::government_universe`] the server seeds also streams a real price.
 //! Each record maps onto the two identities the rest of the stack keys on:
@@ -94,7 +95,8 @@ impl SecurityType {
 ///
 /// Covers the whole [`celnet_refdata`] government universe: US Treasuries (parsed
 /// from the embedded snapshot, priced off the snapshot's real ask/bid, CUSIP
-/// identity) **and** the curated non-US govvies (UK gilts + EUR govvies, built from a
+/// identity) **and** the curated non-US cash bonds (UK gilts, EUR govvies and EUR
+/// corporates, built from a
 /// [`celnet_refdata::GovBondSpec`] via [`TreasuryBond::from_gov_spec`], slug identity,
 /// seeded at par). Built only by the loaders from validated inputs, so every field
 /// here is known-good: the ISIN passes its check digit, both prices are finite and in
@@ -109,7 +111,8 @@ pub struct TreasuryBond {
     /// The pricing/settlement currency — the currency leg of the engine key. `USD`
     /// for Treasuries; `GBP`/`EUR` for the curated non-US govvies.
     pub currency: Ccy,
-    /// The region label (`us` / `uk` / `de` / `fr` / `it`).
+    /// The region label (`us` / `uk` / `de` / `fr` / `it` for sovereigns, `eu` for the
+    /// EUR corporate complex).
     pub region: &'static str,
     /// A pre-built friendly blotter/GUI name for the curated non-US govvies (their
     /// `GovBondSpec.name`); `None` for a Treasury, whose display name is composed
@@ -305,7 +308,7 @@ impl TreasuryBond {
             display_name: self.display_name(),
             identity: format!("{} / {}", self.isin, self.cusip),
             instrument: self.engine_instrument(),
-            model,
+            mid: crate::price::MidSource::MeanRevertingYield(model),
             spread_scale: 1.0,
             lean_scale: budget.lean_scale,
             yield_dispersion: Some(budget.yield_dispersion),
@@ -539,8 +542,9 @@ pub fn load_coupon_universe() -> Vec<TreasuryBond> {
         .collect()
 }
 
-/// The curated **non-US** government reference bonds — UK gilts + EUR govvies (DE /
-/// FR / IT) — from [`celnet_refdata::curated_universe`], each built into a real
+/// The curated **non-US** cash reference bonds — UK gilts, EUR govvies (DE / FR / IT)
+/// and the EUR corporate complex — from [`celnet_refdata::curated_universe`], each
+/// built into a real
 /// [`celnet_bond::Bond`] schedule and seeded at par (see
 /// [`TreasuryBond::from_gov_spec`]). All are coupon-bearing fixed govvies. Any spec
 /// not modellable (unrecognised currency, bad date, unmappable frequency) is dropped.
@@ -973,23 +977,28 @@ mod tests {
     #[test]
     fn curated_non_us_bonds_build_real_schedules_and_price_on_the_leaf() {
         let curated = load_curated_universe();
-        // 10 UK gilts + 8 DE Bunds + 6 FR OATs + 6 IT BTPs.
-        assert_eq!(curated.len(), 30, "expected the full curated non-US set");
+        // 10 UK gilts + 8 DE Bunds + 6 FR OATs + 6 IT BTPs + 4 EUR corporate curves × 5.
+        assert_eq!(curated.len(), 50, "expected the full curated non-US set");
 
         // The sim's default settlement; every curated maturity (2028+) is after it.
         let settle = BrokenDate::new(2026, 4, 16);
-        let (mut uk, mut de, mut fr, mut it) = (0, 0, 0, 0);
+        let (mut uk, mut de, mut fr, mut it, mut eu) = (0, 0, 0, 0, 0);
         for b in &curated {
             match b.region {
                 "uk" => uk += 1,
                 "de" => de += 1,
                 "fr" => fr += 1,
                 "it" => it += 1,
+                // The EUR corporates go through the IDENTICAL oracle round-trip below as
+                // the sovereigns: a corporate the sim cannot build a real schedule for, or
+                // cannot round-trip price↔yield on, must fail here rather than reach a
+                // venue as an unpriceable line.
+                "eu" => eu += 1,
                 other => panic!("unexpected curated region {other}"),
             }
-            assert!(b.cusip.is_empty(), "a non-US govvie carries no CUSIP");
-            assert_ne!(b.currency, Ccy::USD, "a non-US govvie prices in GBP/EUR");
-            assert!(b.name.is_some(), "a curated govvie carries a friendly name");
+            assert!(b.cusip.is_empty(), "a non-US bond carries no CUSIP");
+            assert_ne!(b.currency, Ccy::USD, "a non-US bond prices in GBP/EUR");
+            assert!(b.name.is_some(), "a curated bond carries a friendly name");
             // The slug is the wire id the server's identity join keys on.
             assert!(
                 b.instrument_id().contains('-'),
@@ -1025,7 +1034,11 @@ mod tests {
                 b.instrument_id
             );
         }
-        assert_eq!((uk, de, fr, it), (10, 8, 6, 6), "curated region breakdown");
+        assert_eq!(
+            (uk, de, fr, it, eu),
+            (10, 8, 6, 6, 20),
+            "curated region breakdown (the last is the EUR corporate complex)"
+        );
     }
 
     #[test]

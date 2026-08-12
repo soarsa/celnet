@@ -65,7 +65,7 @@ export function SetupWizard({ onClose }: SetupWizardProps): React.ReactElement {
 
   const [step, setStep] = useState(0);
   const [books, setBooks] = useState<WizardBook[]>(() => [
-    { key: newBookKey(), name: "", parentKey: null, deskId: null, enabled: true, limits: null },
+    { key: newBookKey(), name: "", parentKey: null, deskId: null, enabled: true, limits: null, assetClass: "fixed_income" },
   ]);
   const [routingRules, setRoutingRules] = useState<RiskRule[]>(() => [
     { id: newRuleId(), conditions: [], bookId: null, enabled: true },
