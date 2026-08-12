@@ -78,6 +78,7 @@ import { CurveDashboard } from "./CurveDashboard";
 import { CurveDefinitionEditor } from "./CurveDefinitionEditor";
 import styles from "./CurveWorkspace.module.css";
 
+import { MagnitudeField } from "../components/MagnitudeField";
 import { NumberField } from "../components/NumberField";
 
 /** The manager lenses, in the order the tab bar offers them. */
@@ -1819,11 +1820,14 @@ function CurveQueryMode({
                 <span className={styles.inputUnit}>%</span>
               </label>
               <label className={styles.inlineInput}>
-                <NumberField
+                <MagnitudeField
                   step={1_000_000}
+                  allowBlank={false}
                   value={legNotional}
                   aria-label="repriced leg notional"
-                  onChange={(e) => setLegNotional(Number(e.target.value))}
+                  onCommit={(v) => {
+                    if (v !== null) setLegNotional(v);
+                  }}
                 />
               </label>
               <select

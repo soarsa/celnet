@@ -13,6 +13,7 @@ import { describeExitAction } from "../../lib/hedgeExit";
 import { blankHedgeState, traceHedgeGraph, type HedgeSampleState } from "../../lib/hedgeTrace";
 import styles from "./HedgingWorkspace.module.css";
 
+import { MagnitudeField } from "../../components/MagnitudeField";
 import { NumberField } from "../../components/NumberField";
 
 interface HedgeTracePanelProps {
@@ -122,13 +123,30 @@ export function HedgeTracePanel({ graph }: HedgeTracePanelProps): React.ReactEle
                 {f.label}
                 {f.unit ? <span className={styles.traceUnit}> · {f.unit}</span> : null}
               </span>
-              <NumberField
-                className={styles.input}
-                step={f.step ?? 1}
-                value={value}
-                data-testid={`trace-${f.key}`}
-                onChange={(e) => setNum(f.key, Number(e.target.value))}
-              />
+              {/* The `compact` fields are the cash/risk quantities — exactly the
+                  ones worth dialling as `250m` / `5k`. The fraction and bp fields
+                  beside them stay plain numeric, where a magnitude suffix would
+                  be a footgun rather than a shortcut. */}
+              {f.compact ? (
+                <MagnitudeField
+                  className={styles.input}
+                  step={f.step ?? 1}
+                  allowBlank={false}
+                  value={value}
+                  data-testid={`trace-${f.key}`}
+                  onCommit={(v) => {
+                    if (v !== null) setNum(f.key, v);
+                  }}
+                />
+              ) : (
+                <NumberField
+                  className={styles.input}
+                  step={f.step ?? 1}
+                  value={value}
+                  data-testid={`trace-${f.key}`}
+                  onChange={(e) => setNum(f.key, Number(e.target.value))}
+                />
+              )}
               {f.compact && value !== 0 ? (
                 <span className={styles.traceUnit} data-testid={`trace-${f.key}-compact`}>
                   = {fmtCompact(value)}

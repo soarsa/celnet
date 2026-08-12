@@ -10,6 +10,7 @@ import type { HedgeConfig, HedgeExecutionMode } from "../../data/contract";
 import { HelpButton } from "../../components/HelpButton";
 import styles from "./HedgingWorkspace.module.css";
 
+import { MagnitudeField } from "../../components/MagnitudeField";
 import { NumberField } from "../../components/NumberField";
 
 interface HedgeConfigControlProps {
@@ -130,11 +131,14 @@ export function HedgeConfigControl({
       <div className={styles.formGrid}>
         <label className={styles.formField}>
           <span className={styles.fieldLabel}>Max clip</span>
-          <NumberField
+          <MagnitudeField
             className={styles.input}
+            allowBlank={false}
             value={config.maxClip}
             disabled={disabled}
-            onChange={(e) => patch({ maxClip: Number(e.target.value) })}
+            onCommit={(v) => {
+              if (v !== null) patch({ maxClip: v });
+            }}
           />
         </label>
         <label className={styles.formField}>
@@ -148,11 +152,14 @@ export function HedgeConfigControl({
         </label>
         <label className={styles.formField}>
           <span className={styles.fieldLabel}>Daily external cap</span>
-          <NumberField
+          <MagnitudeField
             className={styles.input}
+            allowBlank={false}
             value={config.dailyExternalNotionalCap}
             disabled={disabled}
-            onChange={(e) => patch({ dailyExternalNotionalCap: Number(e.target.value) })}
+            onCommit={(v) => {
+              if (v !== null) patch({ dailyExternalNotionalCap: v });
+            }}
           />
         </label>
         {showComposite && (

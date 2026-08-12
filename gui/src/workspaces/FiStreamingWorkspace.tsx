@@ -54,7 +54,7 @@ import { fmtClock, fmtCompact, fmtPnlAdaptive, fmtSigned } from "../lib/format";
 import { oisSpec, irsSpec, fraSpec, bondSpec } from "../products";
 import styles from "./FiStreamingWorkspace.module.css";
 
-import { NumberField } from "../components/NumberField";
+import { MagnitudeField } from "../components/MagnitudeField";
 
 /** The FI instrument families this hub can stream — the FOUR rates families from
  *  the Ticket product registry (OIS / IRS / FRA / Bond), each an additive
@@ -591,14 +591,16 @@ export function FiStreamingWorkspace(): React.ReactElement {
               <span className={styles.fieldLabel}>
                 Size <span className={styles.fieldHint}>{fmtCompact(notional)} notional</span>
               </span>
-              <NumberField
+              <MagnitudeField
                 id="rfs-notional"
                 className={styles.input}
                 min={0}
                 step={1_000_000}
-                value={Number.isFinite(notional) ? notional : ""}
-                onChange={(e) => setNotional(Number(e.target.value))}
-                aria-invalid={!notionalValid}
+                allowBlank={false}
+                value={Number.isFinite(notional) ? notional : null}
+                onCommit={(v) => {
+                  if (v !== null) setNotional(v);
+                }}
               />
             </label>
 

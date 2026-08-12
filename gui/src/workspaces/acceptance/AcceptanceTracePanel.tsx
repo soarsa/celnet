@@ -16,6 +16,7 @@ import {
 } from "../../lib/acceptanceTrace";
 import styles from "./AcceptanceWorkspace.module.css";
 
+import { MagnitudeField } from "../../components/MagnitudeField";
 import { NumberField } from "../../components/NumberField";
 
 interface AcceptanceTracePanelProps {
@@ -35,8 +36,11 @@ const NUMERIC_FIELDS: readonly {
   key: keyof AcceptanceSampleLift;
   label: string;
   step?: number;
+  /** A cash quantity — takes `k`/`m`/`b` shorthand. Tenors, bps and millisecond
+      ages deliberately do not: a magnitude suffix there would be a footgun. */
+  magnitude?: boolean;
 }[] = [
-  { key: "notionalUsd", label: "Notional (USD)" },
+  { key: "notionalUsd", label: "Notional (USD)", magnitude: true },
   { key: "tenorYears", label: "Tenor (years)", step: 0.5 },
   { key: "edgeBps", label: "Edge (bps)", step: 0.1 },
   { key: "quoteAgeMs", label: "Quote age (ms)", step: 50 },
@@ -94,13 +98,26 @@ export function AcceptanceTracePanel({ graph }: AcceptanceTracePanelProps): Reac
         {NUMERIC_FIELDS.map((f) => (
           <label key={f.key} className={styles.traceField}>
             <span className={styles.traceFieldLabel}>{f.label}</span>
-            <NumberField
-              className={styles.input}
-              step={f.step ?? 1}
-              value={lift[f.key] as number}
-              data-testid={`trace-${f.key}`}
-              onChange={(e) => setNum(f.key, Number(e.target.value))}
-            />
+            {f.magnitude ? (
+              <MagnitudeField
+                className={styles.input}
+                step={f.step ?? 1}
+                allowBlank={false}
+                value={lift[f.key] as number}
+                data-testid={`trace-${f.key}`}
+                onCommit={(v) => {
+                  if (v !== null) setNum(f.key, v);
+                }}
+              />
+            ) : (
+              <NumberField
+                className={styles.input}
+                step={f.step ?? 1}
+                value={lift[f.key] as number}
+                data-testid={`trace-${f.key}`}
+                onChange={(e) => setNum(f.key, Number(e.target.value))}
+              />
+            )}
           </label>
         ))}
       </div>

@@ -205,6 +205,14 @@
   gap: var(--space-3);
 }
 
+/* The magnitude-shorthand legend for the limit fields — these caps run to
+   eleven digits, so the shortcut needs to be discoverable at the point of use. */
+.hint {
+  margin: 0;
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
 .meta {
   display: flex;
   gap: var(--space-5);

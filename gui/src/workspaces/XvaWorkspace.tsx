@@ -26,6 +26,7 @@ import type { OptionType, XvaPricingRequest, XvaResult } from "../data/contract"
 import { useApp } from "../app/AppContext";
 import styles from "./XvaWorkspace.module.css";
 
+import { MagnitudeField } from "../components/MagnitudeField";
 import { NumberField as NumberFieldBase } from "../components/NumberField";
 
 /** One editable netting-set trade (vols/notional held in trader-facing units). */
@@ -333,11 +334,14 @@ export function XvaWorkspace(): React.ReactElement {
                 <span className={styles.inputUnit}>%</span>
               </label>
               <label className={styles.inlineInput}>
-                <NumberFieldBase
+                <MagnitudeField
                   step={100_000}
+                  allowBlank={false}
                   value={t.notional}
                   aria-label={`trade ${i + 1} notional`}
-                  onChange={(e) => patchTrade(i, { notional: Number(e.target.value) })}
+                  onCommit={(v) => {
+                    if (v !== null) patchTrade(i, { notional: v });
+                  }}
                 />
               </label>
               <button

@@ -13,6 +13,7 @@
  */
 import { useMemo } from "react";
 
+import { MAGNITUDE_HELP, MagnitudeField } from "../../components/MagnitudeField";
 import type { DeskDesc, FixConnection, RouteField, RouteOp, RouteValue } from "../../data/contract";
 import type { FieldKind } from "../../lib/routeOps";
 import { opLabel } from "../../lib/routeOps";
@@ -254,39 +255,33 @@ export function PortfoliosStep({
               </label>
               <details className={styles.limitsDisclosure}>
                 <summary>Pre-trade limits (optional)</summary>
+                <p className={styles.miniLabel}>{MAGNITUDE_HELP}</p>
                 <div className={styles.entryGrid}>
                   <label className={styles.field}>
                     <span className={styles.miniLabel}>Max net notional</span>
-                    <input
+                    <MagnitudeField
                       className={styles.input}
-                      inputMode="decimal"
                       disabled={readOnly}
-                      value={b.limits?.maxNetNotional ?? ""}
-                      onChange={(e) =>
-                        patch(b.key, { limits: mergeLimit(b, "maxNetNotional", e.target.value) })
-                      }
+                      value={b.limits?.maxNetNotional ?? null}
+                      onCommit={(v) => patch(b.key, { limits: mergeLimit(b, "maxNetNotional", v) })}
                     />
                   </label>
                   <label className={styles.field}>
                     <span className={styles.miniLabel}>Max gross notional</span>
-                    <input
+                    <MagnitudeField
                       className={styles.input}
-                      inputMode="decimal"
                       disabled={readOnly}
-                      value={b.limits?.maxGrossNotional ?? ""}
-                      onChange={(e) =>
-                        patch(b.key, { limits: mergeLimit(b, "maxGrossNotional", e.target.value) })
-                      }
+                      value={b.limits?.maxGrossNotional ?? null}
+                      onCommit={(v) => patch(b.key, { limits: mergeLimit(b, "maxGrossNotional", v) })}
                     />
                   </label>
                   <label className={styles.field}>
                     <span className={styles.miniLabel}>Max DV01</span>
-                    <input
+                    <MagnitudeField
                       className={styles.input}
-                      inputMode="decimal"
                       disabled={readOnly}
-                      value={b.limits?.maxDv01 ?? ""}
-                      onChange={(e) => patch(b.key, { limits: mergeLimit(b, "maxDv01", e.target.value) })}
+                      value={b.limits?.maxDv01 ?? null}
+                      onCommit={(v) => patch(b.key, { limits: mergeLimit(b, "maxDv01", v) })}
                     />
                   </label>
                 </div>
@@ -315,16 +310,21 @@ export function PortfoliosStep({
   );
 }
 
-/** Merge one limit field, returning null when every cap is cleared. */
+/**
+ * Merge one committed limit, returning null when every cap is cleared.
+ *
+ * `value` arrives already parsed and validated by {@link MagnitudeField}: an
+ * entry that failed to parse is never committed, so this function can no longer
+ * be reached with a typo — which previously landed here as `null`, silently
+ * turning a mistyped cap into an UNCAPPED one.
+ */
 function mergeLimit(
   b: WizardBook,
   key: "maxNetNotional" | "maxGrossNotional" | "maxDv01",
-  raw: string,
+  value: number | null,
 ): WizardBook["limits"] {
-  const t = raw.trim();
-  const n = t.length === 0 ? null : Number.isFinite(Number(t)) ? Number(t) : null;
   const base = b.limits ?? { maxNetNotional: null, maxGrossNotional: null, maxDv01: null };
-  const next = { ...base, [key]: n };
+  const next = { ...base, [key]: value };
   return next.maxNetNotional === null && next.maxGrossNotional === null && next.maxDv01 === null
     ? null
     : next;

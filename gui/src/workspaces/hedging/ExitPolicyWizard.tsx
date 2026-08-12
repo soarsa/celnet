@@ -54,7 +54,7 @@ import { WizardShell, type StepMeta } from "../setupWizard/WizardShell";
 import { Explainer } from "../setupWizard/PortfolioRoutingSteps";
 import styles from "../setupWizard/setupWizard.module.css";
 
-import { NumberField } from "../../components/NumberField";
+import { MagnitudeField } from "../../components/MagnitudeField";
 
 export interface ExitPolicyWizardProps {
   /** The scope's currently-selected book id (defaults the analysis book), if any. */
@@ -404,12 +404,15 @@ function ScenarioStep({
                 <span className={styles.miniLabel}>
                   {spec.inputs.escalate ? "First threshold" : "Threshold"} ({md.unit})
                 </span>
-                <NumberField
+                <MagnitudeField
                   className={styles.input}
+                  allowBlank={false}
                   value={params.threshold}
                   disabled={readOnly}
                   data-testid="rw-threshold"
-                  onChange={(e) => patch({ threshold: Number(e.target.value) })}
+                  onCommit={(v) => {
+                    if (v !== null) patch({ threshold: v });
+                  }}
                 />
                 <span className={styles.hint}>
                   {params.threshold > 0 ? `= ${fmtMetric(params.threshold, params.metric)}` : "set a positive value"}
@@ -419,12 +422,15 @@ function ScenarioStep({
             {spec.inputs.escalate && (
               <label className={styles.field}>
                 <span className={styles.miniLabel}>Upper (escalation) threshold ({md.unit})</span>
-                <NumberField
+                <MagnitudeField
                   className={styles.input}
+                  allowBlank={false}
                   value={params.escalateThreshold}
                   disabled={readOnly}
                   data-testid="rw-escalate"
-                  onChange={(e) => patch({ escalateThreshold: Number(e.target.value) })}
+                  onCommit={(v) => {
+                    if (v !== null) patch({ escalateThreshold: v });
+                  }}
                 />
                 <span className={styles.hint}>
                   {params.escalateThreshold > 0

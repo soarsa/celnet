@@ -22,6 +22,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
+import { MAGNITUDE_HELP, MagnitudeField } from "../components/MagnitudeField";
 import type { DeskDesc, RiskBook, RiskLimits } from "../data/contract";
 import { notifyRiskRoutingChanged } from "../lib/routingGuard";
 import styles from "./RiskBooksWorkspace.module.css";
@@ -98,19 +99,6 @@ function subtreeIds(books: readonly RiskBook[], id: string): Set<string> {
   };
   walk(id);
   return out;
-}
-
-/** Parse a limits number field: blank ⇒ null (uncapped); otherwise a finite number. */
-function parseCap(raw: string): number | null {
-  const t = raw.trim();
-  if (t.length === 0) return null;
-  const n = Number(t);
-  return Number.isFinite(n) ? n : null;
-}
-
-/** Render a cap for an input value: null ⇒ blank. */
-function capValue(n: number | null): string {
-  return n === null ? "" : String(n);
 }
 
 const compact = (n: number): string =>
@@ -216,6 +204,20 @@ export function RiskBooksWorkspace(): React.ReactElement {
     setDraft((d) => (d ? { ...d, ...p } : d));
   }, []);
 
+  // Which limit fields currently hold an entry that failed to parse. A limit
+  // the trader mistyped must never be saved as "uncapped" — the permissive
+  // direction — so Save is blocked until the entry is fixed or cleared.
+  const [invalidLimits, setInvalidLimits] = useState<ReadonlySet<string>>(new Set());
+  const setLimitValidity = useCallback((key: string, valid: boolean): void => {
+    setInvalidLimits((prev) => {
+      if (valid === !prev.has(key)) return prev;
+      const next = new Set(prev);
+      if (valid) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
   const patchLimits = useCallback((p: Partial<RiskLimits>): void => {
     setDraft((d) => {
       if (!d) return d;
@@ -239,6 +241,13 @@ export function RiskBooksWorkspace(): React.ReactElement {
       setSaveState({ kind: "error", message: "a portfolio name is required" });
       return;
     }
+    if (invalidLimits.size > 0) {
+      setSaveState({
+        kind: "error",
+        message: "fix the highlighted pre-trade limit before saving",
+      });
+      return;
+    }
     setSaveState({ kind: "saving" });
     try {
       const saved = creating
@@ -257,7 +266,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
         message: e instanceof Error ? e.message : "failed to save the risk portfolio",
       });
     }
-  }, [draft, creating, app.transport, reload]);
+  }, [draft, creating, invalidLimits, app.transport, reload]);
 
   const remove = useCallback(async (): Promise<void> => {
     if (!selectedBook) return;
@@ -435,32 +444,33 @@ export function RiskBooksWorkspace(): React.ReactElement {
 
               <fieldset className={styles.limits} disabled={readOnly}>
                 <legend className={styles.label}>Pre-trade limits (blank ⇒ uncapped)</legend>
+                <p className={styles.hint}>{MAGNITUDE_HELP}</p>
                 <div className={styles.row}>
                   <label className={styles.field}>
                     <span className={styles.subLabel}>Max net notional</span>
-                    <input
+                    <MagnitudeField
                       className={styles.input}
-                      inputMode="decimal"
-                      value={capValue(draft.limits?.maxNetNotional ?? null)}
-                      onChange={(e) => patchLimits({ maxNetNotional: parseCap(e.target.value) })}
+                      value={draft.limits?.maxNetNotional ?? null}
+                      onCommit={(v) => patchLimits({ maxNetNotional: v })}
+                      onValidityChange={(ok) => setLimitValidity("maxNetNotional", ok)}
                     />
                   </label>
                   <label className={styles.field}>
                     <span className={styles.subLabel}>Max gross notional</span>
-                    <input
+                    <MagnitudeField
                       className={styles.input}
-                      inputMode="decimal"
-                      value={capValue(draft.limits?.maxGrossNotional ?? null)}
-                      onChange={(e) => patchLimits({ maxGrossNotional: parseCap(e.target.value) })}
+                      value={draft.limits?.maxGrossNotional ?? null}
+                      onCommit={(v) => patchLimits({ maxGrossNotional: v })}
+                      onValidityChange={(ok) => setLimitValidity("maxGrossNotional", ok)}
                     />
                   </label>
                   <label className={styles.field}>
                     <span className={styles.subLabel}>Max DV01</span>
-                    <input
+                    <MagnitudeField
                       className={styles.input}
-                      inputMode="decimal"
-                      value={capValue(draft.limits?.maxDv01 ?? null)}
-                      onChange={(e) => patchLimits({ maxDv01: parseCap(e.target.value) })}
+                      value={draft.limits?.maxDv01 ?? null}
+                      onCommit={(v) => patchLimits({ maxDv01: v })}
+                      onValidityChange={(ok) => setLimitValidity("maxDv01", ok)}
                     />
                   </label>
                 </div>

@@ -10,6 +10,7 @@ import { useState } from "react";
 import type { HedgeMetric, HedgeScopeKind, WarehouseThreshold } from "../../data/contract";
 import styles from "./HedgingWorkspace.module.css";
 
+import { MagnitudeField } from "../../components/MagnitudeField";
 import { NumberField } from "../../components/NumberField";
 
 const SCOPE_KINDS: readonly HedgeScopeKind[] = ["desk", "book", "instrument"];
@@ -79,6 +80,13 @@ export function ThresholdConfig({
   const patch = (p: Partial<WarehouseThreshold>): void => setDraft((d) => ({ ...d, ...p }));
   const numField = (key: keyof WarehouseThreshold) => (e: React.ChangeEvent<HTMLInputElement>) =>
     patch({ [key]: Number(e.target.value) } as Partial<WarehouseThreshold>);
+  // Quantity fields (the cap and the clip sizes) are denominated in the chosen
+  // metric's unit — `$` face or `$/bp` DV01 — so they take magnitude shorthand.
+  // The band/fraction fields beside them deliberately do NOT: `m` on a 0–1
+  // fraction would be a footgun, not a shortcut.
+  const magField = (key: keyof WarehouseThreshold) => (v: number | null) => {
+    if (v !== null) patch({ [key]: v } as Partial<WarehouseThreshold>);
+  };
 
   const editRow = (t: WarehouseThreshold): void => {
     setDraft({ ...t });
@@ -218,11 +226,12 @@ export function ThresholdConfig({
             </label>
             <label className={styles.formField}>
               <span className={styles.fieldLabel}>Cap (the “100”)</span>
-              <NumberField
+              <MagnitudeField
                 className={styles.input}
+                allowBlank={false}
                 value={draft.cap}
                 data-testid="threshold-cap"
-                onChange={numField("cap")}
+                onCommit={magField("cap")}
               />
             </label>
             <label className={styles.formField}>
@@ -244,11 +253,21 @@ export function ThresholdConfig({
             </label>
             <label className={styles.formField}>
               <span className={styles.fieldLabel}>Min clip</span>
-              <NumberField className={styles.input} value={draft.minClip} onChange={numField("minClip")} />
+              <MagnitudeField
+                className={styles.input}
+                allowBlank={false}
+                value={draft.minClip}
+                onCommit={magField("minClip")}
+              />
             </label>
             <label className={styles.formField}>
               <span className={styles.fieldLabel}>Max clip</span>
-              <NumberField className={styles.input} value={draft.maxClip} onChange={numField("maxClip")} />
+              <MagnitudeField
+                className={styles.input}
+                allowBlank={false}
+                value={draft.maxClip}
+                onCommit={magField("maxClip")}
+              />
             </label>
             <label className={styles.checkField}>
               <input

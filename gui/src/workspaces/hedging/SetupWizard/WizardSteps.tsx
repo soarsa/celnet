@@ -53,6 +53,7 @@ import {
 } from "./wizardModel";
 import styles from "../../setupWizard/setupWizard.module.css";
 
+import { MagnitudeField } from "../../../components/MagnitudeField";
 import { NumberField } from "../../../components/NumberField";
 
 // Re-export the shared steps so the wizard host imports all four step surfaces from here.
@@ -270,12 +271,15 @@ export function HedgingStep({
             </label>
             <label className={styles.field}>
               <span className={styles.miniLabel}>Cap (the &ldquo;100&rdquo;)</span>
-              <NumberField
+              <MagnitudeField
                 className={styles.input}
+                allowBlank={false}
                 value={threshold.cap}
                 disabled={readOnly}
                 data-testid="wiz-threshold-cap"
-                onChange={num("cap")}
+                onCommit={(v) => {
+                  if (v !== null) patchT({ cap: v });
+                }}
               />
             </label>
             <label className={styles.field}>
