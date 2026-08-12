@@ -973,23 +973,28 @@ mod tests {
     #[test]
     fn curated_non_us_bonds_build_real_schedules_and_price_on_the_leaf() {
         let curated = load_curated_universe();
-        // 10 UK gilts + 8 DE Bunds + 6 FR OATs + 6 IT BTPs.
-        assert_eq!(curated.len(), 30, "expected the full curated non-US set");
+        // 10 UK gilts + 8 DE Bunds + 6 FR OATs + 6 IT BTPs + 4 EUR corporate curves × 5.
+        assert_eq!(curated.len(), 50, "expected the full curated non-US set");
 
         // The sim's default settlement; every curated maturity (2028+) is after it.
         let settle = BrokenDate::new(2026, 4, 16);
-        let (mut uk, mut de, mut fr, mut it) = (0, 0, 0, 0);
+        let (mut uk, mut de, mut fr, mut it, mut eu) = (0, 0, 0, 0, 0);
         for b in &curated {
             match b.region {
                 "uk" => uk += 1,
                 "de" => de += 1,
                 "fr" => fr += 1,
                 "it" => it += 1,
+                // The EUR corporates go through the IDENTICAL oracle round-trip below as
+                // the sovereigns: a corporate the sim cannot build a real schedule for, or
+                // cannot round-trip price↔yield on, must fail here rather than reach a
+                // venue as an unpriceable line.
+                "eu" => eu += 1,
                 other => panic!("unexpected curated region {other}"),
             }
-            assert!(b.cusip.is_empty(), "a non-US govvie carries no CUSIP");
-            assert_ne!(b.currency, Ccy::USD, "a non-US govvie prices in GBP/EUR");
-            assert!(b.name.is_some(), "a curated govvie carries a friendly name");
+            assert!(b.cusip.is_empty(), "a non-US bond carries no CUSIP");
+            assert_ne!(b.currency, Ccy::USD, "a non-US bond prices in GBP/EUR");
+            assert!(b.name.is_some(), "a curated bond carries a friendly name");
             // The slug is the wire id the server's identity join keys on.
             assert!(
                 b.instrument_id().contains('-'),
@@ -1025,7 +1030,11 @@ mod tests {
                 b.instrument_id
             );
         }
-        assert_eq!((uk, de, fr, it), (10, 8, 6, 6), "curated region breakdown");
+        assert_eq!(
+            (uk, de, fr, it, eu),
+            (10, 8, 6, 6, 20),
+            "curated region breakdown (the last is the EUR corporate complex)"
+        );
     }
 
     #[test]

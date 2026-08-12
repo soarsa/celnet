@@ -1,0 +1,48 @@
+---
+# The on-box CONTROL SCRIPTS (celnetctl / fixsimctl / lpsimctl), rendered from their
+# templates.
+#
+# Split out of `main.yml` so the BINARY DEPLOY can re-render them too, not just a full
+# provision run. That split exists because of a real failure mode:
+#
+#   `deploy.yml` used to leave these scripts alone, so anything hand-edited on the box
+#   outranked the repository indefinitely. A `FIXSIM_ESP="0"` typed onto the box to park
+#   the ESP leg silently overrode `celnet_fixsim_esp_enabled: true` in group_vars through
+#   every subsequent deploy — the corporate/bond ESP stream stayed dark for a day with the
+#   repo, the inventory and the reviewer all saying it was on. Config that a deploy never
+#   reasserts is config that drifts.
+#
+# These tasks are the single source of truth for both entry points: `site.yml` runs them
+# via `main.yml` (privileged, first provision), `deploy.yml` imports this file directly
+# (unprivileged, every release). Rendering is idempotent — an unchanged template reports
+# `ok`, so a normal deploy stays quiet and only real drift shows as `changed`.
+#
+# `owner`/`group` are asserted here rather than inherited: the unprivileged deploy runs AS
+# `celnet_user`, so restating the ownership it already has is a no-op, while the privileged
+# provision run needs it to hand a root-created file to the service account.
+
+- name: Install the celnetctl start/stop control script
+  ansible.builtin.template:
+    src: celnetctl.sh.j2
+    dest: "{{ celnet_bin_dir }}/celnetctl"
+    owner: "{{ celnet_user }}"
+    group: "{{ celnet_group }}"
+    mode: "0755"
+
+- name: Install the fixsimctl FIX quote-simulator control script
+  ansible.builtin.template:
+    src: fixsimctl.sh.j2
+    dest: "{{ celnet_bin_dir }}/fixsimctl"
+    owner: "{{ celnet_user }}"
+    group: "{{ celnet_group }}"
+    mode: "0755"
+  when: celnet_fixsim_enabled | default(true) | bool
+
+- name: Install the lpsimctl LP-SIM Treasury-feed control script
+  ansible.builtin.template:
+    src: lpsimctl.sh.j2
+    dest: "{{ celnet_bin_dir }}/lpsimctl"
+    owner: "{{ celnet_user }}"
+    group: "{{ celnet_group }}"
+    mode: "0755"
+  when: celnet_lpsim_enabled | default(true) | bool

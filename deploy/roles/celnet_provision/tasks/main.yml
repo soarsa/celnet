@@ -186,31 +186,11 @@
     group: root
     mode: "0644"
 
-- name: Install the celnetctl start/stop control script
-  ansible.builtin.template:
-    src: celnetctl.sh.j2
-    dest: "{{ celnet_bin_dir }}/celnetctl"
-    owner: "{{ celnet_user }}"
-    group: "{{ celnet_group }}"
-    mode: "0755"
-
-- name: Install the fixsimctl FIX quote-simulator control script
-  ansible.builtin.template:
-    src: fixsimctl.sh.j2
-    dest: "{{ celnet_bin_dir }}/fixsimctl"
-    owner: "{{ celnet_user }}"
-    group: "{{ celnet_group }}"
-    mode: "0755"
-  when: celnet_fixsim_enabled | default(true) | bool
-
-- name: Install the lpsimctl LP-SIM Treasury-feed control script
-  ansible.builtin.template:
-    src: lpsimctl.sh.j2
-    dest: "{{ celnet_bin_dir }}/lpsimctl"
-    owner: "{{ celnet_user }}"
-    group: "{{ celnet_group }}"
-    mode: "0755"
-  when: celnet_lpsim_enabled | default(true) | bool
+# The control scripts live in their own task file so `deploy.yml` can re-render them on
+# every release without re-running this whole privileged role — see the rationale at the
+# top of `control_scripts.yml` (a hand edit on the box used to outrank group_vars forever).
+- name: Install the on-box control scripts (celnetctl / fixsimctl / lpsimctl)
+  ansible.builtin.include_tasks: control_scripts.yml
 
 # --- Simulator service identities ---------------------------------------------
 #
