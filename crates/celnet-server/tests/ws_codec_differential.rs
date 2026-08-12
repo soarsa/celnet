@@ -69,12 +69,13 @@ use celnet_proto::{ListLpFlowMetricsRequest, ListLpFlowMetricsResponse, LpFlowMe
 use celnet_proto::ExecStyleEnum;
 use celnet_proto::{
     ExitActionDesc, ExitActionKind, GetHedgeConfigResponse, GetHedgePolicyGraphResponse,
-    HedgeConditionDesc, HedgeConfigDesc, HedgeDeskToggle, HedgeExecutionModeEnum, HedgeFieldEnum,
-    HedgeGraphDesc, HedgeIntent, HedgeLpPanelDesc, HedgeMetricEnum, HedgeNodeDesc,
-    HedgePolicyScopeKindEnum, HedgeProvenance, HedgeScopeKindEnum, HedgeSizeDesc, HedgeSizeKind,
-    ListHedgeProvenanceResponse, ListHedgeThresholdsResponse, SetHedgeConfigResponse,
-    UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdResponse, WarehouseThresholdDesc,
-    hedge_node_desc,
+    HedgeConditionDesc, HedgeConfigDesc, HedgeDeskToggle, HedgeExecutionModeEnum,
+    HedgeExitModeBinding, HedgeExitModeEnum, HedgeFieldEnum, HedgeGraphDesc, HedgeIntent,
+    HedgeLpPanelDesc, HedgeMetricEnum, HedgeNodeDesc, HedgePolicyScopeKindEnum, HedgeProvenance,
+    HedgeScopeKindEnum, HedgeSizeDesc, HedgeSizeKind, HedgeVehicleDesc, HedgeVehicleKindEnum,
+    HedgeVehiclePlanDesc, ListHedgeProvenanceResponse, ListHedgeThresholdsResponse,
+    SetHedgeConfigResponse, UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdResponse,
+    WarehouseThresholdDesc, hedge_node_desc,
 };
 // Incoming-quote acceptance (AuthService acceptance RPCs): the acceptance decision graph
 // (`AcceptanceGraphDesc`/`AcceptanceNodeDesc`/`AcceptanceConditionDesc`/`AcceptanceActionDesc`).
@@ -6296,7 +6297,10 @@ fn hedge_graph_body() -> Value {
                 "size": { "kind": HedgeSizeKind::HedgeSizeOverflow as i32, "fixed": 0.0 },
                 "to_edge": false,
                 "style": ExecStyleEnum::ExecStyleWorked as i32,
-                "lps": [], "internal_first": true, "reason": "" } },
+                "lps": [], "internal_first": true, "reason": "",
+                // A vehicle leaf nested TWO levels deep (graph → node oneof → action).
+                "vehicle_kind": HedgeVehicleKindEnum::HedgeVehicleFuture as i32,
+                "vehicle_instrument": "TY-DEC26" } },
             { "id": 9, "action": {
                 "kind": ExitActionKind::ExitActionEscalate as i32,
                 "instrument": "", "to_edge": false,
@@ -6414,6 +6418,10 @@ fn hedge_graph_desc() -> HedgeGraphDesc {
                     size: Some(size(HedgeSizeKind::HedgeSizeOverflow, 0.0)),
                     style: ExecStyleEnum::ExecStyleWorked as i32,
                     internal_first: true,
+                    // A vehicle leaf nested TWO levels deep (graph → node oneof → action):
+                    // exactly the shape a top-level key diff cannot see.
+                    vehicle_kind: HedgeVehicleKindEnum::HedgeVehicleFuture as i32,
+                    vehicle_instrument: "TY-DEC26".to_owned(),
                     ..Default::default()
                 },
             ),
@@ -6772,6 +6780,26 @@ fn update_hedge_threshold_response_encode_byte_identical() {
     );
 }
 
+/// A sized VEHICLE hedge plan — the whole-contract DV01 ratio with its honest residual.
+/// Every field is deliberately non-default so a dropped one shows up as a diff.
+fn vehicle_plan_full() -> HedgeVehiclePlanDesc {
+    HedgeVehiclePlanDesc {
+        hedge_instrument_id: "TY-DEC26".to_owned(),
+        unit_label: "contract".to_owned(),
+        whole_units: true,
+        dv01_basis: "analytic".to_owned(),
+        duration_correct: true,
+        target_dv01: 24_840.0,
+        dv01_per_unit: 78.0,
+        exact_units: 318.461_538_461_538_5,
+        units: 318.0,
+        hedged_dv01: 24_804.0,
+        residual_dv01: 36.0,
+        summary: "318 contracts of TY-DEC26 (318.46 exact, analytic basis; residual 36.0 DV01)"
+            .to_owned(),
+    }
+}
+
 /// A fully-populated fired-hedge provenance record (present `lp_won` + nested action).
 fn hedge_provenance_full() -> HedgeProvenance {
     HedgeProvenance {
@@ -6793,6 +6821,9 @@ fn hedge_provenance_full() -> HedgeProvenance {
                 fixed: 0.0,
             }),
             lps: vec!["LP-A".to_owned(), "LP-B".to_owned()],
+            // The leaf hedges into a named FUTURE — the vehicle fields ride FLAT here.
+            vehicle_kind: HedgeVehicleKindEnum::HedgeVehicleFuture as i32,
+            vehicle_instrument: "TY-DEC26".to_owned(),
             ..Default::default()
         }),
         internal_crossed: 25_000_000.0,
@@ -6805,8 +6836,10 @@ fn hedge_provenance_full() -> HedgeProvenance {
         advisory: false,
         // The effective LP set the RFQ hedge targeted (repeated string — populated edge).
         lps: vec!["LP-A".to_owned(), "LP-B".to_owned()],
-        // A per-fill execution record carries the parent position id (the PRESENT edge).
-        vehicle_plan: None,
+        // A per-fill execution record carries the parent position id (the PRESENT edge)
+        // and, for a vehicle hedge, the sized DV01-ratio plan (the other PRESENT edge —
+        // `hedge_provenance_no_lp` below keeps the ABSENT/omitted edge).
+        vehicle_plan: Some(vehicle_plan_full()),
         parent_position_id: Some(4242),
     }
 }
@@ -6906,13 +6939,45 @@ fn hedge_config_full() -> HedgeConfigDesc {
                 enabled: false,
             },
         ],
+        vehicles: vec![
+            HedgeVehicleDesc {
+                id: "US-BOND-10Y".to_owned(),
+                product: "BOND".to_owned(),
+                ccy: "USD".to_owned(),
+                min_maturity_years: 7.0,
+                max_maturity_years: 12.0,
+                hedge_instrument_id: "TY-DEC26".to_owned(),
+                is_future: true,
+                dv01_per_unit: 78.0,
+                unit_label: "contract".to_owned(),
+                ..Default::default()
+            },
+            HedgeVehicleDesc {
+                id: "PIN-XS9".to_owned(),
+                instrument_id: "XS-CORP-9Y".to_owned(),
+                hedge_instrument_id: "US912810TM0".to_owned(),
+                dv01_per_unit: 780.0,
+                unit_label: "1mm face".to_owned(),
+                ..Default::default()
+            },
+        ],
+        exit_modes: vec![
+            HedgeExitModeBinding {
+                scope_kind: HedgeScopeKindEnum::HedgeScopeBook as i32,
+                scope_id: "credit".to_owned(),
+                mode: HedgeExitModeEnum::HedgeExitModeSuggest as i32,
+            },
+            HedgeExitModeBinding {
+                scope_kind: HedgeScopeKindEnum::HedgeScopeDesk as i32,
+                scope_id: "fi-desk".to_owned(),
+                mode: HedgeExitModeEnum::HedgeExitModeAuto as i32,
+            },
+        ],
         max_clip: 50_000_000.0,
         max_hedges_per_interval: 10,
         daily_external_notional_cap: 1_000_000_000.0,
         // The standing hedging LP panels: a book-scoped include+exclude and a desk-scoped
         // exclude-only (the repeated-nested-message edge, each with repeated-string fields).
-        vehicles: Vec::new(),
-        exit_modes: Vec::new(),
         lp_panels: vec![
             HedgeLpPanelDesc {
                 scope_kind: HedgeScopeKindEnum::HedgeScopeBook as i32,
@@ -6948,6 +7013,25 @@ fn hedge_config_body() -> Value {
               "include": ["LP-A", "LP-B"], "exclude": ["LP-C"] },
             { "scope_kind": HedgeScopeKindEnum::HedgeScopeDesk as i32, "scope_id": "fi-desk",
               "include": [], "exclude": ["LP-D"] },
+        ],
+        // The hedge-vehicle REGISTRY and the scoped SUGGEST/AUTO bindings ride on this same
+        // config message, so they must decode identically on both paths — populated here
+        // rather than left empty, because an empty list would pass without proving anything.
+        "vehicles": [
+            { "id": "US-BOND-10Y", "instrument_id": "", "product": "BOND", "ccy": "USD",
+              "min_maturity_years": 7.0, "max_maturity_years": 12.0,
+              "hedge_instrument_id": "TY-DEC26", "is_future": true,
+              "dv01_per_unit": 78.0, "unit_label": "contract" },
+            { "id": "PIN-XS9", "instrument_id": "XS-CORP-9Y", "product": "", "ccy": "",
+              "min_maturity_years": 0.0, "max_maturity_years": 0.0,
+              "hedge_instrument_id": "US912810TM0", "is_future": false,
+              "dv01_per_unit": 780.0, "unit_label": "1mm face" },
+        ],
+        "exit_modes": [
+            { "scope_kind": HedgeScopeKindEnum::HedgeScopeBook as i32, "scope_id": "credit",
+              "mode": HedgeExitModeEnum::HedgeExitModeSuggest as i32 },
+            { "scope_kind": HedgeScopeKindEnum::HedgeScopeDesk as i32, "scope_id": "fi-desk",
+              "mode": HedgeExitModeEnum::HedgeExitModeAuto as i32 },
         ],
     })
 }
@@ -7020,8 +7104,10 @@ fn set_hedge_config_response_encode_byte_identical() {
 fn hedge_intent_encode_byte_identical() {
     // The advisory shadow-run push frame (encode-only): a nested action + policy_path.
     let intent = HedgeIntent {
-        vehicle_plan: None,
-        exit_mode: 0,
+        // The sized vehicle plan (PRESENT edge) + a non-default exit mode, so a dropped
+        // field on either codec path shows up as a diff rather than passing vacuously.
+        vehicle_plan: Some(vehicle_plan_full()),
+        exit_mode: HedgeExitModeEnum::HedgeExitModeSuggest as i32,
         book: "gm".to_owned(),
         instrument: "EURUSD".to_owned(),
         action: Some(ExitActionDesc {
@@ -7031,6 +7117,7 @@ fn hedge_intent_encode_byte_identical() {
                 kind: HedgeSizeKind::HedgeSizeOverflow as i32,
                 fixed: 0.0,
             }),
+            vehicle_kind: HedgeVehicleKindEnum::HedgeVehicleBenchmark as i32,
             ..Default::default()
         }),
         band: "red".to_owned(),

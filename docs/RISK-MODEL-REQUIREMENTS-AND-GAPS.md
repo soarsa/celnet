@@ -786,6 +786,94 @@ is a migration, not a drop-in, and must ship with the re-basing.
 `(scope, metric)`. *Unblocks:* real DV01 limits (tier 1), and the tier framework itself —
 after this, adding a tier is adding a metric and its exposure function.
 
+#### 7.2.1 Waves 0 and 1 — AS BUILT (2026-08-11), and the cap re-basing
+
+Waves 0 and 1 are **implemented**. What actually landed, and what an operator must do:
+
+**Wave 0 — the bond arm is re-based.** `rates_linear_exposure`'s bond arm
+(`crates/celnet-server/src/services/rates_book.rs`) is now
+`celnet_bond::dv01(contract, coupon_yield) × face`, memoized per `(security, settlement
+date)` as a DV01 **per unit face** (DV01 is exactly linear in `redemption`, so one cached
+number is exact for any size). The retired proxy survives as
+`rates_linear_exposure_proxy`, used only as the migration's reference measure and as the
+honest fallback when no contract can be constructed (missing/unparseable maturity,
+unmapped frequency or day-count). Bond and swap exposure are now commensurable in one
+book net.
+
+> **The curve question, answered.** §3.5 warns that making the measure curve-dependent
+> couples the booking gate to market-data availability. **Wave 0 does not do that.**
+> `celnet_bond::dv01` is the closed-form derivative `−∂P/∂y · 1bp` of the bond's *own*
+> cashflow schedule (`crates/celnet-bond/src/risk.rs`) — no discount curve, no bootstrap,
+> no live market data. The gate stays deterministic and market-data-free, exactly as
+> before. The genuine curve dependency belongs to the Wave-2 **key-rate ladder** (G7/G12)
+> and has deliberately **not** been introduced. The one honest approximation is the yield
+> the derivative is taken at: a stored position has no dealt price, so the par (coupon)
+> assumption is used; the sizing path (`genuine_position_dv01`) still prefers the dealt
+> yield when the booking path supplies one, so sizing is never less precise than
+> measurement.
+
+**Cap re-basing — mandatory, and what each cap becomes.** Every cap that gates on
+`rates_linear_exposure` changed units for bonds and **only** for bonds:
+
+```
+new_cap  =  old_cap  ×  (portfolio-weighted average modified duration of the BONDS in that scope)
+```
+
+Equivalently, `new_cap = old_cap × (Σ|analytic DV01| / Σ|redemption × 1bp|)` over the
+scope's bond inventory. Indicative multipliers for a par bond: **≈1.9× at 2y, ≈4.5× at
+5y, ≈7.7× at 10y, ≈16× at 30y**. A scope holding **no bonds** needs **no change** —
+swap/FRA exposure was never duration-blind.
+
+The affected caps are:
+
+| Cap | Where | Re-base? |
+| --- | --- | --- |
+| `LimitSpec{metric: Dv01 \| Pvbp}` at `Book`/`Entity`/`Firm` | `RatesPositionStore::set_limit` | **Yes**, by the scope's bond duration |
+| `LimitSpec{metric: Delta}` on the **rates** limit tree | same | **Yes** — the rates sink charges the linear IR proxy against `Delta`, so it changed units too |
+| `HedgeThresholdDef{metric: Dv01}` (warehouse cap, amber/red, `min_clip`/`max_clip`) | hedge policy, `Book`-scoped | **Yes** — and note `min_clip`/`max_clip` are in the same units |
+| `HedgeThresholdDef{metric: NetNotional \| GrossNotional \| NetDelta \| NetVega}` | hedge policy | **No** — these read `rates_signed_notional`, untouched |
+| `RiskLimits{max_net_notional, max_gross_notional}` per risk book | risk-book tree | **No** — notional, untouched |
+| Any cap on a swap/FRA-only scope | anywhere | **No** |
+
+**The migration announces itself.** Three mechanisms, so no operator discovers this as an
+unexplained breach:
+
+1. **Boot audit** — `RatesPositionStore::audit_proxy_era_caps()` runs at server start
+   (`celnet-server/src/lib.rs`, after the limit/policy prime) and measures every affected
+   cap against the *actual* loaded inventory under both measures. Each cap whose meaning
+   changed is rung at `WARN` (`class=risk`) with `legacy_exposure`, `rebased_exposure`,
+   `multiplier`, `suggested_cap` and `breaching_now`. It returns the findings so an admin
+   surface can render them.
+2. **Rejection-time advice** — when a booking is rejected by a cap the old measure fitted
+   inside and the new one does not, the `failed_precondition` message carries a
+   `MIGRATION NOTE … PROXY-ERA` explanation with the observed multiplier and the re-based
+   cap. A cap blown under *both* measures is a real breach and gets no such note, so the
+   guard never cries wolf.
+3. **Tenor-bucket honesty** — a configured `RateTenorBucket` limit still cannot bind at
+   booking (no ladder, Wave 2). Rather than let it read a silent zero, the gate warns once
+   per process that curve risk is unprotected there.
+
+**Wave 1 — the FI limits are reachable.** `rates_pre_trade` now runs
+`celnet_limits::pre_trade_check_mixed`, which routes each limit to the node its own family
+is measured on: FX-Greeks metrics against the projected `NodeAggregate`, FI metrics
+(`is_fixed_income()`) against a real `RatesNodeAggregate` built from the projected position
+set. Each limit is charged **exactly once**, so the coarse `Delta` proxy and a `Dv01` cap
+cannot double-charge. Two honest limitations of the booking-gate aggregate, both
+documented at `rates_risk_fact_of`:
+
+- it is keyed on ISO 4217 **`XXX`** ("no currency involved"), because a `RatesPosition`
+  carries no settlement currency — the gate nets one currency-agnostic set, exactly as
+  every existing rates roll-up already does. G3 replaces this with a per-currency
+  aggregate;
+- `pv` is **NaN** (there is no curve here, so there is no present value, and a `0.0` would
+  read as "flat"), and `key_rate_ladder` is **empty**. No limit metric reads either.
+
+**Still open from these waves:** G3 (feeding the aggregate from the live `PositionStore`
+per currency, with a real PV), G4 (`WarehouseThreshold`'s `Dv01` still resolves against the
+scalar, though that scalar is now duration-correct), G5 (`Dv01Basis` on the *measurement*
+wire, not just the sizing path), G23 (`(scope × metric)` threshold resolution), G25 (the
+empty desk id).
+
 **Wave 2 — Add the tenor axis. (Large. This is the real work.)**
 `G6` + `G7` + `G8` + `G9` + `G13`. `RatesExposure{parallel, ladder}`; per-position ladder
 computed once at book time and cached; one shared `TenorBucketId` for limits and the vehicle

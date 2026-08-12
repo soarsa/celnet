@@ -38,14 +38,15 @@ use celnet_hedge_routing::{
     HedgeVehicleRule, plan_hedge_ratio,
 };
 use celnet_limits::{
-    IncrementalTrade, LimitScope, LimitSpec, LimitTree, NonAdditiveExposure, PreTradeDecision,
-    PreTradeResult, ScopePath, pre_trade_check,
+    IncrementalTrade, LimitCheck, LimitScope, LimitSpec, LimitTree, NonAdditiveExposure,
+    PreTradeDecision, PreTradeResult, ScopePath, pre_trade_check_mixed,
 };
 use celnet_proto::{
-    EntitlementPrincipal, EntitlementRule, HedgeProvenance, InternaliseProvenance, RatesPosition,
-    RiskDimension, Side, rates_instrument,
+    BondInstrument, EntitlementPrincipal, EntitlementRule, HedgeProvenance, InternaliseProvenance,
+    RatesPosition, RiskDimension, Side, rates_instrument,
 };
 use celnet_risk_cube::{BookId, EntityId, NetGreeks, NodeAggregate, VegaPillar};
+use celnet_risk_fleet::{RatesFactKey, RatesNodeAggregate, RatesRiskFact, firm_aggregate_rates};
 use celnet_risk_routing::{RiskRouter, RiskRoutingGraph, RoutingContext};
 
 use crate::config::hedge_policy::{
@@ -568,6 +569,109 @@ impl RatesPositionStore {
         *g = policy.map(Arc::new);
     }
 
+    /// **Wave-0 migration audit** — every configured cap whose *meaning* changed when the
+    /// bond exposure arm was re-based from `redemption × 1bp` to a duration-correct
+    /// analytic DV01 (`docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md` §7.2 Wave 0, G1).
+    ///
+    /// The re-basing is a **migration, not a patch**: every cap an operator set against
+    /// the old units silently tightened by roughly the bond's duration (≈1.9× at 2y, ≈4.5×
+    /// at 5y, ≈8× at 10y, ≈16× at 30y), so a bond book that sat comfortably inside its cap
+    /// can breach on day one for no economic reason. This audit measures the change on the
+    /// **actual current inventory** rather than assuming a duration, and states the exact
+    /// factor each cap must be multiplied by to keep its original meaning.
+    ///
+    /// Covered:
+    ///
+    /// - every [`LimitTree`] cap at a scope a rates cell rolls through (`Book` / `Entity` /
+    ///   `Firm`) whose metric is charged with [`rates_linear_exposure`] — `Dv01`, `Pvbp`,
+    ///   and `Delta` (the rates booking sink charges the linear IR proxy against `Delta`,
+    ///   so a `Delta` cap on the rates tree changed units too);
+    /// - every warehouse [`ScopedThreshold`] whose metric is [`HedgeMetric::Dv01`] and
+    ///   which binds to a **risk book** (a `Desk`-scoped threshold does not bind on the
+    ///   rates path at all, and an `Instrument` threshold has no resolvable position set
+    ///   here — both are reported by the caller-facing docs, not silently audited).
+    ///
+    /// A scope holding no bonds produces no finding: swap/FRA exposure is unchanged by the
+    /// re-basing, so its caps mean exactly what they always did.
+    ///
+    /// Every finding is also rung at **WARN** (`class=risk`) so the change cannot be
+    /// discovered as an unexplained breach. Call it after priming limits/policy at boot and
+    /// after any admin edit; it is O(caps × positions) on the control plane, never the
+    /// booking or pricing path.
+    #[must_use]
+    pub fn audit_proxy_era_caps(&self) -> Vec<ProxyEraCapFinding> {
+        let mut findings = Vec::new();
+        {
+            let positions = self
+                .inner
+                .read()
+                .expect("rates position store lock poisoned");
+            let limits = self.limits.read().expect("rates limit tree lock poisoned");
+            for (scope, spec) in limits.iter() {
+                if !matches!(
+                    scope,
+                    LimitScope::Book(_) | LimitScope::Entity(_) | LimitScope::Firm
+                ) || !matches!(
+                    spec.metric,
+                    celnet_limits::LimitMetric::Dv01
+                        | celnet_limits::LimitMetric::Pvbp
+                        | celnet_limits::LimitMetric::Delta
+                ) {
+                    continue;
+                }
+                let matched = positions.iter().filter(|p| rates_scope_matches(scope, p));
+                if let Some(f) = ProxyEraCapFinding::measure(
+                    format!("limit:{scope:?}"),
+                    format!("{:?}", spec.metric),
+                    spec.cap,
+                    matched,
+                ) {
+                    findings.push(f);
+                }
+            }
+        }
+        let thresholds = self
+            .hedge_policy
+            .read()
+            .expect("rates hedge-policy lock poisoned")
+            .as_ref()
+            .map(|p| p.thresholds.clone())
+            .unwrap_or_default();
+        for t in thresholds
+            .iter()
+            .filter(|t| t.def.metric == HedgeMetric::Dv01)
+            .filter(|t| t.def.scope_kind == HedgeScopeKind::Book)
+        {
+            let held = self.positions_in_risk_book(&t.scope_id);
+            if let Some(f) = ProxyEraCapFinding::measure(
+                format!("warehouse:book:{}", t.scope_id),
+                HedgeMetric::Dv01.label().to_owned(),
+                t.def.cap,
+                held.iter(),
+            ) {
+                findings.push(f);
+            }
+        }
+        for f in &findings {
+            tracing::warn!(
+                class = celnet_observability::LogClass::Risk.label(),
+                scope = %f.scope,
+                metric = %f.metric,
+                cap = f.cap,
+                legacy_exposure = f.legacy_exposure,
+                rebased_exposure = f.rebased_exposure,
+                multiplier = f.multiplier,
+                suggested_cap = f.suggested_cap,
+                breaching_now = f.breaching_now,
+                "PROXY-ERA CAP: bond exposure is now a duration-correct DV01, so this cap's \
+                 units changed. Re-base it by `multiplier` (suggested_cap) or confirm the \
+                 current value is intended — see docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md \
+                 §7.2 Wave 0",
+            );
+        }
+        findings
+    }
+
     /// Install (or clear) the firm-wide **incoming-quote-acceptance** decision graph
     /// snapshot (the third trader-configurable rule engine — `celnet-acceptance`). Pushed at
     /// boot from the persisted `IdentityStore` and re-pushed after every admin acceptance
@@ -864,7 +968,7 @@ impl RatesPositionStore {
                     .expect("rates position store lock poisoned");
                 let result = rates_pre_trade(&g, &limits, &position);
                 if result.decision == PreTradeDecision::Reject {
-                    return Err(limit_breached_status(&result));
+                    return Err(rates_limit_breached(&g, &position, &result));
                 }
             }
         }
@@ -1010,7 +1114,7 @@ impl RatesPositionStore {
                     .expect("rates position store lock poisoned");
                 let result = rates_pre_trade(&g, &limits, &position);
                 if result.decision == PreTradeDecision::Reject {
-                    return Err(limit_breached_status(&result));
+                    return Err(rates_limit_breached(&g, &position, &result));
                 }
             }
         }
@@ -1784,6 +1888,14 @@ impl RatesPositionStore {
                 // what the LP quoted), falling back to the family label otherwise.
                 log.record_fill(lp, execution_instrument.clone(), exec.filled, now);
             }
+            log_hedge_execution(
+                book,
+                &ctx.instrument_id,
+                &execution_instrument,
+                fill.position_id,
+                &exec,
+                "auto-hedge shed EXECUTED",
+            );
             // Build the REALISED execution record: the graph's own (external) action + the fill's
             // real economics, keyed by `parent_position_id` for deal reconciliation. It SUPERSEDES
             // the engine's pre-execution decision record in place (see below), so a fired hedge
@@ -2065,6 +2177,14 @@ impl RatesPositionStore {
         {
             log.record_fill(lp, e.execution_instrument.clone(), exec.filled, now);
         }
+        log_hedge_execution(
+            &e.book,
+            &e.instrument,
+            &e.execution_instrument,
+            e.fill.position_id,
+            &exec,
+            "fired hedge suggestion EXECUTED",
+        );
         let prov = policy.engine.record_execution(HedgeProvenance {
             hedge_id: String::new(),
             book: e.book.clone(),
@@ -2365,14 +2485,16 @@ fn hedge_execution_instrument(fill: &RatesPosition) -> Option<String> {
 /// The **genuine** DV01 of a rates fill, and the basis it was computed on
 /// (`docs/HEDGING-AND-RISK-EXIT.md` §6.4).
 ///
-/// This exists because a hedge ratio is only as good as its numerator, and the book's own
-/// [`rates_linear_exposure`] proxy is **not** good enough for one. Its bond arm is
-/// `redemption × 1bp` — every bond treated as though its duration were `1` — so a
-/// `position_DV01 / vehicle_DV01` ratio taken off it is wrong by the bond's actual
-/// duration (a 10-year is roughly 8×). Sizing a real futures hedge off that number would
-/// under-hedge a long-dated bond by a factor of eight and call it done.
+/// This exists because a hedge ratio is only as good as its numerator. It predates the
+/// Wave-0 re-basing, when [`rates_linear_exposure`]'s bond arm was still `redemption ×
+/// 1bp` and a ratio taken off it under-hedged a long-dated bond by its whole duration.
+/// The two measures now **agree on the bond arm** — both are `celnet_bond::dv01` on the
+/// same contract — with one deliberate difference: this function prefers the yield
+/// implied by the **dealt clean price** when the booking path supplies one, whereas the
+/// stored-position exposure measure has no dealt price and uses the par (coupon)
+/// assumption. Sizing therefore stays at least as precise as measurement, never less.
 ///
-/// So each arm reports the best measure it honestly has, **labelled**:
+/// Each arm reports the best measure it honestly has, **labelled**:
 ///
 /// | Arm | Measure | [`Dv01Basis`] |
 /// | --- | --- | --- |
@@ -2526,17 +2648,6 @@ fn resolve_hedge_threshold(
         .map(|t| t.def)
 }
 
-/// The signed **linear interest-rate exposure** a rates position charges against a
-/// limit: a conservative undiscounted PV01 (`notional · tenor_years · 1bp`) — the
-/// linear IR delta of the linear-rates line — signed by direction (pay-fixed `+`,
-/// receive-fixed `−`, so a payer and a receiver of equal size net to zero at a node).
-///
-/// This is a deliberately curve-free, deterministic P1 exposure: the discount factors
-/// are `≤ 1`, so the undiscounted PV01 is an **upper bound** on the true annuity PV01
-/// — conservative (fail-safe) for a hard limit. The exact curve-bootstrapped DV01 and
-/// the tenor-bucketed IR limit (`LimitScope::Tenor` / a dedicated `LimitMetric::Dv01`)
-/// are the ADR-0016 **A3** breadth wave (P2); this A1 gate consults the linear delta at
-/// the `book → entity → firm` scopes, which is the reachability A3 depends on.
 /// Construct the **offsetting hedge leg** for a shed of `factor · |fill exposure|` (§6.2):
 /// a copy of `fill`'s instrument with its side FLIPPED and its notional scaled by `factor`
 /// (`= hedged_dv01 / fill_dv01`, in `(0, 1]`), so its signed linear exposure is exactly the
@@ -2548,8 +2659,9 @@ fn resolve_hedge_threshold(
 /// FACE scaled by `factor`. Because the leg and the fill are the identical bond, their DV01 ratio
 /// is identically `1` — selling `factor` of the face you are long sheds exactly `factor` of the
 /// risk under ANY duration measure, so no curve or duration input is needed to scale it honestly.
-/// (Under the book's own [`rates_linear_exposure`], whose bond arm is `redemption · 1bp` signed by
-/// side, this is likewise exact.) This is what makes a bond hedge actually REDUCE the warehoused
+/// (This holds under [`rates_linear_exposure`]'s analytic DV01 bond arm exactly as it held under
+/// the pre-migration `redemption · 1bp` proxy: both are linear in face for a fixed security.)
+/// This is what makes a bond hedge actually REDUCE the warehoused
 /// net; before it, a bond stamped hedge provenance while the book retained 100% of the risk, so
 /// every subsequent fill compounded a position the blotter already claimed was hedged.
 ///
@@ -2596,8 +2708,140 @@ fn offsetting_rates_leg(fill: &RatesPosition, factor: f64) -> Option<RatesPositi
     Some(leg)
 }
 
+/// The memo key of one cash bond's **DV01 per unit redemption face**: everything
+/// `celnet_bond::dv01` at the par (coupon) yield depends on, and nothing else. The face
+/// itself is deliberately absent — every cashflow of a `Bond` scales linearly with
+/// `redemption`, so the price and its yield derivative do too, which makes DV01 exactly
+/// proportional to face and one cached unit-face number exact for any size of the same
+/// security (asserted by `bond_dv01_is_exactly_linear_in_face`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct BondDv01Key {
+    /// `coupon_rate.to_bits()` — an exact key for an `f64` (no epsilon comparison).
+    coupon_bits: u64,
+    /// The wire maturity `(year, month, day)`.
+    maturity: (i32, u32, u32),
+    /// The wire `PaymentFrequency` ordinal.
+    frequency: i32,
+    /// The wire `AccrualBasis` ordinal.
+    day_count: i32,
+}
+
+/// The process-wide analytic-DV01 memo, valid for **one** settlement date.
+struct BondDv01Memo {
+    /// The reference date every cached value was computed against. A date roll clears
+    /// the map (settlement moves ⇒ every schedule and therefore every DV01 changes), so
+    /// the memo is bounded by the traded universe rather than growing without limit.
+    day: time::Date,
+    /// `key → DV01 per unit face`, or `None` for a security whose contract cannot be
+    /// constructed (memoized too, so a malformed bond is not re-attempted per position).
+    per_unit: HashMap<BondDv01Key, Option<f64>>,
+}
+
+static BOND_DV01_MEMO: OnceLock<RwLock<BondDv01Memo>> = OnceLock::new();
+
+/// Compute one bond's analytic DV01 **per unit redemption face**, at the par (coupon)
+/// yield. Curve-free: `celnet_bond::dv01` is the closed-form derivative
+/// `−∂P/∂y · 1bp` of the bond's **own** cashflow schedule (`celnet-bond/src/risk.rs`),
+/// so it needs no bootstrapped discount curve and no live market data — which is what
+/// keeps [`rates_linear_exposure`] usable as a deterministic, market-data-free
+/// pre-trade gate after the re-basing (`docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md` §6.2
+/// G12: the curve dependency that gap warns about belongs to the Wave-2 *key-rate
+/// ladder*, not to this analytic yield derivative).
+///
+/// `None` when the contract cannot be constructed (missing/unparseable maturity,
+/// unmapped frequency or day-count, maturity not after settlement) or the derivative is
+/// not a usable positive finite number — the caller then falls back to the
+/// pre-migration proxy and says so, never to a guessed duration (guardrail 2).
+fn compute_bond_dv01_per_unit_face(bond: &BondInstrument, today: time::Date) -> Option<f64> {
+    let mut unit = bond.clone();
+    unit.redemption = 1.0;
+    let contract = crate::rates_pricing::bond_contract_from_wire(&unit, today).ok()?;
+    let dv01 = celnet_bond::dv01(&contract, celnet_types::Rate(bond.coupon_rate)).ok()?;
+    (dv01.is_finite() && dv01 > 0.0).then_some(dv01)
+}
+
+/// The memoized analytic DV01 per unit redemption face for `bond` on `today`.
+///
+/// The memo is what makes the re-basing affordable at investment-banking book sizes
+/// (guardrail 6): `rates_linear_exposure` is called once per position per book roll-up
+/// and per pre-trade scope, so an un-memoized `CashflowSchedule` build + 60-term
+/// derivative sum per call would turn an `O(N)` roll-up into `O(N · cashflows)` on the
+/// booking tier. Distinct securities in a book are few relative to positions, so the
+/// memo collapses that back to `O(N)` map lookups after one computation per security
+/// per day. Off the pinned zero-alloc pricing core (booking tier only).
+fn bond_dv01_per_unit_face(bond: &BondInstrument, today: time::Date) -> Option<f64> {
+    let m = bond.maturity_date.as_ref()?;
+    let key = BondDv01Key {
+        coupon_bits: bond.coupon_rate.to_bits(),
+        maturity: (m.year, m.month, m.day),
+        frequency: bond.coupon_frequency,
+        day_count: bond.day_count,
+    };
+    let memo = BOND_DV01_MEMO.get_or_init(|| {
+        RwLock::new(BondDv01Memo {
+            day: today,
+            per_unit: HashMap::new(),
+        })
+    });
+    {
+        let g = memo.read().expect("bond dv01 memo lock poisoned");
+        if g.day == today
+            && let Some(hit) = g.per_unit.get(&key)
+        {
+            return *hit;
+        }
+    }
+    let computed = compute_bond_dv01_per_unit_face(bond, today);
+    let mut g = memo.write().expect("bond dv01 memo lock poisoned");
+    if g.day != today {
+        g.day = today;
+        g.per_unit.clear();
+    }
+    g.per_unit.insert(key, computed);
+    computed
+}
+
+/// The **pre-migration** bond exposure magnitude: `|redemption| · 1bp` — every bond
+/// treated as though its duration were `1`.
+///
+/// Retained deliberately, and used in exactly two places: as the honest fallback when
+/// no analytic DV01 can be constructed, and as the reference measure the Wave-0
+/// migration guard ([`proxy_era_cap_advice`] / [`RatesPositionStore::audit_proxy_era_caps`])
+/// compares against to tell an operator that a configured cap was set in these units.
+/// It is **not** a DV01 and must never be presented as one.
 #[must_use]
-pub(crate) fn rates_linear_exposure(position: &RatesPosition) -> f64 {
+fn bond_proxy_exposure_magnitude(bond: &BondInstrument) -> f64 {
+    bond.redemption.abs() * ONE_BP
+}
+
+/// The **duration-correct** bond exposure magnitude — the analytic DV01 of the bond's
+/// own cashflow schedule at the par (coupon) yield, falling back to
+/// [`bond_proxy_exposure_magnitude`] only when no contract can be constructed.
+///
+/// This is the Wave-0 re-basing (`docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md` §7.2 / G1).
+/// Before it, a 10-year bond charged ~1/8 of its real risk and — far worse — a bond and
+/// a swap in the same book net were **not commensurable**: a 10y swap contributed
+/// `notional · 10 · 1bp` while a 10y bond of equal face contributed `redemption · 1bp`,
+/// so netting them was arithmetic on two different units and an economically flat mixed
+/// book could report large risk (or vice versa).
+#[must_use]
+fn bond_exposure_magnitude(bond: &BondInstrument) -> f64 {
+    let today = time::OffsetDateTime::now_utc().date();
+    bond_dv01_per_unit_face(bond, today).map_or_else(
+        || bond_proxy_exposure_magnitude(bond),
+        |per_unit| per_unit * bond.redemption.abs(),
+    )
+}
+
+/// The shared body of [`rates_linear_exposure`] and [`rates_linear_exposure_proxy`]:
+/// the swap/FRA arms are identical in both (their `notional · years · 1bp` IS the
+/// undiscounted annuity PV01 and was never duration-blind), so only the **bond**
+/// magnitude differs and it is injected.
+#[must_use]
+fn rates_linear_exposure_with(
+    position: &RatesPosition,
+    bond_magnitude: impl Fn(&BondInstrument) -> f64,
+) -> f64 {
     let Some(instr) = position
         .instrument
         .as_ref()
@@ -2635,23 +2879,64 @@ pub(crate) fn rates_linear_exposure(position: &RatesPosition) -> f64 {
                 _ => magnitude,
             }
         }
-        // A cash bond's precise curve DV01 needs the discount curve, which this
-        // curve-free pre-trade proxy does not carry; the per-1bp face redemption is a
-        // coarse linear-exposure proxy (the exact curve-bootstrapped bond DV01 is the
-        // ADR-0016 A3 breadth wave). This arm IS live: bonds route and book through
-        // `book_with_routing`, so it feeds real limits and is the measure the auto-hedge
-        // warehouse nets and sheds in — see [`offsetting_rates_leg`], whose bond leg is the
-        // same security sold back (DV01 ratio exactly 1), so it stays exact under this proxy
-        // AND under the A3 curve DV01 that replaces it. A long (SIDE_BUY) bond carries
-        // long-duration exposure — the same netting sign as a receive-fixed swap.
+        // The cash-bond magnitude is injected: the duration-correct analytic DV01 for the
+        // live measure, the pre-migration `redemption · 1bp` for the migration reference.
+        // This arm IS live: bonds route and book through `book_with_routing`, so it feeds
+        // real limits and is the measure the auto-hedge warehouse nets and sheds in — see
+        // [`offsetting_rates_leg`], whose bond leg is the same security sold back (DV01
+        // ratio exactly 1), so the shed stays exact under EITHER magnitude. A long
+        // (SIDE_BUY) bond carries long-duration exposure — the same netting sign as a
+        // receive-fixed swap.
         rates_instrument::Instrument::Bond(bond) => {
-            let magnitude = bond.redemption.abs() * ONE_BP;
+            let magnitude = bond_magnitude(bond);
             match Side::try_from(bond.side) {
                 Ok(Side::Buy) => -magnitude,
                 _ => magnitude,
             }
         }
     }
+}
+
+/// The signed **linear interest-rate exposure** a rates position charges against a
+/// limit, in the platform's one IR-duration sign convention (pay-fixed / short bond `+`,
+/// receive-fixed / long bond `−`, so equal-and-opposite legs net to zero at a node).
+///
+/// | Arm | Measure |
+/// | --- | --- |
+/// | OIS / IRS | `notional · tenor_years · 1bp` — the undiscounted fixed-leg annuity PV01 |
+/// | FRA | `notional · accrual_window_years · 1bp` |
+/// | Cash bond | the **analytic DV01** of its own cashflow schedule at the par (coupon) yield ([`bond_exposure_magnitude`]) |
+///
+/// **This measure is curve-free and deterministic, and stays so after the Wave-0
+/// re-basing.** The swap arms are undiscounted, so they are an *upper bound* on the true
+/// annuity PV01 — conservative, hence fail-safe for a hard limit. The bond arm is
+/// `celnet_bond::dv01`, a closed-form yield derivative of the bond's own schedule
+/// (`celnet-bond/src/risk.rs`); it consumes no discount curve, no market data and no
+/// live surface, so the pre-trade gate keeps exactly the market-data independence that
+/// made it safe to run on the booking path. The genuinely curve-dependent measure —
+/// the per-pillar key-rate ladder — is Wave 2 (`RISK-MODEL-REQUIREMENTS-AND-GAPS.md`
+/// §3.5 / G7, G12) and is deliberately **not** introduced here.
+///
+/// The one honest approximation is the yield the derivative is taken at: with no dealt
+/// price on a stored position, the coupon (par) assumption is used. Modified duration
+/// is only weakly sensitive to the yield level, so the measure stays sound; the sizing
+/// path ([`genuine_position_dv01`]), which *does* see a dealt clean price, prefers the
+/// dealt yield.
+#[must_use]
+pub(crate) fn rates_linear_exposure(position: &RatesPosition) -> f64 {
+    rates_linear_exposure_with(position, bond_exposure_magnitude)
+}
+
+/// The **pre-migration** linear exposure — identical to [`rates_linear_exposure`] except
+/// that its bond arm is the duration-1 `redemption · 1bp` proxy.
+///
+/// This is not a live risk measure and nothing gates on it. It exists solely so the
+/// Wave-0 migration can *quantify itself*: the ratio of the two over a real book is the
+/// factor by which every cap configured before the re-basing must be re-based
+/// (`docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md` §7.2, §7.3 "Re-basing existing caps").
+#[must_use]
+pub(crate) fn rates_linear_exposure_proxy(position: &RatesPosition) -> f64 {
+    rates_linear_exposure_with(position, bond_proxy_exposure_magnitude)
 }
 
 /// The trade-direction **signed** notional of a rates position — magnitude signed by
@@ -2898,10 +3183,257 @@ fn rates_scope_matches(scope: LimitScope, p: &RatesPosition) -> bool {
     }
 }
 
+/// Ring the realised **hedge execution** — including, first-class, the **venue** it
+/// filled on and the winning `lp_won`.
+///
+/// Before this the venue lived *only* in the in-memory `HedgeProvenance` ring: no log
+/// sink anywhere carried `COMPOSITE` or an LP id, so ops could not tell from the logs
+/// whether a hedge had crossed the street to a real LP or backstopped to the synthetic
+/// composite mid — a question that is the difference between "we are flat" and "we
+/// booked an offsetting leg against a number we invented".
+///
+/// - **INFO** on a real fill (`venue = LP_PANEL | COMPOSITE`, `lp_won = <lp id> |
+///   COMPOSITE`).
+/// - **WARN** on a miss (`venue = NONE`): nothing was externalised, so the risk is still
+///   on the book — the case that most needs to be visible.
+///
+/// `class=hedge` routes it to the orders sink alongside the internalise-decision line,
+/// which fires *before* execution and therefore cannot carry a venue. Booking tier, never
+/// the pinned core.
+fn log_hedge_execution(
+    book: &str,
+    instrument: &str,
+    execution_instrument: &str,
+    parent_position_id: u64,
+    exec: &crate::services::auto_hedge::ExternalHedgeFill,
+    headline: &'static str,
+) {
+    let venue = exec.venue_label();
+    let lp_won = exec.lp_won.as_deref().unwrap_or("—");
+    if exec.is_filled() {
+        tracing::info!(
+            class = celnet_observability::LogClass::Hedge.label(),
+            book,
+            instrument,
+            execution_instrument,
+            parent_position_id,
+            venue,
+            lp_won,
+            filled = exec.filled,
+            residual = exec.residual,
+            hedge_price = exec.hedge_price,
+            mid_at_fire = exec.mid_at_fire,
+            slippage_bp = exec.slippage_bp,
+            "{headline} on venue {venue} (lp_won={lp_won})",
+        );
+    } else {
+        tracing::warn!(
+            class = celnet_observability::LogClass::Hedge.label(),
+            book,
+            instrument,
+            execution_instrument,
+            parent_position_id,
+            venue,
+            lp_won,
+            filled = exec.filled,
+            residual = exec.residual,
+            mid_at_fire = exec.mid_at_fire,
+            "{headline} — NOTHING externalised (no venue filled); the whole shed stays \
+             warehoused on the book",
+        );
+    }
+}
+
+/// One configured cap whose **meaning** changed under the Wave-0 bond re-basing
+/// (`docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md` §7.2), measured on the scope's *actual*
+/// current inventory rather than on an assumed duration.
+///
+/// Produced by [`RatesPositionStore::audit_proxy_era_caps`]; a scope holding no bonds
+/// never produces one, because the re-basing does not touch swap/FRA exposure.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProxyEraCapFinding {
+    /// Which cap: `limit:<LimitScope>` for a limit-tree cap, `warehouse:book:<id>` for a
+    /// warehouse threshold.
+    pub scope: String,
+    /// The metric the cap constrains.
+    pub metric: String,
+    /// The cap as configured — expressed, on the evidence below, in **pre-migration**
+    /// units.
+    pub cap: f64,
+    /// `|Σ exposure|` over the scope under the pre-migration duration-1 bond proxy.
+    pub legacy_exposure: f64,
+    /// `|Σ exposure|` over the scope under the duration-correct bond DV01.
+    pub rebased_exposure: f64,
+    /// `rebased / legacy` — the factor this cap must be multiplied by to preserve its
+    /// pre-migration meaning **for this inventory** (≈ the book's bond duration).
+    pub multiplier: f64,
+    /// `cap × multiplier` — the re-based cap.
+    pub suggested_cap: f64,
+    /// Whether the cap is breached under the new measure but was **not** under the old —
+    /// the silent day-one breach this audit exists to pre-empt.
+    pub breaching_now: bool,
+}
+
+impl ProxyEraCapFinding {
+    /// Measure one cap against a scope's positions under both measures, returning a
+    /// finding only when the two differ (i.e. the scope actually holds a bond, so the cap's
+    /// units genuinely changed). A non-finite or non-positive legacy exposure yields no
+    /// finding: there is no honest multiplier to state, and inventing one would be exactly
+    /// the fabricated precision this migration is trying to avoid.
+    #[must_use]
+    fn measure<'a>(
+        scope: String,
+        metric: String,
+        cap: f64,
+        positions: impl Iterator<Item = &'a RatesPosition>,
+    ) -> Option<Self> {
+        let (rebased, legacy) = positions.fold((0.0_f64, 0.0_f64), |(r, l), p| {
+            (
+                r + rates_linear_exposure(p),
+                l + rates_linear_exposure_proxy(p),
+            )
+        });
+        let (rebased, legacy) = (rebased.abs(), legacy.abs());
+        // Bit-equal ⇒ the scope holds no bond (or a zero one): nothing changed.
+        if rebased == legacy || !legacy.is_finite() || legacy <= 0.0 || !rebased.is_finite() {
+            return None;
+        }
+        let multiplier = rebased / legacy;
+        Some(Self {
+            scope,
+            metric,
+            cap,
+            legacy_exposure: legacy,
+            rebased_exposure: rebased,
+            multiplier,
+            suggested_cap: cap * multiplier,
+            breaching_now: rebased > cap && legacy <= cap,
+        })
+    }
+}
+
+/// ISO 4217 **`XXX`** — "no currency involved" — the currency the booking-gate rates
+/// aggregate is keyed on.
+///
+/// A [`RatesPosition`] carries **no settlement currency** (`celnet.proto` gives it
+/// `entity`, `book` and `instrument`, nothing else), so the booking gate nets one
+/// currency-agnostic set — exactly what [`RatesPositionStore::book_net_dv01`] and every
+/// existing rates roll-up already do. `XXX` records that honestly instead of asserting a
+/// currency the position does not carry. The aggregate is gate-local, never published,
+/// and [`celnet_limits::exposure_of_rates`] never reads `ccy`. Wave 2 / G3
+/// (`docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md`) replaces this with a genuinely
+/// per-currency aggregate once positions carry their curve currency.
+const GATE_CCY: celnet_types::Ccy = match celnet_types::Ccy::new([b'X', b'X', b'X']) {
+    Some(c) => c,
+    None => panic!("XXX is a valid ISO 4217 alphabetic code"),
+};
+
+/// One booked rates position as a [`RatesRiskFact`] for the **booking-gate** aggregate.
+///
+/// - `dv01` — the position's signed [`rates_linear_exposure`]: the duration-correct
+///   analytic DV01 for a bond, the undiscounted annuity PV01 for a swap/FRA. This is the
+///   number a [`celnet_limits::LimitMetric::Dv01`] cap now actually gates on.
+/// - `pv01` — the **same** number. On this deliberately curve-free gate the platform has
+///   exactly one first-order rate sensitivity per position; there is no separately
+///   discounted annuity to report. Charging the undiscounted figure to a `Pvbp` cap is
+///   conservative (discount factors are `≤ 1`, so it is an upper bound), which preserves
+///   the gate's fail-safe character. The two measures diverge only once the curve-priced
+///   aggregate of Wave 2 / G3 feeds this seam.
+/// - `pv` — **NaN, deliberately**. No curve is available here, so there is no present
+///   value; a `0.0` would be a fabricated number that reads as "flat" (guardrail 2). NaN
+///   makes any future read of `net_pv` off a gate-local aggregate impossible to miss.
+///   No limit metric reads it.
+/// - `key_rate_ladder` — **empty**. The per-pillar ladder needs a bootstrapped curve and
+///   a book-time cache (Wave 2 / G7); it is not computed here and no bucket value is
+///   fabricated. A configured `RateTenorBucket` limit therefore cannot bind on this path
+///   and is reported as such by [`warn_tenor_bucket_limits_are_inert`] rather than left
+///   to read a silent zero.
+#[must_use]
+fn rates_risk_fact_of(p: &RatesPosition) -> RatesRiskFact {
+    let dv01 = rates_linear_exposure(p);
+    RatesRiskFact {
+        key: RatesFactKey {
+            entity: EntityId(p.entity),
+            ccy: GATE_CCY,
+            book: BookId(p.book),
+        },
+        pv: f64::NAN,
+        pv01: dv01,
+        dv01,
+        key_rate_ladder: Vec::new(),
+    }
+}
+
+/// Say once, loudly, that a configured [`celnet_limits::LimitMetric::RateTenorBucket`]
+/// limit **cannot bind on the booking path**.
+///
+/// The booking-gate aggregate carries no key-rate ladder (see [`rates_risk_fact_of`]), so
+/// `exposure_of_rates` sums an empty ladder and the limit reads `0`. That is precisely
+/// the silent-inertness defect this wave removed for `Dv01`/`Pvbp`
+/// (`docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md` §2.3 Defect 2), one level down — so it is
+/// surfaced rather than tolerated. The tenor axis is Wave 2 (G6/G7/G8) and needs a
+/// bootstrapped curve plus a per-position ladder cache; nothing here fabricates a bucket
+/// value in the meantime.
+///
+/// Fires at most once per process (a per-fill warning would drown the log). The limit
+/// still evaluates — honestly, at zero — so nothing is blocked or spuriously breached.
+fn warn_tenor_bucket_limits_are_inert(limits: &LimitTree, path: &ScopePath) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    // Already said ⇒ nothing to scan and nothing to allocate on the booking path.
+    if WARNED.load(Ordering::Relaxed) {
+        return;
+    }
+    let tenor_of = |l: &LimitSpec| match l.metric {
+        celnet_limits::LimitMetric::RateTenorBucket { tenor_years } => Some(tenor_years),
+        _ => None,
+    };
+    // Allocation-free scan first; only a tree that really carries a tenor limit builds the
+    // list for the message.
+    if !path
+        .scopes()
+        .flat_map(|scope| limits.at(scope).iter())
+        .any(|l| tenor_of(l).is_some())
+        || WARNED.swap(true, Ordering::Relaxed)
+    {
+        return;
+    }
+    let configured: Vec<u32> = path
+        .scopes()
+        .flat_map(|scope| limits.at(scope).iter())
+        .filter_map(tenor_of)
+        .collect();
+    tracing::warn!(
+        class = celnet_observability::LogClass::Risk.label(),
+        tenors = ?configured,
+        "RateTenorBucket limit(s) are configured but CANNOT bind on the rates booking path: \
+         the booking gate builds no key-rate ladder (the per-position ladder needs a \
+         bootstrapped curve and a book-time cache — Wave 2 / G6-G8 of \
+         docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md). They evaluate at a true zero and will \
+         never breach here. Curve risk is currently UNPROTECTED at booking; the tenor \
+         limits that DO bind are the ones enforced on the AggregateRatesRisk request path, \
+         which supplies a real ladder.",
+    );
+}
+
 /// Run the pre-trade limit check for a proposed rates booking against the projected
-/// book: the current linear exposure at each of the position's `book → entity → firm`
-/// scopes (excluding any prior fact under the same id so a re-book projects
-/// `others + this trade`) plus this trade's incremental linear IR delta.
+/// book, at each of the position's `book → entity → firm` scopes (excluding any prior
+/// fact under the same id, so a re-book projects `others + this trade`).
+///
+/// **Both metric families are enforced** ([`pre_trade_check_mixed`]):
+///
+/// - **FX-Greeks metrics** (in practice [`celnet_limits::LimitMetric::Delta`], the coarse
+///   linear-IR proxy the rates sink has always charged) read the projected `NodeAggregate`.
+/// - **Linear-FI metrics** ([`celnet_limits::LimitMetric::Dv01`] /
+///   [`Pvbp`](celnet_limits::LimitMetric::Pvbp) /
+///   [`RateTenorBucket`](celnet_limits::LimitMetric::RateTenorBucket)) read a genuine
+///   [`RatesNodeAggregate`] built here from the projected position set.
+///
+/// Before this, the gate ran the Greeks check alone, so `exposure_of` returned a
+/// hard-coded `0.0` for every FI metric and **a DV01 limit configured on a risk book was
+/// silently inert — it could never breach** (`RISK-MODEL-REQUIREMENTS-AND-GAPS.md` §2.3
+/// Defect 2 / G2). Each limit is charged exactly once, by its own family, so the coarse
+/// delta proxy and the DV01 cap never double-charge the same node.
 #[must_use]
 fn rates_pre_trade(
     positions: &[RatesPosition],
@@ -2913,6 +3445,7 @@ fn rates_pre_trade(
         LimitScope::Entity(EntityId(position.entity)),
         LimitScope::Firm,
     ]);
+    warn_tenor_bucket_limits_are_inert(limits, &path);
     let mut greeks = NetGreeks::zero();
     greeks.delta_base = rates_linear_exposure(position);
     // A linear-rates line carries no vega; the increment's vega is 0, so the pillar is
@@ -2923,20 +3456,119 @@ fn rates_pre_trade(
         vega: 0.0,
     };
     let exclude = position.position_id;
-    let node_at = |scope: LimitScope| -> NodeAggregate {
-        let sum: f64 = positions
+    let others = |scope: LimitScope| {
+        positions
             .iter()
-            .filter(|p| exclude == 0 || p.position_id != exclude)
-            .filter(|p| rates_scope_matches(scope, p))
-            .map(rates_linear_exposure)
-            .sum();
+            .filter(move |p| exclude == 0 || p.position_id != exclude)
+            .filter(move |p| rates_scope_matches(scope, p))
+    };
+    let node_at = |scope: LimitScope| -> NodeAggregate {
+        let sum: f64 = others(scope).map(rates_linear_exposure).sum();
         let mut node = NodeAggregate::empty(scope.group_value().unwrap_or(0));
         node.net_greeks.delta_base = sum;
         node
     };
     // Booking never re-derives VaR/ES/stop-loss on the linear-rates path.
     let nonadditive_at = |_scope: LimitScope| NonAdditiveExposure::default();
-    pre_trade_check(limits, &path, &increment, node_at, nonadditive_at)
+    // The FI aggregate is built ALREADY PROJECTED — the scope's current facts plus the
+    // proposed trade — by folding the proposal in as one more fact through the same
+    // fixed-order additive builder the sharded roll-up uses, rather than by mutating a
+    // finalized aggregate (whose exact-fold order is its contract). Every scope on `path`
+    // contains the proposed position by construction, so it belongs in every projection.
+    let rates_at = |scope: LimitScope| -> RatesNodeAggregate {
+        let facts: Vec<RatesRiskFact> = others(scope)
+            .chain(std::iter::once(position))
+            .map(rates_risk_fact_of)
+            .collect();
+        firm_aggregate_rates(&facts)
+            .book(GATE_CCY)
+            .cloned()
+            .unwrap_or_else(|| RatesNodeAggregate::empty(GATE_CCY))
+    };
+    pre_trade_check_mixed(limits, &path, &increment, node_at, nonadditive_at, rates_at)
+}
+
+/// The Wave-0 **migration guard**: when the duration-correct measure rejects a booking
+/// that the pre-migration `redemption × 1bp` proxy would have accepted at the same scope,
+/// the cap is almost certainly **proxy-era** — set against a number that understated
+/// every bond by roughly its duration.
+///
+/// Returns the operator-facing advice appended to the rejection, or `None` when the
+/// breach is genuine under both measures (a real risk breach, not a units change).
+/// Cheap: two sums over the breached scope, computed only on an already-failing booking.
+#[must_use]
+fn proxy_era_cap_advice(
+    positions: &[RatesPosition],
+    position: &RatesPosition,
+    breach: &LimitCheck,
+) -> Option<String> {
+    let exclude = position.position_id;
+    let scope_sum = |measure: fn(&RatesPosition) -> f64| -> f64 {
+        positions
+            .iter()
+            .filter(|p| exclude == 0 || p.position_id != exclude)
+            .filter(|p| rates_scope_matches(breach.scope, p))
+            .chain(std::iter::once(position))
+            .map(measure)
+            .sum()
+    };
+    let rebased = scope_sum(rates_linear_exposure).abs();
+    let legacy = scope_sum(rates_linear_exposure_proxy).abs();
+    let cap = breach.limit.cap;
+    // Only a cap the OLD measure fitted inside and the NEW one does not is proxy-era
+    // evidence. A breach under both measures is a real breach and says nothing about units.
+    if !(legacy <= cap && rebased > cap) {
+        return None;
+    }
+    Some(if legacy > 0.0 {
+        let multiplier = rebased / legacy;
+        format!(
+            "MIGRATION NOTE: this cap is not breached under the pre-migration duration-1 bond \
+             proxy ({legacy:.4} vs cap {cap}) and IS breached under the duration-correct bond \
+             DV01 ({rebased:.4}, ×{multiplier:.2}). The cap looks PROXY-ERA: bond exposure is \
+             now measured as a real DV01, so a cap set before the re-basing must be multiplied \
+             by this book's bond duration — here ×{multiplier:.2}, i.e. {suggested:.0} — to keep \
+             its original meaning. See docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md §7.2 Wave 0.",
+            suggested = cap * multiplier
+        )
+    } else {
+        format!(
+            "MIGRATION NOTE: the pre-migration duration-1 bond proxy measured this scope at \
+             ~0 against cap {cap}; the duration-correct bond DV01 measures {rebased:.4}. This \
+             cap looks PROXY-ERA and must be re-based. See \
+             docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md §7.2 Wave 0."
+        )
+    })
+}
+
+/// The `failed_precondition` for a rejected rates pre-trade, carrying the Wave-0
+/// migration advice when the rejection is a re-basing artefact rather than a real
+/// breach. Never silent: the same advice is rung at WARN so ops sees it even when the
+/// caller only surfaces the status code.
+#[must_use]
+fn rates_limit_breached(
+    positions: &[RatesPosition],
+    position: &RatesPosition,
+    result: &PreTradeResult,
+) -> tonic::Status {
+    let base = limit_breached_status(result);
+    let Some(advice) = result
+        .hard_breaches()
+        .next()
+        .and_then(|b| proxy_era_cap_advice(positions, position, b))
+    else {
+        return base;
+    };
+    tracing::warn!(
+        class = celnet_observability::LogClass::Risk.label(),
+        position_id = position.position_id,
+        book = position.book,
+        entity = position.entity,
+        advice = %advice,
+        "rates pre-trade REJECTED by a cap that looks PROXY-ERA (the Wave-0 bond DV01 \
+         re-basing changed this cap's units)",
+    );
+    tonic::Status::failed_precondition(format!("{} — {advice}", base.message()))
 }
 
 /// Whether a rates `(entity, book)` cell is admitted by an asserted entitlement
@@ -3194,6 +3826,190 @@ pub(crate) mod tests {
             .expect("within-limit rates book");
         assert_eq!(booked.position_id, 1);
         assert_eq!(store.len(), 1);
+    }
+
+    // ---- G2: a DV01 limit is REACHABLE at booking (it used to be structurally inert) ----
+
+    /// **A hard `Dv01` limit now actually blocks a rates booking.**
+    ///
+    /// Before this wave the rates gate ran the FX-Greeks `pre_trade_check` alone, so
+    /// `exposure_of` charged every FI metric a hard-coded `0.0` and a DV01 cap **could
+    /// never breach** (`docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md` §2.3 Defect 2 / G2). The
+    /// gate now also builds a real `RatesNodeAggregate`, so the cap binds — and the
+    /// rejection names the metric that stopped it.
+    #[test]
+    fn a_dv01_limit_now_rejects_a_rates_booking_it_could_never_have_stopped_before() {
+        // A 10y 5% 10mm bond: analytic DV01 ≈ 7 720 (the retired proxy measured 1 000).
+        let fill = dated_bond(0, 10_000_000.0, Side::Buy, 10);
+        let dv01 = rates_linear_exposure(&fill).abs();
+        assert!((7_000.0..8_500.0).contains(&dv01), "sanity: DV01 {dv01}");
+
+        let store = RatesPositionStore::new();
+        store.set_limit(
+            LimitScope::Firm,
+            LimitSpec::hard(celnet_limits::LimitMetric::Dv01, dv01 / 2.0),
+        );
+        let err = store
+            .book(fill.clone())
+            .expect_err("a DV01 cap at half the position's DV01 must now block");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(
+            err.message().contains("Dv01"),
+            "the reject must name the DV01 metric that bound, got {:?}",
+            err.message()
+        );
+        assert_eq!(
+            store.len(),
+            0,
+            "a rejected booking must not mutate the book"
+        );
+
+        // Control: the same limit with room accepts, so the gate is discriminating, not
+        // simply rejecting everything now that the metric is live.
+        let roomy = RatesPositionStore::new();
+        roomy.set_limit(
+            LimitScope::Firm,
+            LimitSpec::hard(celnet_limits::LimitMetric::Dv01, dv01 * 10.0),
+        );
+        roomy.book(fill).expect("a DV01 cap with room accepts");
+        assert_eq!(roomy.len(), 1);
+    }
+
+    /// A `Pvbp` cap binds through the same seam (the gate's aggregate carries the
+    /// conservative undiscounted PV01 alongside the DV01).
+    #[test]
+    fn a_pvbp_limit_also_binds_at_the_rates_booking_gate() {
+        let fill = dated_bond(0, 10_000_000.0, Side::Buy, 10);
+        let store = RatesPositionStore::new();
+        store.set_limit(
+            LimitScope::Firm,
+            LimitSpec::hard(celnet_limits::LimitMetric::Pvbp, 1.0),
+        );
+        let err = store.book(fill).expect_err("a 1-unit PV01 cap must block");
+        assert!(err.message().contains("Pvbp"), "{:?}", err.message());
+    }
+
+    /// A `RateTenorBucket` cap is **honestly inert at booking** — the gate builds no
+    /// key-rate ladder (Wave 2 / G6-G8), so nothing is fabricated and nothing is blocked.
+    /// The operator is told, once, by `warn_tenor_bucket_limits_are_inert` rather than left
+    /// to believe a tenor cap is protecting them.
+    #[test]
+    fn a_tenor_bucket_limit_is_inert_at_booking_and_never_fabricates_a_bucket() {
+        let store = RatesPositionStore::new();
+        store.set_limit(
+            LimitScope::Firm,
+            LimitSpec::hard(
+                celnet_limits::LimitMetric::RateTenorBucket { tenor_years: 10 },
+                1.0,
+            ),
+        );
+        store
+            .book(dated_bond(0, 10_000_000.0, Side::Buy, 10))
+            .expect("no ladder ⇒ zero bucket exposure ⇒ no breach, and no invented value");
+        assert_eq!(store.len(), 1);
+    }
+
+    // ---- Wave-0 migration: re-basing the bond arm is announced, never silent ----
+
+    /// **A rejection caused by the re-basing says so.** A cap the retired duration-1 proxy
+    /// fitted inside and the duration-correct DV01 does not is proxy-era; the status carries
+    /// the observed multiplier and the re-based cap instead of an unexplained breach.
+    #[test]
+    fn a_proxy_era_cap_rejection_carries_the_rebasing_advice() {
+        let fill = dated_bond(0, 10_000_000.0, Side::Buy, 10);
+        let legacy = rates_linear_exposure_proxy(&fill).abs(); // 1 000
+        let rebased = rates_linear_exposure(&fill).abs(); // ≈ 7 720
+        let cap = (legacy + rebased) / 2.0; // fits the old measure, blows the new one
+        assert!(legacy <= cap && cap < rebased);
+
+        let store = RatesPositionStore::new();
+        store.set_limit(
+            LimitScope::Firm,
+            LimitSpec::hard(celnet_limits::LimitMetric::Dv01, cap),
+        );
+        let msg = store
+            .book(fill)
+            .expect_err("blown under the new measure")
+            .message()
+            .to_owned();
+        assert!(msg.contains("PROXY-ERA"), "{msg}");
+        assert!(msg.contains("MIGRATION NOTE"), "{msg}");
+        assert!(
+            msg.contains("RISK-MODEL-REQUIREMENTS-AND-GAPS.md"),
+            "the advice must point at the migration doc, got {msg}"
+        );
+    }
+
+    /// A cap blown under **both** measures is a real risk breach, not a units artefact — no
+    /// migration advice is attached, so the guard never cries wolf.
+    #[test]
+    fn a_genuine_breach_carries_no_rebasing_advice() {
+        let store = RatesPositionStore::new();
+        store.set_limit(
+            LimitScope::Firm,
+            LimitSpec::hard(celnet_limits::LimitMetric::Dv01, 1.0),
+        );
+        let msg = store
+            .book(dated_bond(0, 10_000_000.0, Side::Buy, 10))
+            .expect_err("blown under both measures")
+            .message()
+            .to_owned();
+        assert!(
+            !msg.contains("PROXY-ERA"),
+            "a breach under both measures says nothing about units, got {msg}"
+        );
+    }
+
+    /// **The startup audit names every cap whose units changed, and by how much.** A 10y
+    /// bond book reports a multiplier ≈ its modified duration, the re-based cap, and the
+    /// day-one breach it would otherwise have produced silently.
+    #[test]
+    fn audit_reports_the_bond_duration_multiplier_for_a_proxy_era_cap() {
+        let store = RatesPositionStore::new();
+        // Book first under a cap with room, then tighten to the proxy-era value.
+        store.set_limit(
+            LimitScope::Firm,
+            LimitSpec::hard(celnet_limits::LimitMetric::Dv01, 1.0e12),
+        );
+        let fill = dated_bond(0, 10_000_000.0, Side::Buy, 10);
+        let rebased = rates_linear_exposure(&fill).abs();
+        store.book(fill).expect("books");
+        let cap = 1_500.0; // > the retired proxy's 1 000, < the real ~7 720
+        store.set_limit(
+            LimitScope::Firm,
+            LimitSpec::hard(celnet_limits::LimitMetric::Dv01, cap),
+        );
+
+        let findings = store.audit_proxy_era_caps();
+        assert_eq!(findings.len(), 1, "one bond-bearing cap, one finding");
+        let f = &findings[0];
+        assert_eq!(f.metric, "Dv01");
+        assert!((f.legacy_exposure - 1_000.0).abs() < 1e-9);
+        assert!((f.rebased_exposure - rebased).abs() < 1e-9);
+        assert!(
+            (7.0..8.5).contains(&f.multiplier),
+            "the multiplier is the book's bond duration, got {}",
+            f.multiplier
+        );
+        assert!((f.suggested_cap - cap * f.multiplier).abs() < 1e-9);
+        assert!(
+            f.breaching_now,
+            "this cap breaches under the new measure and did not under the old — exactly \
+             the silent day-one breach the audit exists to pre-empt"
+        );
+    }
+
+    /// A **swap-only** book produces no finding: the re-basing did not touch swap exposure,
+    /// so its caps mean precisely what they always did and the audit stays quiet.
+    #[test]
+    fn audit_is_silent_for_a_book_holding_no_bonds() {
+        let store = RatesPositionStore::new();
+        store.set_limit(
+            LimitScope::Firm,
+            LimitSpec::hard(celnet_limits::LimitMetric::Dv01, 1.0e12),
+        );
+        store.book(position(0, 1, 10)).expect("books");
+        assert!(store.audit_proxy_era_caps().is_empty());
     }
 
     /// A soft rates limit breach books (never blocks) — soft limits only early-warn.
@@ -4687,38 +5503,127 @@ pub(crate) mod tests {
         }
     }
 
-    /// **The DV01-proxy problem, pinned.** The book's own exposure proxy measures a bond as
-    /// `redemption × 1bp` — duration 1 — while the genuine analytic DV01 of a ten-year 5%
-    /// bond is roughly EIGHT times that (modified duration ≈ 7.7). A hedge ratio taken off
-    /// the proxy would therefore under-hedge by ~8×, which is exactly why
-    /// `genuine_position_dv01` exists and why the vehicle sizing never reads the proxy for a
-    /// bond it can price.
+    /// **The DV01-proxy problem, pinned — and the Wave-0 re-basing that removed it.**
+    ///
+    /// The pre-migration exposure measured a bond as `redemption × 1bp` (duration 1), while
+    /// the genuine analytic DV01 of a ten-year 5% bond is roughly EIGHT times that (modified
+    /// duration ≈ 7.7). `rates_linear_exposure` now charges the analytic number, and
+    /// `rates_linear_exposure_proxy` retains the old one purely as the migration reference.
     #[test]
-    fn a_ten_year_bonds_genuine_dv01_is_about_eight_times_the_duration_blind_proxy() {
+    fn a_ten_year_bonds_exposure_is_about_eight_times_the_retired_duration_blind_proxy() {
         let fill = dated_bond(1, 1_000_000.0, Side::Buy, 10);
-        let proxy = rates_linear_exposure(&fill).abs();
+        let proxy = rates_linear_exposure_proxy(&fill).abs();
         assert!(
             (proxy - 100.0).abs() < 1e-9,
-            "the proxy is redemption × 1bp = 100, i.e. duration 1: {proxy}"
+            "the retired proxy is redemption × 1bp = 100, i.e. duration 1: {proxy}"
         );
 
+        let rebased = rates_linear_exposure(&fill).abs();
+        // A 10y 5% annual bond at par: modified duration ≈ 7.72 ⇒ DV01 ≈ 772 per 1mm face.
+        let ratio = rebased / proxy;
+        assert!(
+            (7.0..8.5).contains(&ratio),
+            "the LIVE exposure measure must now be ~8× the retired proxy for a 10y bond, \
+             got {ratio}× (rebased {rebased}, proxy {proxy})"
+        );
+
+        // The exposure measure and the hedge-sizing measure now agree on the bond arm — the
+        // asymmetry that made a correct hedge ratio chase a meaningless target is gone.
         let (genuine, basis) = genuine_position_dv01(&fill, None);
         assert_eq!(
             basis,
             Dv01Basis::Analytic,
             "a bond with a real maturity is priced analytically, never off the proxy"
         );
-        // A 10y 5% annual bond at par: modified duration ≈ 7.72 ⇒ DV01 ≈ 772 per 1mm face.
-        let ratio = genuine / proxy;
         assert!(
-            (7.0..8.5).contains(&ratio),
-            "the genuine DV01 must be ~8× the proxy for a 10y bond, got {ratio}× \
-             (genuine {genuine}, proxy {proxy})"
+            (genuine - rebased).abs() < 1e-9,
+            "measurement and sizing must charge the same bond DV01: {genuine} vs {rebased}"
         );
         assert!(
             basis.is_duration_correct(),
             "an analytic DV01 is duration-correct and may be presented as exact"
         );
+    }
+
+    /// **The re-based bond exposure IS `celnet_bond::dv01`** — verified against the leaf
+    /// engine directly, not against the server's own restatement of it (an independent
+    /// oracle for the migration).
+    #[test]
+    fn rebased_bond_exposure_equals_the_analytic_leaf_dv01() {
+        let fill = dated_bond(1, 5_000_000.0, Side::Buy, 10);
+        let rates_instrument::Instrument::Bond(bond) = fill
+            .instrument
+            .as_ref()
+            .and_then(|i| i.instrument.as_ref())
+            .expect("a bond arm")
+        else {
+            panic!("a bond arm");
+        };
+        let today = time::OffsetDateTime::now_utc().date();
+        let contract = crate::rates_pricing::bond_contract_from_wire(bond, today)
+            .expect("a dated bond builds a contract");
+        let oracle = celnet_bond::dv01(&contract, celnet_types::Rate(bond.coupon_rate))
+            .expect("the analytic derivative");
+        assert!(
+            (rates_linear_exposure(&fill).abs() - oracle).abs() < 1e-9,
+            "the exposure measure must BE the analytic leaf DV01, not an approximation of it"
+        );
+    }
+
+    /// **DV01 is exactly linear in redemption face** — the invariant the per-unit-face memo
+    /// depends on. Every cashflow of a `Bond` scales with `redemption`, so the price and its
+    /// yield derivative do too; one cached unit-face number is therefore exact for any size
+    /// of the same security.
+    #[test]
+    fn bond_dv01_is_exactly_linear_in_face() {
+        let one = rates_linear_exposure(&dated_bond(1, 1.0, Side::Buy, 10)).abs();
+        for face in [100.0, 1_000_000.0, 250_000_000.0] {
+            let scaled = rates_linear_exposure(&dated_bond(2, face, Side::Buy, 10)).abs();
+            let want = one * face;
+            assert!(
+                (scaled - want).abs() <= want * 1e-12,
+                "DV01 must scale exactly with face: {face} ⇒ {scaled}, expected {want}"
+            );
+        }
+    }
+
+    /// **Bond and swap risk are now COMMENSURABLE in one book net** — the defect that made
+    /// any DV01 limit on a mixed book meaningless (`RISK-MODEL-REQUIREMENTS-AND-GAPS.md`
+    /// §2.3 Defect 1). A long 10y bond and a receive-fixed... i.e. a pay-fixed 10y swap of
+    /// DV01-equivalent size must net to ~0. Under the retired proxy the same pair nets to a
+    /// large fictitious number.
+    #[test]
+    fn a_bond_and_a_swap_of_equal_dv01_now_net_to_zero() {
+        let bond = dated_bond(1, 100_000_000.0, Side::Buy, 10);
+        let bond_dv01 = rates_linear_exposure(&bond).abs();
+        // A pay-fixed 10y OIS whose annuity PV01 (notional × 10 × 1bp) equals the bond's DV01.
+        let notional = bond_dv01 / (10.0 * ONE_BP);
+        let swap = ois(2, 7, 10, notional, Side::Buy);
+
+        let net = rates_linear_exposure(&bond) + rates_linear_exposure(&swap);
+        assert!(
+            net.abs() < bond_dv01 * 1e-9,
+            "an economically flat bond-vs-swap pair must net to ~0, got {net} \
+             (bond {bond_dv01})"
+        );
+
+        // The pre-migration measure netted the SAME pair to a huge fictitious residual,
+        // because it was adding two different units.
+        let legacy = rates_linear_exposure_proxy(&bond) + rates_linear_exposure_proxy(&swap);
+        assert!(
+            legacy.abs() > bond_dv01 * 0.5,
+            "the retired proxy must be shown to mis-net this pair, got {legacy}"
+        );
+    }
+
+    /// A bond that cannot be turned into a contract (no maturity date) falls back to the
+    /// retired proxy rather than reporting zero or a guessed duration — and both measures
+    /// then agree, so the migration audit correctly reports "nothing changed" for it.
+    #[test]
+    fn an_unconstructable_bond_falls_back_to_the_proxy_magnitude() {
+        let fill = bond_position(1, 1_000_000.0, Side::Buy);
+        assert!((rates_linear_exposure(&fill).abs() - 100.0).abs() < 1e-9);
+        assert!((rates_linear_exposure(&fill) - rates_linear_exposure_proxy(&fill)).abs() < 1e-12);
     }
 
     /// A swap reports the undiscounted annuity PV01 and says so — duration-correct in shape
@@ -4937,11 +5842,13 @@ pub(crate) mod tests {
             "the ratio is sized off a GENUINE DV01, never the duration-blind proxy"
         );
         assert!(plan.duration_correct);
-        // The ratio really is the genuine DV01 over the contract DV01, not the proxy's.
-        // The proxy would have sized this at `10mm × 1bp / 78 ≈ 12.8` contracts. The genuine
-        // 9-year DV01 is ~7× that, so the honest hedge is ~90 contracts. Sizing off the proxy
-        // would have left roughly seven eighths of the risk unhedged and called it done.
-        let proxy_units = rates_linear_exposure(&booked).abs() / plan.dv01_per_unit;
+        // The ratio really is the genuine DV01 over the contract DV01, not the retired
+        // duration-1 proxy's. The proxy would have sized this at `10mm × 1bp / 78 ≈ 12.8`
+        // contracts. The genuine 9-year DV01 is ~7× that, so the honest hedge is ~90
+        // contracts. Sizing off the proxy would have left roughly seven eighths of the risk
+        // unhedged and called it done. (Since the Wave-0 re-basing the BOOK's own exposure
+        // measure agrees with the sizing measure — this compares against the retired proxy.)
+        let proxy_units = rates_linear_exposure_proxy(&booked).abs() / plan.dv01_per_unit;
         assert!(
             plan.exact_units > 5.0 * proxy_units,
             "the genuine-DV01 ratio must dwarf the duration-blind proxy ratio: {} vs {proxy_units}",

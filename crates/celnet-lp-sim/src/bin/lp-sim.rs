@@ -207,6 +207,8 @@ fn main() -> std::process::ExitCode {
     let mut priceable = bond_lines(
         &universe,
         cfg.settlement,
+        cfg.half_spread,
+        cfg.skew_step,
         cfg.reversion_per_sec,
         cfg.perturbation,
     );

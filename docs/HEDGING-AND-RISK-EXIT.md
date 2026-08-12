@@ -120,15 +120,25 @@ This is what the warehouse cap, the RAG band, and hedge sizing all read.
 | OIS | `notional × tenor_years × 1bp` | pay-fixed `+`, receive-fixed `−` |
 | IRS | `notional × tenor_years × 1bp` | pay-fixed `+`, receive-fixed `−` |
 | FRA | `notional × (end−start)/12 × 1bp` | pay-fixed `+`, receive-fixed `−` |
-| Bond | `redemption × 1bp` | long (Buy) `−`, short `+` |
+| Bond | **analytic DV01** of its own cashflow schedule at the par (coupon) yield (`celnet_bond::dv01`) | long (Buy) `−`, short `+` |
 
 Signs are chosen so that **equal-and-opposite positions net to zero at a node**. A long bond
 carries long-duration exposure, which is the same IR sign as a *receive*-fixed swap — hence the
 apparently inverted bond row. This is correct and intentional.
 
-The measure is deliberately **curve-free**: no discount factors, no bootstrapping. Discount
-factors are `≤ 1`, so the undiscounted PV01 is an *upper bound* on the true annuity PV01 —
-conservative, i.e. fail-safe, for a hard limit. See §10 for what this costs.
+The bond row was `redemption × 1bp` — every bond treated as duration 1 — until the Wave-0
+re-basing (`docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md` §7.2.1). It is now a genuine DV01, so
+**bond and swap exposure are commensurable in one book net**. The retired proxy survives as
+`rates_linear_exposure_proxy`, used only as the migration's reference measure and as the honest
+fallback for a bond whose contract cannot be constructed. **Every cap configured before that
+change is in the old units and must be re-based** — see §7.2.1 of the risk-model document for
+the exact factor and the boot-time audit that reports it per cap.
+
+The measure remains deliberately **curve-free**: no discount factors, no bootstrapping, no live
+market data. The swap arms are undiscounted, and discount factors are `≤ 1`, so those are an
+*upper bound* on the true annuity PV01 — conservative, i.e. fail-safe, for a hard limit. The
+bond arm is a closed-form yield derivative of the bond's own schedule, which needs no curve
+either; the genuinely curve-dependent key-rate ladder is a later wave and is not on this path.
 
 ### 4.2 `rates_signed_notional` — the trade-direction face notional
 
@@ -335,13 +345,15 @@ outcome — positive means rounded down and risk remains, negative means rounded
 is now short the difference. A target below half a contract yields `units = 0` and the whole
 target as residual: an honest "too small to hedge with this vehicle", not a fabricated part lot.
 
-**The numerator is the part most easily got wrong, so it is labelled.** The book's own
-`rates_linear_exposure` measures a cash bond as `redemption × 1bp` — duration 1 (§10 boundary
-1). A ratio taken off *that* under-hedges a 10-year bond by roughly 8×. So the vehicle sizing
-does **not** read the proxy for a bond it can price: `genuine_position_dv01` computes the
-closed-form analytic DV01 off the bond's own cashflow schedule (`celnet-bond`), at the yield
-implied by the dealt clean price when one is known and at its coupon (the par assumption)
-otherwise. Every plan carries the basis it used:
+**The numerator is the part most easily got wrong, so it is labelled.** `genuine_position_dv01`
+computes the closed-form analytic DV01 off the bond's own cashflow schedule (`celnet-bond`), at
+the yield implied by the dealt clean price when one is known and at its coupon (the par
+assumption) otherwise. This predates the Wave-0 re-basing, when `rates_linear_exposure` still
+measured a cash bond as `redemption × 1bp` and a ratio taken off it under-hedged a 10-year bond
+by roughly 8×. The two measures now **agree on the bond arm**, with one deliberate difference:
+sizing prefers the *dealt* yield, measurement (which has no dealt price on a stored position)
+uses the par assumption — so sizing is never less precise than measurement. Every plan still
+carries the basis it used:
 
 | `Dv01Basis` | Source | Duration-correct? |
 | --- | --- | --- |
@@ -546,29 +558,55 @@ hedge fill, so those stay absent rather than being invented.
 band); `HEDGE_FIRED` is emitted additionally when risk actually sheds externally — the terminal
 stage of a hedged lift.
 
+**Logs.** Two `class=hedge` structured lines bracket an exit, and they carry different things
+because they know different things:
+
+| Line | When | Carries |
+| --- | --- | --- |
+| `auto-hedge internalise decision` | on every fill, **before** execution | internalised / external DV01 split, edge bps, tolerance verdict, RAG band, cap, utilisation. **No venue** — nothing has traded yet. |
+| `auto-hedge shed EXECUTED` / `fired hedge suggestion EXECUTED` | after the external attempt | **`venue`** (`LP_PANEL` / `COMPOSITE` / `NONE`), **`lp_won`**, the execution instrument, filled / residual / hedge price / mid / slippage bp |
+
+The execution line is `INFO` on a real fill and **`WARN` on a miss** (`venue=NONE`), because a
+miss means nothing was externalised and the risk is still on the book. Before this the venue
+lived only in the in-memory provenance ring, so no log sink anywhere distinguished a genuine
+street fill from a synthetic composite backstop.
+
 ---
 
 ## 10. Honest boundaries
 
 Read this section before relying on the numbers.
 
-1. **The bond exposure proxy is not duration-scaled.** `rates_linear_exposure` computes
-   `notional × tenor_years × 1bp` for swaps but `redemption × 1bp` for bonds — i.e. it treats
-   every bond as though it had a duration of 1. A 10-year bond's true DV01 is roughly 8× what
-   the proxy reports. **Consequence: bond and swap risk are not commensurable in the same book
-   net today**, and a bond-heavy book's utilisation is understated. The exact
-   curve-bootstrapped DV01 is the ADR-0016 **A3** breadth wave. Note this does *not* affect
-   hedge-leg correctness (§8.2): the same-security ratio is 1 under any measure.
+1. **RESOLVED (Wave 0) — the bond exposure arm is now duration-correct, and existing caps
+   must be re-based.** `rates_linear_exposure`'s bond arm was `redemption × 1bp` (duration 1);
+   it is now `celnet_bond::dv01` on the bond's own schedule, so bond and swap risk **are**
+   commensurable in one book net and a bond-heavy book's utilisation is no longer understated.
+   The budget (cap, band, overflow) and the hedge size now read the same measure — the
+   asymmetry this boundary used to describe is gone.
 
-   It *would* have wrecked the **vehicle** ratio (§6.4), which divides by another
-   instrument's DV01 — so the vehicle sizing deliberately does not read this proxy for a bond
-   it can price, using the analytic DV01 instead and labelling every plan with the basis it
-   used. The proxy still governs the **budget** (the cap, the band, the overflow), so a
-   bond-heavy book's *utilisation* remains understated even though its hedge *size* is now
-   right. Those are two different numbers and only one of them is fixed.
+   **What remains an operator obligation:** every cap configured against the old units is
+   now measured on a number roughly the bond's duration larger (≈8× at 10y). Re-base them —
+   `docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md` §7.2.1 gives the exact factor per cap class,
+   and the server rings a per-cap `WARN` at boot (`audit_proxy_era_caps`) plus a
+   `MIGRATION NOTE … PROXY-ERA` on any rejection the re-basing caused. Note the re-basing
+   never affected hedge-*leg* correctness (§8.2): the same-security ratio is 1 under any
+   measure.
 
-2. **The PV01 proxy is curve-free and undiscounted.** It is an upper bound on the true annuity
-   PV01 — conservative for a hard limit, but not a mark.
+   **Still open:** the measurement path does not yet carry `Dv01Basis` onto the wire (only
+   the sizing path does), and `WarehouseThreshold`'s resolver still keys on scope alone
+   rather than `(scope × metric)`.
+
+2. **The swap PV01 arms are curve-free and undiscounted.** They are an upper bound on the
+   true annuity PV01 — conservative for a hard limit, but not a mark. The bond arm is an
+   exact closed-form yield derivative, but taken at the par (coupon) yield rather than the
+   live market yield, since a stored position carries no dealt price.
+
+2a. **`RateTenorBucket` limits cannot bind at booking.** The booking-gate rates aggregate
+   carries no key-rate ladder (that needs a bootstrapped curve and a per-position book-time
+   cache — Wave 2), so a configured tenor-bucket cap evaluates at a true zero there. Nothing
+   is fabricated, and the server warns once per process that curve risk is unprotected at
+   booking. Tenor limits *do* bind on the `AggregateRatesRisk` request path, which supplies a
+   real ladder.
 
 3. **`Desk`-scoped bindings do not bind on the rates booking path.** The resolvers support
    `Instrument → Book → Desk` precedence, but the rates call site passes an empty desk id, so
@@ -580,9 +618,11 @@ Read this section before relying on the numbers.
    action but a worked order currently executes as a single clip.
 
 5. **The composite venue always fills.** It is a synthetic backstop off the Agg Book mid, not a
-   real counterparty. A book whose hedges all show `venue=Composite` / `lp_won=COMPOSITE` is
+   real counterparty. A book whose hedges all show `venue=COMPOSITE` / `lp_won=COMPOSITE` is
    telling you the LP panel never matched — usually a security-id mismatch between the book's
-   instruments and what the LPs actually quote.
+   instruments and what the LPs actually quote. Both fields are now on the `class=hedge`
+   execution log line (§9), so this is answerable from the logs rather than only from the
+   in-memory provenance ring.
 
 6. **Hedging evaluates per fill, not on a timer.** The decision runs when a fill books. Risk
    that drifts past a band through *market* movement alone, with no new flow, is not
@@ -657,8 +697,9 @@ These are the properties the test suite pins. If you change this subsystem, keep
    `max_clip` is the control for bounding a single ticket.
 5. **An internal-mandate policy is never force-shed** by a thin-edge fill.
 6. **Every booked fill carries a real threshold, band, and decision** — never an empty `—`.
-7. **The two exposure measures stay distinct.** Notional rules read notional; the DV01 budget
-   reads the PV01 proxy. Never cross them.
+7. **The two exposure measures stay distinct.** Notional rules read `rates_signed_notional`;
+   the DV01 budget reads `rates_linear_exposure`. Never cross them — they are different units
+   with different sign conventions.
 8. **A hedge quantity is never guessed.** A vehicle with no configured `dv01_per_unit` cannot be
    sized, so the exit falls back to the self-hedge (exact by construction) rather than trading a
    fabricated contract count.

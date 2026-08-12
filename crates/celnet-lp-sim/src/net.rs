@@ -763,6 +763,8 @@ mod tests {
         let lines = crate::universe::bond_lines(
             &selection,
             cfg.settlement,
+            cfg.half_spread,
+            cfg.skew_step,
             cfg.reversion_per_sec,
             cfg.perturbation,
         );

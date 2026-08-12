@@ -38,7 +38,15 @@ fn cfg() -> LpSimConfig {
 fn selection(cfg: &LpSimConfig) -> Vec<QuotedLine> {
     load_coupon_universe()
         .into_iter()
-        .filter_map(|b| b.to_line(cfg.settlement, cfg.reversion_per_sec, cfg.perturbation))
+        .filter_map(|b| {
+            b.to_line(
+                cfg.settlement,
+                cfg.half_spread,
+                cfg.skew_step,
+                cfg.reversion_per_sec,
+                cfg.perturbation,
+            )
+        })
         .take(6)
         .collect()
 }

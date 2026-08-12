@@ -228,21 +228,78 @@ impl TreasuryBond {
         })
     }
 
+    /// The DV01 of this bond's reference schedule **per 100 face** at its own
+    /// reference yield: the clean-price move per basis point, from the real analytics
+    /// leaf. The conversion factor between a price budget and a yield budget for this
+    /// security (`Δy = Δprice / DV01 × 1bp`).
+    ///
+    /// Returns `None` when the bond cannot be modelled at `settlement`, or when the
+    /// derived DV01 is not usable as a divisor (non-finite or non-positive).
+    #[must_use]
+    pub fn dv01_per_100(&self, settlement: BrokenDate) -> Option<f64> {
+        let bond = self.to_reference_bond(settlement).ok()?;
+        let y = celnet_bond::yield_to_maturity(&bond, self.reference_mid()).ok()?;
+        let dv01 = celnet_bond::dv01(&bond, y).ok()?;
+        (dv01.is_finite() && dv01 > 0.0).then_some(dv01)
+    }
+
     /// The [`QuotedLine`](crate::quoted::QuotedLine) this bond streams as: its
-    /// canonical identity, engine key and reference-seeded stochastic yield model,
-    /// with the cash market's quoting conventions (the LP's own spread and skew, off
-    /// any price grid — a cash bond is quoted freely, not on an exchange tick).
+    /// canonical identity, engine key, reference-seeded stochastic yield model, and
+    /// the quoting conventions of the OTC cash market it trades in.
+    ///
+    /// # How a cash-bond panel is shaped — and why it is not the listed shape
+    ///
+    /// A cash bond is quoted freely, off any exchange tick, by dealers who each mark
+    /// their own book. That much genuinely differs from a listed contract, and the
+    /// line keeps it: no price grid, and each member keeps its own spread width, its
+    /// own size, its own re-quote cadence and its own wandering private view.
+    ///
+    /// What does **not** differ is that the *level* is common information. A dealer
+    /// in a benchmark government bond marks off the same observable inter-dealer
+    /// level as its competitors; it does not form an independent opinion of where the
+    /// 30-year is to the nearest several basis points. Modelling the level as an
+    /// independent per-member draw is not a model of bilateral disagreement — it
+    /// displaces each member's mid by the bond's DV01 times the yield jitter, which
+    /// on anything past the front end is one to two orders of magnitude wider than
+    /// the quoted bid-offer. Every member's bid then prints through some other
+    /// member's offer, the consolidated composite comes out **crossed**, and the
+    /// server's RFQ resolver rejects the line: no outbound quote, no hedge fill. A
+    /// panel of dealers who disagree by fifty times what they quote is not a market,
+    /// it is a standing arbitrage.
+    ///
+    /// So the level is shared and the cross-member differentiation is carried by
+    /// three deliberate, **budgeted** displacements, each sized as a fraction of the
+    /// fleet's base half-spread and converted into yield through **this bond's own
+    /// DV01** (a flat yield budget cannot serve a Bill and a 30-year alike — the same
+    /// yield move is worth two orders of magnitude more price on the latter):
+    ///
+    /// * the member's directional **lean** (its axe),
+    /// * its fixed private **view** of the security (the starting-yield dispersion),
+    /// * its **wandering** private view between its own re-quotes.
+    ///
+    /// Their sum is held strictly inside the *tightest* member's half-spread, which
+    /// is the condition for the panel's best bid never to reach its best offer: two
+    /// members' mids differ by at most twice that sum, and crossing needs them to
+    /// differ by more than the two half-spreads they quote around them.
+    ///
+    /// `base_half_spread` and `base_skew_step` are the fleet's defaults the returned
+    /// scales are expressed relative to.
     ///
     /// Returns `None` when the bond cannot be modelled at `settlement` — exactly the
-    /// cases [`yield_model`](Self::yield_model) rejects.
+    /// cases [`yield_model`](Self::yield_model) rejects — or when no usable DV01 can
+    /// be derived to size the budget against.
     #[must_use]
     pub fn to_line(
         &self,
         settlement: BrokenDate,
+        base_half_spread: f64,
+        base_skew_step: f64,
         reversion_per_sec: f64,
         perturbation: f64,
     ) -> Option<crate::quoted::QuotedLine> {
         let model = self.yield_model(settlement, reversion_per_sec, perturbation)?;
+        let dv01 = self.dv01_per_100(settlement)?;
+        let budget = quote_budget(base_half_spread, base_skew_step, dv01);
         Some(crate::quoted::QuotedLine {
             instrument_id: self.instrument_id.clone(),
             display_name: self.display_name(),
@@ -250,8 +307,9 @@ impl TreasuryBond {
             instrument: self.engine_instrument(),
             model,
             spread_scale: 1.0,
-            lean_scale: 1.0,
-            yield_dispersion: None,
+            lean_scale: budget.lean_scale,
+            yield_dispersion: Some(budget.yield_dispersion),
+            dealer_view: budget.dealer_view,
             tick: None,
         })
     }
@@ -516,20 +574,92 @@ pub fn load_government_universe(include_bills: bool) -> Vec<TreasuryBond> {
     universe
 }
 
+/// The three per-member displacement budgets a cash-bond line quotes under, derived
+/// from the fleet's defaults and the bond's own DV01 (see [`TreasuryBond::to_line`]).
+struct CashQuoteBudget {
+    /// Multiplier on the fleet's `skew_step` giving the member's directional lean.
+    lean_scale: f64,
+    /// The member's fixed private view, as a starting-yield dispersion (decimal).
+    yield_dispersion: f64,
+    /// The member's wandering private view amplitude (decimal yield).
+    dealer_view: f64,
+}
+
+/// Size a cash-bond line's per-member displacement budgets so the panel cannot
+/// consolidate crossed.
+///
+/// The three displacements are expressed as fractions of `base_half_spread` (price
+/// points per 100 face) and converted into yield through `dv01_per_100`, the bond's
+/// own clean-price move per basis point. See [`TreasuryBond::to_line`] for the market
+/// -structure argument; this function is only the arithmetic.
+///
+/// # The never-crossed condition
+///
+/// Members quote half-spreads dispersed over `[0.6, 1.4) × base_half_spread` (see
+/// `crate::lpsim::member_params`), so the tightest member shows `0.6 ×
+/// base_half_spread`. Two members' mids differ by at most twice the peak
+/// displacement, and their best bid reaches their best offer only once that
+/// difference exceeds the sum of the two half-spreads they quote — at least `2 × 0.6
+/// × base_half_spread`. Holding the peak displacement under `0.6 ×
+/// base_half_spread` therefore makes crossing impossible, and the fractions below sum
+/// to `0.40`, leaving half as much again in headroom. (The headroom also absorbs
+/// panels wider than the deployed five members: the peak lean grows as `(n−1)/2`
+/// steps, and the budget still holds at ten.)
+fn quote_budget(base_half_spread: f64, base_skew_step: f64, dv01_per_100: f64) -> CashQuoteBudget {
+    /// Peak directional lean of the outermost member, as a fraction of the base
+    /// half-spread.
+    const LEAN_FRACTION: f64 = 0.15;
+    /// Peak fixed private view of a member, as a fraction of the base half-spread.
+    const VIEW_FRACTION: f64 = 0.10;
+    /// Peak wandering private view of a member, as a fraction of the base
+    /// half-spread.
+    const WANDER_FRACTION: f64 = 0.15;
+    /// The outermost member of the deployed five-member panel sits this many
+    /// `skew_step`s from the centre (`(n−1)/2`), so a peak-displacement lean budget
+    /// converts to a per-step scale by dividing by it.
+    const PANEL_HALF_WIDTH_STEPS: f64 = 2.0;
+
+    // Price displacement -> yield displacement through the bond's own DV01.
+    let to_yield = |fraction: f64| fraction * base_half_spread / dv01_per_100 * 1.0e-4;
+    let lean_scale = if base_skew_step.is_finite() && base_skew_step > 0.0 {
+        LEAN_FRACTION * base_half_spread / PANEL_HALF_WIDTH_STEPS / base_skew_step
+    } else {
+        1.0
+    };
+    CashQuoteBudget {
+        lean_scale,
+        yield_dispersion: to_yield(VIEW_FRACTION),
+        dealer_view: to_yield(WANDER_FRACTION),
+    }
+}
+
 /// Build the [`QuotedLine`](crate::quoted::QuotedLine)s for a loaded cash-bond
 /// universe (see [`TreasuryBond::to_line`]). Bonds with no solvable reference yield
 /// at `settlement` — e.g. a deep-discount Bill the coupon-bond solver cannot bracket
 /// — are dropped, never quoted off a fabricated level.
+///
+/// `base_half_spread` and `base_skew_step` are the fleet's quoting defaults each
+/// line's per-member displacement budget is sized against.
 #[must_use]
 pub fn bond_lines(
     bonds: &[TreasuryBond],
     settlement: BrokenDate,
+    base_half_spread: f64,
+    base_skew_step: f64,
     reversion_per_sec: f64,
     perturbation: f64,
 ) -> Vec<crate::quoted::QuotedLine> {
     bonds
         .iter()
-        .filter_map(|b| b.to_line(settlement, reversion_per_sec, perturbation))
+        .filter_map(|b| {
+            b.to_line(
+                settlement,
+                base_half_spread,
+                base_skew_step,
+                reversion_per_sec,
+                perturbation,
+            )
+        })
         .collect()
 }
 

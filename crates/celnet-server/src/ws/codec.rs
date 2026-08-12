@@ -4904,26 +4904,38 @@ fn hedge_suggestion_to_json(s: &celnet_proto::HedgeSuggestion) -> Value {
 /// as their i32 tag; `policy_path` is an array of ints; the nested `action` renders
 /// as `null` when absent. No presence-tracked fields (every scalar always emits).
 fn hedge_intent_to_json(i: &HedgeIntent) -> Value {
-    json!({
-        "book": i.book,
-        "instrument": i.instrument,
-        "action": i.action.as_ref().map(exit_action_desc_to_json),
-        "band": i.band,
-        "net_risk": i.net_risk,
-        "threshold": i.threshold,
-        "utilization": i.utilization,
-        "overflow": i.overflow,
-        "size": i.size,
-        "internal_crossed": i.internal_crossed,
-        "external_hedged": i.external_hedged,
-        "advisory": i.advisory,
-        "fired_at": i.fired_at,
-        "policy_path": i.policy_path,
-        "reason": i.reason,
-        "lps": i.lps,
-        "vehicle_plan": i.vehicle_plan.as_ref().map(hedge_vehicle_plan_desc_to_json),
-        "exit_mode": i.exit_mode,
-    })
+    let mut m = Map::new();
+    m.insert("book".to_string(), json!(i.book));
+    m.insert("instrument".to_string(), json!(i.instrument));
+    m.insert(
+        "action".to_string(),
+        json!(i.action.as_ref().map(exit_action_desc_to_json)),
+    );
+    m.insert("band".to_string(), json!(i.band));
+    m.insert("net_risk".to_string(), json!(i.net_risk));
+    m.insert("threshold".to_string(), json!(i.threshold));
+    m.insert("utilization".to_string(), json!(i.utilization));
+    m.insert("overflow".to_string(), json!(i.overflow));
+    m.insert("size".to_string(), json!(i.size));
+    m.insert("internal_crossed".to_string(), json!(i.internal_crossed));
+    m.insert("external_hedged".to_string(), json!(i.external_hedged));
+    m.insert("advisory".to_string(), json!(i.advisory));
+    m.insert("fired_at".to_string(), json!(i.fired_at));
+    m.insert("policy_path".to_string(), json!(i.policy_path));
+    m.insert("reason".to_string(), json!(i.reason));
+    m.insert("lps".to_string(), json!(i.lps));
+    // Presence-tracked, and therefore OMITTED when absent — the same discipline the
+    // sibling `lp_won` / `parent_position_id` fields on `HedgeProvenance` follow, and what
+    // the descriptor-driven encoder does for a proto3 `optional` on a message that is not
+    // on the null-absent list. Absent for a self-hedge (ratio identically 1).
+    if let Some(plan) = &i.vehicle_plan {
+        m.insert(
+            "vehicle_plan".to_string(),
+            hedge_vehicle_plan_desc_to_json(plan),
+        );
+    }
+    m.insert("exit_mode".to_string(), json!(i.exit_mode));
+    Value::Object(m)
 }
 
 /// A per-desk hedge enable toggle → JSON.

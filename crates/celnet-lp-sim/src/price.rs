@@ -69,7 +69,21 @@ impl YieldModel {
     /// the consolidator's non-finite fold rather than silently mispricing.
     #[must_use]
     pub fn clean_price_at(&self, now_nanos: i64, noise: f64) -> f64 {
-        let y = self.yield_at(now_nanos, noise);
+        self.clean_price_at_view(now_nanos, noise, 0.0)
+    }
+
+    /// The clean price implied by the sampled yield **displaced by one quoting
+    /// member's own `view_yield`** (decimal yield) — the dealer's idiosyncratic
+    /// view of where the security is, on top of the market-wide sampled level.
+    ///
+    /// Separating the two is what makes a multi-dealer panel consolidate: the
+    /// market level is common information every dealer marks off, and the dealer's
+    /// own view is a small displacement around it. Priced through the same real
+    /// analytics leaf, so a displaced view is still an oracle price of a real yield
+    /// (never a price handle nudged after the fact).
+    #[must_use]
+    pub fn clean_price_at_view(&self, now_nanos: i64, noise: f64, view_yield: f64) -> f64 {
+        let y = self.yield_at(now_nanos, noise) + view_yield;
         clean_price(&self.bond, Rate(y)).unwrap_or(f64::NAN)
     }
 }
@@ -91,9 +105,23 @@ impl MidSource {
     /// yield.
     #[must_use]
     pub fn mid_at(&self, now_nanos: i64, noise: f64) -> f64 {
+        self.mid_at_view(now_nanos, noise, 0.0)
+    }
+
+    /// The mid at logical `now_nanos` given the tick's seeded `noise` and the
+    /// quoting member's own `view_yield` displacement (decimal yield) — see
+    /// [`YieldModel::clean_price_at_view`].
+    ///
+    /// A [`MidSource::Fixed`] ladder mid ignores `view_yield`: it is an exact,
+    /// caller-specified constant whose whole purpose is to be the analytic ground
+    /// truth of a BBO test, so it carries no dealer-view dispersion by design.
+    #[must_use]
+    pub fn mid_at_view(&self, now_nanos: i64, noise: f64, view_yield: f64) -> f64 {
         match self {
             MidSource::Fixed(m) => *m,
-            MidSource::MeanRevertingYield(model) => model.clean_price_at(now_nanos, noise),
+            MidSource::MeanRevertingYield(model) => {
+                model.clean_price_at_view(now_nanos, noise, view_yield)
+            }
         }
     }
 

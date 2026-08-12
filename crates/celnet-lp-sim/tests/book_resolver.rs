@@ -46,7 +46,15 @@ fn selection(n: usize) -> Vec<QuotedLine> {
     let c = cfg();
     load_coupon_universe()
         .into_iter()
-        .filter_map(|b| b.to_line(c.settlement, c.reversion_per_sec, c.perturbation))
+        .filter_map(|b| {
+            b.to_line(
+                c.settlement,
+                c.half_spread,
+                c.skew_step,
+                c.reversion_per_sec,
+                c.perturbation,
+            )
+        })
         .take(n)
         .collect()
 }

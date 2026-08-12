@@ -5559,10 +5559,11 @@ message HedgeProvenance {
 // How a VEHICLE hedge was sized: the DV01 ratio, what it rounds to, and what is
 // honestly left over (mirrors `celnet_hedge_routing::HedgeRatioPlan`).
 //
-//     units = position_DV01 / hedge_instrument_DV01_per_unit
-//
-// rounded to whole contracts for a future — you cannot trade 318.47 lots — with the
-// rounding residual REPORTED rather than hidden.
+// `units = position_DV01 / hedge_instrument_DV01_per_unit`, rounded to whole contracts
+// for a future — you cannot trade 318.47 lots — with the rounding residual REPORTED
+// rather than hidden. (Kept inline rather than indented: an indented block in a proto
+// comment becomes a rustdoc CODE BLOCK on the generated struct, which rustdoc then tries
+// to compile as a doctest.)
 message HedgeVehiclePlanDesc {
   // The instrument actually traded.
   string hedge_instrument_id = 1;

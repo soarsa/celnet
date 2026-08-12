@@ -184,6 +184,20 @@ pub struct RatesNodeAggregate {
 }
 
 impl RatesNodeAggregate {
+    /// The **empty** aggregate for `ccy` — a netting set holding no facts (a fresh
+    /// book): every measure `0`, an empty ladder, no cells. The FI counterpart to
+    /// `celnet_risk_cube::NodeAggregate::empty`, and the identity of
+    /// [`merge_additive`](Self::merge_additive).
+    ///
+    /// Exists so a caller that resolves *no* facts for a scope has an honest empty
+    /// aggregate to classify against, rather than having to fabricate one or skip the
+    /// limit check (a skipped check is an inert limit — the failure mode
+    /// `docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md` §2.3 Defect 2 documents).
+    #[must_use]
+    pub fn empty(ccy: Ccy) -> Self {
+        Self::finalize(ccy, BTreeMap::new())
+    }
+
     /// Fold a cell map into the finalized firm-node measures by summing the cells
     /// in **ascending-entity order** (and, within the ladder, ascending tenor) —
     /// the deterministic order both the single-node and the fan-in paths share.

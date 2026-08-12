@@ -133,6 +133,8 @@ pub fn quotable_lines(cfg: &LpSimConfig, bonds: &[TreasuryBond]) -> Vec<QuotedLi
     let mut lines = crate::universe::bond_lines(
         bonds,
         cfg.settlement,
+        cfg.half_spread,
+        cfg.skew_step,
         cfg.reversion_per_sec,
         cfg.perturbation,
     );
@@ -174,12 +176,18 @@ pub fn build_fleet(cfg: &LpSimConfig, lines: &[QuotedLine]) -> Vec<SimLp> {
                     // keyed the same way the runtime tick noise is (tick 0).
                     let u = seeded_unit(lp_seed, &venue, &instrument, 0);
                     let mut model = line.model;
-                    // A line may carry its own dispersion (a listed instrument sizes
-                    // it in ticks off its own DV01); otherwise the fleet's cash default.
+                    // Every real line sizes its own dispersion off its own DV01 (a
+                    // flat yield budget cannot serve instruments of different
+                    // duration); the fleet default only covers a hand-built line.
                     model.initial_yield +=
                         line.yield_dispersion.unwrap_or(cfg.yield_dispersion) * u;
                     InstrumentModel::new(instrument, MidSource::MeanRevertingYield(model))
-                        .with_quote_shape(line.spread_scale, line.lean_scale, line.tick)
+                        .with_quote_shape(
+                            line.spread_scale,
+                            line.lean_scale,
+                            line.tick,
+                            line.dealer_view,
+                        )
                 })
                 .collect();
 

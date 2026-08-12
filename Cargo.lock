@@ -848,6 +848,8 @@ name = "celnet-refdata"
 version = "0.0.0"
 dependencies = [
  "celnet-bond",
+ "celnet-calendar",
+ "celnet-types",
  "serde",
  "serde_json",
  "time",

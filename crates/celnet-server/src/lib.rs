@@ -821,6 +821,24 @@ impl Edge {
         // lifts from first boot. Re-primed on every admin acceptance write via
         // `AuthEdge::reconcile_acceptance`. `None` ⇒ acceptance off (every lift accepted).
         rates_store.set_acceptance(identity_store.acceptance_graph().cloned());
+        // MIGRATION (Wave 0, `docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md` §7.2): bond exposure
+        // is now measured as a duration-correct analytic DV01 rather than `redemption × 1bp`,
+        // so every cap configured against the old units silently tightened by roughly the
+        // bond's duration. Audit the freshly-primed limit tree + warehouse thresholds against
+        // the loaded inventory and WARN, per cap, with the exact re-basing factor — so the
+        // change is announced at boot rather than discovered as an unexplained day-one breach.
+        // Findings are empty (and the call ~free) on a book holding no bonds.
+        let rebase_findings = rates_store.audit_proxy_era_caps();
+        if !rebase_findings.is_empty() {
+            tracing::warn!(
+                class = celnet_observability::LogClass::Risk.label(),
+                caps = rebase_findings.len(),
+                breaching_now = rebase_findings.iter().filter(|f| f.breaching_now).count(),
+                "BOND DV01 RE-BASING: configured rate-risk caps still appear to be in \
+                 pre-migration (duration-1 bond proxy) units — see the per-cap warnings above \
+                 for the multiplier each must be re-based by",
+            );
+        }
 
         // ADR-0015 §2.1: activate the configurable consistency tier — Raft **wired
         // everywhere but forced nowhere**. A `RaftNode` is booted ONLY when a

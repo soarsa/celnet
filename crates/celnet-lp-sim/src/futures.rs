@@ -225,6 +225,12 @@ impl FuturesContract {
             spread_scale: ratio(HALF_SPREAD_TICKS * tick, base_half_spread),
             lean_scale: ratio(LEAN_TICKS * tick / PANEL_HALF_WIDTH_STEPS, base_skew_step),
             yield_dispersion: Some(yield_dispersion),
+            // No wandering private mark on a listed line: a market maker's view
+            // between re-quotes moves by far less than the minimum price increment
+            // the two-way is snapped to, so it would round away without reaching the
+            // tape. Listed makers differentiate on size and queue position, which
+            // this feed carries in the per-member firm size, not on a private mark.
+            dealer_view: 0.0,
             tick: Some(tick),
         })
     }

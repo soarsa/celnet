@@ -110,6 +110,13 @@ pub fn exposure_of(
         // is (mis)configured onto an FX limit tree can never spuriously breach an options
         // booking. Every pre-existing FX-Greeks metric is untouched — `exposure_of` stays
         // byte-identical on the options path.
+        //
+        // ⚠ This zero is only safe because a caller that HAS FI limits routes them to
+        // [`exposure_of_rates`] instead of here. A booking path that ran the FX-Greeks
+        // [`pre_trade_check`] alone over a tree carrying FI limits would silently render
+        // every one of them inert. [`pre_trade_check_mixed`] is the entry point that makes
+        // that impossible for a mixed (linear-rates) tree; use it, not `pre_trade_check`,
+        // whenever the tree may carry both families.
         LimitMetric::Dv01 | LimitMetric::Pvbp | LimitMetric::RateTenorBucket { .. } => 0.0,
     }
 }
@@ -300,6 +307,100 @@ where
 
         for limit in tree.at(scope) {
             let exposure = exposure_of(&projected, limit.metric, &nonadditive);
+            let utilization = limit.classify(exposure);
+            let check = LimitCheck {
+                scope,
+                limit: *limit,
+                utilization,
+            };
+            if check.is_hard_breach() {
+                hard_breach = true;
+            } else if utilization.status.is_breach() {
+                soft_warn = true;
+            }
+            checks.push(check);
+        }
+    }
+
+    let decision = if hard_breach {
+        PreTradeDecision::Reject
+    } else if soft_warn {
+        PreTradeDecision::Warn
+    } else {
+        PreTradeDecision::Accept
+    };
+    PreTradeResult { decision, checks }
+}
+
+/// **Mixed-family pre-trade check** — the gate a *linear fixed-income* booking path
+/// runs (`docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md` §6.1 G2).
+///
+/// A rates limit tree legitimately carries limits from **both** metric families: a
+/// coarse [`LimitMetric::Delta`] proxy the booking sink charges, *and* precise
+/// [`LimitMetric::Dv01`] / [`LimitMetric::Pvbp`] / [`LimitMetric::RateTenorBucket`] caps.
+/// [`pre_trade_check`] alone cannot enforce the latter: [`exposure_of`] reads a true `0`
+/// for every FI metric on an FX-Greeks [`NodeAggregate`], so **an FI limit configured on
+/// a rates book was silently inert — it could never breach**. This entry point closes
+/// that hole by routing each limit to the node its own family is measured on:
+///
+/// | Family | Node | Evaluator |
+/// | --- | --- | --- |
+/// | FX Greeks (delta/gamma/vega/…, concentration, VaR/ES/stop-loss) | projected [`NodeAggregate`] from `node_at` + `incremental` | [`exposure_of`] |
+/// | Linear FI ([`LimitMetric::is_fixed_income`]) | [`RatesNodeAggregate`] from `rates_at` | [`exposure_of_rates`] |
+///
+/// Every limit is charged **exactly once**, by exactly one family, so the two can never
+/// double-charge a node — the structural guarantee `is_fixed_income()` was introduced for.
+///
+/// `rates_at(scope)` must return the scope's **already-projected** aggregate (current
+/// booked risk *plus* the proposed trade). Projecting on the caller's side rather than
+/// applying an increment here is deliberate: [`RatesNodeAggregate`] is built by a
+/// fixed-order additive fold whose exactness is its contract, so the projection is done
+/// by folding the proposed position in as one more fact — never by mutating a finalized
+/// aggregate.
+///
+/// Both closures are invoked **at most once per scope, and only when that scope actually
+/// carries a limit of that family** — a tree with no FI limits never builds a rates
+/// aggregate, so the FI path costs nothing until it is configured.
+#[must_use]
+pub fn pre_trade_check_mixed<F, N, R>(
+    tree: &LimitTree,
+    path: &ScopePath,
+    incremental: &IncrementalTrade,
+    mut node_at: F,
+    mut nonadditive_at: N,
+    mut rates_at: R,
+) -> PreTradeResult
+where
+    F: FnMut(LimitScope) -> NodeAggregate,
+    N: FnMut(LimitScope) -> NonAdditiveExposure,
+    R: FnMut(LimitScope) -> RatesNodeAggregate,
+{
+    let mut checks = Vec::new();
+    let mut hard_breach = false;
+    let mut soft_warn = false;
+
+    for scope in path.scopes() {
+        if !tree.has(scope) {
+            continue;
+        }
+        let limits = tree.at(scope);
+        // Lazily materialize each family's node: a scope carrying only Greek limits never
+        // builds a rates aggregate, and vice versa.
+        let mut greeks: Option<(NodeAggregate, NonAdditiveExposure)> = None;
+        let mut rates: Option<RatesNodeAggregate> = None;
+
+        for limit in limits {
+            let exposure = if limit.metric.is_fixed_income() {
+                let agg = rates.get_or_insert_with(|| rates_at(scope));
+                exposure_of_rates(agg, limit.metric)
+            } else {
+                let (node, nonadditive) = greeks.get_or_insert_with(|| {
+                    let mut projected = node_at(scope);
+                    incremental.apply_to(&mut projected);
+                    (projected, nonadditive_at(scope))
+                });
+                exposure_of(node, limit.metric, nonadditive)
+            };
             let utilization = limit.classify(exposure);
             let check = LimitCheck {
                 scope,

@@ -49,6 +49,18 @@ impl HedgeVenue {
     /// The stable `lp_won` label carried on provenance for a composite fill (an LP fill
     /// carries the winning LP's own id instead).
     pub const COMPOSITE_LABEL: &'static str = "COMPOSITE";
+
+    /// The stable venue label for **structured logging** — the field that tells ops
+    /// whether a hedge really crossed the street or backstopped to a synthetic mid.
+    /// Before this the venue existed only in the in-memory provenance ring, so nothing in
+    /// any log sink distinguished a genuine LP fill from a `COMPOSITE` backstop.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            HedgeVenue::LpPanel => "LP_PANEL",
+            HedgeVenue::Composite => Self::COMPOSITE_LABEL,
+        }
+    }
 }
 
 /// One external LP hedge fill — the best two-way an LP returned for a hedge request.
@@ -127,6 +139,15 @@ impl ExternalHedgeFill {
     #[must_use]
     pub fn is_filled(&self) -> bool {
         self.filled > 0.0 && self.venue.is_some()
+    }
+
+    /// The venue label for **structured logging**: the filling venue, or `NONE` for an
+    /// honest miss / advisory (nothing was externalised). Paired with `lp_won` on the
+    /// hedge-execution log line, this is what lets ops answer "did that hedge cross the
+    /// street, or backstop to a synthetic mid?" from the logs alone.
+    #[must_use]
+    pub fn venue_label(&self) -> &'static str {
+        self.venue.map_or("NONE", HedgeVenue::label)
     }
 }
 

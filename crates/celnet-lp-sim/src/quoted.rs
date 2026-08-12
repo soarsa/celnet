@@ -53,16 +53,34 @@ pub struct QuotedLine {
     /// prints through its best offer and the composite comes out **crossed** — which
     /// the server's RFQ resolver rejects, silently starving every hedge routed at it.
     pub lean_scale: f64,
-    /// This instrument's own per-member starting-yield dispersion (decimal yield),
+    /// This instrument's own per-member **starting**-yield dispersion (decimal
+    /// yield) — the fixed part of a dealer's private view of where the security is,
     /// overriding the fleet default. `None` uses the fleet's
     /// [`yield_dispersion`](crate::LpSimConfig::yield_dispersion).
     ///
-    /// A single yield dispersion cannot serve both market structures: the price
-    /// displacement it produces is the instrument's DV01 times that yield move, so
-    /// the same 1.5 bp of dispersion is a couple of basis points on a short bond and
-    /// several minimum price increments on a long-duration futures contract. A listed
-    /// line therefore sets its own, sized in ticks off its own derived DV01.
+    /// A single yield dispersion cannot serve instruments of different duration: the
+    /// price displacement it produces is the instrument's DV01 times that yield move,
+    /// so the same 1.5 bp of dispersion is a fraction of a cent on a Bill and more
+    /// than a full price point on a 30-year bond. Every real line therefore sets its
+    /// own, sized in **price** terms off its own derived DV01 and budgeted inside the
+    /// tightest member's half-spread.
     pub yield_dispersion: Option<f64>,
+    /// This instrument's per-member **time-varying** private-view amplitude (decimal
+    /// yield): how far a member's own mark wanders from the panel-common market level
+    /// between its own re-quotes (see
+    /// [`InstrumentModel::dealer_view`](crate::lp::InstrumentModel::dealer_view)).
+    ///
+    /// Sized off the same DV01 budget as
+    /// [`yield_dispersion`](Self::yield_dispersion), and for the same reason: the
+    /// three per-member displacements (deliberate lean, fixed private view, wandering
+    /// private view) must together stay strictly inside the tightest member's
+    /// half-spread, or the panel's best bid prints through its best offer and the
+    /// composite comes out crossed.
+    ///
+    /// `0.0` where a wandering sub-increment view is not meaningful — a listed
+    /// contract quoted on a tick grid snaps it away, and its makers compete on size
+    /// and queue position rather than on a private mark.
+    pub dealer_view: f64,
     /// The minimum price increment this instrument trades on, if it trades on a grid.
     /// A bid is snapped **down** to the grid and an offer **up**, which is what an
     /// exchange-listed market maker does and can never invert a two-way. `None` for

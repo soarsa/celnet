@@ -79,7 +79,7 @@ pub mod tree;
 pub use check::{
     EscalationStatus, IncrementalTrade, LimitCheck, NonAdditiveExposure, PreTradeDecision,
     PreTradeResult, ScopeMonitor, check_scope, check_scope_rates, exposure_of, exposure_of_rates,
-    post_trade_check, post_trade_check_rates, pre_trade_check,
+    post_trade_check, post_trade_check_rates, pre_trade_check, pre_trade_check_mixed,
 };
 pub use limit::{ConcentrationMetric, Enforcement, LimitMetric, LimitSpec, RagStatus, Utilization};
 pub use tree::{LimitScope, LimitTree, ScopePath};
@@ -643,6 +643,177 @@ mod tests {
             mon.checks[0].limit.metric,
             LimitMetric::RateTenorBucket { tenor_years: 5 }
         );
+    }
+
+    // ---- the mixed-family pre-trade gate (G2: FI limits reachable at booking) ----
+
+    /// **THE REGRESSION TEST for the inert-DV01 defect.**
+    ///
+    /// A hard `Dv01` limit that is over its cap on the projected book:
+    ///
+    /// - under the FX-Greeks-only [`pre_trade_check`] it **ACCEPTS** — `exposure_of`
+    ///   returns a hard-coded `0.0` for every FI metric on a Greeks node, so the limit is
+    ///   structurally incapable of breaching (the defect,
+    ///   `docs/RISK-MODEL-REQUIREMENTS-AND-GAPS.md` §2.3 Defect 2 / G2);
+    /// - under [`pre_trade_check_mixed`] it **REJECTS**, charged against the real
+    ///   `RatesNodeAggregate` DV01.
+    #[test]
+    fn dv01_limit_breaches_under_the_mixed_gate_and_was_inert_before() {
+        // A book whose projected net DV01 is a KNOWN -5000; the hard cap is 4000.
+        let agg = fi_agg(vec![fi_fact(1, 10, -6000.0, -5000.0, &[(5, -5000.0)])]);
+        let mut tree = LimitTree::new();
+        tree.set(LimitScope::Firm, LimitSpec::hard(LimitMetric::Dv01, 4000.0));
+        let path = ScopePath::from_scopes(vec![LimitScope::Firm]);
+        let increment = IncrementalTrade {
+            greeks: NetGreeks::zero(),
+            vega_pillar: VegaPillar::new(0, 0),
+            vega: 0.0,
+        };
+
+        // BEFORE: the Greeks-only gate cannot see the DV01 at all.
+        let before = pre_trade_check(
+            &tree,
+            &path,
+            &increment,
+            |_| empty_node(),
+            |_| NonAdditiveExposure::default(),
+        );
+        assert_eq!(
+            before.decision,
+            PreTradeDecision::Accept,
+            "the FX-Greeks-only gate charges a DV01 limit 0.0 — it can never breach"
+        );
+        assert_eq!(before.checks[0].utilization.ratio, 0.0);
+
+        // AFTER: the mixed gate charges the real aggregate DV01 and blocks.
+        let after = pre_trade_check_mixed(
+            &tree,
+            &path,
+            &increment,
+            |_| empty_node(),
+            |_| NonAdditiveExposure::default(),
+            |_| agg.clone(),
+        );
+        assert_eq!(after.decision, PreTradeDecision::Reject);
+        let breach = after.hard_breaches().next().expect("a hard DV01 breach");
+        assert_eq!(breach.limit.metric, LimitMetric::Dv01);
+        assert!((breach.utilization.ratio - 5000.0 / 4000.0).abs() < 1e-12);
+    }
+
+    /// **A `Pvbp` limit is equally reachable** through the mixed gate, read off the
+    /// aggregate's netted analytic PV01 rather than the parallel DV01.
+    #[test]
+    fn pvbp_limit_breaches_under_the_mixed_gate() {
+        let agg = fi_agg(vec![fi_fact(1, 10, -6000.0, -1.0, &[(5, -1.0)])]);
+        let mut tree = LimitTree::new();
+        tree.set(LimitScope::Firm, LimitSpec::hard(LimitMetric::Pvbp, 5000.0));
+        let path = ScopePath::from_scopes(vec![LimitScope::Firm]);
+        let increment = IncrementalTrade {
+            greeks: NetGreeks::zero(),
+            vega_pillar: VegaPillar::new(0, 0),
+            vega: 0.0,
+        };
+        let res = pre_trade_check_mixed(
+            &tree,
+            &path,
+            &increment,
+            |_| empty_node(),
+            |_| NonAdditiveExposure::default(),
+            |_| agg.clone(),
+        );
+        assert_eq!(res.decision, PreTradeDecision::Reject);
+        assert_eq!(
+            res.hard_breaches().next().expect("breach").limit.metric,
+            LimitMetric::Pvbp
+        );
+    }
+
+    /// **Each limit is charged exactly once, by its own family** — a tree carrying both a
+    /// Greeks `Delta` proxy limit and a `Dv01` cap evaluates two checks, each against its
+    /// own node, with no double-charging and no cross-contamination.
+    #[test]
+    fn mixed_gate_charges_each_family_against_its_own_node() {
+        let agg = fi_agg(vec![fi_fact(1, 10, -100.0, -900.0, &[(5, -900.0)])]);
+        let mut tree = LimitTree::new();
+        tree.set(
+            LimitScope::Firm,
+            LimitSpec::hard(LimitMetric::Delta, 10_000.0),
+        );
+        tree.set(
+            LimitScope::Firm,
+            LimitSpec::hard(LimitMetric::Dv01, 10_000.0),
+        );
+        let path = ScopePath::from_scopes(vec![LimitScope::Firm]);
+        // The proposed trade adds +2000 of linear delta on the Greeks side.
+        let mut greeks = NetGreeks::zero();
+        greeks.delta_base = 2000.0;
+        let increment = IncrementalTrade {
+            greeks,
+            vega_pillar: VegaPillar::new(0, 0),
+            vega: 0.0,
+        };
+        let res = pre_trade_check_mixed(
+            &tree,
+            &path,
+            &increment,
+            |_| {
+                let mut n = empty_node();
+                n.net_greeks.delta_base = 3000.0;
+                n
+            },
+            |_| NonAdditiveExposure::default(),
+            |_| agg.clone(),
+        );
+        assert_eq!(res.decision, PreTradeDecision::Accept);
+        assert_eq!(
+            res.checks.len(),
+            2,
+            "two limits, two checks — charged once each"
+        );
+        let delta = res
+            .checks
+            .iter()
+            .find(|c| c.limit.metric == LimitMetric::Delta)
+            .expect("delta check");
+        let dv01 = res
+            .checks
+            .iter()
+            .find(|c| c.limit.metric == LimitMetric::Dv01)
+            .expect("dv01 check");
+        // Delta: (3000 current + 2000 incremental) / 10000; DV01: |−900| / 10000.
+        assert!((delta.utilization.ratio - 0.5).abs() < 1e-12);
+        assert!((dv01.utilization.ratio - 0.09).abs() < 1e-12);
+    }
+
+    /// **The rates aggregate is not built unless an FI limit actually needs it** — a tree
+    /// carrying only Greeks limits never pays for the FI path.
+    #[test]
+    fn mixed_gate_skips_the_rates_aggregate_when_no_fi_limit_is_configured() {
+        let mut tree = LimitTree::new();
+        tree.set(
+            LimitScope::Firm,
+            LimitSpec::hard(LimitMetric::Delta, 10_000.0),
+        );
+        let path = ScopePath::from_scopes(vec![LimitScope::Firm]);
+        let increment = IncrementalTrade {
+            greeks: NetGreeks::zero(),
+            vega_pillar: VegaPillar::new(0, 0),
+            vega: 0.0,
+        };
+        let mut built = 0_u32;
+        let res = pre_trade_check_mixed(
+            &tree,
+            &path,
+            &increment,
+            |_| empty_node(),
+            |_| NonAdditiveExposure::default(),
+            |_| {
+                built += 1;
+                fi_agg(vec![fi_fact(1, 10, 0.0, 0.0, &[])])
+            },
+        );
+        assert_eq!(res.decision, PreTradeDecision::Accept);
+        assert_eq!(built, 0, "no FI limit ⇒ no rates aggregate built");
     }
 
     /// **The two metric families are inert on each other's node**, so one limit tree may

@@ -100,8 +100,8 @@ use celnet_proto::{
 // `BuildCurve` curve-calibration verb. This is the final family; after it every WS
 // unary verb runs on the descriptor-driven generated codec.
 use celnet_proto::{
-    AggregatedBookDesc, AggregatedBookSpec, AggregationParamsDesc, BondDef, BookDesc,
-    BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, CapabilityDesc,
+    AggregatedBookDesc, AggregatedBookSpec, AggregationParamsDesc, BondDef, BondFutureDef,
+    BookDesc, BuildCurveRequest, CalibratedCurve, CalibratedCurvePoint, CapabilityDesc,
     CreateAggregatedBookRequest, CreateAggregatedBookResponse, CreateBookRequest,
     CreateBookResponse, CreateDeskRequest, CreateDeskResponse, CreateEntityRequest,
     CreateEntityResponse, CreateInstrumentRequest, CreateInstrumentResponse,
@@ -171,7 +171,8 @@ use celnet_proto::{
 use celnet_proto::{
     ExitActionDesc, GetHedgeConfigRequest, GetHedgeConfigResponse, GetHedgePolicyGraphRequest,
     GetHedgePolicyGraphResponse, HedgeConditionDesc, HedgeConfigDesc, HedgeDeskToggle,
-    HedgeGraphDesc, HedgeIntent, HedgeLpPanelDesc, HedgeNodeDesc, HedgeProvenance, HedgeSizeDesc,
+    HedgeExitModeBinding, HedgeGraphDesc, HedgeIntent, HedgeLpPanelDesc, HedgeNodeDesc,
+    HedgeProvenance, HedgeSizeDesc, HedgeVehicleDesc, HedgeVehiclePlanDesc,
     ListHedgeProvenanceRequest, ListHedgeProvenanceResponse, ListHedgeThresholdsRequest,
     ListHedgeThresholdsResponse, SetHedgeConfigRequest, SetHedgeConfigResponse,
     UpdateHedgePolicyGraphRequest, UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdRequest,
@@ -5637,6 +5638,41 @@ impl WireBuilder for BondDef {
     }
 }
 
+impl WireBuilder for BondFutureDef {
+    const MESSAGE: &'static str = "BondFutureDef";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "contract_code" => self.contract_code = req_string(value, "contract_code")?,
+            "contract_symbol" => self.contract_symbol = string_or_empty(value),
+            "underlying_issuer" => self.underlying_issuer = string_or_empty(value),
+            "contract_face_value" => self.contract_face_value = f64_or_zero(value),
+            "tick_size_points" => self.tick_size_points = f64_or_zero(value),
+            "tick_value" => self.tick_value = f64_or_zero(value),
+            "notional_coupon_rate" => self.notional_coupon_rate = f64_or_zero(value),
+            "deliverable_min_months" => self.deliverable_min_months = u32_or_zero(value),
+            "deliverable_max_months" => self.deliverable_max_months = u32_or_zero(value),
+            "delivery_month_start" => {
+                self.delivery_month_start = opt_msg::<BrokenDate>(value, "delivery_month_start")?;
+            }
+            "first_delivery_date" => {
+                self.first_delivery_date = opt_msg::<BrokenDate>(value, "first_delivery_date")?;
+            }
+            "last_trading_date" => {
+                self.last_trading_date = opt_msg::<BrokenDate>(value, "last_trading_date")?;
+            }
+            "last_delivery_date" => {
+                self.last_delivery_date = opt_msg::<BrokenDate>(value, "last_delivery_date")?;
+            }
+            "dv01_per_contract_at_notional_yield" => {
+                self.dv01_per_contract_at_notional_yield = f64_or_zero(value);
+            }
+            "calendars" => self.calendars = string_vec(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for InstrumentDefDesc {
     const MESSAGE: &'static str = "InstrumentDefDesc";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -5663,6 +5699,12 @@ impl WireBuilder for InstrumentDefDesc {
                 self.definition = Some(InstrumentDefinition::StirFuture(req_msg::<StirFutureDef>(
                     value,
                     "stir_future",
+                )?));
+            }
+            "bond_future" => {
+                self.definition = Some(InstrumentDefinition::BondFuture(req_msg::<BondFutureDef>(
+                    value,
+                    "bond_future",
                 )?));
             }
             "vanilla_irs" => {
@@ -6553,6 +6595,45 @@ impl WireBuilder for ExitActionDesc {
             "lps" => self.lps = string_vec(value),
             "internal_first" => self.internal_first = bool_or_false(value),
             "reason" => self.reason = string_or_empty(value),
+            // An absent `vehicle_kind` decodes to `0` = SELF, so a stored graph authored
+            // before vehicles existed round-trips to the historical self-hedge.
+            "vehicle_kind" => self.vehicle_kind = enum_or_zero(value),
+            "vehicle_instrument" => self.vehicle_instrument = string_or_empty(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for HedgeVehicleDesc {
+    const MESSAGE: &'static str = "HedgeVehicleDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "id" => self.id = string_or_empty(value),
+            "instrument_id" => self.instrument_id = string_or_empty(value),
+            "product" => self.product = string_or_empty(value),
+            "ccy" => self.ccy = string_or_empty(value),
+            "min_maturity_years" => self.min_maturity_years = f64_or_zero(value),
+            "max_maturity_years" => self.max_maturity_years = f64_or_zero(value),
+            "hedge_instrument_id" => self.hedge_instrument_id = string_or_empty(value),
+            "is_future" => self.is_future = bool_or_false(value),
+            "dv01_per_unit" => self.dv01_per_unit = f64_or_zero(value),
+            "unit_label" => self.unit_label = string_or_empty(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for HedgeExitModeBinding {
+    const MESSAGE: &'static str = "HedgeExitModeBinding";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "scope_kind" => self.scope_kind = enum_or_zero(value),
+            "scope_id" => self.scope_id = string_or_empty(value),
+            // An absent `mode` decodes to `0` = AUTO — the historical fire-on-breach
+            // behaviour, never SUGGEST.
+            "mode" => self.mode = enum_or_zero(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -6734,6 +6815,10 @@ impl WireBuilder for HedgeConfigDesc {
                 self.lp_panels = opt_repeated::<HedgeLpPanelDesc>(value, "lp_panels")?;
             }
             "composite_spread_bp" => self.composite_spread_bp = f64_or_zero(value),
+            "vehicles" => self.vehicles = opt_repeated::<HedgeVehicleDesc>(value, "vehicles")?,
+            "exit_modes" => {
+                self.exit_modes = opt_repeated::<HedgeExitModeBinding>(value, "exit_modes")?;
+            }
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -7912,6 +7997,33 @@ impl WireAdapter for BondDef {
     }
 }
 
+impl WireAdapter for BondFutureDef {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "contract_code" => Some(WireVal::Str(&self.contract_code)),
+            "contract_symbol" => Some(WireVal::Str(&self.contract_symbol)),
+            "underlying_issuer" => Some(WireVal::Str(&self.underlying_issuer)),
+            "contract_face_value" => Some(WireVal::F64(self.contract_face_value)),
+            "tick_size_points" => Some(WireVal::F64(self.tick_size_points)),
+            "tick_value" => Some(WireVal::F64(self.tick_value)),
+            "notional_coupon_rate" => Some(WireVal::F64(self.notional_coupon_rate)),
+            "deliverable_min_months" => Some(WireVal::U64(u64::from(self.deliverable_min_months))),
+            "deliverable_max_months" => Some(WireVal::U64(u64::from(self.deliverable_max_months))),
+            // Singular `BrokenDate` messages: absent renders `null` via the generic rule,
+            // exactly as `BondDef::maturity_date` does.
+            "delivery_month_start" => self.delivery_month_start.as_ref().map(|d| WireVal::Msg(d)),
+            "first_delivery_date" => self.first_delivery_date.as_ref().map(|d| WireVal::Msg(d)),
+            "last_trading_date" => self.last_trading_date.as_ref().map(|d| WireVal::Msg(d)),
+            "last_delivery_date" => self.last_delivery_date.as_ref().map(|d| WireVal::Msg(d)),
+            "dv01_per_contract_at_notional_yield" => {
+                Some(WireVal::F64(self.dv01_per_contract_at_notional_yield))
+            }
+            "calendars" => Some(WireVal::RepeatedStr(&self.calendars)),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for InstrumentDefDesc {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -7938,6 +8050,10 @@ impl WireAdapter for InstrumentDefDesc {
             },
             "stir_future" => match &self.definition {
                 Some(InstrumentDefinition::StirFuture(s)) => Some(WireVal::Msg(s)),
+                _ => None,
+            },
+            "bond_future" => match &self.definition {
+                Some(InstrumentDefinition::BondFuture(b)) => Some(WireVal::Msg(b)),
                 _ => None,
             },
             "vanilla_irs" => match &self.definition {
@@ -8939,6 +9055,60 @@ impl WireAdapter for ExitActionDesc {
             "lps" => Some(WireVal::RepeatedStr(&self.lps)),
             "internal_first" => Some(WireVal::Bool(self.internal_first)),
             "reason" => Some(WireVal::Str(&self.reason)),
+            // WITH WHAT the leaf hedges. Both are plain proto3 scalars (always emitted):
+            // `SELF` is ordinal 0, so a leaf that names no vehicle encodes exactly as it
+            // did before vehicles existed.
+            "vehicle_kind" => Some(WireVal::Enum(self.vehicle_kind)),
+            "vehicle_instrument" => Some(WireVal::Str(&self.vehicle_instrument)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for HedgeVehiclePlanDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "hedge_instrument_id" => Some(WireVal::Str(&self.hedge_instrument_id)),
+            "unit_label" => Some(WireVal::Str(&self.unit_label)),
+            "whole_units" => Some(WireVal::Bool(self.whole_units)),
+            "dv01_basis" => Some(WireVal::Str(&self.dv01_basis)),
+            "duration_correct" => Some(WireVal::Bool(self.duration_correct)),
+            "target_dv01" => Some(WireVal::F64(self.target_dv01)),
+            "dv01_per_unit" => Some(WireVal::F64(self.dv01_per_unit)),
+            "exact_units" => Some(WireVal::F64(self.exact_units)),
+            "units" => Some(WireVal::F64(self.units)),
+            "hedged_dv01" => Some(WireVal::F64(self.hedged_dv01)),
+            "residual_dv01" => Some(WireVal::F64(self.residual_dv01)),
+            "summary" => Some(WireVal::Str(&self.summary)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for HedgeVehicleDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "id" => Some(WireVal::Str(&self.id)),
+            "instrument_id" => Some(WireVal::Str(&self.instrument_id)),
+            "product" => Some(WireVal::Str(&self.product)),
+            "ccy" => Some(WireVal::Str(&self.ccy)),
+            "min_maturity_years" => Some(WireVal::F64(self.min_maturity_years)),
+            "max_maturity_years" => Some(WireVal::F64(self.max_maturity_years)),
+            "hedge_instrument_id" => Some(WireVal::Str(&self.hedge_instrument_id)),
+            "is_future" => Some(WireVal::Bool(self.is_future)),
+            "dv01_per_unit" => Some(WireVal::F64(self.dv01_per_unit)),
+            "unit_label" => Some(WireVal::Str(&self.unit_label)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for HedgeExitModeBinding {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "scope_kind" => Some(WireVal::Enum(self.scope_kind)),
+            "scope_id" => Some(WireVal::Str(&self.scope_id)),
+            "mode" => Some(WireVal::Enum(self.mode)),
             _ => None,
         }
     }
@@ -9087,6 +9257,13 @@ impl WireAdapter for HedgeProvenance {
             // proto3 `optional`: absent ⇒ omitted (a per-fill execution record's parent
             // position id; the book-level advisory-intent records carry none).
             "parent_position_id" => self.parent_position_id.map(WireVal::U64),
+            // proto3 `optional` message: absent ⇒ OMITTED (HedgeProvenance is not on the
+            // null-absent list), matching the hand encoder's `if let Some(plan)` insert.
+            // Absent for a self-hedge, whose DV01 ratio is identically 1 and needs no plan.
+            "vehicle_plan" => self
+                .vehicle_plan
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
             _ => None,
         }
     }
@@ -9115,6 +9292,15 @@ impl WireAdapter for HedgeIntent {
             "policy_path" => Some(WireVal::RepeatedU32(&self.policy_path)),
             "reason" => Some(WireVal::Str(&self.reason)),
             "lps" => Some(WireVal::RepeatedStr(&self.lps)),
+            // proto3 `optional` message: absent ⇒ OMITTED (HedgeIntent is not on the
+            // null-absent list) — the same presence discipline as `HedgeProvenance`'s.
+            "vehicle_plan" => self
+                .vehicle_plan
+                .as_ref()
+                .map(|p| WireVal::Msg(p as &dyn WireAdapter)),
+            // Whether this scope fires automatically or only suggests. Plain scalar
+            // (`AUTO` is ordinal 0), so it always emits.
+            "exit_mode" => Some(WireVal::Enum(self.exit_mode)),
             _ => None,
         }
     }
@@ -9165,6 +9351,21 @@ impl WireAdapter for HedgeConfigDesc {
                     .collect(),
             )),
             "composite_spread_bp" => Some(WireVal::F64(self.composite_spread_bp)),
+            // The firm's hedge-vehicle REGISTRY and the scoped SUGGEST-vs-AUTO bindings.
+            // Both round-trip through this one config message (no separate CRUD RPC), so
+            // an omission here silently disables the whole Vehicles / Exit-mode surface.
+            "vehicles" => Some(WireVal::RepeatedMsg(
+                self.vehicles
+                    .iter()
+                    .map(|v| v as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "exit_modes" => Some(WireVal::RepeatedMsg(
+                self.exit_modes
+                    .iter()
+                    .map(|m| m as &dyn WireAdapter)
+                    .collect(),
+            )),
             _ => None,
         }
     }

@@ -343,6 +343,20 @@ impl crate::services::analytics::lp::LpFlowSource for AggregationHub {
 /// reducing a short ⇒ we BUY at its offer), among the fresh (non-stale) member lines — or
 /// `None` when no covering book has a fresh member with a firm price on that side (an honest
 /// miss the executor backstops to the composite / warehouses, never a fabricated fill).
+///
+/// # Why this reads the member panel and not the composite
+///
+/// A hedge fills against **one** named LP at **one** of that LP's own prices. It never needs
+/// the book's consolidated two-way, so it must not inherit the non-crossed guard
+/// [`AggregationHub::resolve_rfq_composite`] applies: that guard exists because quoting a
+/// *crossed composite* out to a client as a two-way is nonsense, which is a statement about
+/// the composite, not about the panel underneath it. A crossed composite means one member's
+/// bid sits above another member's offer — every one of those prices is still a real, firm,
+/// executable one-sided price from a named LP, and the desk shedding risk would happily lift
+/// the best of them. Refusing to fill there is refusing free liquidity, and it is what made
+/// every auto-hedge silently backstop to the synthetic COMPOSITE venue whenever the panel
+/// happened to consolidate crossed (a divergent member, a fat-finger print, a two-member book
+/// below the divergence-gating quorum) — so street-side LP analytics never recorded a fill.
 impl crate::services::auto_hedge::LpHedgeSource for AggregationHub {
     fn best_fill(
         &self,
@@ -350,38 +364,48 @@ impl crate::services::auto_hedge::LpHedgeSource for AggregationHub {
         net_risk: f64,
         _size: f64,
     ) -> Option<crate::services::auto_hedge::LpFill> {
-        let composite = self.resolve_rfq_composite(instrument)?;
         // Reducing a long (net_risk > 0) sheds by SELLING → lift an LP's BID (best = highest);
         // reducing a short sheds by BUYING → lift an LP's OFFER (best = lowest). A zero/None
         // net has no side; treat it as a sell (a degenerate shed) for determinism.
         let sell = net_risk > 0.0;
-        let mut best: Option<(&str, f64)> = None;
-        for m in &composite.members {
-            if m.stale {
-                continue; // a stale contribution is not executable (excluded from the panel).
-            }
-            let price = if sell { m.bid } else { m.offer };
-            if !price.is_finite() {
+        // Covering books in deterministic id order: the first one holding an executable
+        // member price wins, so a book whose members have all aged out falls through to the
+        // next rather than masking live liquidity behind it.
+        for book_id in self.covering_books(instrument) {
+            let Some(members) = self.resolve_member_panel(&book_id, instrument) else {
                 continue;
-            }
-            let improves = match best {
-                None => true,
-                Some((_, incumbent)) => {
-                    if sell {
-                        price > incumbent // we receive more selling into a higher bid.
-                    } else {
-                        price < incumbent // we pay less buying at a lower offer.
-                    }
-                }
             };
-            if improves {
-                best = Some((m.lp_name.as_str(), price));
+            let mut best: Option<(&str, f64)> = None;
+            for m in &members {
+                if m.stale {
+                    continue; // a stale contribution is not executable.
+                }
+                let price = if sell { m.bid } else { m.offer };
+                if !price.is_finite() {
+                    continue;
+                }
+                let improves = match best {
+                    None => true,
+                    Some((_, incumbent)) => {
+                        if sell {
+                            price > incumbent // we receive more selling into a higher bid.
+                        } else {
+                            price < incumbent // we pay less buying at a lower offer.
+                        }
+                    }
+                };
+                if improves {
+                    best = Some((m.lp_name.as_str(), price));
+                }
+            }
+            if let Some((lp_id, price)) = best {
+                return Some(crate::services::auto_hedge::LpFill {
+                    lp_id: lp_id.to_owned(),
+                    price,
+                });
             }
         }
-        best.map(|(lp_id, price)| crate::services::auto_hedge::LpFill {
-            lp_id: lp_id.to_owned(),
-            price,
-        })
+        None
     }
 }
 
@@ -575,6 +599,63 @@ impl AggregationHub {
             .contains_key(book_id)
     }
 
+    /// The ids of the enabled books whose scope admits `instrument_id`, in deterministic
+    /// id order (a stable resolution when more than one book admits the same instrument).
+    ///
+    /// Collected under a short read lock that is released before returning, because every
+    /// caller goes on to call [`Self::snapshot`], which re-locks — holding the read guard
+    /// across that could deadlock.
+    fn covering_books(&self, instrument_id: &str) -> Vec<String> {
+        let books = self.books.read().expect("aggregation books lock poisoned");
+        let mut ids: Vec<String> = books
+            .iter()
+            .filter(|(_, engine)| {
+                let cfg = engine.cfg.lock().expect("book cfg lock poisoned");
+                scope_admits(&cfg.scope, instrument_id)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    /// The contributing member-LP panel `book_id` currently publishes for
+    /// `instrument_id` — **without** the non-crossed/finite composite guard
+    /// [`Self::resolve_rfq_composite`] applies.
+    ///
+    /// That guard belongs to the question "what two-way do we show a client?", not to
+    /// "which named LP can we hit?". A caller that fills against a single member's own
+    /// firm price (see the [`LpHedgeSource`](crate::services::auto_hedge::LpHedgeSource)
+    /// impl above) needs the panel and nothing else, and a crossed or otherwise
+    /// degenerate composite says nothing about whether the members underneath it are
+    /// executable. Callers that price a two-way keep using `resolve_rfq_composite`.
+    ///
+    /// `None` when the book is not running or publishes no line for the instrument.
+    #[must_use]
+    pub fn resolve_member_panel(
+        &self,
+        book_id: &str,
+        instrument_id: &str,
+    ) -> Option<Vec<RfqMemberLine>> {
+        let published = self.snapshot(book_id)?;
+        let line = published
+            .snapshot
+            .instruments
+            .iter()
+            .find(|i| i.instrument_id == instrument_id)?;
+        let members = line
+            .contributions
+            .iter()
+            .map(|c| RfqMemberLine {
+                lp_name: c.lp_name.clone(),
+                bid: c.bid,
+                offer: c.offer,
+                stale: c.stale,
+            })
+            .collect();
+        Some(members)
+    }
+
     /// Resolve the composite line for `instrument_id` from the first enabled book
     /// (deterministic id order) whose scope admits it **and** that currently publishes a
     /// well-formed composite line for it (quorum met, fresh members, a finite non-crossed
@@ -586,26 +667,13 @@ impl AggregationHub {
     /// line for it (e.g. no fresh member LPs / below quorum), or the composite is
     /// degenerate (non-finite / crossed) — the RFQ path then falls back to the synthetic
     /// demo panel, so nothing regresses when no book is configured.
+    ///
+    /// A caller that only needs to hit ONE named LP must NOT use this: the non-crossed
+    /// guard is about the two-way this returns, not about whether the members underneath
+    /// are executable. Use [`Self::resolve_member_panel`].
     #[must_use]
     pub fn resolve_rfq_composite(&self, instrument_id: &str) -> Option<RfqComposite> {
-        // Candidate books whose scope admits the id, in deterministic id order (a stable
-        // resolution when more than one book admits the same instrument). Collected under
-        // a short read lock that is released before consolidating — `snapshot` re-locks,
-        // so holding the read guard across it could deadlock.
-        let candidates: Vec<String> = {
-            let books = self.books.read().expect("aggregation books lock poisoned");
-            let mut ids: Vec<String> = books
-                .iter()
-                .filter(|(_, engine)| {
-                    let cfg = engine.cfg.lock().expect("book cfg lock poisoned");
-                    scope_admits(&cfg.scope, instrument_id)
-                })
-                .map(|(id, _)| id.clone())
-                .collect();
-            ids.sort();
-            ids
-        };
-        for book_id in candidates {
+        for book_id in self.covering_books(instrument_id) {
             let Some(published) = self.snapshot(&book_id) else {
                 continue;
             };
@@ -727,20 +795,7 @@ impl AggregationHub {
     ) -> Option<RfqComposite> {
         let now = self.clock.now_nanos();
         let settlement = settlement_date(now);
-        let candidates: Vec<String> = {
-            let books = self.books.read().expect("aggregation books lock poisoned");
-            let mut ids: Vec<String> = books
-                .iter()
-                .filter(|(_, engine)| {
-                    let cfg = engine.cfg.lock().expect("book cfg lock poisoned");
-                    scope_admits(&cfg.scope, instrument_id)
-                })
-                .map(|(id, _)| id.clone())
-                .collect();
-            ids.sort();
-            ids
-        };
-        for book_id in candidates {
+        for book_id in self.covering_books(instrument_id) {
             let Some(published) = self.snapshot(&book_id) else {
                 continue;
             };
@@ -1294,6 +1349,77 @@ mod tests {
         assert!(inst.confidence > 0.0 && inst.confidence <= 1.0);
         // Best offer of 100.05 is LP-3's; its size stacks the offer side.
         assert_eq!(inst.offer_size.to_bits(), 2_000_000.0_f64.to_bits());
+    }
+
+    /// A **crossed** composite must still fill a hedge on a real, named LP.
+    ///
+    /// A two-member book below the divergence-gating quorum (the deployed `ust` shape)
+    /// consolidates `best_bid = max(bids)` and `best_offer = min(offers)`, so two members
+    /// whose mids sit further apart than their own spreads produce `best_bid >
+    /// best_offer`. `resolve_rfq_composite` rightly refuses to quote that two-way out —
+    /// but the panel underneath is fine: both members show real, firm, one-sided prices,
+    /// and a shed hits exactly one of them. Before the fix `best_fill` inherited the
+    /// composite guard and returned `None` here, so every auto-hedge backstopped to the
+    /// synthetic COMPOSITE venue and street-side LP analytics never recorded a fill.
+    #[test]
+    fn a_crossed_composite_still_fills_on_a_named_lp() {
+        use crate::services::auto_hedge::LpHedgeSource;
+        let hub = hub_with(def("b", &["LP-1", "LP-2"], params(true, 1, 60_000)));
+        // LP-1 marks the bond a full point above LP-2: max bid 92.70 > min offer 92.02.
+        assert!(hub.ingest(&lp_quote("LP-1", "CUSIP-X", 92.70, 92.74, NOW)));
+        assert!(hub.ingest(&lp_quote("LP-2", "CUSIP-X", 91.98, 92.02, NOW)));
+        let inst = &hub.snapshot("b").expect("book").snapshot.instruments[0];
+        assert!(
+            inst.best_bid > inst.best_offer,
+            "the fixture must actually be crossed: {} vs {}",
+            inst.best_bid,
+            inst.best_offer
+        );
+
+        // The composite two-way is (correctly) refused — it is not quotable.
+        assert!(
+            hub.resolve_rfq_composite("CUSIP-X").is_none(),
+            "a crossed composite must not be quoted out as a two-way"
+        );
+
+        // ...but the panel is executable, and a shed fills on the best side of it.
+        // Reducing a LONG sells into the highest bid: LP-1 at 92.70.
+        let sell = hub.best_fill("CUSIP-X", 1_000_000.0, 5_000_000.0);
+        let sell = sell.expect("a crossed composite must not starve a real LP fill");
+        assert_eq!(sell.lp_id, "LP-1");
+        assert_eq!(sell.price.to_bits(), 92.70_f64.to_bits());
+
+        // Reducing a SHORT buys at the lowest offer: LP-2 at 92.02.
+        let buy = hub
+            .best_fill("CUSIP-X", -1_000_000.0, 5_000_000.0)
+            .expect("fills the other side too");
+        assert_eq!(buy.lp_id, "LP-2");
+        assert_eq!(buy.price.to_bits(), 92.02_f64.to_bits());
+    }
+
+    /// A stale member is still not executable — the fix removes the composite-level
+    /// guard, not the per-member freshness one.
+    #[test]
+    fn a_stale_member_is_never_filled_on() {
+        use crate::services::auto_hedge::LpHedgeSource;
+        let hub = hub_with(def("b", &["LP-1", "LP-2"], params(false, 1, 30_000)));
+        // LP-1 shows the better bid but aged out 120 s ago; LP-2 is fresh.
+        assert!(hub.ingest(&lp_quote("LP-1", "CUSIP-S", 99.90, 99.94, NOW - 120 * S)));
+        assert!(hub.ingest(&lp_quote("LP-2", "CUSIP-S", 99.50, 99.54, NOW)));
+        let fill = hub
+            .best_fill("CUSIP-S", 1_000_000.0, 1_000_000.0)
+            .expect("the fresh member fills");
+        assert_eq!(fill.lp_id, "LP-2", "a stale line is not executable");
+        assert_eq!(fill.price.to_bits(), 99.50_f64.to_bits());
+    }
+
+    /// No covering book, or a covered book with nothing published, is an honest miss —
+    /// the executor backstops rather than being handed a fabricated fill.
+    #[test]
+    fn an_unfed_or_uncovered_instrument_yields_no_fill() {
+        use crate::services::auto_hedge::LpHedgeSource;
+        let hub = hub_with(def("b", &["LP-1"], params(false, 1, 60_000)));
+        assert!(hub.best_fill("NOT-QUOTED", 1.0, 1.0).is_none());
     }
 
     #[test]

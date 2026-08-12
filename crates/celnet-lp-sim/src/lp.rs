@@ -109,40 +109,75 @@ pub struct InstrumentModel {
     /// exchange-listed market maker shows and can never invert a two-way. `None` for
     /// an off-grid OTC instrument.
     pub tick: Option<f64>,
-    /// Whether the panel shares one stochastic draw (and one re-quote cadence) for
-    /// this instrument instead of each member drawing its own.
+    /// The amplitude (decimal yield) of this member's **own** time-varying view of
+    /// the instrument, drawn on the member's own seed and re-quote cadence and
+    /// applied on top of the panel-common market level (see
+    /// [`common_market_draw`](Self::common_market_draw)).
     ///
-    /// This is the difference between an OTC market and a listed one. Bilateral cash
-    /// dealers each form their own view, so per-member noise is the right model. On an
-    /// exchange every market maker is looking at the *same* order book and re-quotes
-    /// off the same price update, so the market moves as one and the members differ
-    /// only by their deliberate lean and inventory position.
+    /// This is the dealer's idiosyncratic axe/micro-view: it is what keeps a member
+    /// distinguishable from its peers tick to tick rather than a fixed offset from
+    /// them forever, and it is why a member's own re-quote cadence still means
+    /// something once the market level is common. It must stay **small relative to
+    /// the member's own half-spread** — the caller sizes it in price terms off the
+    /// instrument's own DV01 and budgets it inside the tightest member's half-spread
+    /// (see [`crate::quoted::QuotedLine::dealer_view`]).
     ///
-    /// It is also what keeps a listed composite fillable. Independent per-member
-    /// draws displace the members' mids by the instrument's DV01 times the yield
-    /// jitter — on a listed contract that is many minimum price increments, far more
-    /// than the tick-wide spread, so the panel's best bid routinely prints through its
-    /// best offer and the composite comes out **crossed**. A crossed line is rejected
-    /// by the server's RFQ resolver, so the hedge it exists to fill never fills.
-    pub common_tick_noise: bool,
+    /// `0.0` for a market where a sub-increment private view is not meaningful (a
+    /// listed contract quoted on a tick grid snaps it away).
+    pub dealer_view: f64,
+    /// Whether the panel shares one stochastic **market-level** draw (and one
+    /// re-quote cadence for it) for this instrument, instead of each member drawing
+    /// the level independently.
+    ///
+    /// The level of a traded security is common information — an exchange print
+    /// reaches every market maker at once, and an OTC dealer in a benchmark
+    /// government bond marks off the same observable inter-dealer level as its
+    /// competitors. Drawing that level *independently* per member is not a model of
+    /// bilateral disagreement, it is a model of dealers looking at different markets:
+    /// it displaces the members' mids by the instrument's DV01 times the yield
+    /// jitter, which on any medium-duration security is an order of magnitude more
+    /// than the quoted bid-offer. The panel's best bid then routinely prints through
+    /// its best offer, the composite comes out **crossed**, and the server's RFQ
+    /// resolver rejects the line outright — so the hedge and the outbound quote it
+    /// exists to serve never happen.
+    ///
+    /// Genuine cross-dealer differentiation is carried instead by the member's
+    /// deliberate lean, its own spread width, and its
+    /// [`dealer_view`](Self::dealer_view) — all budgeted inside its own half-spread,
+    /// because a market whose dealers disagree by more than they quote is not a
+    /// market, it is an arbitrage.
+    ///
+    /// `false` restores fully independent per-member level draws — the primitive
+    /// [`InstrumentModel::new`] keeps, for ladder/analytic use.
+    pub common_market_draw: bool,
 }
 
-/// The shared re-quote cadence for a listed instrument: the panel steps its common
-/// stochastic draw together rather than on each member's own dispersed cadence,
-/// because an exchange price update reaches every market maker at once.
-const LISTED_TICK_NANOS: i64 = 250_000_000;
+/// The shared re-quote cadence of the common market level: the panel steps its
+/// common stochastic draw together rather than on each member's own dispersed
+/// cadence, because the market level every maker marks off is one observable.
+const MARKET_TICK_NANOS: i64 = 250_000_000;
 
-/// The seed and venue label the shared listed-market draw is keyed on, so every
+/// The seed and venue label the shared market-level draw is keyed on, so every
 /// member of the panel samples the identical value for a given (instrument, tick).
 const SHARED_MARKET_SEED: u64 = 0x4C49_5354_4544_0001;
 
-/// The venue key of the shared listed-market draw (a label, not a real connection).
+/// A salt keying a member's private [`dealer_view`](InstrumentModel::dealer_view)
+/// draw independently of the market-level draw it is added to.
+const DEALER_VIEW_SALT: u64 = 0x5649_4557_0000_0001;
+
+/// The venue key of the shared market-level draw (a label, not a real connection).
 static SHARED_MARKET_VENUE: std::sync::LazyLock<VenueId> =
-    std::sync::LazyLock::new(|| VenueId::new("LISTED-MARKET"));
+    std::sync::LazyLock::new(|| VenueId::new("MARKET-LEVEL"));
 
 impl InstrumentModel {
     /// A model quoting `instrument` off `mid` with the LP's own spread and skew, off
-    /// any price grid — the OTC default.
+    /// any price grid, forming its market level **independently** of the rest of the
+    /// panel — the bare primitive, used for ladder mids and for analytic tests that
+    /// want deliberately decorrelated members.
+    ///
+    /// A member quoting a real instrument alongside a real panel is built with
+    /// [`with_quote_shape`](Self::with_quote_shape) instead, which shares the market
+    /// level; see [`common_market_draw`](Self::common_market_draw) for why.
     #[must_use]
     pub fn new(instrument: Instrument, mid: MidSource) -> Self {
         Self {
@@ -151,26 +186,33 @@ impl InstrumentModel {
             spread_scale: 1.0,
             lean_scale: 1.0,
             tick: None,
-            common_tick_noise: false,
+            dealer_view: 0.0,
+            common_market_draw: false,
         }
     }
 
-    /// This model with an exchange-style quoting shape: the half-spread scaled by
+    /// This model with a real market's quoting shape: the half-spread scaled by
     /// `spread_scale`, the directional lean by `lean_scale`, quotes snapped to a
-    /// `tick` grid, and — when `tick` is set — the panel's stochastic draw shared, so
-    /// the listed market moves as one (see
-    /// [`common_tick_noise`](Self::common_tick_noise)).
+    /// `tick` grid when the instrument trades on one, this member's own private
+    /// view sized at `dealer_view` (decimal yield), and the **market level shared
+    /// across the panel** (see [`common_market_draw`](Self::common_market_draw)).
     #[must_use]
     pub fn with_quote_shape(
         mut self,
         spread_scale: f64,
         lean_scale: f64,
         tick: Option<f64>,
+        dealer_view: f64,
     ) -> Self {
         self.spread_scale = spread_scale;
         self.lean_scale = lean_scale;
-        self.common_tick_noise = tick.is_some();
         self.tick = tick;
+        self.dealer_view = if dealer_view.is_finite() && dealer_view > 0.0 {
+            dealer_view
+        } else {
+            0.0
+        };
+        self.common_market_draw = true;
         self
     }
 
@@ -260,15 +302,15 @@ impl SimLp {
         self.books.iter().find(|b| &b.instrument == instrument)
     }
 
-    /// The seeded per-tick noise for a stochastic mid at logical `t_nanos`
-    /// (`0.0` for a constant ladder mid, which needs no draw).
-    fn noise_at(&self, model: &InstrumentModel, t_nanos: i64) -> f64 {
+    /// The seeded per-tick **market-level** noise for a stochastic mid at logical
+    /// `t_nanos` (`0.0` for a constant ladder mid, which needs no draw).
+    fn market_noise_at(&self, model: &InstrumentModel, t_nanos: i64) -> f64 {
         if !model.mid.is_stochastic() {
             return 0.0;
         }
-        if model.common_tick_noise {
-            // A listed market: one draw on one cadence for the whole panel.
-            let tick = t_nanos.div_euclid(LISTED_TICK_NANOS);
+        if model.common_market_draw {
+            // The level is one observable: one draw on one cadence for the panel.
+            let tick = t_nanos.div_euclid(MARKET_TICK_NANOS);
             seeded_unit(
                 SHARED_MARKET_SEED,
                 &SHARED_MARKET_VENUE,
@@ -279,6 +321,25 @@ impl SimLp {
             let tick = t_nanos.div_euclid(self.params.tick_nanos.max(1));
             seeded_unit(self.seed, &self.venue, &model.instrument, tick)
         }
+    }
+
+    /// This member's own private yield displacement at logical `t_nanos`: a seeded
+    /// draw on the member's **own** seed and re-quote cadence, scaled by the model's
+    /// [`dealer_view`](InstrumentModel::dealer_view) amplitude. Zero when the model
+    /// carries no private view (a ladder mid, or a market where one is not
+    /// meaningful).
+    fn dealer_view_at(&self, model: &InstrumentModel, t_nanos: i64) -> f64 {
+        if !model.mid.is_stochastic() || model.dealer_view == 0.0 {
+            return 0.0;
+        }
+        let tick = t_nanos.div_euclid(self.params.tick_nanos.max(1));
+        let u = seeded_unit(
+            self.seed ^ DEALER_VIEW_SALT,
+            &self.venue,
+            &model.instrument,
+            tick,
+        );
+        model.dealer_view * u
     }
 }
 
@@ -301,8 +362,11 @@ impl VenueFeed for SimLp {
             ),
         };
 
-        let noise = self.noise_at(model, sample_nanos);
-        let mut mid = model.mid.mid_at(sample_nanos, noise);
+        // The market level is (for a real instrument) one shared observable; this
+        // member's own private view of the security displaces it by a small amount.
+        let noise = self.market_noise_at(model, sample_nanos);
+        let view = self.dealer_view_at(model, sample_nanos);
+        let mut mid = model.mid.mid_at_view(sample_nanos, noise, view);
         if let Fault::Outlier { shift } = self.fault {
             mid += shift;
         }
@@ -530,6 +594,7 @@ mod quote_shape_tests {
             1.0,
             1.0,
             Some(tick),
+            0.0,
         );
         let params = LpParams {
             half_spread: tick / 2.0,
@@ -563,7 +628,7 @@ mod quote_shape_tests {
             ..LpParams::tight()
         };
         let model = InstrumentModel::new(instr("x"), MidSource::Fixed(100.0))
-            .with_quote_shape(0.25, 0.05, None);
+            .with_quote_shape(0.25, 0.05, None, 0.0);
         let lp = SimLp::new(VenueId::new("LP-2"), 1, base, vec![model]);
         let q = lp.top_of_book(&instr("x"), 0).expect("quotes");
         // half-spread 0.02 x 0.25 = 0.005; lean 0.008 x 0.05 = 0.0004.
@@ -577,7 +642,7 @@ mod quote_shape_tests {
     fn a_degenerate_scale_falls_back_to_the_lp_parameters() {
         for bad in [0.0, -1.0, f64::NAN] {
             let model = InstrumentModel::new(instr("y"), MidSource::Fixed(100.0))
-                .with_quote_shape(bad, bad, None);
+                .with_quote_shape(bad, bad, None, 0.0);
             let lp = SimLp::new(
                 VenueId::new("LP-3"),
                 1,
@@ -618,7 +683,7 @@ mod quote_shape_tests {
         let listed = |seed: u64, venue: &str, cadence: i64| {
             let model =
                 InstrumentModel::new(instr("z"), MidSource::MeanRevertingYield(yield_model))
-                    .with_quote_shape(1.0, 1.0, Some(1.0 / 64.0));
+                    .with_quote_shape(1.0, 1.0, Some(1.0 / 64.0), 0.0);
             SimLp::new(
                 VenueId::new(venue),
                 seed,
