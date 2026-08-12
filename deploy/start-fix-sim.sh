@@ -126,18 +126,20 @@ FIXSIM_ESP_SEED="${FIXSIM_ESP_SEED:-0x5EED1234}"
 case "$FIXSIM_ESP_SEED" in
   0x*|0X*) FIXSIM_ESP_SEED="$(( FIXSIM_ESP_SEED ))" ;;
 esac
-FIXSIM_USER="${FIXSIM_USER:-admin@celnet.com}"
-FIXSIM_PASSWORD="${FIXSIM_PASSWORD:-password}"
-# Prefer a host-local password file (kept OUT of the committed repo) for the ESP gRPC login,
-# exactly as start-lp-sim.sh does — the real service credential never lives in group_vars/git,
-# and the ESP refdata download (AuthService.Login) authenticates with the SAME working
-# credential as lp-sim instead of the literal "password" fallback (which fails login and
-# aborts the ESP leg with "invalid email or password"). Defaults to lp-sim's own pw file so a
-# box that already provisioned lp-sim needs no extra step. Falls back to FIXSIM_PASSWORD.
-FIXSIM_PASSWORD_FILE="${FIXSIM_PASSWORD_FILE:-/home/celnet/.lpsim_pw}"
-if [ -n "${FIXSIM_PASSWORD_FILE:-}" ] && [ -r "${FIXSIM_PASSWORD_FILE}" ]; then
-  FIXSIM_PASSWORD="$(cat "$FIXSIM_PASSWORD_FILE")"
-fi
+# ESP reference-data login (AuthService.Login). The identity defaults to this sim's OWN
+# dedicated least-privilege service account — NOT the admin, and NOT shared with lp-sim.
+# The FIX simulator acts as a CLIENT counterparty; its only authenticated server call is
+# ListInstruments, an authenticate()-only RPC gated on no capability, so the account is
+# provisioned with an EMPTY effective capability set.
+FIXSIM_USER="${FIXSIM_USER:-fix-sim@svc.celnet.local}"
+# The SECRET never goes on the command line — argv is world-readable (`ps -ef`,
+# /proc/<pid>/cmdline). The client reads FIXSIM_PASSWORD_FILE (a 0600 file, preferred) or
+# FIXSIM_PASSWORD from its ENVIRONMENT; we export them and pass no credential argument.
+# Its own file, so revoking the FIX sim never disturbs lp-sim (separate identities).
+FIXSIM_PASSWORD_FILE="${FIXSIM_PASSWORD_FILE:-/home/celnet/.fixsim_pw}"
+export FIXSIM_USER
+[ -n "${FIXSIM_PASSWORD_FILE:-}" ] && export FIXSIM_PASSWORD_FILE
+[ -n "${FIXSIM_PASSWORD:-}" ] && export FIXSIM_PASSWORD
 FIXSIM_ONESHOT="${FIXSIM_ONESHOT:-0}"
 FIXSIM_DAEMON="${FIXSIM_DAEMON:-0}"
 
@@ -418,8 +420,10 @@ if [ "$FIXSIM_ESP" = "1" ] && [ -n "$FIXSIM_ESP_PORT" ]; then
       --req-id "FIXSIM-ESP-$(date +%s)" \
       --asset esp --grpc-addr "$FIXSIM_GRPC_ADDR" \
       --esp-instruments "$FIXSIM_ESP_INSTRUMENTS" --seed "$FIXSIM_ESP_SEED" \
-      --user "$FIXSIM_USER" --password "$FIXSIM_PASSWORD" \
+      --user "$FIXSIM_USER" \
       --notional "$FIXSIM_NOTIONAL" --repeat 0 "${ESP_CADENCE[@]}")
+    # NOTE: no --password. The secret reaches the child through the exported
+    # FIXSIM_PASSWORD_FILE / FIXSIM_PASSWORD environment, never through argv.
     log "ESP leg: streaming top-$FIXSIM_ESP_INSTRUMENTS refdata bonds from $FIXSIM_HOST:$FIXSIM_ESP_PORT (refdata $FIXSIM_GRPC_ADDR)."
     ( while true; do "${ESP_ARGS[@]}" || log "ESP client exited ($?) — reconnecting in 5s"; sleep 5; done ) &
     ESP_PID=$!

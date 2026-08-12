@@ -49,13 +49,26 @@ LPSIM_SEED="${LPSIM_SEED:-305419896}"
 LPSIM_SETTLEMENT="${LPSIM_SETTLEMENT:-2026-04-16}"
 LPSIM_INCLUDE_BILLS="${LPSIM_INCLUDE_BILLS:-0}"
 LPSIM_NO_FAULTS="${LPSIM_NO_FAULTS:-0}"
-# Service login for the book poll (AuthService.Login); defaults to the seeded admin.
-LPSIM_USER="${LPSIM_USER:-admin@celnet.com}"
-LPSIM_PASSWORD="${LPSIM_PASSWORD:-password}"
-# Prefer a host-local password file (kept OUT of the committed repo) when present, so the
-# real service credential never lives in group_vars / git; falls back to LPSIM_PASSWORD.
-if [ -n "${LPSIM_PASSWORD_FILE:-}" ] && [ -r "${LPSIM_PASSWORD_FILE}" ]; then
-  LPSIM_PASSWORD="$(cat "$LPSIM_PASSWORD_FILE")"
+# Service login for the book poll (AuthService.Login). The identity defaults to the
+# DEDICATED least-privilege service account — NOT the admin. That account is provisioned
+# as a service account with an EMPTY effective capability set, which is all this daemon
+# needs: ListAggregatedBooks is an authenticate()-only RPC gated on no capability.
+LPSIM_USER="${LPSIM_USER:-lp-sim@svc.celnet.local}"
+# The SECRET is never placed on the command line — argv is world-readable (`ps -ef`,
+# /proc/<pid>/cmdline), so a --password flag publishes it to every local account. The
+# binary reads LPSIM_PASSWORD_FILE (a 0600 file, preferred) or LPSIM_PASSWORD from its
+# ENVIRONMENT instead; both are readable only by the process owner and root.
+# We export them and pass NO credential argument at all.
+LPSIM_PASSWORD_FILE="${LPSIM_PASSWORD_FILE:-/home/celnet/.lpsim_pw}"
+export LPSIM_USER
+[ -n "${LPSIM_PASSWORD_FILE:-}" ] && export LPSIM_PASSWORD_FILE
+[ -n "${LPSIM_PASSWORD:-}" ] && export LPSIM_PASSWORD
+# Fail fast with an actionable message rather than letting the daemon loop on login
+# errors: at least one credential source must be usable.
+if [ ! -r "${LPSIM_PASSWORD_FILE:-/nonexistent}" ] && [ -z "${LPSIM_PASSWORD:-}" ]; then
+  echo "start-lp-sim: no service credential. Create ${LPSIM_PASSWORD_FILE} (chmod 600," >&2
+  echo "  owned by this user) containing the ${LPSIM_USER} password, or set LPSIM_PASSWORD." >&2
+  exit 78   # EX_CONFIG
 fi
 LPSIM_ONESHOT="${LPSIM_ONESHOT:-0}"
 LPSIM_DAEMON="${LPSIM_DAEMON:-0}"
@@ -156,14 +169,13 @@ build_args() {
   if [ "$LPSIM_INCLUDE_BILLS" = "1" ]; then ARGS+=(--include-bills); fi
   # Network feed: push LpQuotes to the server ingest so the composite surfaces to GUI
   # subscribers (mirrors how the FIX sim passes --addr to its acceptor). In this
-  # book-aware network mode the binary MUST also receive the service login and poll
-  # cadence — without them it silently falls back to its own defaults and cannot
-  # authenticate on a box whose admin password was rotated (the book poll then fails
-  # and no composite ever surfaces).
+  # book-aware network mode the binary MUST also receive the poll cadence.
+  #
+  # The service login is passed via the EXPORTED environment (LPSIM_USER +
+  # LPSIM_PASSWORD_FILE/LPSIM_PASSWORD), never as arguments: the password must never
+  # reach `ps` output. The binary has no --password flag at all.
   if [ -n "$LPSIM_ADDR" ]; then
     ARGS+=(--addr "$LPSIM_ADDR")
-    [ -n "${LPSIM_USER:-}" ] && ARGS+=(--user "$LPSIM_USER")
-    [ -n "${LPSIM_PASSWORD:-}" ] && ARGS+=(--password "$LPSIM_PASSWORD")
     [ -n "${LPSIM_BOOK_POLL:-}" ] && ARGS+=(--book-poll "$LPSIM_BOOK_POLL")
     [ "${LPSIM_NO_BOOK_POLL:-0}" = "1" ] && ARGS+=(--no-book-poll)
   fi

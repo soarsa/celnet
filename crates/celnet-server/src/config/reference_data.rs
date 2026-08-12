@@ -908,8 +908,30 @@ pub fn ensure_seed_instruments(instruments: &mut Vec<InstrumentDef>) -> bool {
     true
 }
 
-/// The seeded set: a USD-SOFR rates strip (deposit, FRA, STIR future, OIS, IRS)
-/// plus two sample USD bonds (a UST and a corporate).
+/// The seeded set: a USD-SOFR rates strip (deposit, FRA, STIR future, OIS, IRS) — the
+/// curve pillars a fresh edge needs to build a discount curve and book a rates trade.
+///
+/// # Why there are no bonds here
+///
+/// This seed used to carry two sample USD bonds (`ust-2y-note` and `acme-5y-corp`) with
+/// invented ISINs. They were **retired**: a seeded bond is advertised as tradeable, but no
+/// liquidity provider quotes an invented security, so the traded and quoted universes
+/// disagreed. A hedge on such a bond resolves no LP panel line, finds no named venue, and
+/// silently backstops to the synthetic composite — which is precisely how a bond hedge
+/// came to record a fill against `COMPOSITE` that no LP ever made.
+///
+/// The real cash-bond universe is seeded separately and additively by
+/// [`government_bond_defs`] (US Treasuries + UK gilts + EUR govvies) and
+/// [`treasury_future_defs`], on EVERY boot. Every one of those `instrument_id`s is exactly
+/// what the LP feed streams, so the tradeable and quotable universes coincide by
+/// construction. Do not reintroduce a sample bond here: add it to the curated universe in
+/// `celnet-refdata` where the liquidity providers price it too, or it is a defect the
+/// [`audit_unquotable`] guard will report.
+///
+/// The rates pillars below are curve inputs, not risk shed into an LP panel, so their
+/// absence from a quoted book is correct rather than an asymmetry.
+///
+/// [`audit_unquotable`]: crate::services::aggregation::AggregationHub::audit_unquotable
 fn seed_instruments() -> Vec<InstrumentDef> {
     let us = || vec!["united_states".to_string()];
     vec![
@@ -1029,84 +1051,6 @@ fn seed_instruments() -> Vec<InstrumentDef> {
                 spot_lag_days: 2,
             }),
         },
-        InstrumentDef {
-            instrument_id: "ust-2y-note".to_string(),
-            name: "US Treasury 2Y Note 4.5% 2028".to_string(),
-            description: "On-the-run 2-year US Treasury note (sample).".to_string(),
-            currency: "USD".to_string(),
-            external_ids: vec![ExternalId {
-                scheme: "isin".to_string(),
-                value: "US91282CKM23".to_string(),
-            }],
-            definition: InstrumentFamily::Bond(BondDef {
-                issuer: "US Treasury".to_string(),
-                coupon_rate: 0.045,
-                coupon_type: "fixed".to_string(),
-                coupon_frequency: "semi_annual".to_string(),
-                day_count: "act_act".to_string(),
-                issue_date: Some(CivilDate {
-                    year: 2026,
-                    month: 1,
-                    day: 31,
-                }),
-                dated_date: Some(CivilDate {
-                    year: 2026,
-                    month: 1,
-                    day: 31,
-                }),
-                first_coupon_date: Some(CivilDate {
-                    year: 2026,
-                    month: 7,
-                    day: 31,
-                }),
-                maturity_date: CivilDate {
-                    year: 2028,
-                    month: 1,
-                    day: 31,
-                },
-                redemption: 100.0,
-                calendars: us(),
-            }),
-        },
-        InstrumentDef {
-            instrument_id: "acme-5y-corp".to_string(),
-            name: "ACME Corp 5% 2031".to_string(),
-            description: "Sample 5-year USD corporate bond.".to_string(),
-            currency: "USD".to_string(),
-            external_ids: vec![ExternalId {
-                scheme: "isin".to_string(),
-                value: "US000402AA77".to_string(),
-            }],
-            definition: InstrumentFamily::Bond(BondDef {
-                issuer: "ACME Capital".to_string(),
-                coupon_rate: 0.05,
-                coupon_type: "fixed".to_string(),
-                coupon_frequency: "semi_annual".to_string(),
-                day_count: "thirty_360_bond_basis".to_string(),
-                issue_date: Some(CivilDate {
-                    year: 2026,
-                    month: 6,
-                    day: 15,
-                }),
-                dated_date: Some(CivilDate {
-                    year: 2026,
-                    month: 6,
-                    day: 15,
-                }),
-                first_coupon_date: Some(CivilDate {
-                    year: 2026,
-                    month: 12,
-                    day: 15,
-                }),
-                maturity_date: CivilDate {
-                    year: 2031,
-                    month: 6,
-                    day: 15,
-                },
-                redemption: 100.0,
-                calendars: us(),
-            }),
-        },
     ]
 }
 
@@ -1171,7 +1115,14 @@ mod tests {
     fn seed_is_valid_and_idempotent() {
         let mut v = Vec::new();
         assert!(ensure_seed_instruments(&mut v), "first call seeds");
-        assert_eq!(v.len(), 8);
+        // The seed is rates curve pillars ONLY. The sample bonds it used to carry were
+        // retired because no LP quotes an invented security — see `seed_instruments`.
+        assert_eq!(v.len(), 6);
+        assert!(
+            !v.iter()
+                .any(|i| matches!(i.definition, InstrumentFamily::Bond(_))),
+            "the seed must advertise no bond the liquidity panel cannot quote"
+        );
         validate_instruments(&v).expect("seeded registry is valid");
         assert!(
             !ensure_seed_instruments(&mut v),

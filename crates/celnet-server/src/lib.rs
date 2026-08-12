@@ -693,7 +693,8 @@ impl Edge {
         // entity exists.
         let registry_seeded = identity_store.ensure_seed_registry();
         // Seed a small, realistic instrument reference-data registry (a USD-SOFR
-        // rates strip + sample bonds) on a fresh store so curve-building/pricing have
+        // rates strip; the cash bonds come from the curated universe below) on a fresh
+        // store so curve-building/pricing have
         // resolvable instrument definitions from first boot. Idempotent — a no-op once
         // any instrument exists.
         let instruments_seeded = identity_store.ensure_seed_instruments();

@@ -113,7 +113,7 @@ async fn lp_feed_flows_through_to_aggregated_book_subscribers() {
                         "LP-SIM-03".to_string(),
                     ],
                     scope_mode: AggregationScopeMode::Explicit as i32,
-                    instrument_ids: vec!["ust-2y-note".to_string(), "acme-5y-corp".to_string()],
+                    instrument_ids: vec!["91282CQJ3".to_string(), "91282CPZ8".to_string()],
                     params: Some(AggregationParamsDesc {
                         staleness_tau_ms: 30_000,
                         max_quote_age_ms: 5_000,
@@ -135,18 +135,24 @@ async fn lp_feed_flows_through_to_aggregated_book_subscribers() {
         let book_id = created.id;
 
         // --- 2. Push LP quotes from three venues for two instruments over the real
-        // gRPC LpFeed ingest. On `ust-2y-note` all three are fresh. On `acme-5y-corp`
+        // gRPC LpFeed ingest. On `91282CQJ3` all three are fresh. On `91282CPZ8`
         // LP-SIM-02 posts the best two-way but is stamped 60 s stale (> the 5 s hard
         // cutoff), so it must drop out of the composite best price.
+        //
+        // Both instruments are REAL US Treasuries from the curated universe the LPs
+        // quote, keyed by the CUSIP the feed puts on the wire. The sample bonds this
+        // test used to name (`ust-2y-note` / `acme-5y-corp`) were retired: a security
+        // the firm advertises as tradeable but no LP can quote is the exact asymmetry
+        // that made bond hedges backstop to the synthetic composite venue.
         let now = epoch_now();
         let stale = now - 60 * 1_000_000_000;
         let quotes = vec![
-            lpq("LP-SIM-01", "ust-2y-note", 99.90, 100.10, now),
-            lpq("LP-SIM-02", "ust-2y-note", 99.95, 100.05, now), // sets best bid + offer
-            lpq("LP-SIM-03", "ust-2y-note", 99.80, 100.20, now),
-            lpq("LP-SIM-01", "acme-5y-corp", 98.00, 98.50, now),
-            lpq("LP-SIM-02", "acme-5y-corp", 98.20, 98.30, stale), // best if fresh — but stale
-            lpq("LP-SIM-03", "acme-5y-corp", 98.10, 98.40, now),
+            lpq("LP-SIM-01", "91282CQJ3", 99.90, 100.10, now),
+            lpq("LP-SIM-02", "91282CQJ3", 99.95, 100.05, now), // sets best bid + offer
+            lpq("LP-SIM-03", "91282CQJ3", 99.80, 100.20, now),
+            lpq("LP-SIM-01", "91282CPZ8", 98.00, 98.50, now),
+            lpq("LP-SIM-02", "91282CPZ8", 98.20, 98.30, stale), // best if fresh — but stale
+            lpq("LP-SIM-03", "91282CPZ8", 98.10, 98.40, now),
         ];
         let mut feed = LiquidityFeedServiceClient::connect(base.clone())
             .await
@@ -212,64 +218,68 @@ async fn lp_feed_flows_through_to_aggregated_book_subscribers() {
 
         assert_eq!(composite.book_id, book_id);
         assert_eq!(composite.instruments.len(), 2, "both in-scope instruments");
-        // Instruments are ordered by instrument_id: "acme-5y-corp" < "ust-2y-note".
-        let acme = &composite.instruments[0];
-        let ust = &composite.instruments[1];
+        // Instruments are ordered by instrument_id: "91282CPZ8" < "91282CQJ3".
+        let one_stale = &composite.instruments[0];
+        let all_fresh = &composite.instruments[1];
 
-        // ust-2y-note: all fresh ⇒ best bid = max(99.95), best offer = min(100.05).
-        assert_eq!(ust.instrument_id, "ust-2y-note");
+        // 91282CQJ3: all fresh ⇒ best bid = max(99.95), best offer = min(100.05).
+        assert_eq!(all_fresh.instrument_id, "91282CQJ3");
         assert_eq!(
-            ust.isin, "US91282CKM23",
-            "ISIN resolved from reference data"
+            all_fresh.isin, "US91282CQJ35",
+            "ISIN resolved from the curated reference universe the LPs quote"
+        );
+        assert_eq!(
+            all_fresh.cusip, "91282CQJ3",
+            "the CUSIP cross-reference the identifier cross-walk joins on"
         );
         assert!(
-            close(ust.best_bid, 99.95),
+            close(all_fresh.best_bid, 99.95),
             "best bid = max fresh bid, got {}",
-            ust.best_bid
+            all_fresh.best_bid
         );
         assert!(
-            close(ust.best_offer, 100.05),
+            close(all_fresh.best_offer, 100.05),
             "best offer = min fresh offer, got {}",
-            ust.best_offer
+            all_fresh.best_offer
         );
-        assert_eq!(ust.contributions.len(), 3, "three members reported");
+        assert_eq!(all_fresh.contributions.len(), 3, "three members reported");
         assert!(
-            ust.contributions.iter().all(|c| !c.stale),
-            "all ust members are fresh"
+            all_fresh.contributions.iter().all(|c| !c.stale),
+            "all three members are fresh"
         );
         assert!(
-            ust.confidence > 0.0 && ust.confidence <= 1.0,
+            all_fresh.confidence > 0.0 && all_fresh.confidence <= 1.0,
             "confidence in (0,1], got {}",
-            ust.confidence
+            all_fresh.confidence
         );
 
-        // acme-5y-corp: LP-SIM-02 is stale ⇒ survivors LP-1 / LP-3 set the envelope:
+        // 91282CPZ8: LP-SIM-02 is stale ⇒ survivors LP-1 / LP-3 set the envelope:
         // best bid = 98.10 (LP-3), best offer = 98.40 (LP-3) — NOT LP-2's tighter
         // 98.20 / 98.30. Validate against the surviving-member envelope, never the
         // crossed would-be BBO.
-        assert_eq!(acme.instrument_id, "acme-5y-corp");
+        assert_eq!(one_stale.instrument_id, "91282CPZ8");
         assert_eq!(
-            acme.isin, "US000402AA77",
-            "ISIN resolved from reference data"
+            one_stale.isin, "US91282CPZ85",
+            "ISIN resolved from the curated reference universe the LPs quote"
         );
         assert!(
-            close(acme.best_bid, 98.10),
+            close(one_stale.best_bid, 98.10),
             "stale LP-2's 98.20 bid did not set the composite, got {}",
-            acme.best_bid
+            one_stale.best_bid
         );
         assert!(
-            close(acme.best_offer, 98.40),
+            close(one_stale.best_offer, 98.40),
             "stale LP-2's 98.30 offer did not set the composite, got {}",
-            acme.best_offer
+            one_stale.best_offer
         );
-        let lp2 = acme
+        let lp2 = one_stale
             .contributions
             .iter()
             .find(|c| c.lp_name == "LP-SIM-02")
             .expect("LP-SIM-02 is still reported (as excluded)");
         assert!(lp2.stale, "the aged-out member is flagged stale");
         assert!(
-            acme.contributions.iter().filter(|c| !c.stale).count() == 2,
+            one_stale.contributions.iter().filter(|c| !c.stale).count() == 2,
             "exactly the two fresh members contribute"
         );
     })
@@ -311,7 +321,7 @@ async fn ws_mirror_aggregated_book_subscribe_receives_a_composite_snapshot() {
                     name: "UST Composite WS".to_string(),
                     member_connection_ids: vec!["LP-SIM-01".to_string(), "LP-SIM-02".to_string()],
                     scope_mode: AggregationScopeMode::Explicit as i32,
-                    instrument_ids: vec!["ust-2y-note".to_string(), "acme-5y-corp".to_string()],
+                    instrument_ids: vec!["91282CQJ3".to_string(), "91282CPZ8".to_string()],
                     params: Some(AggregationParamsDesc {
                         staleness_tau_ms: 30_000,
                         max_quote_age_ms: 5_000,
@@ -334,10 +344,10 @@ async fn ws_mirror_aggregated_book_subscribe_receives_a_composite_snapshot() {
 
         let now = epoch_now();
         let quotes = vec![
-            lpq("LP-SIM-01", "ust-2y-note", 99.90, 100.10, now),
-            lpq("LP-SIM-02", "ust-2y-note", 99.95, 100.05, now),
-            lpq("LP-SIM-01", "acme-5y-corp", 98.00, 98.50, now),
-            lpq("LP-SIM-02", "acme-5y-corp", 98.20, 98.30, now),
+            lpq("LP-SIM-01", "91282CQJ3", 99.90, 100.10, now),
+            lpq("LP-SIM-02", "91282CQJ3", 99.95, 100.05, now),
+            lpq("LP-SIM-01", "91282CPZ8", 98.00, 98.50, now),
+            lpq("LP-SIM-02", "91282CPZ8", 98.20, 98.30, now),
         ];
         let mut feed = LiquidityFeedServiceClient::connect(base.clone())
             .await

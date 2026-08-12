@@ -30,13 +30,17 @@ use crate::quoted::QuotedLine;
 use crate::rng::{child_seed, unit01};
 use crate::{LpSimConfig, SimLp, build_fleet};
 
-/// The seeded admin account the server ensures on first boot — the out-of-the-box
-/// service login so the daemon authenticates against a fresh UAT box with no extra
-/// provisioning. (The value mirrors the server's `SEED_ADMIN_EMAIL` /
-/// `SEED_ADMIN_PASSWORD`; deployments override via `--user`/`--password`.)
-pub const DEFAULT_SERVICE_EMAIL: &str = "admin@celnet.com";
-/// The seeded admin password (see [`DEFAULT_SERVICE_EMAIL`]).
-pub const DEFAULT_SERVICE_PASSWORD: &str = "password";
+/// The **dedicated least-privilege service identity** this feed authenticates as.
+///
+/// A price-publishing simulator holds no administrative authority: this account exists
+/// solely so the daemon can call `ListAggregatedBooks`, which is an `authenticate()`-only
+/// RPC gated on **no** capability at all. The account is therefore provisioned as a
+/// *service account* whose effective capability set is **empty** (deny-by-default with no
+/// role bundle) — see `docs/SIMULATOR-SERVICE-IDENTITIES.md`.
+///
+/// Overridable via `LPSIM_USER`. An identity is not a secret, so it carries a default;
+/// the **password** deliberately does not (see [`crate::credentials`]).
+pub const DEFAULT_SERVICE_EMAIL: &str = "lp-sim@svc.celnet.local";
 
 /// The reconnect backoff after a dropped / failed feed connection.
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
@@ -230,24 +234,18 @@ impl FeedState {
 // Book-aware network feed — the deployed daemon (`--book-poll`)
 // ===========================================================================
 
-/// The service credentials the daemon logs in with (only `ListAggregatedBooks`
-/// needs auth; the `LpFeed` ingest itself is an unauthenticated backend feed).
-#[derive(Debug, Clone)]
-pub struct LoginCredentials {
-    /// The login email.
-    pub email: String,
-    /// The plaintext password (checked against the server's Argon2id hash).
-    pub password: String,
-}
-
-impl Default for LoginCredentials {
-    fn default() -> Self {
-        Self {
-            email: DEFAULT_SERVICE_EMAIL.to_string(),
-            password: DEFAULT_SERVICE_PASSWORD.to_string(),
-        }
-    }
-}
+/// The service credentials the daemon logs in with.
+///
+/// Resolved by [`crate::credentials::resolve`] from `LPSIM_PASSWORD_FILE` /
+/// `LPSIM_PASSWORD` — **never** from `argv`. There is deliberately no `Default`: a
+/// daemon with no configured credential must fail at startup rather than fall back to a
+/// well-known seeded account.
+///
+/// Only `ListAggregatedBooks` actually needs this session — it is an
+/// `authenticate()`-only RPC requiring **no** capability, so the account this
+/// authenticates as needs no granted authority whatsoever. The `LpFeed` ingest itself is
+/// an unauthenticated backend feed.
+pub type LoginCredentials = crate::credentials::ServiceCredentials;
 
 /// The seeded schedule of occasional, transient LP faults applied at stream time.
 ///
@@ -376,12 +374,12 @@ async fn login(channel: Channel, creds: &LoginCredentials) -> Result<String, Str
     let mut auth = AuthServiceClient::new(channel);
     let resp = auth
         .login(LoginRequest {
-            email: creds.email.clone(),
-            password: creds.password.clone(),
+            email: creds.email().to_string(),
+            password: creds.password().to_string(),
             correlation_id: None,
         })
         .await
-        .map_err(|s| format!("login as {}: {}", creds.email, s.message()))?
+        .map_err(|s| format!("login as {}: {}", creds.email(), s.message()))?
         .into_inner();
     Ok(resp.session_token)
 }
@@ -530,7 +528,7 @@ async fn book_feed_session(
         .map_err(|e| format!("connect {addr}: {e}"))?;
 
     let token = login(channel.clone(), &opts.credentials).await?;
-    tracing::info!(addr, user = %opts.credentials.email, "lp-sim: authenticated; book-aware feed");
+    tracing::info!(addr, user = %opts.credentials.email(), "lp-sim: authenticated; book-aware feed");
 
     // The members we impersonate and the instruments we can price.
     let members: BTreeSet<String> = (0..cfg.members.max(1))

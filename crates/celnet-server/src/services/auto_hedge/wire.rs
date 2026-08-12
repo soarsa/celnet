@@ -16,21 +16,21 @@
 
 use celnet_hedge_routing::{
     ExecStyle, ExitAction, HedgeExitMode, HedgeField, HedgeGraph, HedgeLpPanel, HedgeNode,
-    HedgeRatioPlan, HedgeSize, HedgeVehicle, HedgeVehicleRegistry, HedgeVehicleRule, NodeId,
-    RagStatus, RouteOp, RouteValue,
+    HedgeRatioPlan, HedgeSize, HedgeVehicle, HedgeVehicleRegistry, HedgeVehicleRule, HedgingModel,
+    NodeId, RagStatus, RouteOp, RouteValue,
 };
 use celnet_proto::{
     ExecStyleEnum, ExitActionDesc, ExitActionKind, HedgeConditionDesc, HedgeConfigDesc,
     HedgeDeskToggle as HedgeDeskToggleDesc, HedgeExitModeBinding, HedgeExitModeEnum,
     HedgeFieldEnum, HedgeGraphDesc, HedgeLpPanelDesc, HedgeNodeDesc, HedgeSizeDesc, HedgeSizeKind,
-    HedgeVehicleDesc, HedgeVehicleKindEnum, HedgeVehiclePlanDesc, RouteRange, RouteValueDesc,
-    StringList, WarehouseThresholdDesc, hedge_node_desc, route_value_desc,
+    HedgeVehicleDesc, HedgeVehicleKindEnum, HedgeVehiclePlanDesc, HedgingModelBinding, RouteRange,
+    RouteValueDesc, StringList, WarehouseThresholdDesc, hedge_node_desc, route_value_desc,
 };
 use tonic::Status;
 
 use crate::config::hedge_policy::{
     HedgeConfigDef, HedgeDeskToggle, HedgeExecutionMode, HedgeMetric, HedgeScopeKind,
-    HedgeThresholdDef, ScopedExitMode, ScopedLpPanel, ScopedThreshold,
+    HedgeThresholdDef, ScopedExitMode, ScopedHedgingModel, ScopedLpPanel, ScopedThreshold,
 };
 
 // --- RagStatus label --------------------------------------------------------
@@ -447,6 +447,35 @@ pub fn exit_mode_binding_to_wire(m: &ScopedExitMode) -> HedgeExitModeBinding {
     }
 }
 
+/// Map a persisted [`ScopedHedgingModel`] onto its wire binding.
+///
+/// The posture and its DV01 budget travel together: a non-positive `dv01_budget` means
+/// INHERIT the scope's configured threshold, and is carried across verbatim rather than
+/// normalised here, so the wire never implies a cap the operator did not set.
+#[must_use]
+pub fn hedging_model_binding_to_wire(m: &ScopedHedgingModel) -> HedgingModelBinding {
+    HedgingModelBinding {
+        scope_kind: m.scope_kind.as_i32(),
+        scope_id: m.scope_id.clone(),
+        model: m.model.as_i32(),
+        dv01_budget: m.dv01_budget,
+    }
+}
+
+/// Map a wire binding onto the persisted [`ScopedHedgingModel`].
+#[must_use]
+pub fn hedging_model_binding_from_wire(d: &HedgingModelBinding) -> ScopedHedgingModel {
+    ScopedHedgingModel {
+        scope_kind: HedgeScopeKind::from_i32(d.scope_kind),
+        scope_id: d.scope_id.clone(),
+        // An unknown ordinal folds to `Custom` — the escape hatch that keeps the desk's
+        // authored graph — so a wire value this build does not understand can never
+        // silently re-post a book onto a derived posture.
+        model: HedgingModel::from_i32(d.model),
+        dv01_budget: d.dv01_budget,
+    }
+}
+
 /// Map a wire binding onto the persisted [`ScopedExitMode`].
 #[must_use]
 pub fn exit_mode_binding_from_wire(d: &HedgeExitModeBinding) -> ScopedExitMode {
@@ -652,6 +681,11 @@ pub fn config_to_wire(c: &HedgeConfigDef) -> HedgeConfigDesc {
         lp_panels: c.lp_panels.iter().map(lp_panel_to_wire).collect(),
         vehicles: c.vehicles.rules.iter().map(vehicle_rule_to_wire).collect(),
         exit_modes: c.exit_modes.iter().map(exit_mode_binding_to_wire).collect(),
+        hedging_models: c
+            .hedging_models
+            .iter()
+            .map(hedging_model_binding_to_wire)
+            .collect(),
     }
 }
 
@@ -681,6 +715,11 @@ pub fn config_from_wire(d: &HedgeConfigDesc) -> HedgeConfigDef {
             .exit_modes
             .iter()
             .map(exit_mode_binding_from_wire)
+            .collect(),
+        hedging_models: d
+            .hedging_models
+            .iter()
+            .map(hedging_model_binding_from_wire)
             .collect(),
         // `min_edge_bps` is not carried on `HedgeConfigDesc` (a server-side price-tolerance
         // floor, not a GUI-edited engine control), so it defaults here; the `set_hedge_config`

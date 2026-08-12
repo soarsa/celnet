@@ -35,12 +35,19 @@ export LPSIM_SETTLEMENT="{{ celnet_lpsim_settlement | default('2026-04-16') }}"
 export LPSIM_INCLUDE_BILLS="{{ celnet_lpsim_include_bills | default('0') }}"
 export LPSIM_NO_FAULTS="{{ celnet_lpsim_no_faults | default('0') }}"
 # Service login for the book poll (AuthService.Login); defaults to the seeded admin.
-export LPSIM_USER="{{ celnet_lpsim_user | default('admin@celnet.com') }}"
-export LPSIM_PASSWORD="{{ celnet_lpsim_password | default('password') }}"
+export LPSIM_USER="{{ celnet_lpsim_user | default('lp-sim@svc.celnet.local') }}"
+{% if celnet_lpsim_password is defined and celnet_lpsim_password %}
+# NOTE: an inline password in group_vars is DISCOURAGED — prefer the password file below,
+# which keeps the secret off disk in git and out of this generated script.
+export LPSIM_PASSWORD="{{ celnet_lpsim_password }}"
+{% endif %}
 # A host-local password file (mode 600, NOT in git) overrides LPSIM_PASSWORD when present
 # — put the real service credential here on the box so no secret lives in group_vars:
 #   printf '%s' 'THE_PASSWORD' > {{ celnet_lpsim_password_file | default('/home/' ~ (celnet_user | default('celnet')) ~ '/.lpsim_pw') }} && chmod 600 "$_"
 export LPSIM_PASSWORD_FILE="{{ celnet_lpsim_password_file | default('/home/' ~ (celnet_user | default('celnet')) ~ '/.lpsim_pw') }}"
+# The secret is handed to the daemon through THIS environment only. lp-sim has no
+# --password flag: argv is world-readable, so a flag would publish it to every local
+# account via `ps`. Verify with:  ps -ww -o args= -C lp-sim | grep -c password  → 0
 # Network feed endpoint: lp-sim streams LpQuotes to the server's LpFeed ingest so the
 # composite surfaces to GUI subscribers (default: the local gRPC edge). Book-aware
 # mode requires this to be set (it is, by default).

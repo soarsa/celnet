@@ -73,9 +73,9 @@ use celnet_proto::{
     HedgeExitModeBinding, HedgeExitModeEnum, HedgeFieldEnum, HedgeGraphDesc, HedgeIntent,
     HedgeLpPanelDesc, HedgeMetricEnum, HedgeNodeDesc, HedgePolicyScopeKindEnum, HedgeProvenance,
     HedgeScopeKindEnum, HedgeSizeDesc, HedgeSizeKind, HedgeVehicleDesc, HedgeVehicleKindEnum,
-    HedgeVehiclePlanDesc, ListHedgeProvenanceResponse, ListHedgeThresholdsResponse,
-    SetHedgeConfigResponse, UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdResponse,
-    WarehouseThresholdDesc, hedge_node_desc,
+    HedgeVehiclePlanDesc, HedgingModelBinding, HedgingModelEnum, ListHedgeProvenanceResponse,
+    ListHedgeThresholdsResponse, SetHedgeConfigResponse, UpdateHedgePolicyGraphResponse,
+    UpdateHedgeThresholdResponse, WarehouseThresholdDesc, hedge_node_desc,
 };
 // Incoming-quote acceptance (AuthService acceptance RPCs): the acceptance decision graph
 // (`AcceptanceGraphDesc`/`AcceptanceNodeDesc`/`AcceptanceConditionDesc`/`AcceptanceActionDesc`).
@@ -6971,6 +6971,23 @@ fn hedge_config_full() -> HedgeConfigDesc {
                 scope_kind: HedgeScopeKindEnum::HedgeScopeDesk as i32,
                 scope_id: "fi-desk".to_owned(),
                 mode: HedgeExitModeEnum::HedgeExitModeAuto as i32,
+            },
+        ],
+        // NON-VACUOUS on purpose: all three postures, a real DV01 budget, and a
+        // zero budget (which means INHERIT the scope's threshold, not a zero cap) —
+        // an all-default fixture would pass while proving nothing.
+        hedging_models: vec![
+            HedgingModelBinding {
+                scope_kind: HedgeScopeKindEnum::HedgeScopeBook as i32,
+                scope_id: "credit".to_owned(),
+                model: HedgingModelEnum::HedgingModelBackToBack as i32,
+                dv01_budget: 0.0,
+            },
+            HedgingModelBinding {
+                scope_kind: HedgeScopeKindEnum::HedgeScopeDesk as i32,
+                scope_id: "fi-desk".to_owned(),
+                model: HedgingModelEnum::HedgingModelInternaliseToDv01 as i32,
+                dv01_budget: 250_000.0,
             },
         ],
         max_clip: 50_000_000.0,

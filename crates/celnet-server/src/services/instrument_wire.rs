@@ -284,17 +284,37 @@ fn trimmed(v: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::reference_data::ensure_seed_instruments;
+    use crate::config::reference_data::{
+        ensure_seed_instruments, government_bond_defs, treasury_future_defs,
+    };
 
+    /// Every instrument family the server seeds on boot: the rates curve pillars from
+    /// [`ensure_seed_instruments`] PLUS the curated cash bonds and listed Treasury
+    /// futures, which are seeded additively on every boot.
+    ///
+    /// The bond / bond-future families are drawn from the curated universe rather than
+    /// from the rates seed on purpose. The rates seed used to carry two sample bonds; they
+    /// were retired because no liquidity provider quotes an invented security. Taking the
+    /// coverage from the real universe keeps every family exercised here AND keeps the
+    /// tradeable set equal to the quotable one.
     fn seeded() -> Vec<InstrumentDef> {
         let mut v = Vec::new();
         let _ = ensure_seed_instruments(&mut v);
+        v.extend(government_bond_defs().into_iter().take(2));
+        v.extend(treasury_future_defs().into_iter().take(2));
         v
     }
 
     #[test]
     fn every_seeded_family_round_trips_through_wire() {
-        for inst in seeded() {
+        let seeded = seeded();
+        for family in ["bond", "bond_future"] {
+            assert!(
+                seeded.iter().any(|i| i.definition.kind() == family),
+                "the round-trip corpus must still cover the {family} family"
+            );
+        }
+        for inst in seeded {
             let wire = instrument_to_wire(&inst);
             let back = instrument_from_wire(&wire).expect("round-trips");
             assert_eq!(inst, back, "family {}", inst.definition.kind());
