@@ -169,10 +169,14 @@ struct Args {
     /// How many of the most-liquid/relevant reference-data instruments to download and
     /// stream in ESP mode (`--asset esp`). Default [`DEFAULT_ESP_INSTRUMENTS`].
     esp_instruments: usize,
-    /// Service login email/password for the ESP reference-data download (`AuthService.Login`).
-    /// Default the seeded admin so it authenticates out-of-the-box on a fresh box.
+    /// Service login **email** for the ESP reference-data download (`AuthService.Login`).
+    /// Defaults to the dedicated least-privilege service identity [`DEFAULT_ESP_USER`].
+    ///
+    /// The matching **password** is deliberately NOT a field here: it is resolved lazily
+    /// by [`resolve_esp_password`] at the one call site that needs it, so the FI/FX legs
+    /// (which make no authenticated server call) require no credential at all, and the
+    /// secret never sits in a struct that might be `{:?}`-logged.
     user: String,
-    password: String,
     /// Deterministic seed for the ESP random-trade selection (which streamed instruments
     /// get lifted) — the same seed replays the same trade decisions.
     seed: u64,
@@ -193,7 +197,8 @@ fn print_help() -> ! {
          fi:  --curve USD-OIS  --tenor 5  --notional 10000000|mix  --side pay|receive|two-way|mix\n  \
          fx:  --pair EURUSD  --type call|put  --strike 1.10  --expiry-years 1.0\n       \
          --side observe|buy|sell  --settlement deliverable|ndf  --exercise european|american\n  \
-         esp: --grpc-addr http://127.0.0.1:50051  --esp-instruments 15  --user admin@celnet.com  --password ****  --seed 0x5EED1234\n  \
+         esp: --grpc-addr http://127.0.0.1:50051  --esp-instruments 15  --seed 0x5EED1234\n       \
+      (credential via FIXSIM_PASSWORD_FILE=/home/celnet/.fixsim_pw — never a flag)\n  \
          loop: --repeat 0  --interval-ms 750 (or --interval SECS)  --stream-hold-ms 2000  --manual-every 3  --manual-tenor 15  --manual-security XXX-UNKNOWN  --lift-every 3\n  \
          common: --sender CELNET-CPTY  --target CELNET  --req-id RFQ-CLI"
     );
@@ -223,10 +228,26 @@ const DEFAULT_MANUAL_SECURITY: &str = "XXX-UNKNOWN";
 /// Default number of top reference-data instruments the ESP client downloads + streams.
 const DEFAULT_ESP_INSTRUMENTS: usize = 15;
 
-/// Default ESP login (the seeded admin), so the reference-data download authenticates
-/// out-of-the-box on a fresh box. Override with `--user` / `--password`.
-const DEFAULT_ESP_USER: &str = "admin@celnet.com";
-const DEFAULT_ESP_PASSWORD: &str = "password";
+/// The **dedicated least-privilege service identity** the ESP reference-data download
+/// authenticates as. This client acts as a *counterparty* sending RFQ/ESP flow; its only
+/// authenticated server call is `ListInstruments`, an `authenticate()`-only RPC gated on
+/// **no** capability at all. It is therefore provisioned as a service account whose
+/// effective capability set is **empty** — it holds no administrative authority.
+///
+/// Resolution precedence, mirroring `celnet_lp_sim::credentials`:
+/// `--user` → `FIXSIM_USER` → this default. An identity is not a secret, so it carries
+/// a default and may travel on the command line; the **password** never does.
+const DEFAULT_ESP_USER: &str = "fix-sim@svc.celnet.local";
+
+/// The ESP service identity from the environment, honouring the same
+/// "set but blank counts as absent" rule the password resolution uses — a blank
+/// `FIXSIM_USER=` in a generated unit file must not select an empty login.
+fn esp_user_from_env() -> Option<String> {
+    std::env::var("FIXSIM_USER")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
 
 /// Default deterministic seed for the ESP random-trade selection.
 const DEFAULT_ESP_SEED: u64 = 0x5EED_1234;
@@ -267,8 +288,8 @@ fn parse_args() -> Args {
     let mut stream_hold_ms = DEFAULT_STREAM_HOLD_MS;
     let mut grpc_addr = String::from("http://127.0.0.1:50051");
     let mut esp_instruments = DEFAULT_ESP_INSTRUMENTS;
-    let mut user = String::from(DEFAULT_ESP_USER);
-    let mut password = String::from(DEFAULT_ESP_PASSWORD);
+    // `FIXSIM_USER` seeds the identity; an explicit `--user` below still overrides it.
+    let mut user = esp_user_from_env().unwrap_or_else(|| String::from(DEFAULT_ESP_USER));
     let mut seed = DEFAULT_ESP_SEED;
     // `--side` means different things per asset and flags arrive in any order, so
     // capture it raw and interpret it after the loop once `--asset` is known.
@@ -299,7 +320,14 @@ fn parse_args() -> Args {
                 })
             }
             "--user" => user = val,
-            "--password" => password = val,
+            // NOTE: there is deliberately NO `--password` flag. A process command line is
+            // world-readable (`ps -ef`, /proc/<pid>/cmdline), so passing a secret there
+            // publishes it to every local account. The credential is resolved from
+            // FIXSIM_PASSWORD_FILE / FIXSIM_PASSWORD instead — see `resolve_esp_password`.
+            "--password" => usage_and_exit(
+                "--password is not accepted: argv is world-readable. Set FIXSIM_PASSWORD_FILE \
+                 to a 0600 file containing the password (preferred), or FIXSIM_PASSWORD.",
+            ),
             "--seed" => {
                 seed = val
                     .parse()
@@ -534,7 +562,6 @@ fn parse_args() -> Args {
         grpc_addr,
         esp_instruments,
         user,
-        password,
         seed,
     }
 }
@@ -1059,6 +1086,48 @@ fn esp_day_count_from_label(label: &str) -> AccrualBasis {
     }
 }
 
+/// Resolve the ESP service password — from a restricted **file** or the **environment**,
+/// never from `argv`.
+///
+/// A process command line is world-readable (`ps -ef`, `/proc/<pid>/cmdline`), so a
+/// `--password` flag would publish this secret to every local account on the box. The
+/// precedence mirrors `celnet_lp_sim::credentials` (kept as a small local copy rather
+/// than taking a cross-crate dependency, since `celnet-fix` sits *below* `celnet-lp-sim`
+/// in the dependency order and must not point upward):
+///
+/// 1. `FIXSIM_PASSWORD_FILE` — path to a `0600` file whose trimmed contents are the
+///    password. If set, it **must** be readable and non-empty: a hard error, never a
+///    silent fall-through to a weaker source.
+/// 2. `FIXSIM_PASSWORD` — the literal secret in the environment.
+/// 3. Nothing ⇒ an actionable error. There is deliberately no built-in default password.
+fn resolve_esp_password() -> Result<String, String> {
+    let non_empty = |name: &str| -> Option<String> {
+        std::env::var(name)
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+
+    if let Some(path) = non_empty("FIXSIM_PASSWORD_FILE") {
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| format!("password file {path:?} is not readable: {e}"))?;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(format!("password file {path:?} is empty"));
+        }
+        return Ok(trimmed.to_string());
+    }
+    if let Some(pw) = non_empty("FIXSIM_PASSWORD") {
+        return Ok(pw);
+    }
+    Err(
+        "no ESP service credential configured: set FIXSIM_PASSWORD_FILE to a 0600 file \
+         containing the password (preferred), or FIXSIM_PASSWORD in the environment. \
+         A password is never accepted on the command line — argv is world-readable."
+            .to_string(),
+    )
+}
+
 /// Download the top-N streamable instruments from the server's reference-data service:
 /// authenticate (`AuthService.Login`), `ListInstruments`, and keep the bond-family
 /// definitions (with a resolvable maturity) in registry order — the curated benchmark
@@ -1074,7 +1143,7 @@ async fn download_top_bonds(args: &Args) -> Result<Vec<EspBond>, String> {
     let token = auth
         .login(LoginRequest {
             email: args.user.clone(),
-            password: args.password.clone(),
+            password: resolve_esp_password()?,
             correlation_id: None,
         })
         .await

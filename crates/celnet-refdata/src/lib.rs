@@ -47,13 +47,27 @@
 //! [`TreasuryFutureSpec::dv01_per_contract`] before relying on that number: it depends
 //! on the yield you evaluate it at, and it is explicit about what is and is not
 //! modelled.
+//!
+//! # The identifier cross-walk
+//!
+//! One security, several identifiers. A quoting venue keys its panel by whatever id it
+//! puts on the wire (a CUSIP, a contract code, a slug) while a reference-data registry
+//! may hold the same security under a different canonical id. [`IdentifierCrosswalk`]
+//! closes that gap with a fixed, documented precedence — exact `instrument_id`, then
+//! CUSIP, then ISIN — and resolves to **nothing** when no identifier matches exactly, so
+//! an unresolvable security stays visibly unresolved instead of filling against an
+//! approximately-similar bond. See that type's module documentation for the full rules.
 
+mod crosswalk;
 mod curated;
 mod futures;
 mod isin;
 mod model;
 mod treasury;
 
+pub use crosswalk::{
+    CrosswalkBasis, IdentifierCrosswalk, IdentifierSet, Resolution, curated_identifiers,
+};
 pub use curated::curated_universe;
 pub use futures::{
     ContractTerms, DeliveryConvention, FutureSpecError, LISTED_CONTRACT_MONTHS, LISTED_CYCLE_START,

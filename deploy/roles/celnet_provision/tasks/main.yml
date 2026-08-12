@@ -211,3 +211,79 @@
     group: "{{ celnet_group }}"
     mode: "0755"
   when: celnet_lpsim_enabled | default(true) | bool
+
+# --- Simulator service identities ---------------------------------------------
+#
+# The simulators log in as their OWN least-privilege accounts, with a GENERATED
+# per-environment password that lives in a 0600 file and reaches the daemon through
+# its ENVIRONMENT — never through argv, which is world-readable. These tasks install
+# the provisioner and (when an admin credential is available) run it.
+#
+# Every task here is idempotent: the file tasks preserve timestamps so a re-run
+# reports no change, and the provisioner itself converges rather than re-minting.
+
+- name: Install the simulator service-identity provisioner
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/provision-sim-identities.mjs"
+    dest: "{{ celnet_bin_dir }}/provision-sim-identities.mjs"
+    owner: "{{ celnet_user }}"
+    group: "{{ celnet_group }}"
+    mode: "0755"
+
+# Create the credential files if absent and pin their mode/ownership if present.
+# `access_time`/`modification_time: preserve` keeps `touch` idempotent, so a
+# re-run does not report a spurious change on every deploy.
+- name: Ensure the simulator credential files exist, readable only by the service account
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: touch
+    owner: "{{ celnet_user }}"
+    group: "{{ celnet_group }}"
+    mode: "0600"
+    access_time: preserve
+    modification_time: preserve
+  loop:
+    - "{{ celnet_lpsim_password_file }}"
+    - "{{ celnet_fixsim_password_file }}"
+
+- name: Check whether an admin credential is available for identity provisioning
+  ansible.builtin.stat:
+    path: "{{ celnet_admin_password_file }}"
+  register: celnet_admin_pw_stat
+  when: celnet_provision_sim_identities | bool
+
+# The provisioner is the single source of truth for the identities: it creates the
+# accounts if missing, resets the password only when the stored one stops working,
+# denies every capability the trader role bundle confers (so the effective set
+# resolves EMPTY), and then VERIFIES by logging in as each service account and
+# making the one RPC that simulator really issues. A non-zero exit means the
+# identities are not correct, and the play should fail rather than deploy a box
+# whose simulators will fall back to failing logins.
+- name: Provision the simulator service identities (idempotent, self-verifying)
+  ansible.builtin.command:
+    cmd: >-
+      node {{ celnet_bin_dir }}/provision-sim-identities.mjs
+  become: true
+  become_user: "{{ celnet_user }}"
+  environment:
+    CELNET_WS: "ws://{{ celnet_ws_addr | default('127.0.0.1:50061') }}"
+    CELNET_ADMIN_EMAIL: "{{ celnet_admin_email }}"
+    CELNET_ADMIN_PASSWORD_FILE: "{{ celnet_admin_password_file }}"
+    CELNET_SIM_HOME: "/home/{{ celnet_user }}"
+  register: celnet_sim_identity_run
+  changed_when: "'GENERATED new' in celnet_sim_identity_run.stdout
+    or 'CREATED id=' in celnet_sim_identity_run.stdout
+    or 'RESET to the file' in celnet_sim_identity_run.stdout"
+  when:
+    - celnet_provision_sim_identities | bool
+    - celnet_admin_pw_stat.stat.exists | default(false)
+
+- name: Report skipped identity provisioning (no admin credential on the box)
+  ansible.builtin.debug:
+    msg: >-
+      Skipped simulator identity provisioning: {{ celnet_admin_password_file }} is
+      absent. This is fine on a box whose identities are already provisioned. To
+      (re)provision, place the admin password in that file (chmod 600) and re-run.
+  when:
+    - celnet_provision_sim_identities | bool
+    - not (celnet_admin_pw_stat.stat.exists | default(false))

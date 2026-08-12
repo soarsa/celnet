@@ -75,6 +75,7 @@
 #![forbid(unsafe_code)]
 
 pub mod books;
+pub mod credentials;
 pub mod fleet;
 pub mod futures;
 pub mod lp;
@@ -88,6 +89,7 @@ pub mod universe;
 pub use books::{
     BookScope, BookView, StreamDiff, StreamKey, StreamPlan, resolve_from_descs, resolve_plan,
 };
+pub use credentials::{CredentialError, ServiceCredentials};
 pub use fleet::{FleetConfig, FleetInstrument, fleet, into_feeds};
 pub use futures::{FuturesContract, futures_lines, load_futures_universe};
 pub use lp::{Fault, InstrumentModel, LpParams, SimLp};

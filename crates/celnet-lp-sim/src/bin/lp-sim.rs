@@ -41,8 +41,10 @@ use clap::Parser;
 (LP-SIM-01…LP-SIM-05), each with a distinct seeded pricing character, that push \
 oracle-anchored two-way Treasury quotes into a running celnet server's LpFeed ingest.\n\n\
 DEPLOYED (book-aware) MODE — the default when --addr is set:\n  \
-  lp-sim --addr http://127.0.0.1:50051 --members 5 --book-poll 5 \\\n         \
-     --user admin@celnet.com --password ****\n  \
+  LPSIM_PASSWORD_FILE=/home/celnet/.lpsim_pw \\\n  \
+  lp-sim --addr http://127.0.0.1:50051 --members 5 --book-poll 5\n  \
+  The credential comes from LPSIM_PASSWORD_FILE (a 0600 file, preferred) or \
+LPSIM_PASSWORD — NEVER a command-line flag, because argv is world-readable.\n  \
   The feed authenticates (AuthService.Login), polls the enabled aggregated books \
 (ListAggregatedBooks) every --book-poll seconds, and for each book resolves which \
 LP-SIM-0N members it should impersonate and which instruments to quote \
@@ -145,15 +147,15 @@ struct Args {
     no_book_poll: bool,
 
     /// Service login email for the book poll (`AuthService.Login`). Falls back to the
-    /// `LPSIM_USER` env var, then to the seeded admin (`admin@celnet.com`) so the
-    /// daemon authenticates out-of-the-box on a fresh box.
+    /// `LPSIM_USER` env var, then to the dedicated least-privilege service identity
+    /// (`lp-sim@svc.celnet.local`).
+    ///
+    /// There is deliberately **no** `--password` flag: a process command line is
+    /// world-readable (`ps`, `/proc/<pid>/cmdline`), so the secret is resolved only from
+    /// `LPSIM_PASSWORD_FILE` (a `0600` file — preferred) or `LPSIM_PASSWORD`. See
+    /// [`celnet_lp_sim::credentials`].
     #[arg(long)]
     user: Option<String>,
-
-    /// Service login password. Falls back to `LPSIM_PASSWORD`, then the seeded admin
-    /// password.
-    #[arg(long)]
-    password: Option<String>,
 
     /// Disable the occasional injected staleness/outlier faults (network modes emit,
     /// by default, an occasional divergent or stale print on at most one member per
@@ -258,16 +260,24 @@ fn main() -> std::process::ExitCode {
     // ---- Book-aware network daemon (the deployed default when --addr is set) -------
     if book_aware {
         let addr = args.addr.as_deref().expect("network implies --addr");
-        let email = args
-            .user
-            .clone()
-            .or_else(|| std::env::var("LPSIM_USER").ok())
-            .unwrap_or_else(|| celnet_lp_sim::net::DEFAULT_SERVICE_EMAIL.to_string());
-        let password = args
-            .password
-            .clone()
-            .or_else(|| std::env::var("LPSIM_PASSWORD").ok())
-            .unwrap_or_else(|| celnet_lp_sim::net::DEFAULT_SERVICE_PASSWORD.to_string());
+        // Resolve the service credential from the environment / a 0600 file — NEVER
+        // from argv. A missing credential is fatal here rather than a silent fall-back
+        // to a well-known seeded account.
+        let credentials = match celnet_lp_sim::credentials::resolve(
+            "LPSIM",
+            celnet_lp_sim::net::DEFAULT_SERVICE_EMAIL,
+        ) {
+            Ok(c) => match args.user.clone() {
+                // An explicit --user overrides the resolved identity (not the secret).
+                Some(u) if !u.trim().is_empty() => LoginCredentials::new(u.trim(), c.password()),
+                _ => c,
+            },
+            Err(e) => {
+                eprintln!("[lp-sim] ERROR: {e}");
+                return std::process::ExitCode::from(2);
+            }
+        };
+        let email = credentials.email().to_string();
         let faults = FaultSchedule {
             enabled: !args.no_faults,
             seed: args.seed ^ 0x00FA_0175_0000_0000,
@@ -276,10 +286,7 @@ fn main() -> std::process::ExitCode {
         let opts = BookFeedOptions {
             book_poll: Duration::from_secs(args.book_poll.max(1)),
             quote_interval: args.quote_interval(),
-            credentials: LoginCredentials {
-                email: email.clone(),
-                password,
-            },
+            credentials,
             faults,
             once: args.once,
         };

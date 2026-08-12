@@ -692,10 +692,12 @@ impl Edge {
         // wire keys stay numeric; this only names them). Idempotent — a no-op once any
         // entity exists.
         let registry_seeded = identity_store.ensure_seed_registry();
-        // Seed a small, realistic instrument reference-data registry (a USD-SOFR
-        // rates strip + sample bonds) on a fresh store so curve-building/pricing have
-        // resolvable instrument definitions from first boot. Idempotent — a no-op once
-        // any instrument exists.
+        // Seed a small, realistic instrument reference-data registry (a USD-SOFR rates
+        // strip — curve pillars only, NO bonds) on a fresh store so curve-building/pricing
+        // have resolvable instrument definitions from first boot. Idempotent — a no-op
+        // once any instrument exists. The cash-bond universe comes from
+        // `ensure_seed_government_bonds` below, whose ids are exactly what the LP feed
+        // streams; a seeded sample bond would be tradeable but unquotable.
         let instruments_seeded = identity_store.ensure_seed_instruments();
         // Additively ensure the curated government-bond universe (US Treasuries + UK
         // gilts + EUR govvies) is registered — on EVERY boot, so an already-populated

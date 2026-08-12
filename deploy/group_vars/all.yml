@@ -87,10 +87,16 @@ celnet_fixsim_stream_sender: "CELER_RATES_STREAM"
 celnet_fixsim_grpc_addr: "http://127.0.0.1:50051"  # reference-data + login endpoint
 celnet_fixsim_esp_instruments: 8         # top-N most-liquid/relevant instruments to stream (trimmed 15→8)
 celnet_fixsim_esp_seed: "0x5EED1234"     # deterministic seed (hex ok — the launcher normalizes 0x… → decimal)
-# Host-local password file for the ESP refdata gRPC login (AuthService.Login). The launcher
-# reads it into FIXSIM_PASSWORD when present, so no secret lives in group_vars/git and the ESP
-# leg authenticates with the SAME working credential as lp-sim. Defaults to lp-sim's pw file.
-celnet_fixsim_password_file: "/home/{{ celnet_user | default('celnet') }}/.lpsim_pw"
+# Service login for the ESP refdata gRPC call (AuthService.Login). The FIX simulator acts
+# as a CLIENT counterparty and authenticates as its OWN dedicated, least-privilege account
+# — never as `admin@celnet.com`, and never sharing lp-sim's identity, so revoking one
+# simulator does not disturb the other. Its only authenticated call (ListInstruments) is
+# gated on authentication alone, so an EMPTY capability set suffices.
+# See docs/SIMULATOR-SERVICE-IDENTITIES.md.
+celnet_fixsim_user: "fix-sim@svc.celnet.local"
+# Its OWN 0600 credential file (previously this pointed at lp-sim's, coupling the two).
+# Generated per environment by deploy/provision-sim-identities.mjs; never committed.
+celnet_fixsim_password_file: "/home/{{ celnet_user | default('celnet') }}/.fixsim_pw"
 
 # --- LP-SIM Treasury liquidity feed -----------------------------------------
 # When true, the release builds the celnet-lp-sim `lp-sim` binary, ships it as
@@ -118,13 +124,17 @@ celnet_lpsim_seed: 305419896              # reproducibility seed
 celnet_lpsim_settlement: "2026-04-16"    # valuation date (YYYY-MM-DD)
 celnet_lpsim_include_bills: 0             # 1 = also stream zero-coupon Bills
 celnet_lpsim_no_faults: 0                # 1 = disable occasional injected staleness/outlier
-# Service login for the book poll (AuthService.Login). Defaults to the seeded admin so
-# the daemon authenticates out-of-the-box; override on a hardened box.
-celnet_lpsim_user: "admin@celnet.com"
-# Dev default only. Do NOT put a real credential here (this file is committed). On a box
-# whose admin password was rotated, create the host-local file below instead (mode 600),
-# which overrides this at runtime and stays out of git.
-celnet_lpsim_password: "password"
+# Service login for the book poll (AuthService.Login). The LP simulator authenticates
+# as its OWN dedicated, least-privilege account — NEVER as `admin@celnet.com`. That
+# account's effective capability set is EMPTY, which is exactly sufficient: the only
+# authenticated call this daemon makes (ListAggregatedBooks) is gated on authentication
+# alone, not on any capability. See docs/SIMULATOR-SERVICE-IDENTITIES.md.
+celnet_lpsim_user: "lp-sim@svc.celnet.local"
+# There is deliberately NO `celnet_lpsim_password` here. This file is committed, so it
+# must never carry a credential — not even a dev default, which is what previously let
+# a real box fall back to a wrong password and lock the admin account out. The secret is
+# GENERATED per environment by deploy/provision-sim-identities.mjs into the 0600 file
+# below, and reaches the daemon through its ENVIRONMENT, never through argv.
 celnet_lpsim_password_file: "/home/{{ celnet_user | default('celnet') }}/.lpsim_pw"
 
 # --- Runtime environment (templated into shared/config/celnet.env) ----------

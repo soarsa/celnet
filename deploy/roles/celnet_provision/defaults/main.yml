@@ -36,3 +36,34 @@ celnet_swap_enabled: true
 celnet_swap_path: /swapfile
 celnet_swap_size_mb: 4096          # 4 GiB — covers the celnet-server LTO + Vite peaks
 celnet_swappiness: 10              # prefer RAM; spill to swap only under genuine pressure
+
+# --- Simulator service identities ---------------------------------------------
+# The simulators authenticate as their OWN dedicated, least-privilege accounts —
+# never as `admin@celnet.com`, and never with a `--password` flag (argv is
+# world-readable, so a flag publishes the secret to every local account via `ps`).
+#
+# Each identity's password is GENERATED per environment by
+# `deploy/provision-sim-identities.mjs`, stored in a `0600` file readable only by
+# the service account, and Argon2id-hashed at rest in `identity.json` exactly like
+# any other user. No secret is ever committed to this repository.
+#
+# See `docs/SIMULATOR-SERVICE-IDENTITIES.md` for the capability rationale.
+celnet_lpsim_user: lp-sim@svc.celnet.local
+celnet_fixsim_user: fix-sim@svc.celnet.local
+celnet_lpsim_password_file: "/home/{{ celnet_user }}/.lpsim_pw"
+celnet_fixsim_password_file: "/home/{{ celnet_user }}/.fixsim_pw"
+
+# Run the provisioner during a play to create/repair the service identities.
+# It is IDEMPOTENT: an existing password file is reused (so a re-run never
+# invalidates the credential a running daemon already loaded), the password is
+# only reset when it no longer authenticates, and the capability lock-down
+# converges to the same deny set on every run.
+#
+# It needs an ADMIN credential, which is deliberately NOT stored in this repo or
+# in group_vars: point `celnet_admin_password_file` at a 0600 file placed on the
+# box out of band. When that file is absent the provisioning step is SKIPPED with
+# a clear message rather than failing the play — a box whose identities are
+# already provisioned needs no admin credential to deploy.
+celnet_provision_sim_identities: true
+celnet_admin_email: admin@celnet.com
+celnet_admin_password_file: "/home/{{ celnet_user }}/.celnet_admin_pw"

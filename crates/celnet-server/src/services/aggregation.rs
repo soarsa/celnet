@@ -46,6 +46,7 @@ use celnet_proto::{
     PricingProvenance,
 };
 use celnet_rates::{AccrualBasis, PaymentFrequency};
+use celnet_refdata::{CrosswalkBasis, IdentifierCrosswalk, IdentifierSet};
 use celnet_tiering::{FeatureKind, FeaturePipeline, PricedResult, PricingCtx, QuoteCtx, TwoWay};
 use celnet_types::{Ccy, CommodityRef, Symbol, Tenor, Underlying};
 
@@ -189,6 +190,177 @@ pub struct PublishedBook {
     /// consolidated composite unchanged; per-client outbound pricing is applied by the
     /// pricing-group pipelines off this raw composite, never stored on the book.
     pub snapshot: AggregatedBookSnapshot,
+    /// The **identifier cross-walk** over [`Self::snapshot`]'s lines, so a lookup whose
+    /// id lives in a different identifier namespace than the one this panel is keyed by
+    /// still resolves (see [`IdentifierCrosswalk`]).
+    ///
+    /// Built ONCE per published version alongside the consolidation, never per lookup:
+    /// this index is read on the auto-hedge fill path, where a repeated linear scan of
+    /// the quoted universe (hundreds of instruments) per fill would be a real cost. The
+    /// [`Resolution::row`] it returns indexes straight back into `snapshot.instruments`.
+    panel: IdentifierCrosswalk,
+}
+
+impl PublishedBook {
+    /// The composite line for `query` — resolved through the panel cross-walk, so a
+    /// caller holding the security under a different identifier (a registry slug against
+    /// a CUSIP-keyed panel, or vice versa) still finds the line the venues are quoting.
+    ///
+    /// `None` when no identifier `query` carries resolves exactly to a published line.
+    /// The caller then has an honest miss and must fall back rather than approximate.
+    fn line(&self, query: &IdentifierSet) -> Option<(&AggregatedInstrument, CrosswalkBasis)> {
+        let hit = self.panel.resolve(query)?;
+        // The index is built from `snapshot.instruments` in order, so the row is in
+        // range by construction; `get` keeps that an honest miss rather than a panic if
+        // the two ever drift.
+        let line = self.snapshot.instruments.get(hit.row)?;
+        Some((line, hit.basis))
+    }
+}
+
+/// Index a published snapshot's lines for the identifier cross-walk. Every composite
+/// line already carries its ISIN and CUSIP (resolved from reference data at
+/// consolidation), so the join keys exist on the panel side without any new plumbing.
+fn panel_crosswalk(snapshot: &AggregatedBookSnapshot) -> IdentifierCrosswalk {
+    IdentifierCrosswalk::build(snapshot.instruments.iter().map(|i| IdentifierSet {
+        instrument_id: i.instrument_id.clone(),
+        cusip: i.cusip.clone(),
+        isin: i.isin.clone(),
+    }))
+}
+
+/// One instrument the firm advertises as tradeable that no liquidity provider can price.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnquotableInstrument {
+    /// The registry `instrument_id` as advertised.
+    pub instrument_id: String,
+    /// Its display name, so the warning names a security a human recognises.
+    pub name: String,
+    /// The instrument family (`bond` / `bond_future`).
+    pub kind: &'static str,
+    /// Its registered CUSIP, or empty — shown because a MISSING cross-reference is the
+    /// usual reason an otherwise-real security fails to cross-walk onto a panel.
+    pub cusip: String,
+    /// Its registered ISIN, or empty.
+    pub isin: String,
+}
+
+/// The result of [`AggregationHub::audit_unquotable`] — how many risk-transferable
+/// instruments the registry advertises, and which of them no venue can quote.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UnquotableAudit {
+    /// How many tradeable (bond / bond-future) instruments were examined.
+    pub tradeable: usize,
+    /// How many of the quotable ones were only reachable through a **cross-reference**
+    /// (CUSIP or ISIN) rather than an exact `instrument_id` match — i.e. how many
+    /// securities the registry and the wire disagree about the name of. These fill
+    /// correctly, but a growing count means the two namespaces are drifting.
+    pub cross_walked: usize,
+    /// The tradeable instruments no liquidity provider can price, by `instrument_id`.
+    pub unquotable: Vec<UnquotableInstrument>,
+}
+
+impl UnquotableAudit {
+    /// Whether the tradeable and quotable universes coincide — the healthy state.
+    #[must_use]
+    pub fn is_clean(&self) -> bool {
+        self.unquotable.is_empty()
+    }
+
+    /// A compact one-line rendering of the offending instruments for a log field.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        self.unquotable
+            .iter()
+            .map(|u| {
+                let cross_refs = match (u.cusip.is_empty(), u.isin.is_empty()) {
+                    (true, true) => "no cross-refs".to_owned(),
+                    (true, false) => format!("isin={}", u.isin),
+                    (false, true) => format!("cusip={}", u.cusip),
+                    (false, false) => format!("cusip={} isin={}", u.cusip, u.isin),
+                };
+                format!("{} [{}] ({})", u.instrument_id, u.kind, cross_refs)
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// Whether the **curated universe** `celnet-refdata` ships — the universe the liquidity
+/// providers price from — knows this security, and on which identifier.
+///
+/// Applies the SAME precedence [`IdentifierCrosswalk::resolve`] does (exact
+/// `instrument_id` → CUSIP → ISIN) so the audit's verdict and the live lookup's verdict
+/// cannot disagree. Each arm is an O(1) probe of the crate's static identity index, so
+/// this stays cheap over the whole registry. Returns `None` — never an approximate hit —
+/// when no identifier the query carries is in the curated universe.
+fn curated_basis(query: &IdentifierSet) -> Option<CrosswalkBasis> {
+    let known =
+        |id: &str| !id.trim().is_empty() && celnet_refdata::curated_identifiers(id).is_some();
+    if known(&query.instrument_id) {
+        return Some(CrosswalkBasis::Exact);
+    }
+    if known(&query.cusip) {
+        return Some(CrosswalkBasis::Cusip);
+    }
+    if known(&query.isin) {
+        return Some(CrosswalkBasis::Isin);
+    }
+    None
+}
+
+/// The identifiers carried by a reference-data definition, for the audit's cross-walk
+/// query. Reads the same `external_ids` [`build_identities`] does, so the audit and the
+/// live lookup agree by construction on what a security's cross-references are.
+fn query_identifiers_from_def(def: &crate::config::reference_data::InstrumentDef) -> IdentifierSet {
+    let ext = |scheme: &str| {
+        def.external_ids
+            .iter()
+            .find(|e| e.scheme.eq_ignore_ascii_case(scheme))
+            .map(|e| e.value.clone())
+            .unwrap_or_default()
+    };
+    IdentifierSet {
+        instrument_id: def.instrument_id.clone(),
+        cusip: ext("cusip"),
+        isin: ext("isin"),
+    }
+}
+
+/// The identifiers known for `instrument_id` on the QUERY side of the cross-walk.
+///
+/// Resolution order for the aliases themselves mirrors how much the platform trusts the
+/// source: the **reference-data registry** first (an admin-curated entry is the firm's
+/// own statement of a security's identity), then the **curated universe** shipped in
+/// `celnet-refdata` (which knows every government bond an LP can quote). An id in
+/// neither yields an exact-only set — it can still match a panel line by its own id, and
+/// otherwise stays honestly unresolved.
+fn query_identifiers(
+    identities: &HashMap<String, InstrumentIdentity>,
+    instrument_id: &str,
+) -> IdentifierSet {
+    if let Some(identity) = identities.get(instrument_id) {
+        let ids = IdentifierSet {
+            instrument_id: instrument_id.to_owned(),
+            cusip: identity.cusip.clone(),
+            isin: identity.isin.clone(),
+        };
+        if ids.has_cross_refs() {
+            return ids;
+        }
+        // A registered instrument with no cross-refs (a rates slug) still gets the
+        // curated fallback below rather than nothing.
+    }
+    celnet_refdata::curated_identifiers(instrument_id).map_or_else(
+        || IdentifierSet::from_id(instrument_id),
+        |mut ids| {
+            // Keep the CALLER's id as the exact key — the curated record's canonical id
+            // is reached through the cross-refs, and overwriting it here would silently
+            // re-point an exact match.
+            ids.instrument_id = instrument_id.to_owned();
+            ids
+        },
+    )
 }
 
 /// A book composite resolved for an inbound RFQ (Phase 2b): the book it came from, that
@@ -258,6 +430,7 @@ impl BookEngine {
                 book_id: id.clone(),
                 instruments: Vec::new(),
             },
+            panel: IdentifierCrosswalk::default(),
         });
         Self {
             id,
@@ -288,6 +461,13 @@ pub struct AggregationHub {
     /// byte-identical. Behind an `RwLock<Arc<…>>` for the same hot-swap-whole discipline
     /// as each book's `cfg`.
     pricing: RwLock<Arc<PricingGroupResolver>>,
+    /// The reference-data identity map (`instrument_id -> {name, isin, cusip}`) rebuilt
+    /// on every [`Self::reconcile`] — the same `Arc` each book's `cfg` carries, hoisted
+    /// onto the hub so a lookup can resolve a query's cross-references BEFORE it knows
+    /// which book covers the instrument (the identifier cross-walk needs the aliases to
+    /// pick the covering book at all). Behind an `RwLock<Arc<…>>` for the same
+    /// hot-swap-whole discipline as `pricing`.
+    identities: RwLock<Arc<HashMap<String, InstrumentIdentity>>>,
     /// **Street-side LP tick tally** — a bounded per-LP monotonic count of accepted
     /// quote-update pushes, keyed by `lp_name`. This is the tick-rate source for the
     /// LP liquidity analytics fold (`docs/ANALYTICS-REQUIREMENTS.md` §2.4): the sink
@@ -368,13 +548,29 @@ impl crate::services::auto_hedge::LpHedgeSource for AggregationHub {
         // reducing a short sheds by BUYING → lift an LP's OFFER (best = lowest). A zero/None
         // net has no side; treat it as a sell (a degenerate shed) for determinism.
         let sell = net_risk > 0.0;
+        // Resolve the security's identifiers ONCE (one hash probe), then reuse them for
+        // book admission and for every panel lookup: the id the hedge holds is not
+        // necessarily the id the LPs key their panel by, and re-deriving the cross-refs
+        // per book would put work on the fill path for no gain.
+        let query = self.query_ids(instrument);
         // Covering books in deterministic id order: the first one holding an executable
         // member price wins, so a book whose members have all aged out falls through to the
         // next rather than masking live liquidity behind it.
-        for book_id in self.covering_books(instrument) {
-            let Some(members) = self.resolve_member_panel(&book_id, instrument) else {
+        for book_id in self.covering_books_for(&query) {
+            let Some((members, basis)) = self.resolve_member_panel_for(&book_id, &query) else {
                 continue;
             };
+            if basis != CrosswalkBasis::Exact {
+                // The traded id and the quoted id are in different namespaces. The fill is
+                // real and correct, but the asymmetry is worth seeing: it is what the
+                // tradeable-vs-quotable audit exists to keep rare.
+                tracing::debug!(
+                    instrument = %instrument,
+                    book = %book_id,
+                    basis = basis.label(),
+                    "hedge panel resolved through the identifier cross-walk"
+                );
+            }
             let mut best: Option<(&str, f64)> = None;
             for m in &members {
                 if m.stale {
@@ -422,6 +618,7 @@ impl AggregationHub {
             clock,
             inventory,
             pricing: RwLock::new(Arc::new(PricingGroupResolver::default())),
+            identities: RwLock::new(Arc::new(HashMap::new())),
             lp_ticks: Mutex::new(HashMap::new()),
             pricing_control,
         })
@@ -476,6 +673,7 @@ impl AggregationHub {
         *self.pricing.write().expect("pricing groups lock poisoned") =
             Arc::new(PricingGroupResolver::build(&store.pricing_groups));
         let identities = Arc::new(build_identities(store));
+        *self.identities.write().expect("identities lock poisoned") = Arc::clone(&identities);
         let bond_terms = Arc::new(build_bond_terms(store));
         let enabled: Vec<&AggregatedBookDef> = store
             .aggregated_books
@@ -506,6 +704,14 @@ impl AggregationHub {
                 }
             }
         }
+        // Release the write guard before the audit: it reads the books through the same
+        // lock (and re-locks via `snapshot`), so holding it here would deadlock.
+        drop(books);
+        // Surface any instrument the firm advertises as tradeable that no venue can quote
+        // — the asymmetry that makes a hedge silently backstop instead of filling on a
+        // named LP. Boot and every admin CRUD, so an instrument added without liquidity is
+        // reported the moment it appears.
+        self.report_unquotable(store);
     }
 
     /// Route one pushed LP quote into every enabled book that lists the pushing LP
@@ -579,9 +785,13 @@ impl AggregationHub {
             // Per-client outbound pricing is applied downstream by the pricing-group
             // pipelines off this raw composite, never stored on the book.
             let raw = consolidate_book(&engine.id, &cfg, &state.sink, now);
+            // Index the panel's identifiers once per published version — the lookup path
+            // must stay O(1), not re-scan the quoted universe per fill.
+            let panel = panel_crosswalk(&raw);
             let published = PublishedBook {
                 version: state.dirty_version,
                 snapshot: raw,
+                panel,
             };
             let version = state.dirty_version;
             state.published = Arc::new(published);
@@ -606,17 +816,42 @@ impl AggregationHub {
     /// caller goes on to call [`Self::snapshot`], which re-locks — holding the read guard
     /// across that could deadlock.
     fn covering_books(&self, instrument_id: &str) -> Vec<String> {
+        self.covering_books_for(&IdentifierSet::from_id(instrument_id))
+    }
+
+    /// The ids of the enabled books whose scope admits **any identifier `query` carries**
+    /// (its own id, its CUSIP, or its ISIN), in deterministic id order.
+    ///
+    /// Scope admission is the *first* place the identifier-namespace mismatch bites: an
+    /// `Explicit` book scoped by the CUSIPs its LPs stream does not list a registry slug
+    /// for the same security, so an exact-only check rules the book out before the panel
+    /// is ever consulted. Widening admission to the query's cross-references — and only
+    /// to those exact strings — makes the covering-book choice agree with the cross-walk
+    /// that follows it. An `AllMembersQuote` book was already admitting everything, so
+    /// this changes nothing there.
+    ///
+    /// Passing an [`IdentifierSet::from_id`] (no cross-references) is byte-identical to
+    /// the exact-only [`Self::covering_books`].
+    fn covering_books_for(&self, query: &IdentifierSet) -> Vec<String> {
         let books = self.books.read().expect("aggregation books lock poisoned");
         let mut ids: Vec<String> = books
             .iter()
             .filter(|(_, engine)| {
                 let cfg = engine.cfg.lock().expect("book cfg lock poisoned");
-                scope_admits(&cfg.scope, instrument_id)
+                scope_admits_any(&cfg.scope, query)
             })
             .map(|(id, _)| id.clone())
             .collect();
         ids.sort();
         ids
+    }
+
+    /// The identifiers to query the cross-walk with for `instrument_id` — the reference
+    /// -data cross-references the registry (or the curated universe) holds for it. Cheap:
+    /// one `Arc` clone of the hot-swapped identity map plus at most one hash probe.
+    fn query_ids(&self, instrument_id: &str) -> IdentifierSet {
+        let identities = Arc::clone(&self.identities.read().expect("identities lock poisoned"));
+        query_identifiers(&identities, instrument_id)
     }
 
     /// The contributing member-LP panel `book_id` currently publishes for
@@ -630,19 +865,36 @@ impl AggregationHub {
     /// degenerate composite says nothing about whether the members underneath it are
     /// executable. Callers that price a two-way keep using `resolve_rfq_composite`.
     ///
-    /// `None` when the book is not running or publishes no line for the instrument.
+    /// The lookup is **identifier-namespace aware**: the panel is keyed by whatever
+    /// `instrument_id` the LPs put on the wire (a CUSIP for a US Treasury, a contract
+    /// code, a slug), which is not necessarily the id the caller holds. An exact match is
+    /// tried first and, failing that, the security's CUSIP and then its ISIN — see
+    /// [`IdentifierCrosswalk`] for the full precedence. An id that resolves on none of
+    /// them stays unresolved.
+    ///
+    /// `None` when the book is not running or publishes no line resolvable from
+    /// `instrument_id`.
     #[must_use]
     pub fn resolve_member_panel(
         &self,
         book_id: &str,
         instrument_id: &str,
     ) -> Option<Vec<RfqMemberLine>> {
+        self.resolve_member_panel_for(book_id, &self.query_ids(instrument_id))
+            .map(|(members, _)| members)
+    }
+
+    /// [`Self::resolve_member_panel`] against pre-resolved identifiers, also reporting
+    /// **which** identifier the panel line was found on. `best_fill` resolves the query's
+    /// cross-references once and reuses them across every covering book rather than
+    /// re-deriving them per book.
+    fn resolve_member_panel_for(
+        &self,
+        book_id: &str,
+        query: &IdentifierSet,
+    ) -> Option<(Vec<RfqMemberLine>, CrosswalkBasis)> {
         let published = self.snapshot(book_id)?;
-        let line = published
-            .snapshot
-            .instruments
-            .iter()
-            .find(|i| i.instrument_id == instrument_id)?;
+        let (line, basis) = published.line(query)?;
         let members = line
             .contributions
             .iter()
@@ -653,7 +905,7 @@ impl AggregationHub {
                 stale: c.stale,
             })
             .collect();
-        Some(members)
+        Some((members, basis))
     }
 
     /// Resolve the composite line for `instrument_id` from the first enabled book
@@ -714,6 +966,121 @@ impl AggregationHub {
             });
         }
         None
+    }
+
+    /// Audit the **tradeable-vs-quotable asymmetry**: every instrument the firm advertises
+    /// as risk-transferable that no liquidity provider can price.
+    ///
+    /// # Why this guard exists
+    ///
+    /// An instrument that is tradeable but unquotable is invisible until it is too late.
+    /// Everything looks healthy — the panel is full, the LPs are fresh, the book publishes
+    /// — right up until a hedge on that ONE instrument finds no LP, silently backstops to
+    /// the synthetic composite venue, and the desk's street-side analytics record a fill
+    /// that never happened. That is exactly the shape of this defect, and of a prior
+    /// production one. The asymmetry is cheap to check and expensive to discover, so it is
+    /// checked on every [`Self::reconcile`] — boot and every admin CRUD, which is when the
+    /// tradeable set can change.
+    ///
+    /// # What counts as quotable (and what this deliberately does NOT claim)
+    ///
+    /// An instrument is quotable when **either**:
+    ///
+    /// * it resolves — by id, CUSIP, or ISIN — into the curated universe `celnet-refdata`
+    ///   ships, which is the universe the liquidity providers price from; **or**
+    /// * some enabled book is *currently publishing* a line the cross-walk resolves it to
+    ///   (direct live evidence an LP quotes it, even if it is outside the curated set).
+    ///
+    /// A curated instrument that simply has no live quote right now is **not** reported:
+    /// that is an idle feed, not a structural gap, and crying wolf about it would train
+    /// the desk to ignore the warning. This audit only reports instruments that no venue
+    /// could quote *at all*.
+    ///
+    /// Scope is the risk-transferable families — cash bonds and bond futures. A rates
+    /// curve pillar (a deposit, FRA, or swap) is a curve input, not something shed into an
+    /// LP panel, so its absence from the panel is correct rather than a defect.
+    #[must_use]
+    pub fn audit_unquotable(&self, store: &IdentityStore) -> UnquotableAudit {
+        let mut tradeable = 0usize;
+        let mut cross_walked = 0usize;
+        let mut unquotable = Vec::new();
+        // Resolve against the live panels only when the curated check fails, and reuse one
+        // list of book ids for the whole sweep.
+        let book_ids: Vec<String> = {
+            let books = self.books.read().expect("aggregation books lock poisoned");
+            let mut ids: Vec<String> = books.keys().cloned().collect();
+            ids.sort();
+            ids
+        };
+        let snapshots: Vec<Arc<PublishedBook>> =
+            book_ids.iter().filter_map(|id| self.snapshot(id)).collect();
+        for def in &store.instruments {
+            if !matches!(
+                def.definition,
+                InstrumentFamily::Bond(_) | InstrumentFamily::BondFuture(_)
+            ) {
+                continue;
+            }
+            tradeable += 1;
+            let query = query_identifiers_from_def(def);
+            if let Some(basis) = curated_basis(&query) {
+                // An LP prices this from the curated universe. Count the ones that only
+                // got there through a cross-reference: those are the namespace
+                // disagreements this cross-walk exists to bridge, and a rising count is
+                // the early warning that the registry and the wire are drifting apart.
+                if basis != CrosswalkBasis::Exact {
+                    cross_walked += 1;
+                }
+                continue;
+            }
+            if let Some(basis) = snapshots
+                .iter()
+                .find_map(|p| p.line(&query).map(|(_, b)| b))
+            {
+                // Live evidence: a venue is quoting it right now, even though it is
+                // outside the curated set.
+                if basis != CrosswalkBasis::Exact {
+                    cross_walked += 1;
+                }
+                continue;
+            }
+            unquotable.push(UnquotableInstrument {
+                instrument_id: def.instrument_id.clone(),
+                name: def.name.clone(),
+                kind: def.definition.kind(),
+                cusip: query.cusip,
+                isin: query.isin,
+            });
+        }
+        unquotable.sort_by(|a, b| a.instrument_id.cmp(&b.instrument_id));
+        UnquotableAudit {
+            tradeable,
+            cross_walked,
+            unquotable,
+        }
+    }
+
+    /// Run [`Self::audit_unquotable`] and surface the result: a `warn` naming every
+    /// tradeable-but-unquotable instrument, and nothing louder than `debug` when the
+    /// tradeable and quotable universes coincide. Quiet when clean, by design.
+    fn report_unquotable(&self, store: &IdentityStore) {
+        let audit = self.audit_unquotable(store);
+        if audit.unquotable.is_empty() {
+            tracing::debug!(
+                tradeable = audit.tradeable,
+                cross_walked = audit.cross_walked,
+                "tradeable/quotable audit clean: every tradeable instrument is quotable"
+            );
+            return;
+        }
+        tracing::warn!(
+            tradeable = audit.tradeable,
+            cross_walked = audit.cross_walked,
+            unquotable = audit.unquotable.len(),
+            instruments = %audit.summary(),
+            "TRADEABLE BUT UNQUOTABLE: no liquidity provider can price these instruments — \
+             a hedge on one cannot fill on a named LP and will backstop to the composite"
+        );
     }
 
     /// Diagnose why a composite lookup for `instrument_id` found nothing, so a caller can
@@ -1132,6 +1499,29 @@ fn scope_admits(scope: &Scope, instrument_id: &str) -> bool {
     }
 }
 
+/// Whether `scope` admits **any identifier `query` carries** — its own id, its CUSIP, or
+/// its ISIN. An `Explicit` scope is a list of literal wire ids, so a security the firm
+/// trades under a registry slug is not listed there even when the book's LPs quote it
+/// under its CUSIP. Comparison stays literal (case-insensitive only for the
+/// cross-references, which are defined over `[0-9A-Z]`); nothing is approximated.
+fn scope_admits_any(scope: &Scope, query: &IdentifierSet) -> bool {
+    match scope {
+        Scope::AllMembersQuote => true,
+        Scope::Explicit(ids) => {
+            if ids.iter().any(|i| i == &query.instrument_id) {
+                return true;
+            }
+            let cusip = query.cusip.trim();
+            let isin = query.isin.trim();
+            ids.iter().any(|i| {
+                let i = i.trim();
+                (!cusip.is_empty() && i.eq_ignore_ascii_case(cusip))
+                    || (!isin.is_empty() && i.eq_ignore_ascii_case(isin))
+            })
+        }
+    }
+}
+
 /// The internal, asset-agnostic engine [`Instrument`] key for a server
 /// `instrument_id` — the id carried as a vendor-neutral free-form commodity symbol
 /// (guardrail 8: the id is an opaque code) at a single canonical tenor. Injective
@@ -1282,6 +1672,7 @@ fn build_instrument(
 mod tests {
     use super::*;
     use crate::config::identity::AggregationParams;
+    use crate::config::reference_data::InstrumentDef;
 
     const S: i64 = 1_000_000_000;
     const NOW: i64 = 1_000 * S;
@@ -1703,5 +2094,260 @@ mod tests {
         let raw_half = 0.5 * (prov.raw_offer - prov.raw_bid);
         let tiered_half = 0.5 * (prov.tiered_offer - prov.tiered_bid);
         assert!((prov.applied_margin - (tiered_half - raw_half)).abs() < 1e-9);
+    }
+
+    // ---------------------------------------------------------------------------
+    // The identifier cross-walk
+    // ---------------------------------------------------------------------------
+
+    /// A real curated US Treasury, whose CUSIP is what an LP puts on the wire and whose
+    /// ISIN is the cross-reference a registry entry would carry.
+    fn curated_ust() -> celnet_refdata::GovBondSpec {
+        celnet_refdata::government_universe()
+            .into_iter()
+            .find(|s| s.cusip.is_some())
+            .expect("the curated universe ships US Treasuries")
+    }
+
+    /// A registry entry for `id` carrying the given cross-references — the shape of a
+    /// bond an admin defines under the firm's own slug.
+    fn bond_def(id: &str, cusip: &str, isin: &str) -> InstrumentDef {
+        use crate::config::reference_data::{BondDef, CivilDate, ExternalId};
+        let mut external_ids = Vec::new();
+        if !cusip.is_empty() {
+            external_ids.push(ExternalId {
+                scheme: "cusip".to_string(),
+                value: cusip.to_string(),
+            });
+        }
+        if !isin.is_empty() {
+            external_ids.push(ExternalId {
+                scheme: "isin".to_string(),
+                value: isin.to_string(),
+            });
+        }
+        InstrumentDef {
+            instrument_id: id.to_string(),
+            name: format!("registry entry {id}"),
+            description: "cross-walk fixture".to_string(),
+            currency: "USD".to_string(),
+            external_ids,
+            definition: InstrumentFamily::Bond(BondDef {
+                issuer: "US Treasury".to_string(),
+                coupon_rate: 0.04,
+                coupon_type: "fixed".to_string(),
+                coupon_frequency: "semi_annual".to_string(),
+                day_count: "act_act".to_string(),
+                issue_date: None,
+                dated_date: None,
+                first_coupon_date: None,
+                maturity_date: CivilDate {
+                    year: 2030,
+                    month: 6,
+                    day: 30,
+                },
+                redemption: 100.0,
+                calendars: vec!["united_states".to_string()],
+            }),
+        }
+    }
+
+    /// A hub whose book is fed by `members`, reconciled against a registry holding
+    /// `instruments` — so the identity map the cross-walk queries is populated.
+    fn hub_with_registry(members: &[&str], instruments: Vec<InstrumentDef>) -> Arc<AggregationHub> {
+        let hub = AggregationHub::new(Clock::manual(NOW));
+        let mut store = IdentityStore::default();
+        store
+            .aggregated_books
+            .push(def("b", members, params(false, 1, 60_000)));
+        store.instruments = instruments;
+        hub.reconcile(&store);
+        hub
+    }
+
+    /// **THE DEFECT.** The panel is keyed by the CUSIP the LPs stream; the registry knows
+    /// the same security under a slug. Before the cross-walk the exact-match lookup missed,
+    /// `best_fill` returned `None`, and the hedge backstopped to the synthetic COMPOSITE
+    /// venue — recording a fill no LP ever made. It must now fill on a NAMED LP.
+    #[test]
+    fn a_hedge_on_a_registry_slug_fills_on_the_named_lp_quoting_its_cusip() {
+        use crate::services::auto_hedge::LpHedgeSource;
+        let spec = curated_ust();
+        let cusip = spec.cusip.clone().expect("US row has a CUSIP");
+        let hub = hub_with_registry(
+            &["LP-1", "LP-2"],
+            vec![bond_def("firm-slug-for-the-note", &cusip, &spec.isin)],
+        );
+        // The venues quote the security under its CUSIP, which is NOT the registry id.
+        assert!(hub.ingest(&lp_quote("LP-1", &cusip, 99.90, 100.10, NOW)));
+        assert!(hub.ingest(&lp_quote("LP-2", &cusip, 99.95, 100.05, NOW)));
+
+        // Shedding a long sells into a bid: the best bid is LP-2's 99.95.
+        let fill = hub
+            .best_fill("firm-slug-for-the-note", 1_000_000.0, 1_000_000.0)
+            .expect("the cross-walk must find the panel the LPs are quoting");
+        assert_eq!(fill.lp_id, "LP-2", "filled on a real, named LP");
+        assert_eq!(fill.price.to_bits(), 99.95_f64.to_bits());
+        // …and the same security reached by its ISIN alone resolves to the same panel.
+        let by_isin = hub
+            .resolve_member_panel("b", &spec.isin)
+            .expect("ISIN cross-walks onto the CUSIP-keyed panel");
+        assert_eq!(by_isin.len(), 2);
+    }
+
+    /// The precedence is stable and observable end to end: an exact `instrument_id` hit
+    /// outranks the cross-references even when they name a DIFFERENT quoted line.
+    #[test]
+    fn an_exact_instrument_id_outranks_the_cross_references() {
+        let spec = curated_ust();
+        let cusip = spec.cusip.clone().expect("US row has a CUSIP");
+        // The registry entry is keyed by "DIRECT" but cross-references the UST's CUSIP.
+        let hub = hub_with_registry(&["LP-1"], vec![bond_def("DIRECT", &cusip, &spec.isin)]);
+        assert!(hub.ingest(&lp_quote("LP-1", "DIRECT", 50.0, 50.5, NOW)));
+        assert!(hub.ingest(&lp_quote("LP-1", &cusip, 99.9, 100.1, NOW)));
+
+        let members = hub
+            .resolve_member_panel("b", "DIRECT")
+            .expect("the exact id resolves");
+        assert_eq!(members.len(), 1);
+        assert_eq!(
+            members[0].bid.to_bits(),
+            50.0_f64.to_bits(),
+            "the exact `instrument_id` line won, not the CUSIP cross-reference's"
+        );
+    }
+
+    /// An id in nobody's namespace must stay unresolved — the old behaviour, kept. A
+    /// hedge that cannot find a venue records an honest miss; it never approximates onto
+    /// a different bond just because one is nearby.
+    #[test]
+    fn an_unresolvable_instrument_never_approximates_onto_another_bond() {
+        use crate::services::auto_hedge::LpHedgeSource;
+        let spec = curated_ust();
+        let cusip = spec.cusip.clone().expect("US row has a CUSIP");
+        // The registry advertises a security with NO cross-references at all.
+        let hub = hub_with_registry(&["LP-1"], vec![bond_def("nobody-quotes-me", "", "")]);
+        assert!(hub.ingest(&lp_quote("LP-1", &cusip, 99.90, 100.10, NOW)));
+
+        assert!(
+            hub.best_fill("nobody-quotes-me", 1_000_000.0, 1_000_000.0)
+                .is_none(),
+            "an unresolvable id must not fill on an unrelated bond's panel"
+        );
+        assert!(hub.resolve_member_panel("b", "nobody-quotes-me").is_none());
+        // A plausible-but-wrong CUSIP prefix is not a match either.
+        assert!(
+            hub.resolve_member_panel("b", &cusip[..cusip.len() - 1])
+                .is_none()
+        );
+    }
+
+    /// The curated-universe check the audit uses applies the SAME documented precedence
+    /// as the live lookup, and refuses to resolve anything it does not know exactly.
+    #[test]
+    fn the_curated_basis_follows_the_documented_precedence() {
+        let spec = curated_ust();
+        let cusip = spec.cusip.clone().expect("US row has a CUSIP");
+        assert_eq!(
+            curated_basis(&IdentifierSet::from_id(&spec.instrument_id)),
+            Some(CrosswalkBasis::Exact)
+        );
+        assert_eq!(
+            curated_basis(&IdentifierSet {
+                instrument_id: "firm-slug".to_string(),
+                cusip: cusip.clone(),
+                isin: spec.isin.clone(),
+            }),
+            Some(CrosswalkBasis::Cusip),
+            "CUSIP outranks ISIN when both would hit"
+        );
+        assert_eq!(
+            curated_basis(&IdentifierSet {
+                instrument_id: "firm-slug".to_string(),
+                cusip: String::new(),
+                isin: spec.isin.clone(),
+            }),
+            Some(CrosswalkBasis::Isin)
+        );
+        assert_eq!(curated_basis(&IdentifierSet::from_id("acme-5y-corp")), None);
+        assert_eq!(curated_basis(&IdentifierSet::default()), None);
+    }
+
+    /// The guard: a bond the firm advertises as tradeable that no venue can price is
+    /// reported by name; a bond the LPs actually quote is not. It must be quiet when the
+    /// tradeable and quotable universes coincide, or the desk learns to ignore it.
+    #[test]
+    fn the_audit_names_tradeable_instruments_no_venue_can_quote() {
+        let spec = curated_ust();
+        let cusip = spec.cusip.clone().expect("US row has a CUSIP");
+        let hub = hub_with_registry(
+            &["LP-1"],
+            vec![
+                // (a) curated, reached by its own id — quotable, exactly.
+                bond_def(&spec.instrument_id, "", ""),
+                // (b) a firm slug that cross-walks onto the curated row by CUSIP.
+                bond_def("firm-slug", &cusip, &spec.isin),
+                // (c) an invented security no LP prices — the defect shape.
+                bond_def("acme-5y-corp", "", "US000402AA77"),
+            ],
+        );
+        let mut store = IdentityStore {
+            instruments: vec![
+                bond_def(&spec.instrument_id, "", ""),
+                bond_def("firm-slug", &cusip, &spec.isin),
+                bond_def("acme-5y-corp", "", "US000402AA77"),
+            ],
+            ..Default::default()
+        };
+        let audit = hub.audit_unquotable(&store);
+        assert_eq!(audit.tradeable, 3);
+        assert_eq!(
+            audit.cross_walked, 1,
+            "only the firm slug needed a cross-ref"
+        );
+        assert_eq!(audit.unquotable.len(), 1);
+        assert_eq!(audit.unquotable[0].instrument_id, "acme-5y-corp");
+        assert_eq!(audit.unquotable[0].isin, "US000402AA77");
+        assert!(!audit.is_clean());
+        assert!(audit.summary().contains("acme-5y-corp"));
+
+        // Drop the unquotable one and the audit goes quiet.
+        store.instruments.pop();
+        let clean = hub.audit_unquotable(&store);
+        assert!(clean.is_clean(), "no false positives on a healthy registry");
+        assert_eq!(clean.tradeable, 2);
+        assert!(clean.summary().is_empty());
+    }
+
+    /// The guard applied to the REAL boot universe, not a fixture: exactly what
+    /// `celnet-server` registers on a pristine store — the rates seed plus the full
+    /// curated government-bond and Treasury-futures complex.
+    ///
+    /// Every tradeable instrument the firm advertises must be one some liquidity provider
+    /// can price. A bond in this registry that no LP quotes cannot fill on a named venue;
+    /// it backstops to the synthetic composite and books a fill that never happened. That
+    /// is the defect this whole cross-walk exists to close, so the shipped universe
+    /// asserts it, permanently.
+    #[test]
+    fn the_real_boot_universe_is_entirely_quotable() {
+        let hub = AggregationHub::new(Clock::manual(NOW));
+        let mut store = IdentityStore::default();
+        store.ensure_seed_instruments();
+        store.ensure_seed_government_bonds();
+        hub.reconcile(&store);
+        let audit = hub.audit_unquotable(&store);
+        assert!(
+            audit.tradeable > 100,
+            "the boot universe must actually be seeded, got {} tradeable",
+            audit.tradeable
+        );
+        assert!(
+            audit.is_clean(),
+            "the boot registry advertises {} of {} tradeable instruments that no liquidity \
+             provider can quote: {}",
+            audit.unquotable.len(),
+            audit.tradeable,
+            audit.summary()
+        );
     }
 }
