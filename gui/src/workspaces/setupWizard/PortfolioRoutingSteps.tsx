@@ -177,7 +177,7 @@ export function PortfoliosStep({
   const addBook = (): void =>
     onChange([
       ...books,
-      { key: newBookKey(), name: "", parentKey: null, deskId: null, enabled: true, limits: null },
+      { key: newBookKey(), name: "", parentKey: null, deskId: null, enabled: true, limits: null, assetClass: "fixed_income" },
     ]);
   const removeBook = (key: string): void =>
     onChange(books.filter((b) => b.key !== key).map((b) => (b.parentKey === key ? { ...b, parentKey: null } : b)));

@@ -4400,6 +4400,9 @@ export function riskBookSpecToWire(b: RiskBook): WireObject {
   m["description"] = b.description;
   if (b.limits !== null) m["limits"] = riskLimitsToWire(b.limits);
   m["enabled"] = b.enabled;
+  // Always sent explicitly: the server rejects an unknown/empty class, so an omitted
+  // franchise must surface as an error rather than silently defaulting.
+  m["asset_class"] = b.assetClass;
   return m;
 }
 
@@ -4419,6 +4422,10 @@ export function riskBookDescFromWire(o: WireObject): RiskBook {
         ? riskLimitsFromWire(rawLimits as WireObject)
         : null,
     enabled: o["enabled"] === true,
+    // READ path only: a roster row written before the field (or by an older store)
+    // renders as fixed income, matching the server's own serde default for an
+    // untagged book. The write path always sends an explicit class.
+    assetClass: o["asset_class"] === "fx_options" ? "fx_options" : "fixed_income",
   };
 }
 

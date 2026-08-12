@@ -9,13 +9,19 @@
  * {@link RiskLimits}, tag an owning desk, and re-parent (a client-side acyclic
  * guard forbids parenting a portfolio under itself or a descendant).
  *
- * Gating: the risk-portfolio RPCs gate on the granular `risk_manage·fixed_income`
- * capability server-side (docs/PERMISSIONS-GRANULAR-REVIEW.md §4 — a firm risk-control
- * authority distinct from super-admin, so a desk/risk lead manages portfolios WITHOUT
- * full Administer). Edit affordances mirror it: `readOnly = !can("risk_manage",
- * "fixed_income")`. The whole surface is rail-hidden from anyone lacking the cap, so a
- * non-admin without it never reaches the pane. The firm-wide routing GRAPH that maps
- * fills to leaf books is edited on the flow-canvas surface, not here.
+ * Each portfolio declares the ASSET CLASS whose risk it holds ({@link RiskBook.assetClass}):
+ * vega and DV01 are not commensurable, so a tree holds ONE franchise and a sub-portfolio
+ * inherits its parent's (server-validated). That tag is what lets this be a single
+ * firm-wide surface rather than one screen per asset.
+ *
+ * Gating: the risk-portfolio RPCs gate on the granular `risk_manage` capability
+ * server-side (docs/PERMISSIONS-GRANULAR-REVIEW.md §4 — a firm risk-control authority
+ * distinct from super-admin, so a desk/risk lead manages portfolios WITHOUT full
+ * Administer). Edit affordances mirror it in TWO tiers: reaching the pane needs
+ * `risk_manage` on EITHER class (`readOnly`), while editing a particular portfolio needs
+ * it on THAT portfolio's class (`draftReadOnly`) — so a single-franchise risk manager
+ * sees the whole firm tree but can only edit their own side. The firm-wide routing GRAPH
+ * that maps fills to leaf books is edited on the flow-canvas surface, not here.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -23,12 +29,17 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
 import { MAGNITUDE_HELP, MagnitudeField } from "../components/MagnitudeField";
-import type { DeskDesc, RiskBook, RiskLimits } from "../data/contract";
+import type { CapabilityAsset, DeskDesc, RiskBook, RiskLimits } from "../data/contract";
 import { notifyRiskRoutingChanged } from "../lib/routingGuard";
 import styles from "./RiskBooksWorkspace.module.css";
 
-/** A fresh blank book draft for the Create flow (id blank ⇒ server mints from name). */
-function blankBook(parentId: string | null): RiskBook {
+/**
+ * A fresh blank book draft for the Create flow (id blank ⇒ server mints from name).
+ * `assetClass` is explicit rather than defaulted: a sub-book MUST hold its parent's
+ * franchise (the server rejects a tree that changes class mid-branch), and a top-level
+ * book takes the franchise the trader is currently looking at.
+ */
+function blankBook(parentId: string | null, assetClass: CapabilityAsset): RiskBook {
   return {
     id: "",
     name: "",
@@ -37,6 +48,7 @@ function blankBook(parentId: string | null): RiskBook {
     description: "",
     limits: null,
     enabled: true,
+    assetClass,
   };
 }
 
@@ -112,8 +124,14 @@ export function RiskBooksWorkspace(): React.ReactElement {
   // Risk-portfolio editing is gated on the granular risk_manage·FI capability (not
   // super-admin) — see the header note. The owning-desk picker below still needs the
   // Administer-gated desk roster, so it stays isAdmin-fetched (optional metadata).
-  const canManageRisk = auth.can("risk_manage", "fixed_income");
-  const readOnly = !canManageRisk;
+  // Portfolios are now per-franchise, so reaching the surface needs `risk_manage` on
+  // EITHER class — gating the whole screen on FI would lock an FX risk manager out of
+  // their own books. Editing a PARTICULAR book is gated on that book's own class below,
+  // so a single-franchise manager sees the whole tree but can only edit their side.
+  const canManageAnyRisk =
+    auth.can("risk_manage", "fixed_income") || auth.can("risk_manage", "fx_options");
+  const canManageClass = (cls: CapabilityAsset): boolean => auth.can("risk_manage", cls);
+  const readOnly = !canManageAnyRisk;
 
   const [books, setBooks] = useState<RiskBook[]>([]);
   const [desks, setDesks] = useState<DeskDesc[]>([]);
@@ -122,6 +140,9 @@ export function RiskBooksWorkspace(): React.ReactElement {
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<RiskBook | null>(null);
   const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
+  // The EDITOR is gated on the open book's own franchise: a manager entitled to one
+  // class can see the whole firm-wide tree but may only edit their side of it.
+  const draftReadOnly = readOnly || (draft !== null && !canManageClass(draft.assetClass));
 
   const reload = useCallback(async (): Promise<RiskBook[]> => {
     const list = await app.transport.listRiskBooks();
@@ -193,12 +214,21 @@ export function RiskBooksWorkspace(): React.ReactElement {
     setSaveState({ kind: "idle" });
   }, []);
 
-  const startCreate = useCallback((parentId: string | null): void => {
-    setCreating(true);
-    setSelectedId(null);
-    setDraft(blankBook(parentId));
-    setSaveState({ kind: "idle" });
-  }, []);
+  const startCreate = useCallback(
+    (parentId: string | null): void => {
+      setCreating(true);
+      setSelectedId(null);
+      // A sub-book INHERITS its parent's franchise (the server rejects a tree that
+      // changes class mid-branch, so offering a choice here would only manufacture a
+      // rejection); a top-level book takes the franchise currently on screen.
+      const parent = parentId === null ? undefined : books.find((b) => b.id === parentId);
+      const cls: CapabilityAsset =
+        parent?.assetClass ?? (app.activeDomain === "fx_options" ? "fx_options" : "fixed_income");
+      setDraft(blankBook(parentId, cls));
+      setSaveState({ kind: "idle" });
+    },
+    [books, app.activeDomain],
+  );
 
   const patch = useCallback((p: Partial<RiskBook>): void => {
     setDraft((d) => (d ? { ...d, ...p } : d));
@@ -289,7 +319,10 @@ export function RiskBooksWorkspace(): React.ReactElement {
   const parentOptions = useMemo(() => {
     if (!draft) return books;
     const excluded = draft.id ? subtreeIds(books, draft.id) : new Set<string>();
-    return books.filter((b) => !excluded.has(b.id));
+    // Only SAME-FRANCHISE portfolios are offerable parents: the server rejects a tree
+    // that changes asset class mid-branch, so listing the other franchise here would
+    // only let the trader build a selection that cannot be saved.
+    return books.filter((b) => !excluded.has(b.id) && b.assetClass === draft.assetClass);
   }, [books, draft]);
 
   const deskName = useCallback(
@@ -379,7 +412,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
                 <input
                   className={styles.input}
                   value={draft.name}
-                  disabled={readOnly}
+                  disabled={draftReadOnly}
                   onChange={(e) => patch({ name: e.target.value })}
                   placeholder="e.g. FX EMEA Vanilla"
                 />
@@ -390,7 +423,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
                 <input
                   className={styles.input}
                   value={draft.description}
-                  disabled={readOnly}
+                  disabled={draftReadOnly}
                   onChange={(e) => patch({ description: e.target.value })}
                   placeholder="What this portfolio is for"
                 />
@@ -402,7 +435,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
                   <select
                     className={styles.input}
                     value={draft.parentId ?? ""}
-                    disabled={readOnly}
+                    disabled={draftReadOnly}
                     onChange={(e) => patch({ parentId: e.target.value === "" ? null : e.target.value })}
                   >
                     <option value="">(top-level)</option>
@@ -419,7 +452,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
                   <select
                     className={styles.input}
                     value={draft.deskId ?? ""}
-                    disabled={readOnly}
+                    disabled={draftReadOnly}
                     onChange={(e) => patch({ deskId: e.target.value === "" ? null : e.target.value })}
                   >
                     <option value="">(unowned)</option>
@@ -430,19 +463,40 @@ export function RiskBooksWorkspace(): React.ReactElement {
                     ))}
                   </select>
                 </label>
+
+                <label className={styles.field}>
+                  <span className={styles.label}>Asset class</span>
+                  <select
+                    className={styles.input}
+                    value={draft.assetClass}
+                    // A sub-portfolio INHERITS its parent's franchise — the server rejects
+                    // a tree that changes class mid-branch, so the control is locked rather
+                    // than offering a choice that could only be refused.
+                    disabled={draftReadOnly || draft.parentId !== null}
+                    onChange={(e) => patch({ assetClass: e.target.value as CapabilityAsset })}
+                  >
+                    <option value="fixed_income">Fixed Income</option>
+                    <option value="fx_options">FX Options</option>
+                  </select>
+                  <span className={styles.hint}>
+                    {draft.parentId !== null
+                      ? "Inherited from the parent portfolio."
+                      : "The franchise this portfolio buckets. Vega and DV01 do not net, so a portfolio tree holds one class."}
+                  </span>
+                </label>
               </div>
 
               <label className={styles.checkField}>
                 <input
                   type="checkbox"
                   checked={draft.enabled}
-                  disabled={readOnly}
+                  disabled={draftReadOnly}
                   onChange={(e) => patch({ enabled: e.target.checked })}
                 />
                 <span>Enabled (only enabled portfolios are valid routing targets)</span>
               </label>
 
-              <fieldset className={styles.limits} disabled={readOnly}>
+              <fieldset className={styles.limits} disabled={draftReadOnly}>
                 <legend className={styles.label}>Pre-trade limits (blank ⇒ uncapped)</legend>
                 <p className={styles.hint}>{MAGNITUDE_HELP}</p>
                 <div className={styles.row}>
@@ -495,7 +549,7 @@ export function RiskBooksWorkspace(): React.ReactElement {
                 </dl>
               )}
 
-              {!readOnly && (
+              {!draftReadOnly && (
                 <div className={styles.actions}>
                   <Button onClick={() => void save()} disabled={saveState.kind === "saving"}>
                     {creating ? "Create portfolio" : "Save changes"}

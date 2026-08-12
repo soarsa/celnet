@@ -19,7 +19,12 @@
  * steps as {@link ExtraApplyStep}s and delegate the books+routing spine to
  * {@link applyWizardCore}, so that spine is written — and tested — exactly once.
  */
-import type { RiskBook, RiskLimits, RiskRoutingGraph } from "../../data/contract";
+import type {
+  CapabilityAsset,
+  RiskBook,
+  RiskLimits,
+  RiskRoutingGraph,
+} from "../../data/contract";
 import { compileRulesToGraph, detectRuleConflicts, type RiskRule } from "../../lib/riskRules";
 
 /**
@@ -40,6 +45,11 @@ export interface WizardBook {
   enabled: boolean;
   /** Optional per-portfolio pre-trade limits. */
   limits: RiskLimits | null;
+  /**
+   * The asset class whose risk this portfolio holds. A staged sub-portfolio must carry
+   * its parent's class — the server rejects a tree that changes franchise mid-branch.
+   */
+  assetClass: CapabilityAsset;
 }
 
 /** The generic status of one Apply step, surfaced in the progress list. */
@@ -166,6 +176,7 @@ function bookSpec(b: WizardBook, idByKey: ReadonlyMap<string, string>): RiskBook
     description: "",
     limits: b.limits,
     enabled: b.enabled,
+    assetClass: b.assetClass,
   };
 }
 

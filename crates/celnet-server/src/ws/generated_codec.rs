@@ -6383,6 +6383,9 @@ impl WireBuilder for RiskBookSpec {
             "description" => self.description = string_or_empty(value),
             "limits" => self.limits = opt_msg::<RiskLimitsDesc>(value, "limits")?,
             "enabled" => self.enabled = bool_or_false(value),
+            // Absent ⇒ "" (the proto3 scalar default), which the store rejects as an
+            // unknown asset class — mirrors the hand codec exactly.
+            "asset_class" => self.asset_class = string_or_empty(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -8674,6 +8677,7 @@ impl WireAdapter for RiskBookDesc {
             // hand codec's `.map(..)` yields null too).
             "limits" => self.limits.as_ref().map(|l| WireVal::Msg(l)),
             "enabled" => Some(WireVal::Bool(self.enabled)),
+            "asset_class" => Some(WireVal::Str(&self.asset_class)),
             _ => None,
         }
     }

@@ -5431,6 +5431,7 @@ fn risk_book_spec_body() -> Value {
         "description": "macro book",
         "limits": { "max_net_notional": 1_000_000_000.0, "max_dv01": 50_000.0 },
         "enabled": true,
+        "asset_class": "fx_options",
     })
 }
 
@@ -5618,6 +5619,9 @@ fn risk_book_desc_full() -> RiskBookDesc {
             max_dv01: Some(50_000.0),
         }),
         enabled: true,
+        // The FX class deliberately — the minimal fixture carries the FI one, so the
+        // differential exercises BOTH labels rather than only the serde default.
+        asset_class: "fx_options".to_owned(),
     }
 }
 
@@ -5631,6 +5635,7 @@ fn risk_book_desc_minimal() -> RiskBookDesc {
         description: String::new(),
         limits: None,
         enabled: false,
+        asset_class: "fixed_income".to_owned(),
     }
 }
 

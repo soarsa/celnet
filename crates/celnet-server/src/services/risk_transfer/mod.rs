@@ -555,6 +555,7 @@ mod tests {
             desk_id: Some(desk.to_owned()),
             description: String::new(),
             limits: None,
+            asset_class: crate::config::identity::default_risk_book_asset_class(),
             enabled: true,
         }
     }

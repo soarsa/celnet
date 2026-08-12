@@ -55,14 +55,16 @@ describe("consolidated Risk Transfer rail row", () => {
     expect(new Set(glyphs).size).toBe(glyphs.length);
   });
 
-  it("places the consolidated row under Fixed Income immediately after the Risk host", () => {
+  it("keeps the consolidated row under Fixed Income once the Risk host is hoisted away", () => {
     const fi = railForDomain("fixed_income").map((r) => r.id);
-    // Risk Routing + Acceptance are CONSOLIDATED into the single "riskdashboard" Risk
-    // host (their own tabs), so the FI rail has no standalone riskrouting/acceptance
-    // rows — Risk Transfer now follows the Risk host directly.
+    // Risk Routing + Acceptance are CONSOLIDATED into the "riskdashboard" Risk host
+    // (their own tabs), and that host is itself hoisted to the top-level Risk tab — so
+    // none of the three are FI rail rows. Risk Transfer STAYS on the FI rail: moving
+    // risk between portfolios is an FI desk workflow, not firm-wide risk management.
     expect(fi.includes("riskrouting")).toBe(false);
     expect(fi.includes("acceptance")).toBe(false);
-    expect(fi[fi.indexOf("riskdashboard") + 1]).toBe("risktransfer");
+    expect(fi.includes("riskdashboard")).toBe(false);
+    expect(fi.includes("risktransfer")).toBe(true);
     // The retired transfer ids are not standalone rail rows under any domain either.
     for (const id of RETIRED_ROWS) expect(fi.includes(id)).toBe(false);
   });

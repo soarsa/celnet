@@ -3518,6 +3518,13 @@ export interface RiskBook {
   limits: RiskLimits | null;
   /** Whether the book is active. Only enabled books are valid routing targets. */
   enabled: boolean;
+  /**
+   * The asset class whose risk this portfolio holds. A portfolio buckets ONE
+   * franchise — vega and DV01 are not commensurable, so a tree holds a single class
+   * and a sub-book must match its parent (server-validated). This is what lets the
+   * risk surface be firm-wide while still splitting the tree per franchise.
+   */
+  assetClass: CapabilityAsset;
 }
 
 /**

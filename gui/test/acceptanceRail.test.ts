@@ -43,15 +43,19 @@ describe("acceptance consolidation into the Risk host", () => {
 
   it("resolves as a deep-link alias to the `riskdashboard` host", () => {
     expect(CONSOLIDATED_WORKSPACE_ALIAS.acceptance).toBe("riskdashboard");
-    // Still a navigable id — assets resolve via the alias (fixed_income) rather than
-    // throwing "not in RAIL".
-    expect(workspaceAssets("acceptance")).toEqual(["fixed_income"]);
+    // Still a navigable id — assets resolve via the alias rather than throwing "not in
+    // RAIL". The host is CROSS-ASSET now that portfolios declare their own franchise,
+    // so both classes come back.
+    expect(workspaceAssets("acceptance")).toEqual(["fx_options", "fixed_income"]);
   });
 
-  it("maps to the Fixed Income domain (via the host), not its own tab / admin / analytics", () => {
-    expect(workspaceDomains("acceptance")).toEqual(["fixed_income"]);
-    // The host row (not a standalone `acceptance` row) is the FI Risk entry.
-    expect(railForDomain("fixed_income").some((r) => r.id === "riskdashboard")).toBe(true);
+  it("maps to the hoisted Risk domain (via the host), not FI / admin / analytics", () => {
+    // The host is hoisted to the top-level Risk tab, and the alias inherits it.
+    expect(workspaceDomains("acceptance")).toEqual(["risk"]);
+    // The host row (not a standalone `acceptance` row) is the Risk-tab entry, and
+    // neither appears on the Fixed Income rail any more.
+    expect(railForDomain("risk").some((r) => r.id === "riskdashboard")).toBe(true);
+    expect(railForDomain("fixed_income").some((r) => r.id === "riskdashboard")).toBe(false);
     expect(railForDomain("fixed_income").some((r) => r.id === "acceptance")).toBe(false);
   });
 

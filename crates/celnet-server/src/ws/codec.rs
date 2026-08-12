@@ -4237,6 +4237,7 @@ fn risk_book_desc_to_json(d: &RiskBookDesc) -> Value {
         m.insert("limits".to_string(), risk_limits_desc_to_json(l));
     }
     m.insert("enabled".to_string(), json!(d.enabled));
+    m.insert("asset_class".to_string(), json!(d.asset_class));
     Value::Object(m)
 }
 
@@ -4285,6 +4286,10 @@ fn risk_book_spec_from_json(v: &Value) -> Result<RiskBookSpec> {
         desk_id: opt_string(o, "desk_id"),
         description: string_or_empty(o, "description"),
         limits: opt_nested(o, "limits", risk_limits_desc_from_json)?,
+        // Absent decodes to "" (the proto3 scalar default), which the store REJECTS as an
+        // unknown asset class — an omitted franchise fails loud rather than silently
+        // landing the portfolio in whichever tree the default happened to name.
+        asset_class: string_or_empty(o, "asset_class"),
         enabled: bool_or_false(o, "enabled"),
     })
 }

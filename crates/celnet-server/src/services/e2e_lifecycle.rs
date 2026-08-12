@@ -80,6 +80,7 @@ fn enabled_book(identity: &mut IdentityStore, name: &str, parent: Option<&str>) 
             desk_id: None,
             description: String::new(),
             limits: None,
+            asset_class: crate::config::identity::default_risk_book_asset_class(),
             enabled: true,
         })
         .expect("create enabled risk book")

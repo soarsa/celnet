@@ -2003,6 +2003,7 @@ export class MockTransport implements CelnetTransport {
       description: "EMEA franchise risk — parent of the desk's sub-books.",
       limits: { maxNetNotional: 1_000_000_000, maxGrossNotional: 2_000_000_000, maxDv01: null },
       enabled: true,
+      assetClass: "fx_options",
     },
     {
       id: "fx-emea-vanilla",
@@ -2012,6 +2013,7 @@ export class MockTransport implements CelnetTransport {
       description: "EMEA vanilla options sub-book.",
       limits: { maxNetNotional: 400_000_000, maxGrossNotional: null, maxDv01: null },
       enabled: true,
+      assetClass: "fx_options",
     },
     {
       id: "fx-apac",
@@ -2021,6 +2023,7 @@ export class MockTransport implements CelnetTransport {
       description: "APAC franchise risk.",
       limits: { maxNetNotional: 500_000_000, maxGrossNotional: 900_000_000, maxDv01: null },
       enabled: true,
+      assetClass: "fx_options",
     },
     // Fixed-income risk portfolios so ROUTED rates fills have a real, enabled
     // destination offline (the OIS desk books here). The seeded routing graph below
@@ -2034,6 +2037,7 @@ export class MockTransport implements CelnetTransport {
       description: "EMEA fixed-income rates risk — routed OIS / swap fills land here.",
       limits: { maxNetNotional: 750_000_000, maxGrossNotional: 1_500_000_000, maxDv01: 250_000 },
       enabled: true,
+      assetClass: "fixed_income",
     },
     {
       id: "fi-marex",
@@ -2043,6 +2047,7 @@ export class MockTransport implements CelnetTransport {
       description: "Marex fixed-income London book — routed bond fills land here.",
       limits: { maxNetNotional: 400_000_000, maxGrossNotional: 800_000_000, maxDv01: 150_000 },
       enabled: true,
+      assetClass: "fixed_income",
     },
   ];
 

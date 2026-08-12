@@ -3712,6 +3712,7 @@ fn risk_book_to_wire(def: &RiskBookDef) -> RiskBookDesc {
         description: def.description.clone(),
         limits: def.limits.as_ref().map(risk_limits_to_wire),
         enabled: def.enabled,
+        asset_class: def.asset_class.clone(),
     }
 }
 
@@ -3726,6 +3727,7 @@ fn risk_book_spec_parts(spec: RiskBookSpec) -> RiskBookEdit {
         desk_id: spec.desk_id.filter(|s| !s.is_empty()),
         description: spec.description,
         limits: spec.limits.map(risk_limits_from_wire),
+        asset_class: spec.asset_class,
         enabled: spec.enabled,
     }
 }
@@ -4796,6 +4798,7 @@ mod tests {
                     desk_id: None,
                     description: String::new(),
                     limits: None,
+                    asset_class: "fixed_income".to_string(),
                     enabled: true,
                 }),
                 correlation_id: None,

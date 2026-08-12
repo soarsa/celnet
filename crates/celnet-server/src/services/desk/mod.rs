@@ -2797,6 +2797,7 @@ pub(crate) mod tests {
                 desk_id: None,
                 description: String::new(),
                 limits: None,
+                asset_class: crate::config::identity::default_risk_book_asset_class(),
                 enabled: true,
             })
             .expect("create warehouse book");

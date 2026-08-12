@@ -999,10 +999,30 @@ pub struct RiskBookDef {
     /// is a later phase). `None` ⇒ the book carries no caps yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<RiskLimits>,
+    /// The **asset class** whose risk this portfolio holds, as the kernel's stable
+    /// snake_case [`AssetClass::label`] (`"fx_options"` / `"fixed_income"`). A portfolio
+    /// buckets ONE franchise's risk: an FX-options vega book and a rates DV01 book are
+    /// not commensurable, so netting them into one tree would roll up a meaningless
+    /// total. Tagging the class is what lets the risk surface be firm-wide (a single
+    /// global Risk tab) while still SPLITTING the tree per franchise.
+    ///
+    /// Defaults to `"fixed_income"` on load because every book that exists today is a
+    /// rates book (risk routing and the risk workspace are FI-only), so an
+    /// `identity.json` written before this field loads with its behaviour unchanged.
+    /// Validated in [`check_risk_book`](IdentityStore::check_risk_book) — an unknown
+    /// token fails loud rather than silently degrading to a default.
+    #[serde(default = "default_risk_book_asset_class")]
+    pub asset_class: String,
     /// Whether the book is active. Only **enabled** books are valid routing targets
     /// ([`check_risk_routing_graph`](IdentityStore::check_risk_routing_graph)); a disabled
     /// book is persisted and editable but never routed to.
     pub enabled: bool,
+}
+
+/// serde default for [`RiskBookDef::asset_class`] — see that field's docs for why an
+/// untagged (pre-field) book is a fixed-income book.
+pub(crate) fn default_risk_book_asset_class() -> String {
+    AssetClass::FixedIncome.label().to_string()
 }
 
 /// The editable fields of a risk book (the create/update payload the store's
@@ -1022,6 +1042,8 @@ pub struct RiskBookEdit {
     pub description: String,
     /// Optional per-book pre-trade limits.
     pub limits: Option<RiskLimits>,
+    /// The asset class whose risk this portfolio holds, as an [`AssetClass::label`].
+    pub asset_class: String,
     /// Whether the book is active.
     pub enabled: bool,
 }
@@ -2119,6 +2141,7 @@ impl IdentityStore {
             desk_id: edit.desk_id,
             description: edit.description,
             limits: edit.limits,
+            asset_class: edit.asset_class,
             enabled: edit.enabled,
         };
         self.risk_books.push(def.clone());
@@ -2157,6 +2180,7 @@ impl IdentityStore {
             desk_id: edit.desk_id,
             description: edit.description,
             limits: edit.limits,
+            asset_class: edit.asset_class,
             enabled: edit.enabled,
         };
         let prev = std::mem::replace(&mut self.risk_books[pos], def.clone());
@@ -2252,6 +2276,9 @@ impl IdentityStore {
                     desk_id: None,
                     description: "Auto-provisioned from the risk-routing graph.".to_owned(),
                     limits: None,
+                    // A graph-implied book inherits the FI default: risk routing is the FI
+                    // booking path, so an auto-provisioned target is a rates book.
+                    asset_class: default_risk_book_asset_class(),
                     enabled: true,
                 });
             }
@@ -2289,6 +2316,8 @@ impl IdentityStore {
                           graph are configured."
                 .to_owned(),
             limits: None,
+            // The seeded warehouse book is the FI landing book (routed FI fills).
+            asset_class: default_risk_book_asset_class(),
             enabled: true,
         });
         self.risk_routing_graph = Some(default_risk_routing_graph(DEFAULT_WAREHOUSE_BOOK_ID));
@@ -2698,6 +2727,34 @@ impl IdentityStore {
     fn check_risk_book(&self, def: &RiskBookDef) -> Result<(), String> {
         if def.name.trim().is_empty() {
             return Err(format!("risk book {:?} has an empty name", def.id));
+        }
+        // An unrecognised asset class is REJECTED rather than coerced: a portfolio whose
+        // franchise we cannot name would silently roll its risk up into whichever tree
+        // the reader assumed, which is exactly the mis-attribution the split exists to
+        // prevent. (The serde default covers the pre-field file; this covers a typo.)
+        if AssetClass::from_label(&def.asset_class).is_none() {
+            return Err(format!(
+                "risk book {:?} has unknown asset class {:?} (expected one of: {})",
+                def.id,
+                def.asset_class,
+                AssetClass::ALL
+                    .iter()
+                    .map(|a| a.label())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        // A sub-book must hold the SAME franchise as its parent — a tree that changes
+        // asset class mid-branch would net vega into a DV01 roll-up at the join.
+        if let Some(parent) = &def.parent_id
+            && let Some(p) = self.risk_book(parent)
+            && p.asset_class != def.asset_class
+        {
+            return Err(format!(
+                "risk book {:?} ({}) cannot sit under parent {:?} ({}) — a \
+                 portfolio tree holds ONE asset class",
+                def.id, def.asset_class, p.id, p.asset_class
+            ));
         }
         if self.risk_books.iter().filter(|b| b.id == def.id).count() > 1 {
             return Err(format!("duplicate risk book id {:?}", def.id));
@@ -3590,6 +3647,7 @@ mod tests {
             desk_id: desk.map(str::to_string),
             description: String::new(),
             limits: None,
+            asset_class: default_risk_book_asset_class(),
             enabled: true,
         }
     }
@@ -3675,6 +3733,7 @@ mod tests {
             desk_id: None,
             description: String::new(),
             limits: None,
+            asset_class: default_risk_book_asset_class(),
             enabled: true,
         });
         assert!(
@@ -3720,6 +3779,80 @@ mod tests {
                 .contains("unknown desk")
         );
         assert!(store.risk_books.is_empty(), "rejected books roll back");
+    }
+
+    /// An unrecognised asset class is REJECTED, not coerced to a default. A portfolio
+    /// whose franchise we cannot name would silently roll its risk into whichever tree
+    /// the reader assumed — the exact mis-attribution the per-class split exists to
+    /// prevent — so the boundary fails loud.
+    #[test]
+    fn risk_book_unknown_asset_class_rejected() {
+        let mut store = IdentityStore::default();
+        let mut edit = rb_edit("A", None, None);
+        edit.asset_class = "commodities".into();
+        let err = store.create_risk_book(edit).unwrap_err();
+        assert!(err.contains("unknown asset class"), "{err}");
+        // The message names the admissible set so an operator can fix it unaided.
+        assert!(
+            err.contains("fx_options") && err.contains("fixed_income"),
+            "{err}"
+        );
+        assert!(store.risk_books.is_empty(), "rejected books roll back");
+
+        // The empty string is the proto3 scalar default, i.e. what a client that omits
+        // the field sends — it must be rejected too, never silently defaulted.
+        let mut blank = rb_edit("B", None, None);
+        blank.asset_class = String::new();
+        assert!(
+            store
+                .create_risk_book(blank)
+                .unwrap_err()
+                .contains("unknown asset class")
+        );
+        assert!(
+            store.risk_books.is_empty(),
+            "an omitted class is rejected too"
+        );
+    }
+
+    /// A portfolio TREE holds ONE franchise: a sub-portfolio whose class differs from its
+    /// parent is rejected, because netting vega into a DV01 roll-up at the join would
+    /// produce a meaningless total for the parent.
+    #[test]
+    fn risk_book_child_must_match_parent_asset_class() {
+        let mut store = IdentityStore::default();
+        let parent = store
+            .create_risk_book(rb_edit("Rates EMEA", None, None))
+            .expect("FI parent creates");
+        assert_eq!(parent.asset_class, "fixed_income");
+
+        let mut child = rb_edit("FX Sub", Some(&parent.id), None);
+        child.asset_class = "fx_options".into();
+        let err = store.create_risk_book(child).unwrap_err();
+        assert!(err.contains("ONE asset class"), "{err}");
+        assert_eq!(store.risk_books.len(), 1, "the rejected child rolls back");
+
+        // The SAME-class child is accepted — proving the rule rejects the mismatch, not
+        // sub-portfolios in general.
+        let ok = store
+            .create_risk_book(rb_edit("Rates Sub", Some(&parent.id), None))
+            .expect("same-class child creates");
+        assert_eq!(ok.asset_class, "fixed_income");
+        assert_eq!(store.risk_books.len(), 2);
+    }
+
+    /// A store written BEFORE the field loads as fixed income (every book that existed
+    /// then was a rates book), so an upgrade does not silently re-home existing risk.
+    #[test]
+    fn risk_book_without_asset_class_loads_as_fixed_income() {
+        let json = r#"{
+            "id": "legacy",
+            "name": "Legacy Book",
+            "description": "",
+            "enabled": true
+        }"#;
+        let def: RiskBookDef = serde_json::from_str(json).expect("pre-field book loads");
+        assert_eq!(def.asset_class, "fixed_income");
     }
 
     #[test]
@@ -3922,6 +4055,7 @@ mod tests {
                 desk_id: None,
                 description: String::new(),
                 limits: None,
+                asset_class: default_risk_book_asset_class(),
                 enabled: true,
             }
         }

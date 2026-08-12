@@ -103,8 +103,9 @@ describe("FI Streaming — domain membership (Fixed Income ONLY)", () => {
     for (const other of ["surface", "quoting"] as const) {
       expect(fi.indexOf("fistreaming")).toBeLessThan(fi.indexOf(other));
     }
-    // The consolidated Risk host leads the shared widgets too (it precedes Market Data).
-    expect(fi.indexOf("fistreaming")).toBeLessThan(fi.indexOf("riskdashboard"));
+    // The consolidated Risk host is no longer an FI rail row at all — firm-wide risk
+    // management is hoisted to its own top-level Risk tab.
+    expect(fi).not.toContain("riskdashboard");
   });
 
   it("Ticket is NOT in the Fixed Income rail (re-scoped to FX only)", () => {

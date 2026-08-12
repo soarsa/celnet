@@ -5039,6 +5039,11 @@ message RiskBookDesc {
   optional RiskLimitsDesc limits = 6;
   // Whether the book is active. Only enabled books are valid routing targets.
   bool enabled = 7;
+  // The asset class whose risk this portfolio holds ("fx_options" / "fixed_income").
+  // A portfolio buckets ONE franchise: vega and DV01 are not commensurable, so a tree
+  // holds a single class and a sub-book must match its parent. This is what lets the
+  // risk surface be firm-wide while still splitting the tree per franchise.
+  string asset_class = 8;
 }
 
 // The editable fields of a risk book (the create/update payload). The server-minted
@@ -5060,6 +5065,10 @@ message RiskBookSpec {
   optional RiskLimitsDesc limits = 6;
   // Whether the book is active.
   bool enabled = 7;
+  // The asset class whose risk this portfolio holds ("fx_options" / "fixed_income").
+  // Rejected by the store when it is not a known class, so an omitted value fails
+  // loud rather than silently landing the book in a default franchise.
+  string asset_class = 8;
 }
 
 // List the risk books (admin only — risk-routing config is an admin risk-management

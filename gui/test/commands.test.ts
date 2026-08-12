@@ -20,6 +20,7 @@ import {
   CONSOLIDATED_ALIAS_ENTRIES,
   DOMAIN_RAIL_EXCLUDED,
   HEDGING_WORKSPACES,
+  RISK_WORKSPACES,
   buildCommands,
   cheatsheet,
   COMMAND_META,
@@ -232,10 +233,11 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
   }
   const signedOut: NavAuth = { isAdmin: false, can: () => true };
 
-  it("DOMAINS is exactly FX / FI / Hedging / Analytics / Administration, in bar order", () => {
+  it("DOMAINS is exactly FX / FI / Risk / Hedging / Analytics / Administration, in bar order", () => {
     expect(DOMAINS.map((d) => d.id)).toEqual([
       "fx_options",
       "fixed_income",
+      "risk",
       "hedging",
       "analytics",
       "admin",
@@ -243,6 +245,7 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
     expect(DOMAINS.map((d) => d.label)).toEqual([
       "FX Options",
       "Fixed Income",
+      "Risk",
       "Hedging Rules",
       "Analytics",
       "Administration",
@@ -294,7 +297,12 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
     it("derives membership from `assets` — no row's domains diverge from its served assets", () => {
       for (const r of RAIL) {
         const doms = workspaceDomains(r.id);
-        if (HEDGING_WORKSPACES.has(r.id)) {
+        if (RISK_WORKSPACES.has(r.id)) {
+          // Firm-wide risk management is a membership override — the single "risk"
+          // domain, NOT its served assets, so it is hoisted out of the FI rail onto its
+          // own top-level tab (portfolios carry their own asset class).
+          expect(doms).toEqual(["risk"]);
+        } else if (HEDGING_WORKSPACES.has(r.id)) {
           // Auto-hedge is a membership override — the single "hedging" domain, NOT
           // its served asset (fixed income), so it is hoisted out of the FI rail.
           expect(doms).toEqual(["hedging"]);
@@ -359,12 +367,10 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         "aggbook",
         // "tiering" is CONSOLIDATED into the "Pricing" workspace as its "Tiering" tab —
         // no standalone rail row (the id deep-links to that tab).
-        // "riskbooks" (Risk Portfolios), "riskrouting" (Risk Routing) and "acceptance"
-        // are ALL CONSOLIDATED into the single "Risk" host (riskdashboard) as its
-        // Portfolios / Routing / Acceptance tabs — no standalone rail rows (the ids
-        // deep-link to those tabs). So the FI Risk section is the ONE "riskdashboard"
-        // row (hedging is hoisted to its own top-level tab).
-        "riskdashboard",
+        // "riskdashboard" (with its consolidated "riskbooks" / "riskrouting" /
+        // "acceptance" tabs) is NO LONGER an FI rail row: firm-wide risk management is
+        // hoisted to its own top-level Risk tab, beside Hedging. Each portfolio now
+        // declares the franchise it buckets, so one surface carries both classes.
         // Risk Transfer is CONSOLIDATED into ONE row: the initiate ticket + inbox +
         // audit are tabs of the "risktransfer" host. The former "transferinbox" /
         // "transferaudit" rows are retired (deep-link aliases to that host).
@@ -541,15 +547,15 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
     }
   });
 
-  it("the Fixed-Income rail groups into the five labelled sections, in order", () => {
+  it("the Fixed-Income rail groups into the four labelled sections, in order", () => {
     const groups = railSections(visible("fixed_income", signedOut));
-    // NOTE: signed-out `can` is permissive, so the viewCap-gated Pricing/Risk-mgmt
-    // rows ARE visible here — the FI rail shows all five sections (incl. the new
-    // Reference Data section holding Corporate Actions).
+    // NOTE: signed-out `can` is permissive, so the viewCap-gated Pricing rows ARE
+    // visible here. There is NO "Risk" section under Fixed Income any more: its only
+    // row (riskdashboard) is hoisted to the top-level Risk tab, so FI shows four
+    // sections (incl. Reference Data holding Corporate Actions).
     expect(groups.map((g) => g.section.label)).toEqual([
       "Markets & Liquidity",
       "Pricing",
-      "Risk",
       "Transfers",
       "Reference Data",
     ]);
@@ -559,13 +565,12 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
     expect(byLabel("Markets & Liquidity")).toEqual(["fistreaming", "aggbook", "surface", "quoting"]);
     // "tiering" is folded into "pricinggroups" as its Tiering tab — one Pricing row.
     expect(byLabel("Pricing")).toEqual(["pricinggroups"]);
-    // The whole FI "Risk" section is CONSOLIDATED into the ONE "riskdashboard" host:
-    // Risk Portfolios / Risk Routing / Acceptance are its Portfolios / Routing /
-    // Acceptance tabs, and the FI "Book" ledger is folded in as its top-level
-    // Positions / Quotes / Deals tabs. The cross-asset "risk" Scenario grid is dropped
-    // from the FI rail (its FI risk destination is this host). Hedging is hoisted to
-    // its own top-level tab.
-    expect(byLabel("Risk")).toEqual(["riskdashboard"]);
+    // There is NO FI "Risk" section: the consolidated "riskdashboard" host (Portfolios /
+    // Routing / Acceptance / Positions / Quotes / Deals) is hoisted to its own top-level
+    // Risk tab beside Hedging, so it renders under that domain instead. The cross-asset
+    // "risk" Scenario grid stays dropped from the FI rail.
+    expect(groups.some((g) => g.section.label === "Risk")).toBe(false);
+    expect(railForDomain("risk").map((r) => r.id)).toEqual(["riskdashboard"]);
     // Risk Transfer is CONSOLIDATED into ONE row (initiate + inbox + audit as tabs);
     // the former "transferinbox" / "transferaudit" rows are retired deep-link aliases.
     expect(byLabel("Transfers")).toEqual(["risktransfer"]);
@@ -747,13 +752,15 @@ describe("navigation gating — workspaceAccessible (slice 5c / #6 per-workspace
       // Acceptance tabs)…
       expect(RAIL.some((r) => r.id === "riskrouting")).toBe(false);
       expect(RAIL.some((r) => r.id === "acceptance")).toBe(false);
-      // …but still valid navigable ids — `workspaceAssets` resolves via the alias
-      // (fixed_income, borrowed from the host) rather than throwing "not in RAIL".
-      expect(workspaceAssets("riskrouting")).toEqual(["fixed_income"]);
-      expect(workspaceAssets("acceptance")).toEqual(["fixed_income"]);
-      // Both deep-links gate via the host's `risk_manage·FI` viewCap (the retired ids'
-      // reachability "resolves via the alias host"): a risk_manage·FI holder reaches
-      // them, a plain FI trader (view only) does not. The Acceptance TAB keeps its own
+      // …but still valid navigable ids — `workspaceAssets` resolves via the alias,
+      // borrowing the host's served assets rather than throwing "not in RAIL". The host
+      // is CROSS-ASSET now that portfolios declare their own franchise, so both classes
+      // come back.
+      expect(workspaceAssets("riskrouting")).toEqual(["fx_options", "fixed_income"]);
+      expect(workspaceAssets("acceptance")).toEqual(["fx_options", "fixed_income"]);
+      // Both deep-links gate via the host's `risk_manage` viewCap, which is an any-of
+      // over both classes: `risk_manage` on EITHER franchise reaches them, a plain FI
+      // trader (view only) does not. The Acceptance TAB keeps its own
       // `manage_acceptance` gate INSIDE the host (see riskDashboardWorkspace.test.tsx).
       const riskMgr = navAuth({
         isAdmin: false,
