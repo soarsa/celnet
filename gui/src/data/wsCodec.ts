@@ -154,6 +154,7 @@ import type {
   HedgeVehicleRule,
   HedgeExitMode,
   HedgeExitModeBinding,
+  HedgingModelBinding,
   HedgeSuggestion,
   ClientFlowMetrics,
   FlowGroupBy,
@@ -4902,6 +4903,33 @@ export function hedgeExitModeBindingFromWire(o: WireObject): HedgeExitModeBindin
   };
 }
 
+/** Encode one scoped RISK-MODEL binding (reuses the `HedgeScopeKindEnum` i32 tags). */
+export function hedgingModelBindingToWire(b: HedgingModelBinding): WireObject {
+  return {
+    scope_kind: hedgeScopeToWire(b.scopeKind),
+    scope_id: b.scopeId,
+    model: b.model,
+    dv01_budget: b.dv01Budget,
+  };
+}
+/**
+ * Decode a `HedgingModelBinding`. An absent `model` ⇒ `0` (CUSTOM — the escape hatch
+ * that keeps the desk's authored graph), and an absent `dv01_budget` ⇒ `0`, which means
+ * INHERIT the scope's configured threshold rather than a fabricated cap. Both mirror the
+ * server decoder exactly.
+ */
+export function hedgingModelBindingFromWire(o: WireObject): HedgingModelBinding {
+  const m = enumNum(o, "model");
+  return {
+    scopeKind: hedgeScopeFromWire(enumNum(o, "scope_kind")),
+    scopeId: str(o, "scope_id"),
+    // An unknown ordinal means CUSTOM, matching the proto's own documented rule.
+    model: m === 1 || m === 2 ? m : 0,
+    // `num` yields 0 for an absent field — which IS the inherit sentinel, not a cap.
+    dv01Budget: num(o, "dv01_budget"),
+  };
+}
+
 /** Encode a hedge condition (enums ride as i32 tags; `value` null when unset). */
 export function hedgeConditionToWire(c: HedgeCondition): WireObject {
   return {
@@ -5204,6 +5232,7 @@ export function hedgeConfigToWire(c: HedgeConfig): WireObject {
     // get/set_hedge_config pair — there is deliberately no second CRUD verb.
     vehicles: c.vehicles.map(hedgeVehicleRuleToWire),
     exit_modes: c.exitModes.map(hedgeExitModeBindingToWire),
+    hedging_models: c.hedgingModels.map(hedgingModelBindingToWire),
   };
 }
 /** Decode a `HedgeConfigDesc`. */
@@ -5219,6 +5248,7 @@ export function hedgeConfigFromWire(o: WireObject): HedgeConfig {
     compositeSpreadBp: num(o, "composite_spread_bp"),
     vehicles: array(o, "vehicles").map(hedgeVehicleRuleFromWire),
     exitModes: array(o, "exit_modes").map(hedgeExitModeBindingFromWire),
+    hedgingModels: array(o, "hedging_models").map(hedgingModelBindingFromWire),
   };
 }
 

@@ -151,6 +151,15 @@
   flex: 1;
 }
 
+/*
+ * A field that must claim the whole row rather than share it — the risk-model selector
+ * and its DV01 budget, whose labels and helper text are long enough that the two-up
+ * `.row` layout would truncate them.
+ */
+.fieldWide {
+  flex-basis: 100%;
+}
+
 .row {
   display: flex;
   gap: var(--space-4);

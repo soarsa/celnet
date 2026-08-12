@@ -3863,6 +3863,45 @@ export interface HedgeExitModeBinding {
 }
 
 /**
+ * The RISK MODEL a scope runs — the trader-facing posture that resolves to an
+ * exit-policy graph (mirrors `celnet.wire.HedgingModelEnum`, wire integer tags).
+ * A CONTROL over the existing primitives, not a second engine: each model derives an
+ * ordinary hedge graph from the same node/action vocabulary a trader could author.
+ *  - `0` CUSTOM (default, escape hatch): the scope's own authored exit-policy graph
+ *    governs — exactly the historical behaviour, and what an unbound scope means.
+ *  - `1` BACK_TO_BACK: hedge every fill straight out on the street; warehouse nothing.
+ *    Spread capture only, no directional carry.
+ *  - `2` INTERNALISE_TO_DV01: warehouse client flow against a DV01 budget, let opposing
+ *    flow net off, and shed only the overflow above the band edge.
+ */
+export type HedgingModel = 0 | 1 | 2;
+
+/**
+ * One scoped risk-model binding (mirrors `HedgingModelBinding`). Resolved
+ * MOST-SPECIFIC-WINS — instrument > book > desk — so a firm can run one toxic book
+ * back-to-back while the rest of the estate warehouses.
+ */
+export interface HedgingModelBinding {
+  /** What the {@link scopeId} names (desk / book / instrument). */
+  scopeKind: HedgeScopeKind;
+  /** The scope identifier (a desk id / risk-portfolio id / instrument id). */
+  scopeId: string;
+  /** The posture for that scope. */
+  model: HedgingModel;
+  /**
+   * The DV01 warehouse budget — the level this scope warehouses up to before shedding.
+   * Read ONLY under `INTERNALISE_TO_DV01` (back-to-back warehouses nothing; `CUSTOM`
+   * takes its budget from the configured warehouse threshold).
+   *
+   * A non-positive value means **inherit** the scope's configured threshold, so binding
+   * a model never silently invents a cap. When positive it overrides only the cap and
+   * the metric — amber / red / target / clip / ramp still come from the resolved
+   * threshold, so a desk that tuned its bands keeps them.
+   */
+  dv01Budget: number;
+}
+
+/**
  * One exit action — a terminal leaf of a {@link HedgeGraph} (mirrors `ExitActionDesc`,
  * a FLAT `kind` discriminant + the union of every arm's fields; only the fields
  * relevant to `kind` are read). See docs §5.3.
@@ -4312,6 +4351,12 @@ export interface HedgeConfig {
    * resolved most-specific-wins exactly like {@link lpPanels}. An unbound scope is `auto`.
    */
   exitModes: HedgeExitModeBinding[];
+  /**
+   * The per-scope RISK-MODEL bindings (mirrors `HedgeConfigDesc.hedging_models`),
+   * resolved most-specific-wins exactly like {@link lpPanels} and {@link exitModes}.
+   * An unbound scope is `CUSTOM` — its authored graph governs, unchanged.
+   */
+  hedgingModels: HedgingModelBinding[];
 }
 
 /**

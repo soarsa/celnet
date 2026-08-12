@@ -353,6 +353,97 @@ const ENTRY_LIST: readonly HelpEntry[] = [
     tourId: "bid-offer-tiering",
   },
   {
+    id: "concept.risk-models",
+    category: "concept",
+    title: "Risk models \u2014 back-to-back vs internalise",
+    purpose: "Choosing how a risk portfolio manages the risk it takes on.",
+    howItWorks:
+      "Every risk portfolio runs one of three postures. BACK-TO-BACK hedges every fill straight out on the street and warehouses nothing \u2014 you capture the spread between the client price and the street price, and carry no directional exposure between the two. INTERNALISE TO A DV01 BUDGET holds client flow against a DV01 budget so opposing client flow can net off internally, and sheds only the overflow above the band edge; you keep more spread (no street leg on the netted portion) at the cost of carrying risk. CUSTOM is the escape hatch: the exit-policy graph authored for that scope governs unchanged, and it is what an unbound portfolio means. The model is a control over the existing exit primitives, not a second engine \u2014 each derives an ordinary hedge graph from the same vocabulary you could author by hand.",
+    example: {
+      scenario:
+        "Desk EMEA is bound to Internalise with a 25,000 DV01 budget; the toxic book FI-MAREX is bound to Back-to-back.",
+      rows: [
+        { label: "FI-RATES (no binding of its own)", value: "inherits desk EMEA \u2192 Internalise, budget 25,000" },
+        { label: "FI-MAREX (bound at book scope)", value: "Back-to-back \u2014 its own binding beats the desk" },
+        { label: "A fill into FI-RATES", value: "warehoused while book DV01 \u2264 25,000; only the overflow is shed" },
+        { label: "A fill into FI-MAREX", value: "hedged out immediately, in full" },
+      ],
+      takeaway:
+        "Precedence is most-specific-wins \u2014 instrument beats book beats desk \u2014 so one toxic book can run back-to-back while the rest of the estate warehouses.",
+    },
+    howToConfigure: [
+      "Open Risk \u2192 Portfolios and select the portfolio.",
+      "In the Risk model panel, choose Custom, Back-to-back, or Internalise to a DV01 budget.",
+      "For Internalise, set the DV01 warehouse budget (or leave it blank to inherit the configured threshold).",
+      "Read the resolution line beneath the picker \u2014 it states which scope actually supplied the posture.",
+      "The model saves immediately; it lives on the firm hedge config, not the portfolio definition, so it does not wait for Save changes.",
+    ],
+    whenToUse:
+      "Back-to-back for toxic or illiquid flow where you do not want carry. Internalise where two-way client flow is genuine and netting it internally earns more than it risks.",
+    risks:
+      "Internalising carries directional risk between the client trade and the shed \u2014 that is the point, but it must be sized. A portfolio with no binding is CUSTOM, which means its authored graph governs; it does NOT mean 'no hedging'.",
+    keywords: ["risk model", "back to back", "back-to-back", "internalise", "internalize", "warehouse", "posture", "scope", "precedence", "hedging model"],
+  },
+  {
+    id: "concept.dv01-hedge",
+    category: "concept",
+    title: "DV01 and how the hedge is sized",
+    purpose: "Neutralising interest-rate risk on a bond position by shorting a benchmark.",
+    howItWorks:
+      "DV01 is the P&L change for a 1 basis-point move in yield. For a bond position it is approximately notional \u00d7 modified duration \u00d7 0.0001 \u2014 though the engine computes it analytically from the bond's cashflows rather than from that approximation, and validates the result against a finite-difference reprice. To immunise, the desk shorts a liquid benchmark carrying the SAME DV01: the hedge size is the ratio of the two DV01s, units = position DV01 \u00f7 the vehicle's DV01 per unit. The vehicle is chosen from the firm's registry by product, currency and maturity bucket. If the registry has no DV01 per unit for it, the engine REFUSES to size the trade and falls back to selling the same security back \u2014 it will not trade a guessed size.",
+    example: {
+      scenario:
+        "The desk buys $50,000,000 face of a 10-year corporate bond with a spread duration of 7.0 years, and hedges with the on-the-run 10-year Treasury (DV01 $800 per $1,000,000).",
+      rows: [
+        { label: "Position DV01", value: "$50,000,000 \u00d7 7.0 \u00d7 0.0001 = $35,000 per bp" },
+        { label: "Hedge vehicle DV01 per $1mm", value: "$800" },
+        { label: "Treasury notional to short", value: "$35,000 \u00f7 $800 = $43.75mm" },
+        { label: "Resulting book", value: "Long $50mm corporates, short $43.75mm Treasuries \u2192 net rate DV01 \u2248 0" },
+      ],
+      takeaway:
+        "The hedge ratio is a DV01 ratio, not a notional ratio \u2014 $43.75mm of Treasuries offsets $50mm of corporates because their durations differ.",
+    },
+    howToConfigure: [
+      "Open Hedging \u2192 the vehicle registry and confirm a row exists for the product / currency / maturity you trade.",
+      "Give each vehicle its DV01 per unit \u2014 this is the denominator of the hedge ratio, and without it the engine will not size a trade.",
+      "On the portfolio, choose a risk model: Back-to-back hedges the whole DV01, Internalise hedges only the overflow above the budget.",
+      "Check the hedge trace after a fill: it shows the DV01 used, the vehicle chosen, and the resulting size.",
+    ],
+    whenToUse:
+      "Whenever the desk holds a rate-sensitive position it does not intend to take a directional view on.",
+    risks:
+      "A DV01 hedge neutralises RATE risk only. Credit spread risk (CS01) survives it untouched \u2014 a corporate bond hedged to DV01-neutral is not a flat position. Duration also drifts as yields and time move, so the ratio needs re-striking, and a whole-contract futures hedge leaves a rounding residual.",
+    keywords: ["dv01", "duration", "hedge ratio", "immunise", "immunize", "treasury", "benchmark", "basis point", "pv01", "neutral"],
+  },
+  {
+    id: "concept.dv01-budget",
+    category: "concept",
+    title: "DV01 budget vs DV01 limit",
+    purpose: "Where you start hedging versus where you stop trading.",
+    howItWorks:
+      "These are two different controls and they are not interchangeable. The DV01 BUDGET is soft: it is the level a portfolio warehouses up to before it begins shedding risk to the street, and crossing it triggers hedging. The DV01 LIMIT is hard: it is a pre-trade cap, and crossing it blocks the trade. The budget should sit below the limit \u2014 the gap between them is the working room where the desk manages inventory. Leaving the budget BLANK means inherit the scope's configured warehouse threshold; it does not mean a budget of zero. A zero budget would mean 'warehouse nothing', the opposite of what an empty field implies, so the engine treats non-positive as inherit and never invents a cap.",
+    example: {
+      scenario: "A rates portfolio with a 25,000 DV01 budget and a 40,000 DV01 limit.",
+      rows: [
+        { label: "Book DV01 = 18,000", value: "inside the budget \u2014 flow is warehoused, nothing is shed" },
+        { label: "Book DV01 = 30,000", value: "over budget \u2014 the 5,000 overflow is hedged out to the street" },
+        { label: "A fill taking DV01 to 42,000", value: "over the hard limit \u2014 blocked pre-trade" },
+        { label: "Budget left blank", value: "inherits the scope's configured warehouse threshold" },
+      ],
+      takeaway: "Budget is where you start working out of a position; limit is where you stop taking it on.",
+    },
+    howToConfigure: [
+      "Set the DV01 budget in the portfolio's Risk model panel (visible only for the Internalise model).",
+      "Set the DV01 limit in the portfolio's Pre-trade limits box.",
+      "Keep budget below limit \u2014 if they are equal, the desk has no room to shed before trading is blocked.",
+    ],
+    whenToUse:
+      "Any portfolio running the Internalise model. Back-to-back warehouses nothing, so the budget does not apply to it.",
+    risks:
+      "The pre-trade DV01 LIMIT is not yet enforced at the booking gate \u2014 net and gross notional caps are. Treat the DV01 limit as documentation of intent until that seam lands, and rely on the budget for live risk control.",
+    keywords: ["dv01 budget", "dv01 limit", "warehouse", "threshold", "inherit", "blank", "pre-trade", "cap", "overflow", "band"],
+  },
+  {
     id: "concept.pricing-groups",
     category: "concept",
     title: "Pricing groups",

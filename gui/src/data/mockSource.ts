@@ -2342,6 +2342,12 @@ export class MockTransport implements CelnetTransport {
     // AUTO everywhere except the corporate-credit book, which SUGGESTS: the desk wants to
     // eyeball a benchmark-future hedge before it goes out.
     exitModes: [{ scopeKind: "book", scopeId: "fi-credit-emea", mode: "suggest" }],
+    // One book runs BACK-TO-BACK (nothing warehoused) while the estate warehouses to a
+    // DV01 budget — the most-specific-wins precedence made visible in the mock.
+    hedgingModels: [
+      { scopeKind: "desk" as const, scopeId: "emea", model: 2 as const, dv01Budget: 25_000 },
+      { scopeKind: "book" as const, scopeId: "fi-marex", model: 1 as const, dv01Budget: 0 },
+    ],
   };
 
   /**

@@ -29,7 +29,22 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
 import { MAGNITUDE_HELP, MagnitudeField } from "../components/MagnitudeField";
-import type { CapabilityAsset, DeskDesc, RiskBook, RiskLimits } from "../data/contract";
+import type {
+  CapabilityAsset,
+  DeskDesc,
+  HedgeConfig,
+  HedgingModel,
+  RiskBook,
+  RiskLimits,
+} from "../data/contract";
+import {
+  explainRiskModel,
+  HEDGING_MODEL_HINT,
+  HEDGING_MODEL_LABEL,
+  HEDGING_MODELS,
+  modelUsesBudget,
+  resolveRiskModel,
+} from "../lib/riskModel";
 import { notifyRiskRoutingChanged } from "../lib/routingGuard";
 import styles from "./RiskBooksWorkspace.module.css";
 
@@ -140,9 +155,61 @@ export function RiskBooksWorkspace(): React.ReactElement {
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<RiskBook | null>(null);
   const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
+  // The firm hedge config carries the per-scope RISK-MODEL bindings. It is loaded here
+  // (not just on the Hedging surface) because the model is a property of how a PORTFOLIO
+  // runs, and a trader editing the portfolio must see and set it in one place.
+  const [hedgeConfig, setHedgeConfig] = useState<HedgeConfig | null>(null);
+  const [modelState, setModelState] = useState<SaveState>({ kind: "idle" });
   // The EDITOR is gated on the open book's own franchise: a manager entitled to one
   // class can see the whole firm-wide tree but may only edit their side of it.
   const draftReadOnly = readOnly || (draft !== null && !canManageClass(draft.assetClass));
+
+  // The posture actually governing the open portfolio, resolved most-specific-wins
+  // (instrument > book > desk) so the trader sees the EFFECTIVE model, not just whatever
+  // happens to be bound at this one scope.
+  const resolvedModel = useMemo(
+    () =>
+      draft === null || hedgeConfig === null
+        ? null
+        : resolveRiskModel(hedgeConfig.hedgingModels, {
+            deskId: draft.deskId,
+            bookId: draft.id,
+          }),
+    [draft, hedgeConfig],
+  );
+
+  /**
+   * Bind (or re-bind) this PORTFOLIO's risk model. Writes a `book`-scoped binding and
+   * round-trips the whole hedge config through the existing set_hedge_config RPC — there
+   * is deliberately no separate CRUD verb for bindings.
+   */
+  const applyModel = useCallback(
+    async (model: HedgingModel, dv01Budget: number): Promise<void> => {
+      if (hedgeConfig === null || draft === null || draft.id === "") return;
+      setModelState({ kind: "saving" });
+      const others = hedgeConfig.hedgingModels.filter(
+        (b) => !(b.scopeKind === "book" && b.scopeId.toLowerCase() === draft.id.toLowerCase()),
+      );
+      const next: HedgeConfig = {
+        ...hedgeConfig,
+        hedgingModels: [
+          ...others,
+          { scopeKind: "book", scopeId: draft.id, model, dv01Budget },
+        ],
+      };
+      try {
+        await app.transport.setHedgeConfig(next);
+        setHedgeConfig(next);
+        setModelState({ kind: "ok", message: "Risk model saved." });
+      } catch (e: unknown) {
+        setModelState({
+          kind: "error",
+          message: e instanceof Error ? e.message : "the server rejected the risk model",
+        });
+      }
+    },
+    [app.transport, draft, hedgeConfig],
+  );
 
   const reload = useCallback(async (): Promise<RiskBook[]> => {
     const list = await app.transport.listRiskBooks();
@@ -174,6 +241,28 @@ export function RiskBooksWorkspace(): React.ReactElement {
       cancelled = true;
     };
   }, [reload, signedIn]);
+
+  // The firm hedge config (for the risk-model bindings). Failure is non-fatal: the
+  // portfolio editor still works, the model control just reports itself unavailable
+  // rather than silently rendering "Custom" over an unknown posture.
+  useEffect(() => {
+    if (!signedIn) {
+      setHedgeConfig(null);
+      return;
+    }
+    let cancelled = false;
+    void app.transport
+      .getHedgeConfig()
+      .then((c) => {
+        if (!cancelled) setHedgeConfig(c);
+      })
+      .catch(() => {
+        if (!cancelled) setHedgeConfig(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [app.transport, signedIn]);
 
   // Desk roster for the owning-desk picker — an admin-gated RPC, fetched for admins.
   useEffect(() => {
@@ -485,6 +574,85 @@ export function RiskBooksWorkspace(): React.ReactElement {
                   </span>
                 </label>
               </div>
+
+              {/*
+                RISK MODEL — how this portfolio manages the risk it holds. Saved
+                separately from the portfolio definition (it lives on the firm hedge
+                config as a `book`-scoped binding), so it applies immediately on change
+                rather than waiting for "Save changes".
+              */}
+              {draft.id !== "" && (
+                <fieldset className={styles.limits} disabled={draftReadOnly}>
+                  <legend>Risk model</legend>
+                  {hedgeConfig === null ? (
+                    <span className={styles.hint}>
+                      The hedge configuration could not be loaded, so this portfolio&apos;s risk
+                      model is unknown. It is not being reported as Custom — that would claim a
+                      posture we cannot currently read.
+                    </span>
+                  ) : (
+                    <>
+                      <label className={`${styles.field} ${styles.fieldWide}`}>
+                        <span className={styles.label}>How this portfolio manages risk</span>
+                        <select
+                          className={styles.input}
+                          value={resolvedModel?.model ?? 0}
+                          onChange={(e) => {
+                            const m = Number(e.target.value) as HedgingModel;
+                            void applyModel(m, modelUsesBudget(m) ? (resolvedModel?.budget ?? 0) : 0);
+                          }}
+                        >
+                          {HEDGING_MODELS.map((m) => (
+                            <option key={m} value={m}>
+                              {HEDGING_MODEL_LABEL[m]}
+                            </option>
+                          ))}
+                        </select>
+                        <span className={styles.hint}>
+                          {HEDGING_MODEL_HINT[resolvedModel?.model ?? 0]}
+                        </span>
+                      </label>
+
+                      {modelUsesBudget(resolvedModel?.model ?? 0) && (
+                        <label className={`${styles.field} ${styles.fieldWide}`}>
+                          <span className={styles.label}>DV01 warehouse budget</span>
+                          <MagnitudeField
+                            value={resolvedModel?.budget ?? null}
+                            disabled={draftReadOnly}
+                            onCommit={(v) => {
+                              void applyModel(2, v ?? 0);
+                            }}
+                          />
+                          <span className={styles.hint}>
+                            How much DV01 this portfolio warehouses before it shivers risk out to
+                            the street. Leave blank to inherit the scope&apos;s configured warehouse
+                            threshold — blank means inherit, NOT a budget of zero. {MAGNITUDE_HELP}
+                          </span>
+                        </label>
+                      )}
+
+                      {/*
+                        The resolution trace. Most-specific-wins across desk / book /
+                        instrument means the effective posture is not inferable from any
+                        single control — so state plainly which scope won and why.
+                      */}
+                      {resolvedModel !== null && (
+                        <p className={styles.hint} data-testid="risk-model-resolution">
+                          {explainRiskModel(resolvedModel, draft.id)}
+                        </p>
+                      )}
+                      {modelState.kind === "error" && (
+                        <p className={styles.error} role="alert">
+                          {modelState.message}
+                        </p>
+                      )}
+                      {modelState.kind === "ok" && (
+                        <p className={styles.hint}>{modelState.message}</p>
+                      )}
+                    </>
+                  )}
+                </fieldset>
+              )}
 
               <label className={styles.checkField}>
                 <input

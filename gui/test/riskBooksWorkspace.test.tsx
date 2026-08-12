@@ -36,6 +36,22 @@ function makeApp(opts: {
   return {
     transport: {
       listRiskBooks: vi.fn(async () => opts.books),
+      // The portfolio editor now also reads the firm hedge config (for the per-scope
+      // RISK-MODEL binding), so the stub must answer it or the effect throws.
+      getHedgeConfig: vi.fn(async () => ({
+        killSwitch: false,
+        execution: "lp_panel_then_composite" as const,
+        deskEnabled: [],
+        maxClip: 0,
+        maxHedgesPerInterval: 0,
+        dailyExternalNotionalCap: 0,
+        lpPanels: [],
+        compositeSpreadBp: 0.5,
+        vehicles: [],
+        exitModes: [],
+        hedgingModels: [],
+      })),
+      setHedgeConfig: vi.fn(async () => undefined),
       listDesks: vi.fn(async () => opts.desks ?? []),
       createRiskBook:
         opts.createRiskBook ?? vi.fn(async (b: RiskBook) => ({ ...b, id: b.id || "minted" })),
