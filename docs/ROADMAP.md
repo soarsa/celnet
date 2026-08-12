@@ -434,4 +434,71 @@ A stream is **DONE** only when, on its owned crates:
 
 ---
 
+## 11. Corporate-Action Dynamic Pricing & Inventory-Skew Reconciliation (new backlog — 2026-08-12)
+
+> **Two externally-supplied specifications reconciled against as-built code.** Both turned out to
+> overlap shipped Celnet features substantially, so both produced **gap analyses, not greenfield
+> designs** — writing a fresh spec for a built feature creates a second, drifting source of truth
+> (guardrail 10). Every "already exists" claim in both docs is `file:line`-cited from code that was
+> read, not inferred.
+> - `docs/CORPORATE-ACTION-MONITOR-GAP-ANALYSIS.md` — **stages 1–3 of the source pipeline and 3 of
+>   its 4 event families are already built** (`celnet-corpactions` CAEV model + hand-verified effect
+>   math; `celnet-refstore` journal-backed bitemporal golden store with the vendor-neutral
+>   `CorpActionSource` port; `CorporateActionsService` + GUI workspace). **7 real gaps**, headed by
+>   **G1: an applied corporate action never reaches the live pricer** —
+>   `gov_bond_to_instrument_def` (`config/reference_data.rs:859-895`) still reads the static
+>   `GovBondSpec`, so the "dynamic bond pricing" half of the spec is entirely absent. Also: no
+>   YTW/YTC anchor switch (and no static call/put schedule to switch onto), no pool factor in the
+>   pricing crates, no consent-fee event shape, no valuation of an exchange target, no
+>   per-instrument quote lock (only the firm-wide two-boolean `PricingControl`), no ex-date-aware
+>   accrued. Phases **CA-P1…CA-P7**. Amends `BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md`
+>   (whose "No code yet" status and P1–P5 phase list are now corrected in place).
+> - `docs/INVENTORY-SKEW-ENGINE-GAP-ANALYSIS.md` — **4 of 5 components, both operational modes and
+>   half a guardrail are already live**: `celnet-tiering`'s `FeaturePipeline` *is* the spec's layer
+>   between core pricing and distribution, applied on ESP (`aggregation.rs:1334`) **and** RFQ
+>   (`:1193`); `InventorySkew` is Mode A over live `InventorySource` inventory; `PricingFeature::Axe`
+>   with `AxeSide::{Buy,Sell}` is Mode B; `SpreadUnit::YieldBps` covers the yield-space formulation.
+>   **5 real gaps**, headed by **S1: the anti-arbitrage cap is static, not the spec's dynamic
+>   "never exceed half the bid-ask"** — a mis-set `s_max > h` silently permits a **through-mid**
+>   quote (the quote never crosses itself, since `offer − bid = 2h` is skew-invariant, so this is
+>   silent). Also: skew keys on raw inventory rather than limit utilisation, no per-issuer
+>   aggregation, no dedicated/per-instrument axe, no explicit post-fill fade. Phases **SK-P1…SK-P6**.
+>
+> **Two ADRs required before building.** (1) *Skew-band authority* — whether
+> `celnet-hedge-routing`'s RAG band owns the skew decision with `celnet-tiering` executing it, or
+> the two stay independent. Today they read the same live inventory **independently** (the hedge
+> engine has a `SKEW` action; the tiering skew runs continuously and is not gated by any band), so
+> a desk running both **is** running two uncoordinated responses to one signal — a live
+> configuration hazard, documented in the skew doc §5. (2) *YTW as valuation anchor* — whether the
+> anchor auto-switches or YTW is reported alongside YTM; this changes what a trader sees on a live
+> quote and must not be decided silently. SK-P1 additionally needs an ADR because it changes live
+> outbound prices for any group configured with `s_max > h`.
+>
+> **Guardrail conflicts in the source specs — resolved in the docs, never copied.** The CA spec
+> names Bloomberg CACS / Refinitiv Event Streams as *the* feed (guardrails 7+8 — resolved: the
+> purpose-named `CorpActionSource` port already exists with the open `GovvieSource` first-class; a
+> licensed feed is a customer-wired adapter, vendor names in integration prose only); keys its
+> quote lock on CUSIP (guardrail 7 — CUSIP *data* is licensed; key on internal `instrument_id`);
+> implies a synchronous ingest→pricer chain (guardrail 11 — ingest stays on the async edge, the
+> pricer reads a resolved versioned definition). The skew spec names Bloomberg/Tradeweb/MarketAxess
+> as distribution channels (same posture) and a standalone "Skew Engine" component (guardrail 10 —
+> **extend `celnet-tiering`; a parallel engine must be rejected**). **Neither spec engages guardrail
+> 9** (no versioned API proposed) **or guardrail 2** (no mock mandated). One source requirement is
+> **rejected on correctness grounds**: the CA spec's "reset accrued interest to zero on ex-date" is
+> not market-correct — several conventions trade with *negative* accrued in the ex-dividend period,
+> so the requirement is "ex-date aware", validated against QuantLib (guardrail 5), not "reset to
+> zero".
+>
+> **Recommended build order across both docs:** **SK-P1** (dynamic anti-arb cap — smallest change,
+> real money risk, prevents silent through-mid quotes on a live outbound path) → **CA-P1** (wire the
+> applied CA into the pricer — makes the already-built corpactions/refstore stack actually matter,
+> and retires an overclaiming server doc comment that currently asserts this works) → **SK-P2**
+> (utilisation-driven skew — closes the Mode-A gap and the double-count hazard in one move rather
+> than adding a second uncoordinated skew). Two items are explicitly **measure-before-build**
+> (SK-P6 post-fill fade, given the existing 5 ms repricing loop) or **candidate out-of-scope**
+> (CA-P7 component valuation, which needs a cash-equity instrument type and price source that do
+> not exist).
+
+---
+
 *End of roadmap. Source of truth for live status is `CLAUDE.md` (the ledger); source of truth for contracts is `docs/INTERFACES.md`; FX convention spec is `docs/CONVENTIONS.md`.*
