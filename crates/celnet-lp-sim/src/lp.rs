@@ -81,6 +81,27 @@ pub enum Fault {
     },
 }
 
+/// What a member shows when it participates in an **exchange order book** rather than
+/// dealing bilaterally: the book's own top-of-book width (identical for every member,
+/// because there is one book) and the size *this* member is working there.
+///
+/// Price-time priority means competition at the top of an order book is over quantity
+/// and queue position, not over price — so this is the whole of a member's
+/// individuality on a listed venue, and it is deliberately the only thing that differs
+/// across the panel. See [`crate::quoted::MarketStructure::CentralLimitOrderBook`] for
+/// the exchange behaviours that are and are not modelled.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ListedShape {
+    /// The half-spread of the exchange's top of book, in price points. Absolute, not a
+    /// multiplier on the member's own width: a member does not choose the book's
+    /// spread, it either joins the top of book or it does not.
+    pub half_spread: f64,
+    /// The firm size this member is working on both sides, in face units, always a
+    /// whole multiple of the contract's face value (see
+    /// [`whole_lot_size`](crate::lpsim::whole_lot_size)).
+    pub size: f64,
+}
+
 /// One instrument an LP makes a market in, paired with the mid source that prices
 /// it and the quoting conventions of that instrument's market.
 #[derive(Debug, Clone, PartialEq)]
@@ -150,6 +171,23 @@ pub struct InstrumentModel {
     /// `false` restores fully independent per-member level draws — the primitive
     /// [`InstrumentModel::new`] keeps, for ladder/analytic use.
     pub common_market_draw: bool,
+    /// Set when this instrument trades on an **exchange order book** rather than
+    /// bilaterally: the member then quotes the book's own top of book verbatim (see
+    /// [`ListedShape`]).
+    ///
+    /// This supersedes [`spread_scale`](Self::spread_scale),
+    /// [`lean_scale`](Self::lean_scale) and [`dealer_view`](Self::dealer_view), which
+    /// are all statements about a *dealer's* private market and have no meaning inside
+    /// a single order book: there is one price, and it is the same for every
+    /// participant. The member's individuality is entirely in
+    /// [`ListedShape::size`].
+    ///
+    /// It is also what makes a listed composite uncrossed **by construction**. The
+    /// bilateral path keeps a panel uncrossed by budgeting three per-member
+    /// displacements inside the tightest member's half-spread — correct, but a
+    /// property that has to be re-verified whenever a knob moves. With one book there
+    /// is no displacement to budget: every member's bid is the same number.
+    pub listed: Option<ListedShape>,
 }
 
 /// The shared re-quote cadence of the common market level: the panel steps its
@@ -188,6 +226,7 @@ impl InstrumentModel {
             tick: None,
             dealer_view: 0.0,
             common_market_draw: false,
+            listed: None,
         }
     }
 

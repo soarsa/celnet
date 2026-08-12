@@ -530,6 +530,32 @@ impl TreasuryFutureSpec {
         direction(price / tick) * tick
     }
 
+    /// Whether the contract has **stopped trading** as of `as_of`: the valuation date
+    /// is strictly past its [`last_trading_date`](Self::last_trading_date).
+    ///
+    /// An expired contract is not a market. It must not be advertised as tradeable
+    /// and it must not be quoted — a venue showing a two-way in a contract that no
+    /// longer trades is a fabricated market, and a hedge routed at it can never fill.
+    ///
+    /// An unreal stored or supplied date is treated as **expired** (fail closed): the
+    /// only safe answer when the lifecycle cannot be decided is to stop trading it.
+    #[must_use]
+    pub fn is_expired_on(&self, as_of: CivilYmd) -> bool {
+        match (to_date(as_of), to_date(self.last_trading_date)) {
+            (Some(now), Some(ltd)) => now > ltd,
+            _ => true,
+        }
+    }
+
+    /// Whether the contract is **listed and trading** as of `as_of` — the complement
+    /// of [`is_expired_on`](Self::is_expired_on). This is the predicate both the
+    /// tradeable registry seed and the quoting venue must agree on, or the platform
+    /// re-creates the tradeable-but-unquotable asymmetry in reverse.
+    #[must_use]
+    pub fn is_listed_on(&self, as_of: CivilYmd) -> bool {
+        !self.is_expired_on(as_of)
+    }
+
     /// Render `price` in the exchange's points-and-32nds display convention.
     ///
     /// A Treasury futures price is quoted in **points of 100 face and thirty-seconds
@@ -580,6 +606,61 @@ pub fn treasury_futures_universe() -> Vec<TreasuryFutureSpec> {
         month = next_quarterly_month(month);
     }
     out
+}
+
+/// The committed universe restricted to the contracts still **trading** on `as_of`
+/// (see [`TreasuryFutureSpec::is_listed_on`]), in the same stable order.
+///
+/// This is the set a venue may quote and a registry may advertise as tradeable. The
+/// two must be filtered by the same predicate at the same valuation date: quoting a
+/// contract that has stopped trading fabricates a market, and advertising one that no
+/// venue quotes strands every hedge routed at it.
+#[must_use]
+pub fn listed_universe_on(as_of: CivilYmd) -> Vec<TreasuryFutureSpec> {
+    treasury_futures_universe()
+        .into_iter()
+        .filter(|s| s.is_listed_on(as_of))
+        .collect()
+}
+
+/// The **front month** of one product as of `as_of`: the nearest-delivery contract of
+/// `symbol` (`ZT`/`ZF`/`ZN`/`TN`/`ZB`/`UB`) that is still trading.
+///
+/// This is what "hedge in the 10-Year future" has to resolve to. A hedge policy names
+/// a *product*, not a delivery month — the delivery month it means is whichever
+/// contract is currently the front one, and that answer changes four times a year at
+/// the quarterly roll. Resolving it here, off the same committed cycle the venue
+/// quotes and the registry seeds, is what keeps the three in step: the id this returns
+/// is by construction one the venue is quoting.
+///
+/// The front month is the **nearest by delivery month among the unexpired**, not
+/// merely the first listed: once the front contract stops trading (the seven-business-
+/// day cessation for the 10-Year and the bonds, month end for the short-end notes) the
+/// next quarterly contract becomes the front one, which is exactly the roll.
+///
+/// `None` when `symbol` is not a listed product, or when every listed contract for it
+/// has expired (the committed cycle needs rolling — see [`LISTED_CYCLE_START`]).
+#[must_use]
+pub fn front_contract(symbol: &str, as_of: CivilYmd) -> Option<TreasuryFutureSpec> {
+    treasury_futures_universe()
+        .into_iter()
+        .filter(|s| s.terms.symbol == symbol && s.is_listed_on(as_of))
+        .min_by_key(|s| {
+            let d = s.delivery_month_start;
+            (d.year, d.month, d.day)
+        })
+}
+
+/// The front month of **every** listed product as of `as_of` — the six contracts a
+/// DV01 hedge picks its vehicle from, in the product order of
+/// [`TREASURY_FUTURES_TERMS`]. A product whose whole listed cycle has expired is
+/// omitted rather than represented by a stale contract.
+#[must_use]
+pub fn front_contracts(as_of: CivilYmd) -> Vec<TreasuryFutureSpec> {
+    TREASURY_FUTURES_TERMS
+        .iter()
+        .filter_map(|t| front_contract(t.symbol, as_of))
+        .collect()
 }
 
 /// Every product's contract for one delivery month (`month` must be a quarterly
@@ -1072,6 +1153,108 @@ mod tests {
         // ...and the 2-Year still trades to the last business day, Wed 31 March.
         let zt = mar27.iter().find(|s| s.terms.symbol == "ZT").unwrap();
         assert_eq!(zt.last_trading_date, CivilYmd::new(2027, 3, 31));
+    }
+
+    // --- contract lifecycle: expiry, listing and the quarterly roll ---------------
+
+    #[test]
+    fn a_contract_stops_being_listed_the_day_after_it_stops_trading() {
+        let sep = contracts_for_delivery_month(2026, 9);
+        let zn = sep.iter().find(|s| s.terms.symbol == "ZN").unwrap();
+        // Sep-26 10-Year last trades Mon 21 Sep 2026.
+        assert_eq!(zn.last_trading_date, CivilYmd::new(2026, 9, 21));
+        assert!(zn.is_listed_on(CivilYmd::new(2026, 9, 20)));
+        // The last trading day itself still trades — expiry is strictly after it.
+        assert!(zn.is_listed_on(CivilYmd::new(2026, 9, 21)));
+        assert!(!zn.is_listed_on(CivilYmd::new(2026, 9, 22)));
+        assert!(zn.is_expired_on(CivilYmd::new(2027, 1, 1)));
+        // An unreal valuation date fails closed — never "still trading".
+        assert!(zn.is_expired_on(CivilYmd::new(2026, 2, 30)));
+    }
+
+    #[test]
+    fn the_front_month_rolls_when_the_front_contract_stops_trading() {
+        // Well before the first cessation, the front 10-Year is the Sep-26 contract.
+        let before = CivilYmd::new(2026, 6, 1);
+        let front = front_contract("ZN", before).expect("a front 10-Year");
+        assert_eq!(front.instrument_id, "ZNU26");
+
+        // On its last trading day it is still the front month...
+        let ltd = front.last_trading_date;
+        assert_eq!(front_contract("ZN", ltd).unwrap().instrument_id, "ZNU26");
+        // ...and the day after, the roll has happened: Dec-26 is the front month.
+        let after = CivilYmd::new(ltd.year, ltd.month, ltd.day + 1);
+        assert_eq!(front_contract("ZN", after).unwrap().instrument_id, "ZNZ26");
+
+        // The short-end notes trade through month end, so they roll later than the
+        // 10-Year in the same delivery month — the front month is per product, and
+        // resolving it per product is the whole point.
+        assert_eq!(front_contract("ZT", after).unwrap().instrument_id, "ZTU26");
+
+        // Past the whole committed cycle there is no front contract, rather than a
+        // stale one: the cycle needs rolling (a reviewed edit of LISTED_CYCLE_START).
+        assert!(front_contract("ZN", CivilYmd::new(2030, 1, 1)).is_none());
+        // An unlisted product code never resolves.
+        assert!(front_contract("XX", before).is_none());
+    }
+
+    #[test]
+    fn every_product_has_a_front_month_over_the_committed_cycle() {
+        let as_of = CivilYmd::new(2026, 6, 1);
+        let fronts = front_contracts(as_of);
+        assert_eq!(fronts.len(), TREASURY_FUTURES_TERMS.len());
+        // One per product, in the terms-table order, and each is genuinely listed.
+        for (spec, terms) in fronts.iter().zip(TREASURY_FUTURES_TERMS.iter()) {
+            assert_eq!(spec.terms.symbol, terms.symbol);
+            assert!(spec.is_listed_on(as_of));
+            // The front month is the nearest delivery among that product's listings.
+            let nearest = treasury_futures_universe()
+                .into_iter()
+                .filter(|s| s.terms.symbol == terms.symbol)
+                .map(|s| s.delivery_month_start)
+                .min_by_key(|d| (d.year, d.month))
+                .unwrap();
+            assert_eq!(spec.delivery_month_start, nearest);
+        }
+        // Every front month carries a derivable DV01 — it is a hedge vehicle.
+        for spec in &fronts {
+            assert!(spec.dv01_at_notional_yield().expect("derives") > 0.0);
+        }
+    }
+
+    #[test]
+    fn the_listed_universe_is_the_committed_one_minus_the_expired() {
+        // Before any cessation the two coincide exactly.
+        let early = CivilYmd::new(2026, 6, 1);
+        assert_eq!(
+            listed_universe_on(early).len(),
+            treasury_futures_universe().len()
+        );
+        // Once the Sep-26 month has run off, only the two later months remain.
+        let after_sep = CivilYmd::new(2026, 10, 1);
+        let rest = listed_universe_on(after_sep);
+        assert_eq!(rest.len(), TREASURY_FUTURES_TERMS.len() * 2);
+        assert!(rest.iter().all(|s| s.delivery_month_start.month != 9));
+        // And past the whole cycle, nothing is listed.
+        assert!(listed_universe_on(CivilYmd::new(2030, 1, 1)).is_empty());
+    }
+
+    /// The committed cycle must not be stale relative to the reference snapshot the
+    /// rest of the platform values against. If this goes RED, roll
+    /// [`LISTED_CYCLE_START`] — that is the reviewed edit the constant's docs describe.
+    #[test]
+    fn the_committed_cycle_is_entirely_unexpired_at_the_snapshot_valuation_date() {
+        // The valuation date the securities-master snapshot and the LP simulator use.
+        let snapshot = CivilYmd::new(2026, 4, 16);
+        let u = treasury_futures_universe();
+        assert_eq!(listed_universe_on(snapshot).len(), u.len());
+        for s in &u {
+            assert!(
+                s.is_listed_on(snapshot),
+                "{} has already expired at the snapshot date — roll LISTED_CYCLE_START",
+                s.instrument_id
+            );
+        }
     }
 
     // --- quotation convention ----------------------------------------------------

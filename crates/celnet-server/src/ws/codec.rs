@@ -4866,6 +4866,29 @@ fn hedge_exit_mode_binding_from_json(v: &Value) -> Result<celnet_proto::HedgeExi
     })
 }
 
+/// One scoped hedging-model binding → JSON.
+fn hedging_model_binding_to_json(b: &celnet_proto::HedgingModelBinding) -> Value {
+    json!({
+        "scope_kind": b.scope_kind,
+        "scope_id": b.scope_id,
+        "model": b.model,
+        "dv01_budget": b.dv01_budget,
+    })
+}
+
+/// One scoped hedging-model binding ← JSON. An absent `model` decodes to `0` = CUSTOM
+/// (the escape hatch that keeps the desk's authored graph), and an absent `dv01_budget`
+/// to `0` — which means INHERIT the scope's configured threshold, never a fabricated cap.
+fn hedging_model_binding_from_json(v: &Value) -> Result<celnet_proto::HedgingModelBinding> {
+    let o = obj(v, "hedging_model")?;
+    Ok(celnet_proto::HedgingModelBinding {
+        scope_kind: enum_or_zero(o, "scope_kind"),
+        scope_id: string_or_empty(o, "scope_id"),
+        model: enum_or_zero(o, "model"),
+        dv01_budget: f64_or_zero(o, "dv01_budget"),
+    })
+}
+
 /// A standing hedge suggestion → JSON (encode-only; a server read, never decoded).
 fn hedge_suggestion_to_json(s: &celnet_proto::HedgeSuggestion) -> Value {
     let mut m = Map::new();
@@ -4996,6 +5019,12 @@ fn hedge_config_desc_to_json(c: &HedgeConfigDesc) -> Value {
                 .map(hedge_exit_mode_binding_to_json)
                 .collect(),
         ),
+        "hedging_models": Value::Array(
+            c.hedging_models
+                .iter()
+                .map(hedging_model_binding_to_json)
+                .collect(),
+        ),
     })
 }
 
@@ -5037,6 +5066,17 @@ fn hedge_config_desc_from_json(v: &Value) -> Result<HedgeConfigDesc> {
                 .collect::<Result<Vec<_>>>()
         },
     )?;
+    let hedging_models = o
+        .get("hedging_models")
+        .and_then(Value::as_array)
+        .map_or_else(
+            || Ok(Vec::new()),
+            |arr| {
+                arr.iter()
+                    .map(hedging_model_binding_from_json)
+                    .collect::<Result<Vec<_>>>()
+            },
+        )?;
     Ok(HedgeConfigDesc {
         kill_switch: bool_or_false(o, "kill_switch"),
         execution: enum_or_zero(o, "execution"),
@@ -5048,6 +5088,7 @@ fn hedge_config_desc_from_json(v: &Value) -> Result<HedgeConfigDesc> {
         composite_spread_bp: f64_or_zero(o, "composite_spread_bp"),
         vehicles,
         exit_modes,
+        hedging_models,
     })
 }
 

@@ -16,7 +16,7 @@
 //! `docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4 / §8.4.
 
 use celnet_hedge_routing::{
-    HedgeExitMode, HedgeLpPanel, HedgeVehicleRegistry, HedgeVehicleRule, LimitMetric,
+    HedgeExitMode, HedgeLpPanel, HedgeVehicleRegistry, HedgeVehicleRule, HedgingModel, LimitMetric,
     WarehouseThreshold,
 };
 use serde::{Deserialize, Serialize};
@@ -535,6 +535,60 @@ impl ScopedExitMode {
     }
 }
 
+/// A **scoped hedging-model binding** — *how* this desk / book / instrument manages
+/// risk: back-to-back every fill, or warehouse client flow against a DV01 budget
+/// (`docs/HEDGING-AND-RISK-EXIT.md` §6.0).
+///
+/// Resolves **most-specific-wins** (instrument > book > desk), the identical precedence
+/// [`ScopedLpPanel`] and [`ScopedExitMode`] use — so a firm runs one toxic book
+/// back-to-back while the rest of the estate warehouses. An unbound scope is
+/// [`HedgingModel::Custom`], which means "the scope's own authored exit-policy graph
+/// governs" — i.e. **exactly** the historical behaviour.
+///
+/// The model is a *control that resolves to the existing primitives*, not a second
+/// engine: [`HedgingModel::derived_graph`] yields an ordinary [`HedgeGraph`] built from
+/// the same node/action vocabulary a trader would have authored by hand, and the
+/// booking path hands it to the same evaluator. Nothing else about the six-stage spine
+/// changes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScopedHedgingModel {
+    /// What the bound `scope_id` names (desk / book / instrument).
+    pub scope_kind: HedgeScopeKind,
+    /// The desk / book / instrument id this model binds to.
+    pub scope_id: String,
+    /// The posture. `Custom` (the serde default) keeps the authored graph.
+    #[serde(default)]
+    pub model: HedgingModel,
+    /// The **DV01 warehouse budget** — the "100" this scope warehouses up to. Read
+    /// **only** under [`HedgingModel::InternaliseToDv01`] (back-to-back warehouses
+    /// nothing, and `Custom` takes its budget from the configured warehouse threshold).
+    ///
+    /// A non-positive value (the serde default, and what an operator leaves blank)
+    /// means **inherit** the scope's configured [`ScopedThreshold`] exactly as today —
+    /// so binding a model never silently invents a cap. When positive it overrides only
+    /// the cap and the metric (`Dv01`); the amber / red / target / clip / ramp settings
+    /// still come from the resolved threshold, so a desk that tuned its bands keeps them.
+    #[serde(default, with = "nonfinite_f64")]
+    pub dv01_budget: f64,
+}
+
+impl ScopedHedgingModel {
+    /// Whether two bindings address the same scope (kind + id) — the upsert key.
+    #[must_use]
+    pub fn same_scope(&self, other: &ScopedHedgingModel) -> bool {
+        self.scope_kind == other.scope_kind && self.scope_id == other.scope_id
+    }
+
+    /// The DV01 budget this binding actually imposes, or `None` when it imposes none
+    /// (a non-`InternaliseToDv01` model, or a blank / non-positive / non-finite budget).
+    /// `None` ⇒ the configured warehouse threshold is used unchanged.
+    #[must_use]
+    pub fn effective_budget(&self) -> Option<f64> {
+        (self.model.uses_budget() && self.dv01_budget.is_finite() && self.dv01_budget > 0.0)
+            .then_some(self.dv01_budget)
+    }
+}
+
 /// One per-desk enable toggle in the engine config.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HedgeDeskToggle {
@@ -600,6 +654,13 @@ pub struct HedgeConfigDef {
     /// the historical fire-on-breach behaviour. Additive serde-default.
     #[serde(default)]
     pub exit_modes: Vec<ScopedExitMode>,
+    /// The scoped **hedging models** — *how* each desk / book / instrument manages risk
+    /// (`docs/HEDGING-AND-RISK-EXIT.md` §6.0): back-to-back, warehouse-to-a-DV01-budget,
+    /// or the desk's own authored graph. Empty ⇒ [`HedgingModel::Custom`] everywhere,
+    /// i.e. every scope resolves its authored graph exactly as it always did. Additive
+    /// serde-default, so an existing `identity.json` loads bit-for-bit unchanged.
+    #[serde(default)]
+    pub hedging_models: Vec<ScopedHedgingModel>,
     /// The minimum dealer-captured **edge** (basis points) a booked fill must clear to be
     /// internalised (warehoused) rather than handed back to the street as an advisory
     /// external back-to-back (§6): a fill dealt within this floor of the engine reference
@@ -641,6 +702,7 @@ impl Default for HedgeConfigDef {
             lp_panels: Vec::new(),
             vehicles: HedgeVehicleRegistry::default(),
             exit_modes: Vec::new(),
+            hedging_models: Vec::new(),
             min_edge_bps: default_min_edge_bps(),
         }
     }
@@ -716,6 +778,49 @@ impl HedgeConfigDef {
     /// Clear one scope's exit-mode override, so it inherits from the next-wider scope again.
     pub fn remove_exit_mode(&mut self, scope_kind: HedgeScopeKind, scope_id: &str) {
         self.exit_modes
+            .retain(|m| !(m.scope_kind == scope_kind && m.scope_id == scope_id));
+    }
+
+    /// Resolve the **hedging-model binding** governing a `(desk, book, instrument)` risk
+    /// state, **most-specific-wins** (instrument > book > desk) — the identical precedence
+    /// [`Self::resolve_lp_panel`] and [`Self::resolve_exit_mode`] use.
+    ///
+    /// `None` ⇒ no model is bound at any scope, which is
+    /// [`HedgingModel::Custom`]: the scope's own authored exit-policy graph governs and
+    /// nothing about the decision changes. This is why an `identity.json` written before
+    /// hedging models existed behaves EXACTLY as it did.
+    #[must_use]
+    pub fn resolve_hedging_model(
+        &self,
+        desk: &str,
+        book: &str,
+        instrument: &str,
+    ) -> Option<&ScopedHedgingModel> {
+        let by = |kind: HedgeScopeKind, id: &str| {
+            self.hedging_models
+                .iter()
+                .find(move |m| m.scope_kind == kind && m.scope_id == id)
+        };
+        by(HedgeScopeKind::Instrument, instrument)
+            .or_else(|| by(HedgeScopeKind::Book, book))
+            .or_else(|| by(HedgeScopeKind::Desk, desk))
+    }
+
+    /// Upsert one hedging-model binding by scope (kind + id).
+    ///
+    /// An explicit [`HedgingModel::Custom`] binding is **kept**, not treated as a delete:
+    /// it is a real override that lets one book keep its bespoke authored graph underneath
+    /// a desk-wide `BackToBack` — the escape hatch, expressible at any scope. (Removal is
+    /// [`Self::remove_hedging_model`], which restores inheritance from the wider scope.)
+    pub fn upsert_hedging_model(&mut self, entry: ScopedHedgingModel) {
+        self.hedging_models.retain(|m| !m.same_scope(&entry));
+        self.hedging_models.push(entry);
+    }
+
+    /// Clear one scope's hedging-model override, so it inherits from the next-wider scope
+    /// again (and, with nothing bound anywhere, returns to the authored graph).
+    pub fn remove_hedging_model(&mut self, scope_kind: HedgeScopeKind, scope_id: &str) {
+        self.hedging_models
             .retain(|m| !(m.scope_kind == scope_kind && m.scope_id == scope_id));
     }
 
@@ -1038,6 +1143,213 @@ mod tests {
         // The healed def still reconstructs the pure engine threshold uncapped.
         let t = back.def.to_threshold();
         assert_eq!(t.classify(50_000.0), RagStatus::Green);
+    }
+
+    // --- hedging models (how risk is managed) -------------------------------
+
+    fn model(kind: HedgeScopeKind, id: &str, m: HedgingModel, budget: f64) -> ScopedHedgingModel {
+        ScopedHedgingModel {
+            scope_kind: kind,
+            scope_id: id.into(),
+            model: m,
+            dv01_budget: budget,
+        }
+    }
+
+    /// The no-silent-change contract: an `identity.json` written before hedging models
+    /// existed carries no `hedging_models` key, must load, and must resolve NOTHING —
+    /// which is `Custom`, i.e. the authored graph governs exactly as it always did.
+    #[test]
+    fn a_config_with_no_model_resolves_nothing_and_is_unchanged() {
+        let cfg = HedgeConfigDef::default();
+        assert!(cfg.hedging_models.is_empty());
+        assert!(
+            cfg.resolve_hedging_model("RATES", "RATES-EUR", "BOND")
+                .is_none(),
+            "an unbound scope resolves NO binding ⇒ Custom ⇒ today's behaviour"
+        );
+
+        // A legacy persisted config (no key at all) reloads with an empty roster.
+        let legacy = r#"{"kill_switch":false,"execution":"LpPanelThenComposite"}"#;
+        let back: HedgeConfigDef = serde_json::from_str(legacy).expect("legacy config must load");
+        assert!(back.hedging_models.is_empty());
+        assert!(back.resolve_hedging_model("RATES", "wh", "BOND").is_none());
+    }
+
+    #[test]
+    fn hedging_model_resolves_most_specific_wins() {
+        let cfg = HedgeConfigDef {
+            hedging_models: vec![
+                model(
+                    HedgeScopeKind::Desk,
+                    "RATES",
+                    HedgingModel::InternaliseToDv01,
+                    250_000.0,
+                ),
+                model(
+                    HedgeScopeKind::Book,
+                    "CREDIT",
+                    HedgingModel::BackToBack,
+                    0.0,
+                ),
+                model(
+                    HedgeScopeKind::Instrument,
+                    "XS-CORP-9Y",
+                    HedgingModel::Custom,
+                    0.0,
+                ),
+            ],
+            ..HedgeConfigDef::default()
+        };
+        // Instrument beats book beats desk — and the instrument binding here is the
+        // ESCAPE HATCH: one security keeps its bespoke authored graph under a
+        // back-to-back book under a warehousing desk.
+        assert_eq!(
+            cfg.resolve_hedging_model("RATES", "CREDIT", "XS-CORP-9Y")
+                .unwrap()
+                .model,
+            HedgingModel::Custom
+        );
+        assert_eq!(
+            cfg.resolve_hedging_model("RATES", "CREDIT", "US10Y")
+                .unwrap()
+                .model,
+            HedgingModel::BackToBack
+        );
+        let desk = cfg
+            .resolve_hedging_model("RATES", "RATES-EUR", "US10Y")
+            .unwrap();
+        assert_eq!(desk.model, HedgingModel::InternaliseToDv01);
+        assert_eq!(desk.effective_budget(), Some(250_000.0));
+        // A scope bound nowhere still resolves nothing.
+        assert!(
+            cfg.resolve_hedging_model("FX", "FX-G10", "EURUSD")
+                .is_none()
+        );
+    }
+
+    /// A budget is imposed ONLY by an internalisation binding with a real, positive,
+    /// finite number. Everything else inherits the configured warehouse threshold, so a
+    /// model can never silently invent a cap (guardrail 2).
+    #[test]
+    fn only_a_positive_internalisation_budget_overrides_the_threshold() {
+        assert_eq!(
+            model(
+                HedgeScopeKind::Book,
+                "b",
+                HedgingModel::InternaliseToDv01,
+                100.0
+            )
+            .effective_budget(),
+            Some(100.0)
+        );
+        // Blank / zero / negative ⇒ inherit.
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                model(
+                    HedgeScopeKind::Book,
+                    "b",
+                    HedgingModel::InternaliseToDv01,
+                    bad
+                )
+                .effective_budget(),
+                None,
+                "budget {bad} must not override the configured threshold"
+            );
+        }
+        // Back-to-back warehouses nothing, so a stray budget is ignored, not applied.
+        assert_eq!(
+            model(HedgeScopeKind::Book, "b", HedgingModel::BackToBack, 500.0).effective_budget(),
+            None
+        );
+        assert_eq!(
+            model(HedgeScopeKind::Book, "b", HedgingModel::Custom, 500.0).effective_budget(),
+            None
+        );
+    }
+
+    #[test]
+    fn upsert_replaces_by_scope_and_keeps_an_explicit_custom_override() {
+        let mut cfg = HedgeConfigDef::default();
+        cfg.upsert_hedging_model(model(
+            HedgeScopeKind::Book,
+            "CREDIT",
+            HedgingModel::BackToBack,
+            0.0,
+        ));
+        assert_eq!(cfg.hedging_models.len(), 1);
+        // Same scope replaces, never appends.
+        cfg.upsert_hedging_model(model(
+            HedgeScopeKind::Book,
+            "CREDIT",
+            HedgingModel::InternaliseToDv01,
+            80_000.0,
+        ));
+        assert_eq!(cfg.hedging_models.len(), 1);
+        assert_eq!(
+            cfg.hedging_models[0].effective_budget(),
+            Some(80_000.0),
+            "the replacement's budget wins"
+        );
+        // An explicit `Custom` is a real override, not a delete — it is how a book opts
+        // OUT of a wider posture and back into its own authored graph.
+        cfg.upsert_hedging_model(model(
+            HedgeScopeKind::Desk,
+            "RATES",
+            HedgingModel::BackToBack,
+            0.0,
+        ));
+        cfg.upsert_hedging_model(model(
+            HedgeScopeKind::Book,
+            "WASH",
+            HedgingModel::Custom,
+            0.0,
+        ));
+        assert_eq!(cfg.hedging_models.len(), 3);
+        assert_eq!(
+            cfg.resolve_hedging_model("RATES", "WASH", "BOND")
+                .unwrap()
+                .model,
+            HedgingModel::Custom,
+            "the book-scoped Custom overrides the desk-wide BackToBack"
+        );
+        // Removal restores inheritance from the wider scope.
+        cfg.remove_hedging_model(HedgeScopeKind::Book, "WASH");
+        assert_eq!(
+            cfg.resolve_hedging_model("RATES", "WASH", "BOND")
+                .unwrap()
+                .model,
+            HedgingModel::BackToBack
+        );
+    }
+
+    /// The binding survives an `identity.json` round-trip, including a non-finite budget
+    /// (which must never serialise to `null` and brick the next boot).
+    #[test]
+    fn hedging_model_bindings_survive_a_json_round_trip() {
+        let cfg = HedgeConfigDef {
+            hedging_models: vec![
+                model(
+                    HedgeScopeKind::Book,
+                    "CREDIT",
+                    HedgingModel::BackToBack,
+                    0.0,
+                ),
+                model(
+                    HedgeScopeKind::Desk,
+                    "RATES",
+                    HedgingModel::InternaliseToDv01,
+                    f64::INFINITY,
+                ),
+            ],
+            ..HedgeConfigDef::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(!json.contains("null"), "{json}");
+        let back: HedgeConfigDef = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+        // An `∞` budget is not a real budget — it still inherits the threshold.
+        assert_eq!(back.hedging_models[1].effective_budget(), None);
     }
 
     /// The engine config round-trips with an `∞` clip too (defensive: the field uses `0` for
