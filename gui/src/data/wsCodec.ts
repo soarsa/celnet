@@ -6113,6 +6113,12 @@ export function instrumentDefToWire(def: InstrumentDef): WireObject {
     description: def.description,
     currency: def.currency,
     external_ids: externalIdsToWire(def.externalIds),
+    // Echoed back verbatim on an edit. Omitting them would make the GUI's
+    // save path a CLASSIFICATION ERASER: the server takes the payload as the
+    // whole definition, so a round-trip through this editor would silently
+    // downgrade a seeded `government`/`corporate` bond to unclassified.
+    sub_asset_type: def.subAssetType,
+    region: def.region,
   };
   switch (def.family) {
     case "deposit":
@@ -6148,6 +6154,8 @@ export function instrumentDefFromWire(o: WireObject): InstrumentDef {
     description: str(o, "description"),
     currency: str(o, "currency"),
     externalIds: externalIdsFromWire(o),
+    subAssetType: str(o, "sub_asset_type"),
+    region: str(o, "region"),
   };
   const has = (key: string): boolean =>
     Boolean(o[key]) && typeof o[key] === "object";

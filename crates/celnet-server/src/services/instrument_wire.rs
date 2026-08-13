@@ -38,6 +38,8 @@ pub fn instrument_to_wire(d: &InstrumentDef) -> InstrumentDefDesc {
         description: d.description.clone(),
         currency: d.currency.clone(),
         external_ids: d.external_ids.iter().map(external_to_wire).collect(),
+        sub_asset_type: d.sub_asset_type.clone(),
+        region: d.region.clone(),
         definition: Some(family_to_wire(&d.definition)),
     }
 }
@@ -158,6 +160,8 @@ pub fn instrument_from_wire(d: &InstrumentDefDesc) -> Result<InstrumentDef, Stat
         description: d.description.trim().to_string(),
         currency: d.currency.trim().to_string(),
         external_ids: d.external_ids.iter().map(external_from_wire).collect(),
+        sub_asset_type: d.sub_asset_type.trim().to_string(),
+        region: d.region.trim().to_string(),
         definition: family_from_wire(definition)?,
     })
 }
@@ -324,6 +328,8 @@ mod tests {
     #[test]
     fn unset_definition_is_rejected() {
         let wire = InstrumentDefDesc {
+            sub_asset_type: String::new(),
+            region: String::new(),
             instrument_id: "x".into(),
             name: "X".into(),
             description: String::new(),

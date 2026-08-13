@@ -55,6 +55,15 @@ export interface InstrumentDef {
   readonly description: string;
   readonly currency: string;
   readonly externalIds: readonly ExternalId[];
+  /**
+   * The sub-asset-type taxonomy label (`government` / `corporate` /
+   * `government_future` / `rate_future` / `swap` / `money_market`); `""` when the
+   * definition carries no classification. A govvie and a corporate both arrive as
+   * `family: "bond"` — this is what tells them apart.
+   */
+  readonly subAssetType: string;
+  /** Region taxonomy label (`us` / `uk` / `de` / `fr` / `it` / `eu`); `""` when unclassified. */
+  readonly region: string;
   readonly family: InstrumentFamily | "";
   readonly terms: Readonly<Record<string, unknown>>;
 }
@@ -99,6 +108,8 @@ export function instrumentDefFromWire(o: WireObject): InstrumentDef {
     description: str(o, "description"),
     currency: str(o, "currency"),
     externalIds: array(o, "external_ids").map(externalIdFromWire),
+    subAssetType: str(o, "sub_asset_type"),
+    region: str(o, "region"),
     family,
     terms,
   };

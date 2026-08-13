@@ -3573,6 +3573,8 @@ fn a_broken_date(year: i32, month: u32, day: u32) -> BrokenDate {
 /// coupon dates.
 fn instrument_def_with(definition: Definition) -> InstrumentDefDesc {
     InstrumentDefDesc {
+        sub_asset_type: String::new(),
+        region: String::new(),
         instrument_id: "usd-inst".to_owned(),
         name: "USD Instrument".to_owned(),
         description: "a calibrating instrument".to_owned(),

@@ -142,6 +142,12 @@ export function defaultInstrument(
     description: "",
     currency: "USD",
     externalIds: [] as ExternalIdEntry[],
+    // A hand-authored definition starts UNCLASSIFIED. The taxonomy labels are a
+    // property of the curated universe the server seeds (`government` /
+    // `corporate` / …); inventing one for a blank form would assert a
+    // classification nobody chose, and "" reads honestly as "not stated".
+    subAssetType: "",
+    region: "",
   };
   switch (family) {
     case "deposit":

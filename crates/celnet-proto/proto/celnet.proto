@@ -7442,6 +7442,16 @@ message InstrumentDefDesc {
   // External-identifier cross-refs (ISIN/CUSIP/SEDOL/FIGI/ticker/internal); each
   // `(scheme, value)` pair is unique across the whole registry.
   repeated ExternalId external_ids = 5;
+  // The sub-asset-type taxonomy label — what KIND of risk this instrument is,
+  // within its family: `government` / `corporate` for a cash bond,
+  // `government_future` for a listed Treasury future, `rate_future` for a STIR
+  // contract. Carried explicitly rather than inferred from the issuer name,
+  // because inferring it means a corporate can be silently advertised as
+  // government risk. Empty when the definition carries no classification.
+  string sub_asset_type = 13;
+  // The region taxonomy label (`us` / `uk` / `de` / `fr` / `it`; the EUR issuers
+  // roll up to `eu`). Empty when unclassified.
+  string region = 14;
   // The family-specific convention block: exactly one variant is set.
   oneof definition {
     // A cash money-market deposit.

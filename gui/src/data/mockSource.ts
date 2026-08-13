@@ -2525,6 +2525,8 @@ export class MockTransport implements CelnetTransport {
   private readonly mockInstruments: InstrumentDef[] = [
     {
       instrumentId: "usd-sofr-ois-5y",
+      subAssetType: "swap",
+      region: "us",
       name: "USD SOFR OIS 5Y",
       description: "USD overnight-indexed swap vs SOFR, 5Y",
       currency: "USD",
@@ -2543,6 +2545,8 @@ export class MockTransport implements CelnetTransport {
     },
     {
       instrumentId: "us-treasury-4-25-2035",
+      subAssetType: "government",
+      region: "us",
       name: "US Treasury 4.25% 2035",
       description: "US Treasury note, 4.25% semi-annual coupon, maturing 2035",
       currency: "USD",
@@ -2573,6 +2577,8 @@ export class MockTransport implements CelnetTransport {
     // server seeds the equivalent curated universe into its own registry.
     {
       instrumentId: "912797KX5",
+      subAssetType: "government",
+      region: "us",
       name: "US Treasury Bill 3M",
       description: "US Treasury discount bill, zero coupon, 3-month maturity",
       currency: "USD",
@@ -2594,6 +2600,8 @@ export class MockTransport implements CelnetTransport {
     },
     {
       instrumentId: "91282CJL6",
+      subAssetType: "government",
+      region: "us",
       name: "US Treasury 4.25% 2028",
       description: "US Treasury note, 4.25% semi-annual coupon, 2-year",
       currency: "USD",
@@ -2615,6 +2623,8 @@ export class MockTransport implements CelnetTransport {
     },
     {
       instrumentId: "91282CJK8",
+      subAssetType: "government",
+      region: "us",
       name: "US Treasury 4.00% 2029",
       description: "US Treasury note, 4.00% semi-annual coupon, 3-year",
       currency: "USD",
@@ -2636,6 +2646,8 @@ export class MockTransport implements CelnetTransport {
     },
     {
       instrumentId: "91282CJM4",
+      subAssetType: "government",
+      region: "us",
       name: "US Treasury 4.125% 2031",
       description: "US Treasury note, 4.125% semi-annual coupon, 5-year",
       currency: "USD",
@@ -2657,6 +2669,8 @@ export class MockTransport implements CelnetTransport {
     },
     {
       instrumentId: "91282CJN2",
+      subAssetType: "government",
+      region: "us",
       name: "US Treasury 4.25% 2033",
       description: "US Treasury note, 4.25% semi-annual coupon, 7-year",
       currency: "USD",
@@ -2678,6 +2692,8 @@ export class MockTransport implements CelnetTransport {
     },
     {
       instrumentId: "91282CJP7",
+      subAssetType: "government",
+      region: "us",
       name: "US Treasury 4.375% 2036",
       description: "US Treasury note, 4.375% semi-annual coupon, 10-year",
       currency: "USD",
@@ -2699,6 +2715,8 @@ export class MockTransport implements CelnetTransport {
     },
     {
       instrumentId: "912810UC8",
+      subAssetType: "government",
+      region: "us",
       name: "US Treasury 4.625% 2056",
       description: "US Treasury bond, 4.625% semi-annual coupon, 30-year",
       currency: "USD",
@@ -2723,6 +2741,8 @@ export class MockTransport implements CelnetTransport {
     // apply-a-call → the shown schedule shortens. Its ISIN keys the seeded CA.
     {
       instrumentId: "corp-atlas-6-2032",
+      subAssetType: "corporate",
+      region: "us",
       name: "Atlas Corp 6.00% 2032 (callable)",
       description: "Atlas Corp senior note, 6.00% semi-annual, callable at 101.50",
       currency: "USD",

@@ -382,6 +382,19 @@ pub struct InstrumentDef {
     /// External-identifier cross-refs; each `(scheme, value)` is unique registry-wide.
     #[serde(default)]
     pub external_ids: Vec<ExternalId>,
+    /// The sub-asset-type taxonomy label — what KIND of risk this is within its
+    /// family (`government` / `corporate` / `government_future` / `rate_future`).
+    ///
+    /// Stored rather than derived from the issuer name: a client that has to guess
+    /// "is `Alpine Financial SA` a sovereign?" will eventually guess wrong, and the
+    /// failure mode is advertising credit risk as government risk. Blank when the
+    /// definition carries no classification.
+    #[serde(default)]
+    pub sub_asset_type: String,
+    /// The region taxonomy label (`us` / `uk` / `de` / `fr` / `it`, EUR issuers
+    /// rolling up to `eu`). Blank when unclassified.
+    #[serde(default)]
+    pub region: String,
     /// The family-specific convention block.
     pub definition: InstrumentFamily,
 }
@@ -772,11 +785,14 @@ fn unique_id(base: &str, mut taken: impl FnMut(&str) -> bool) -> String {
 /// the friendly name becomes the composite / blotter display name and the ISIN (+ CUSIP
 /// for US) become external cross-refs. Each `instrument_id` matches what the LP-SIM feed
 /// streams, so a seeded entry resolves the exact wire id and the FI Aggregated Book tiles
-/// show a real bond name instead of a bare code. The region / sub-asset-type taxonomy is
-/// not stored on the registry entry: it lives on [`celnet_refdata::GovBondSpec`] and is
-/// available for future region / sub-asset filtering of the security-list download, but no
-/// download-time filter is wired today (the FIX / RFS security list is answered verbatim
-/// from the advertised universe).
+/// show a real bond name instead of a bare code.
+///
+/// The universe is NOT government-only despite the name: [`celnet_refdata::government_universe`]
+/// also carries the curated EUR credit issuers, and the two are told apart by the
+/// [`InstrumentDef::sub_asset_type`] label carried through from
+/// [`celnet_refdata::GovBondSpec`] — never by pattern-matching the issuer name. The
+/// FIX / RFS security list is still answered verbatim from the advertised universe (no
+/// download-time region / sub-asset filter is wired).
 #[must_use]
 pub fn government_bond_defs() -> Vec<InstrumentDef> {
     celnet_refdata::government_universe()
@@ -833,6 +849,8 @@ fn treasury_future_to_instrument_def(
             scheme: "ticker".to_string(),
             value: s.instrument_id.clone(),
         }],
+        sub_asset_type: s.sub_asset_type.to_string(),
+        region: s.region.to_string(),
         definition: InstrumentFamily::BondFuture(BondFutureDef {
             contract_code: s.instrument_id.clone(),
             contract_symbol: s.terms.symbol.to_string(),
@@ -878,6 +896,8 @@ fn gov_bond_to_instrument_def(s: celnet_refdata::GovBondSpec) -> InstrumentDef {
         description: String::new(),
         currency: s.currency.to_string(),
         external_ids,
+        sub_asset_type: s.sub_asset_type.to_string(),
+        region: s.region.to_string(),
         definition: InstrumentFamily::Bond(BondDef {
             issuer: s.issuer.clone(),
             coupon_rate: s.coupon_rate,
@@ -944,6 +964,8 @@ fn seed_instruments() -> Vec<InstrumentDef> {
                 scheme: "ticker".to_string(),
                 value: "USDSOFR-ON".to_string(),
             }],
+            sub_asset_type: "money_market".to_string(),
+            region: "us".to_string(),
             definition: InstrumentFamily::Deposit(DepositDef {
                 index: "sofr".to_string(),
                 tenor: "ON".to_string(),
@@ -962,6 +984,8 @@ fn seed_instruments() -> Vec<InstrumentDef> {
                 scheme: "ticker".to_string(),
                 value: "USDSOFR-3M".to_string(),
             }],
+            sub_asset_type: "money_market".to_string(),
+            region: "us".to_string(),
             definition: InstrumentFamily::Deposit(DepositDef {
                 index: "sofr".to_string(),
                 tenor: "3M".to_string(),
@@ -980,6 +1004,8 @@ fn seed_instruments() -> Vec<InstrumentDef> {
                 scheme: "ticker".to_string(),
                 value: "USDSOFR-FRA-3X6".to_string(),
             }],
+            sub_asset_type: "money_market".to_string(),
+            region: "us".to_string(),
             definition: InstrumentFamily::Fra(FraDef {
                 float_index: "sofr".to_string(),
                 start_tenor: "3M".to_string(),
@@ -999,6 +1025,8 @@ fn seed_instruments() -> Vec<InstrumentDef> {
                 scheme: "ticker".to_string(),
                 value: "SR3H6".to_string(),
             }],
+            sub_asset_type: "rate_future".to_string(),
+            region: "us".to_string(),
             definition: InstrumentFamily::StirFuture(StirFutureDef {
                 contract_code: "SR3H6".to_string(),
                 reference_start: "2026-03-18".to_string(),
@@ -1018,6 +1046,8 @@ fn seed_instruments() -> Vec<InstrumentDef> {
                 scheme: "ticker".to_string(),
                 value: "USDSOFR-OIS-2Y".to_string(),
             }],
+            sub_asset_type: "swap".to_string(),
+            region: "us".to_string(),
             definition: InstrumentFamily::Ois(OisDef {
                 tenor: "2Y".to_string(),
                 index: "sofr".to_string(),
@@ -1038,6 +1068,8 @@ fn seed_instruments() -> Vec<InstrumentDef> {
                 scheme: "ticker".to_string(),
                 value: "USDSOFR-IRS-5Y".to_string(),
             }],
+            sub_asset_type: "swap".to_string(),
+            region: "us".to_string(),
             definition: InstrumentFamily::VanillaIrs(VanillaIrsDef {
                 tenor: "5Y".to_string(),
                 fixed_frequency: "annual".to_string(),
@@ -1068,6 +1100,8 @@ mod tests {
                 scheme: "ticker".to_string(),
                 value: "X-OIS".to_string(),
             }],
+            sub_asset_type: "swap".to_string(),
+            region: "us".to_string(),
             definition: InstrumentFamily::Ois(OisDef {
                 tenor: "2Y".to_string(),
                 index: "sofr".to_string(),

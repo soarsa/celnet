@@ -5781,6 +5781,10 @@ impl WireBuilder for InstrumentDefDesc {
             "description" => self.description = string_or_empty(value),
             "currency" => self.currency = req_string(value, "currency")?,
             "external_ids" => self.external_ids = external_ids(value)?,
+            // The taxonomy labels mirror `instrument_id`/`description`: absent OR
+            // empty decodes to "" (an unclassified definition is legal).
+            "sub_asset_type" => self.sub_asset_type = string_or_empty(value),
+            "region" => self.region = string_or_empty(value),
             // The `definition` family oneof: the generic decoder has already selected
             // the single live arm (first present in declaration order — the same
             // precedence as the hand `family_from_json`).

@@ -2297,6 +2297,19 @@ interface InstrumentDefBase {
   /** ISO 4217 currency, e.g. "USD". */
   currency: string;
   externalIds: ExternalIdEntry[];
+  /**
+   * The sub-asset-type taxonomy label — what KIND of risk this is within its
+   * family: `government` / `corporate` for a cash bond, `government_future` for a
+   * listed Treasury future, `rate_future` for a STIR contract, `swap` /
+   * `money_market` for the curve instruments. `""` when unclassified.
+   *
+   * This is the ONLY honest way to tell a govvie from a corporate on the client:
+   * both arrive as `family: "bond"`, and the issuer name is a label, not a
+   * classification.
+   */
+  subAssetType: string;
+  /** Region taxonomy label (`us` / `uk` / `de` / `fr` / `it` / `eu`); `""` when unclassified. */
+  region: string;
 }
 
 /**

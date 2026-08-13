@@ -2269,6 +2269,8 @@ mod tests {
             });
         }
         InstrumentDef {
+            sub_asset_type: String::new(),
+            region: String::new(),
             instrument_id: id.to_string(),
             name: format!("registry entry {id}"),
             description: "cross-walk fixture".to_string(),

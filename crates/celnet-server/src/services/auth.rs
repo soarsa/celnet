@@ -4283,6 +4283,8 @@ mod tests {
     /// A USD instrument-definition header wrapping a family block.
     fn cv_usd(id: &str, family: InstrumentFamily) -> InstrumentDef {
         InstrumentDef {
+            sub_asset_type: String::new(),
+            region: String::new(),
             instrument_id: id.to_string(),
             name: id.to_string(),
             description: String::new(),
@@ -5700,6 +5702,8 @@ mod tests {
         let (_tid, trader_token) = make_trader(&edge, &tok, "inst@celnet.com").await;
 
         let ois_desc = |id: &str, ticker: &str| InstrumentDefDesc {
+            sub_asset_type: String::new(),
+            region: String::new(),
             instrument_id: id.to_string(),
             name: format!("Test OIS {id}"),
             description: "test".into(),

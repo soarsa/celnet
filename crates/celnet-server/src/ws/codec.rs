@@ -5694,6 +5694,8 @@ fn instrument_def_to_json(d: &InstrumentDefDesc) -> Value {
         "description": d.description,
         "currency": d.currency,
         "external_ids": Value::Array(d.external_ids.iter().map(external_id_to_json).collect()),
+        "sub_asset_type": d.sub_asset_type,
+        "region": d.region,
     });
     if let (Some(map), Some(def)) = (v.as_object_mut(), d.definition.as_ref()) {
         let (key, val) = family_to_json(def);
@@ -5720,6 +5722,8 @@ fn instrument_def_from_json(v: &Value) -> Result<InstrumentDefDesc> {
         description: opt_string(o, "description").unwrap_or_default(),
         currency: string_field(o, "currency")?,
         external_ids,
+        sub_asset_type: opt_string(o, "sub_asset_type").unwrap_or_default(),
+        region: opt_string(o, "region").unwrap_or_default(),
         definition: family_from_json(o)?,
     })
 }
@@ -9648,6 +9652,8 @@ mod tests {
         ];
         for (i, fam) in families.into_iter().enumerate() {
             let desc = InstrumentDefDesc {
+                sub_asset_type: String::new(),
+                region: String::new(),
                 instrument_id: format!("x-{i}"),
                 name: format!("X {i}"),
                 description: "round-trip".into(),

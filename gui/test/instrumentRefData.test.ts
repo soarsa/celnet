@@ -27,6 +27,8 @@ const OIS: InstrumentDef = {
   description: "USD overnight-indexed swap vs SOFR, 5Y",
   currency: "USD",
   externalIds: [{ scheme: "ticker", value: "USOSFR5" }],
+  subAssetType: "swap",
+  region: "us",
   family: "ois",
   ois: {
     tenor: "5Y",
@@ -46,6 +48,8 @@ const STIR: InstrumentDef = {
   description: "3M SOFR future, Mar-2026",
   currency: "USD",
   externalIds: [{ scheme: "ticker", value: "SR3H26" }],
+  subAssetType: "rate_future",
+  region: "us",
   family: "stir_future",
   stirFuture: {
     contractCode: "SR3",
@@ -67,6 +71,8 @@ const BOND_FULL: InstrumentDef = {
     { scheme: "isin", value: "US91282CHK24" },
     { scheme: "cusip", value: "91282CHK2" },
   ],
+  subAssetType: "government",
+  region: "us",
   family: "bond",
   bond: {
     issuer: "US Treasury",
@@ -89,6 +95,8 @@ const BOND_ZERO: InstrumentDef = {
   description: "zero-coupon",
   currency: "USD",
   externalIds: [],
+  subAssetType: "government",
+  region: "us",
   family: "bond",
   bond: {
     issuer: "ACME",

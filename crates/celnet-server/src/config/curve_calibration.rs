@@ -587,6 +587,8 @@ mod tests {
 
     fn instrument(id: &str, family: InstrumentFamily) -> InstrumentDef {
         InstrumentDef {
+            sub_asset_type: String::new(),
+            region: String::new(),
             instrument_id: id.to_string(),
             name: id.to_string(),
             description: String::new(),
