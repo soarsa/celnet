@@ -215,11 +215,25 @@ impl AggregationHub {
                     }
 
                     let config = consolidation_config(&cfg.params, robust_scale(&member_quotes));
-                    let Ok(consolidated) =
-                        ConsolidatedBook::from_quotes(&member_quotes, now, &config)
-                    else {
-                        continue;
-                    };
+                    let consolidated =
+                        match ConsolidatedBook::from_quotes(&member_quotes, now, &config) {
+                            Ok(book) => book,
+                            Err(_) => {
+                                // No consolidated book at all — every member has aged
+                                // out or is otherwise unusable. Each quote is still
+                                // LIVE in the sink and still excluded from the
+                                // composite, so it must be reported as excluded
+                                // rather than vanish: a silent drop makes a whole book
+                                // going stale read as "no quotes excluded", which is
+                                // the opposite of what happened.
+                                for quote in &member_quotes {
+                                    acc.entry(quote.venue.as_str().to_string())
+                                        .or_default()
+                                        .stale_quotes += 1;
+                                }
+                                continue;
+                            }
+                        };
                     for contribution in &consolidated.contributions {
                         let venue = contribution.venue.as_str();
                         let raw = member_quotes.iter().find(|q| q.venue == contribution.venue);

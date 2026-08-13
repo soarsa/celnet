@@ -148,7 +148,6 @@ async fn connect_and_stream(
     let fleet = build_fleet(cfg, selection);
     let lines = selection.to_vec();
     let interval = Duration::from_secs(interval_secs.max(1));
-    let start = std::time::Instant::now();
 
     // The client-streaming request: an unfold generator yields the next `LpQuote`,
     // sleeping `interval` between rounds; `--once` ends the stream after one round.
@@ -160,7 +159,6 @@ async fn connect_and_stream(
         round_done_once: false,
         interval,
         once,
-        start,
     };
     let request = futures_util::stream::unfold(state, |mut st| async move {
         st.next_quote().await.map(|q| (q, st))
@@ -186,7 +184,6 @@ struct FeedState {
     round_done_once: bool,
     interval: Duration,
     once: bool,
-    start: std::time::Instant,
 }
 
 impl FeedState {
@@ -222,11 +219,17 @@ impl FeedState {
     /// The valuation clock in epoch nanoseconds (real wall time so the server's
     /// staleness decay sees a monotonically advancing observation instant).
     fn now_nanos(&self) -> i64 {
+        // Wall time ALONE. This previously added an elapsed-since-start term on top of the
+        // epoch reading — two clocks that each advance at 1x, so the stamp ran at 2x
+        // and drifted ever further into the FUTURE the longer the feed ran. The
+        // consequence was not cosmetic: the consolidator ages a quote as
+        // `max(0, now - ts)`, so a future-dated tick has age 0 forever and NO quote
+        // could ever be excluded as stale. A dead LP kept setting the composite, and
+        // the staleness gating the whole engine relies on was silently inert.
         let since_epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
         i64::try_from(since_epoch.as_nanos()).unwrap_or(i64::MAX)
-            + i64::try_from(self.start.elapsed().as_nanos()).unwrap_or(0)
     }
 }
 
@@ -644,7 +647,6 @@ async fn run_plan_stream(
         pending: Vec::new(),
         cursor: 0,
         started: false,
-        start: std::time::Instant::now(),
     };
     let request = futures_util::stream::unfold(state, |mut st| async move {
         st.next_quote().await.map(|q| (q, st))
@@ -675,7 +677,6 @@ struct PlanFeedState {
     pending: Vec<LpQuote>,
     cursor: usize,
     started: bool,
-    start: std::time::Instant,
 }
 
 impl PlanFeedState {
@@ -726,11 +727,62 @@ impl PlanFeedState {
     /// The valuation clock in epoch nanoseconds (real wall time plus elapsed, so the
     /// server's staleness decay sees a monotonically advancing instant).
     fn now_nanos(&self) -> i64 {
+        // Wall time ALONE. This previously added an elapsed-since-start term on top of the
+        // epoch reading — two clocks that each advance at 1x, so the stamp ran at 2x
+        // and drifted ever further into the FUTURE the longer the feed ran. The
+        // consequence was not cosmetic: the consolidator ages a quote as
+        // `max(0, now - ts)`, so a future-dated tick has age 0 forever and NO quote
+        // could ever be excluded as stale. A dead LP kept setting the composite, and
+        // the staleness gating the whole engine relies on was silently inert.
         let since_epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
         i64::try_from(since_epoch.as_nanos()).unwrap_or(i64::MAX)
-            + i64::try_from(self.start.elapsed().as_nanos()).unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod clock_tests {
+    /// The feed's valuation clock must be wall time and NOTHING else.
+    ///
+    /// It once returned `epoch + start.elapsed()` — two clocks each advancing at 1x,
+    /// summed. The stamp therefore ran at 2x and sat ever further in the FUTURE. That
+    /// silently disabled the consolidator's staleness gating, which ages a quote as
+    /// `max(0, now - ts)`: a future-dated tick has age 0 forever, so no LP could ever
+    /// be excluded as stale and a dead feed kept setting the composite.
+    ///
+    /// This pins the property that broke — a stamp taken now must not exceed wall
+    /// clock, and must advance at wall-clock rate, not a multiple of it.
+    #[test]
+    fn the_valuation_clock_is_wall_time_and_never_runs_ahead() {
+        fn wall() -> i64 {
+            i64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos(),
+            )
+            .unwrap_or(i64::MAX)
+        }
+
+        let before = wall();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        let mid = wall();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        let after = wall();
+
+        // Monotone, and each step is close to the real elapsed time — a clock summing
+        // two advancing sources would roughly double each interval.
+        assert!(before <= mid && mid <= after);
+        let first = mid - before;
+        let second = after - mid;
+        for step in [first, second] {
+            assert!(
+                (40_000_000..200_000_000).contains(&step),
+                "a ~60ms sleep advanced the clock by {step}ns — a doubled clock would \
+                 show ~120ms and a frozen one ~0"
+            );
+        }
     }
 }
 
