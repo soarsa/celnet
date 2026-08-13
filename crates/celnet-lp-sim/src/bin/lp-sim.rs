@@ -27,7 +27,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use celnet_lp_sim::{
     BookFeedOptions, FaultSchedule, LoginCredentials, LpSimConfig, QuotedLine, bond_lines,
     build_fleet, composite_for, futures_lines, into_feeds, load_futures_universe,
-    load_government_universe, run_book_aware_feed,
+    load_government_universe, load_stir_universe, run_book_aware_feed, stir_lines,
 };
 use celnet_types::BrokenDate;
 use clap::Parser;
@@ -116,6 +116,13 @@ struct Args {
     /// venue. Only pass this to isolate the cash feed.
     #[arg(long, default_value_t = false)]
     exclude_futures: bool,
+
+    /// Do NOT quote the listed SOFR STIR strip (`SR3` / `SR1`). Quoted by DEFAULT,
+    /// for the same reason as the deliverable complex: the strip is advertised as
+    /// tradeable, so leaving it unquoted strands every front-end hedge routed at it.
+    /// Only pass this to isolate the cash + deliverable feed.
+    #[arg(long, default_value_t = false)]
+    exclude_stir: bool,
 
     /// Emit a single round and exit (default: stream forever).
     #[arg(long, default_value_t = false)]
@@ -229,9 +236,35 @@ fn main() -> std::process::ExitCode {
         priceable.extend(lines);
         n
     };
+    // The swap/OIS curve points anchor the STIR strip, so both are sourced from ONE
+    // curve load — the front end and the swap strip cannot drift apart.
+    let stir_count = if args.exclude_stir {
+        0
+    } else {
+        let points = celnet_lp_sim::ois::load_ois_universe();
+        let contracts = load_stir_universe(
+            &points,
+            celnet_refdata::CivilYmd::new(
+                cfg.settlement.year,
+                u32::from(cfg.settlement.month),
+                u32::from(cfg.settlement.day),
+            ),
+        );
+        let lines = stir_lines(
+            &contracts,
+            cfg.half_spread,
+            cfg.skew_step,
+            cfg.reversion_per_sec,
+            cfg.perturbation,
+        );
+        let n = lines.len();
+        priceable.extend(lines);
+        n
+    };
     eprintln!(
-        "[lp-sim] quotable set: {} cash bond(s) + {futures_count} Treasury future(s)",
-        priceable.len() - futures_count,
+        "[lp-sim] quotable set: {} cash bond(s) + {futures_count} Treasury future(s) \
+         + {stir_count} SOFR STIR contract(s)",
+        priceable.len() - futures_count - stir_count,
     );
     if priceable.is_empty() {
         eprintln!(

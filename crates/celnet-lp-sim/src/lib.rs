@@ -85,6 +85,7 @@ pub mod ois;
 pub mod price;
 pub mod quoted;
 mod rng;
+pub mod stir;
 pub mod universe;
 
 pub use books::{
@@ -102,6 +103,7 @@ pub use net::{BookFeedOptions, FaultSchedule, LoginCredentials, run_book_aware_f
 pub use ois::{OisCurvePoint, USD_OIS_CURVE, load_ois_universe, ois_instrument_id, ois_lines};
 pub use price::{MidSource, RateModel, YieldModel};
 pub use quoted::QuotedLine;
+pub use stir::{StirContract, load_stir_universe, stir_lines};
 pub use universe::{
     SecurityType, TreasuryBond, bond_lines, load_coupon_universe, load_curated_universe,
     load_government_universe, load_universe, parse_universe,

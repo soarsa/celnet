@@ -120,8 +120,9 @@ impl LpSimConfig {
 }
 
 /// The full set of [`QuotedLine`]s the sim can price for `cfg`: every cash bond in
-/// `bonds` that models at the config's settlement, followed by every listed Treasury
-/// futures contract anchored to that same cash curve.
+/// `bonds` that models at the config's settlement, every listed Treasury futures
+/// contract anchored to that same cash curve, the swap/OIS curve points, and the
+/// listed SOFR STIR strip anchored to those same curve points.
 ///
 /// This is the sim's **quotable** universe, and it is deliberately built from the
 /// same `celnet-refdata` sources the server seeds its **tradeable** registry from —
@@ -148,14 +149,36 @@ pub fn quotable_lines(cfg: &LpSimConfig, bonds: &[TreasuryBond]) -> Vec<QuotedLi
     // The swap/OIS curve points. Without these no aggregated book ever carries a swap
     // line, and the venue's OIS arm has no composite to price an RFS against (see the
     // `crate::ois` module docs).
+    let ois_points = crate::ois::load_ois_universe();
     lines.extend(crate::ois::ois_lines(
-        &crate::ois::load_ois_universe(),
+        &ois_points,
+        cfg.half_spread,
+        cfg.skew_step,
+        cfg.reversion_per_sec,
+        cfg.perturbation,
+    ));
+    // The listed SOFR STIR strip, anchored to the SAME curve the swap lines stream so
+    // the front end and the swap strip cannot drift apart (see `crate::stir`).
+    let stir = crate::stir::load_stir_universe(&ois_points, as_of(cfg.settlement));
+    lines.extend(crate::stir::stir_lines(
+        &stir,
         cfg.half_spread,
         cfg.skew_step,
         cfg.reversion_per_sec,
         cfg.perturbation,
     ));
     lines
+}
+
+/// The sim's settlement date as a reference-data civil date — the valuation instant
+/// the listed universes are filtered against, so a contract that has stopped trading
+/// is never quoted.
+fn as_of(settlement: BrokenDate) -> celnet_refdata::CivilYmd {
+    celnet_refdata::CivilYmd::new(
+        settlement.year,
+        u32::from(settlement.month),
+        u32::from(settlement.day),
+    )
 }
 
 /// Build the `LP-SIM` panel: one [`SimLp`] per member, each quoting every

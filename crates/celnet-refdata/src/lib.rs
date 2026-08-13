@@ -63,6 +63,7 @@ mod curated;
 mod futures;
 mod isin;
 mod model;
+mod stir;
 mod swaps;
 mod treasury;
 
@@ -77,6 +78,11 @@ pub use futures::{
 };
 pub use isin::{build as build_isin, check_digit, is_well_formed};
 pub use model::{CivilYmd, GovBondSpec};
+pub use stir::{
+    LISTED_STIR_MONTHS, STIR_CYCLE_START, STIR_FUTURES_TERMS, STIR_TICK_POINTS, StirContractTerms,
+    StirCycle, StirFutureSpec, contract_for as stir_contract_for, listed_stir_on,
+    stir_futures_universe, third_wednesday,
+};
 pub use swaps::{ON_THE_RUN_SWAP_TENORS, is_on_the_run_swap_tenor, swap_instrument_id};
 pub use treasury::{TREASURY_UNIVERSE_JSON, parse as parse_treasury_universe, treasury_universe};
 
