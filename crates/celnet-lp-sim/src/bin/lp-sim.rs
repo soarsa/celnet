@@ -236,12 +236,25 @@ fn main() -> std::process::ExitCode {
         priceable.extend(lines);
         n
     };
-    // The swap/OIS curve points anchor the STIR strip, so both are sourced from ONE
-    // curve load — the front end and the swap strip cannot drift apart.
+    // The swap/OIS curve points, and the STIR strip they anchor, from ONE curve load —
+    // the front end and the swap strip cannot drift apart. The curve points are quoted
+    // here as well as in the book-aware path so `--once` reports the SAME quotable set
+    // the daemon streams; omitting them made a standalone run silently narrower than
+    // the deployed feed.
+    let ois_points = celnet_lp_sim::ois::load_ois_universe();
+    let ois_lines = celnet_lp_sim::ois::ois_lines(
+        &ois_points,
+        cfg.half_spread,
+        cfg.skew_step,
+        cfg.reversion_per_sec,
+        cfg.perturbation,
+    );
+    let ois_count = ois_lines.len();
+    priceable.extend(ois_lines);
     let stir_count = if args.exclude_stir {
         0
     } else {
-        let points = celnet_lp_sim::ois::load_ois_universe();
+        let points = ois_points.clone();
         let contracts = load_stir_universe(
             &points,
             celnet_refdata::CivilYmd::new(
@@ -263,8 +276,8 @@ fn main() -> std::process::ExitCode {
     };
     eprintln!(
         "[lp-sim] quotable set: {} cash bond(s) + {futures_count} Treasury future(s) \
-         + {stir_count} SOFR STIR contract(s)",
-        priceable.len() - futures_count - stir_count,
+         + {ois_count} OIS curve point(s) + {stir_count} SOFR STIR contract(s)",
+        priceable.len() - futures_count - stir_count - ois_count,
     );
     if priceable.is_empty() {
         eprintln!(

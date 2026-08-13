@@ -26,7 +26,14 @@
 /// This is the set a liquidity panel is expected to quote and the venue is willing to
 /// auto-quote against; a request for a tenor outside it has no book line behind it and
 /// is declined rather than quoted off an interpolated or fabricated level.
-pub const ON_THE_RUN_SWAP_TENORS: &[u32] = &[2, 3, 5, 7, 10];
+///
+/// The **1-year** point is included because the venue demonstrably accepts 1y OIS
+/// requests: without a streamed line behind it, such a request found no swap composite
+/// and resolved onto a price-quoted level instead — a 1y OIS blotter row reading
+/// `104.15` rather than a rate near `4.2%`. Either the tenor is quotable and the panel
+/// streams it, or it is declined; quoting it off something that is not that curve
+/// point is the one outcome this set exists to prevent.
+pub const ON_THE_RUN_SWAP_TENORS: &[u32] = &[1, 2, 3, 5, 7, 10];
 
 /// The canonical `instrument_id` of a `(curve symbol, whole-year tenor)` swap curve
 /// point: `USD-OIS` + `5` ⇒ `USD-OIS-5Y`.
