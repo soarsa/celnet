@@ -51,6 +51,26 @@ celnet_build_packages:
 # rust-toolchain.toml automatically on first build. Set to override if needed.
 celnet_rust_profile: minimal
 
+# --- Simulator fleet (master switch) ----------------------------------------
+# THE simulator deploy configuration. False ⇒ a genuinely sim-free environment:
+# no simulator binary is built or shipped, no control script is installed, any
+# surviving simulator process is swept on deploy, and nothing is ever started.
+# True ⇒ the per-simulator flags below decide which of the four inbound
+# connections run:
+#
+#   LP-SIM   (celnet_lpsim_enabled)           N liquidity providers → LpFeed ingest
+#   RFQ leg  (celnet_fixsim_enabled)          one-shot FIX quote requests
+#   RFS leg  (celnet_fixsim_stream_port)      FIX request-for-stream subscription
+#   ESP leg  (celnet_fixsim_esp_enabled)      FIX Market-Data streaming off refdata
+#
+# The fleet is bound to the SERVER's lifecycle by default, so `celnetctl restart`
+# stops the sims first, sweeps orphans by process image, and relaunches every
+# configured leg once the server is listening — no generation is ever left behind.
+# Drive the fleet on its own with `simsctl {start|stop|restart|sweep|status}` or
+# `celnetctl sims <verb>`.
+celnet_simulators_enabled: true
+celnet_simulators_restart_with_server: true
+
 # --- FIX quote simulator ----------------------------------------------------
 # When true, the release builds the celnet-fix RFQ client, ships it as
 # <release>/bin/fix-rfq-client, and installs the launcher + `fixsimctl` control

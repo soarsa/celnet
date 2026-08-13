@@ -34,41 +34,41 @@
   roles:
     - role: celnet_release
   post_tasks:
-    - name: Restart celnet-server via celnetctl
+    # `celnetctl restart` now owns the SIMULATOR FLEET too: it stops the sims before
+    # the server (they are its clients), sweeps any orphan by process image, and
+    # relaunches every configured leg once the server is confirmed listening. So this
+    # one command leaves no previous generation behind — which is what the separate
+    # per-sim restarts below could not guarantee, because each only knew about its own
+    # pidfile and a leaked process is precisely one whose pidfile already drifted.
+    - name: Restart celnet-server (and the coupled simulator fleet) via celnetctl
       ansible.builtin.command: "{{ celnet_bin_dir }}/celnetctl restart"
       changed_when: true
-    # The LP-SIM Treasury feed is a managed service: (re)start it on EVERY deploy so a
-    # fresh release always has the sim streaming into the aggregated books (and the
-    # daemon reconnects cleanly after the server restart above). Skipped when the box
-    # isn't provisioned yet (no lpsimctl) or the sim is disabled.
-    - name: Check the lpsimctl LP-SIM control script is installed
+    # Belt and braces for the decoupled case: when the fleet is deliberately NOT bound
+    # to the server lifecycle, a release must still land on freshly restarted sims, so
+    # drive simsctl directly. Skipped when the box isn't provisioned yet (no simsctl)
+    # or the fleet is switched off for this environment.
+    - name: Check the simsctl simulator-fleet control script is installed
       ansible.builtin.stat:
-        path: "{{ celnet_bin_dir }}/lpsimctl"
-      register: celnet_lpsimctl_bin
-    - name: (Re)start the LP-SIM Treasury feed via lpsimctl
-      ansible.builtin.command: "{{ celnet_bin_dir }}/lpsimctl restart"
+        path: "{{ celnet_bin_dir }}/simsctl"
+      register: celnet_simsctl_bin
+    - name: (Re)start the simulator fleet via simsctl (LP-SIM + RFQ/RFS/ESP legs)
+      ansible.builtin.command: "{{ celnet_bin_dir }}/simsctl restart"
       changed_when: true
       when:
-        - celnet_lpsim_enabled | default(true) | bool
-        - celnet_lpsimctl_bin.stat.exists
-    # The FIX RFQ/RFS client simulator is likewise a managed service: (re)start it on EVERY
-    # deploy so a fresh release always has incoming client RFQ/RFS flow driving deals, quotes
-    # and positions. Skipped when the box isn't provisioned yet (no fixsimctl) or it's disabled.
-    - name: Check the fixsimctl FIX-simulator control script is installed
-      ansible.builtin.stat:
-        path: "{{ celnet_bin_dir }}/fixsimctl"
-      register: celnet_fixsimctl_bin
-    # `restart` is safe to call directly now that the pre_task above re-renders fixsimctl
-    # from its template on every release: the on-box script is guaranteed to be the one in
-    # this repository, so it cannot predate a verb this playbook uses. (It previously used
-    # stop||true + start precisely because the on-box copy could be arbitrarily old.)
-    - name: (Re)start the FIX RFQ/RFS client simulator via fixsimctl
-      ansible.builtin.command: "{{ celnet_bin_dir }}/fixsimctl restart"
+        - celnet_simulators_enabled | default(true) | bool
+        - not (celnet_simulators_restart_with_server | default(true) | bool)
+        - celnet_simsctl_bin.stat.exists
+    # A fleet switched OFF must actively be torn down, not merely left unstarted: a box
+    # that used to run sims would otherwise keep the previous generation alive forever.
+    - name: Sweep every simulator process when the fleet is disabled
+      ansible.builtin.shell: >-
+        pkill -TERM -u "$(id -u)" -f 'lp[-_]sim|fix[-_]rfq[-_]client|start-fix-sim\.sh|start-lp-sim\.sh' || true
       changed_when: true
-      when:
-        - celnet_fixsim_enabled | default(true) | bool
-        - celnet_fixsimctl_bin.stat.exists
+      when: not (celnet_simulators_enabled | default(true) | bool)
     - name: Release summary
       ansible.builtin.debug:
-        msg: "Released {{ celnet_release_name }} -> {{ celnet_current_link }} (celnet-server + lp-sim + fix-sim restarted)"
+        msg: >-
+          Released {{ celnet_release_name }} -> {{ celnet_current_link }}
+          (celnet-server restarted;
+          simulators {{ 'restarted' if celnet_simulators_enabled | default(true) | bool else 'DISABLED + swept' }})
 

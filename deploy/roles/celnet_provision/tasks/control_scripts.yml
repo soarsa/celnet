@@ -29,6 +29,27 @@
     group: "{{ celnet_group }}"
     mode: "0755"
 
+# The one control surface over the whole fleet (LP-SIM + the RFQ/RFS/ESP FIX legs).
+# `celnetctl` calls it on start/stop/restart, so the sims are killed and relaunched
+# with the server rather than orphaned across it. Installed whenever the fleet is
+# enabled at all — it is the script that knows which individual legs are configured.
+- name: Install the simsctl simulator-fleet control script
+  ansible.builtin.template:
+    src: simsctl.sh.j2
+    dest: "{{ celnet_bin_dir }}/simsctl"
+    owner: "{{ celnet_user }}"
+    group: "{{ celnet_group }}"
+    mode: "0755"
+  when: celnet_simulators_enabled | default(true) | bool
+
+# Removed when the fleet is switched off, so a decommissioned environment cannot be
+# restarted into simulated liquidity by a stale script left on the box.
+- name: Remove the simsctl control script when the simulator fleet is disabled
+  ansible.builtin.file:
+    path: "{{ celnet_bin_dir }}/simsctl"
+    state: absent
+  when: not (celnet_simulators_enabled | default(true) | bool)
+
 - name: Install the fixsimctl FIX quote-simulator control script
   ansible.builtin.template:
     src: fixsimctl.sh.j2
@@ -36,7 +57,9 @@
     owner: "{{ celnet_user }}"
     group: "{{ celnet_group }}"
     mode: "0755"
-  when: celnet_fixsim_enabled | default(true) | bool
+  when:
+    - celnet_simulators_enabled | default(true) | bool
+    - celnet_fixsim_enabled | default(true) | bool
 
 - name: Install the lpsimctl LP-SIM Treasury-feed control script
   ansible.builtin.template:
@@ -45,4 +68,6 @@
     owner: "{{ celnet_user }}"
     group: "{{ celnet_group }}"
     mode: "0755"
-  when: celnet_lpsim_enabled | default(true) | bool
+  when:
+    - celnet_simulators_enabled | default(true) | bool
+    - celnet_lpsim_enabled | default(true) | bool

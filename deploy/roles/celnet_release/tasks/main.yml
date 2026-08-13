@@ -117,7 +117,9 @@
     RUSTC_WRAPPER: ""
     CARGO_BUILD_JOBS: "{{ celnet_cargo_build_jobs | default('1') }}"
   changed_when: true
-  when: celnet_fixsim_enabled | default(true) | bool
+  when:
+    - celnet_simulators_enabled | default(true) | bool
+    - celnet_fixsim_enabled | default(true) | bool
 
 - name: Install the FIX quote-simulator RFQ client into the release
   ansible.builtin.copy:
@@ -125,14 +127,18 @@
     dest: "{{ celnet_releases_dir }}/{{ celnet_release_name }}/bin/fix-rfq-client"
     mode: "0755"
     remote_src: true
-  when: celnet_fixsim_enabled | default(true) | bool
+  when:
+    - celnet_simulators_enabled | default(true) | bool
+    - celnet_fixsim_enabled | default(true) | bool
 
 - name: Install the FIX quote-simulator launcher (start-fix-sim.sh) into shared bin
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/start-fix-sim.sh"
     dest: "{{ celnet_bin_dir }}/start-fix-sim.sh"
     mode: "0755"
-  when: celnet_fixsim_enabled | default(true) | bool
+  when:
+    - celnet_simulators_enabled | default(true) | bool
+    - celnet_fixsim_enabled | default(true) | bool
 
 # Build the LP-SIM Treasury liquidity feed binary and ship it into the release bin,
 # plus its launcher, so the feed runs ON the server (the celnet user has no cargo at
@@ -151,7 +157,9 @@
     RUSTC_WRAPPER: ""
     CARGO_BUILD_JOBS: "{{ celnet_cargo_build_jobs | default('1') }}"
   changed_when: true
-  when: celnet_lpsim_enabled | default(true) | bool
+  when:
+    - celnet_simulators_enabled | default(true) | bool
+    - celnet_lpsim_enabled | default(true) | bool
 
 - name: Install the LP-SIM feed binary into the release
   ansible.builtin.copy:
@@ -159,14 +167,18 @@
     dest: "{{ celnet_releases_dir }}/{{ celnet_release_name }}/bin/lp-sim"
     mode: "0755"
     remote_src: true
-  when: celnet_lpsim_enabled | default(true) | bool
+  when:
+    - celnet_simulators_enabled | default(true) | bool
+    - celnet_lpsim_enabled | default(true) | bool
 
 - name: Install the LP-SIM feed launcher (start-lp-sim.sh) into shared bin
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/start-lp-sim.sh"
     dest: "{{ celnet_bin_dir }}/start-lp-sim.sh"
     mode: "0755"
-  when: celnet_lpsim_enabled | default(true) | bool
+  when:
+    - celnet_simulators_enabled | default(true) | bool
+    - celnet_lpsim_enabled | default(true) | bool
 
 - name: Write the release VERSION marker
   ansible.builtin.copy:

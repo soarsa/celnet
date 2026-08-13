@@ -37,6 +37,30 @@ celnet_swap_path: /swapfile
 celnet_swap_size_mb: 4096          # 4 GiB — covers the celnet-server LTO + Vite peaks
 celnet_swappiness: 10              # prefer RAM; spill to swap only under genuine pressure
 
+# --- Simulator fleet (a DEPLOY CONFIGURATION) ---------------------------------
+# One master switch over the whole simulator fleet, above the per-simulator
+# `celnet_lpsim_enabled` / `celnet_fixsim_enabled` flags. False ⇒ no simulator
+# binary is shipped, no control script is installed, and nothing is started: a
+# genuinely sim-free environment, which is what a real deployment wants. True ⇒
+# the per-simulator flags decide which legs run. Four inbound connections in all:
+# LP-SIM (liquidity providers → LpFeed ingest) plus the RFQ, RFS and ESP FIX
+# client legs.
+celnet_simulators_enabled: true
+
+# Bind the simulator fleet's lifecycle to the SERVER's, so `celnetctl start/stop/
+# restart` takes the sims down and brings them back with it. Every simulator is a
+# long-lived CLIENT of celnet-server: a restart that leaves them running orphans
+# the previous generation (they survive in reconnect loops while a new generation
+# is launched on top), and a leaked sim still authenticates and still pushes
+# quotes — so it surfaces on the LP Panel as a provider matching nothing the
+# operator configured. False decouples them for an operator driving sims by hand.
+celnet_simulators_restart_with_server: true
+
+# After signalling the fleet, seconds to wait for the processes to actually be
+# reaped. As with the server's own stop, SIGKILL is asynchronous — returning before
+# the reap is what lets the next start race a corpse that still holds its session.
+celnet_simulators_reap_wait_seconds: 10
+
 # --- Simulator service identities ---------------------------------------------
 # The simulators authenticate as their OWN dedicated, least-privilege accounts —
 # never as `admin@celnet.com`, and never with a `--password` flag (argv is

@@ -31,6 +31,33 @@ PORT_FREE_WAIT={{ celnet_port_free_wait_seconds | default(20) }}
 START_ATTEMPTS={{ celnet_start_attempts | default(4) }}
 START_SETTLE={{ celnet_start_settle_seconds | default(2) }}
 
+# --- Simulator fleet coupling -------------------------------------------------
+# Every simulator is a CLIENT of this server, so its lifecycle belongs to the
+# server's. Left uncoupled, a restart orphans the previous generation: the clients
+# survive in reconnect loops, a new generation is launched on top, and the leaked
+# ones keep authenticating and pushing quotes — surfacing as phantom providers on
+# the LP Panel that match nothing an operator configured.
+#
+# So: sims go DOWN before the server (they are its clients — dropping the server
+# first would only make them thrash), and come back UP only once the server is
+# confirmed listening. `simsctl stop` sweeps by process image, so this converges
+# even when a pidfile has already drifted.
+#
+# Set celnet_simulators_restart_with_server=false to decouple them (an operator
+# driving the sims by hand); absent simsctl (no simulator deployed) every hook
+# below is a silent no-op, so a sim-free box behaves exactly as before.
+SIMSCTL="{{ celnet_bin_dir }}/simsctl"
+SIMS_COUPLED="{{ '1' if celnet_simulators_restart_with_server | default(true) else '0' }}"
+
+# Run a simsctl verb, if the fleet is deployed AND coupled. Never fails the server
+# operation: the server is the mission-critical process here, and a simulator that
+# would not stop must not be the reason a restart aborts.
+sims() {
+  [[ "$SIMS_COUPLED" == "1" ]] || return 0
+  [[ -x "$SIMSCTL" ]] || return 0
+  "$SIMSCTL" "$1" || echo "WARNING: simsctl $1 reported a failure (continuing)"
+}
+
 # Source the shared env ONCE, exported, so EVERY subcommand sees the real bind
 # addresses — the port probes and `status` included, not just the spawned child.
 # (Previously only `start` sourced it, so `status` reported the build-time template
@@ -101,6 +128,9 @@ start() {
     sleep "$START_SETTLE"
     if is_running; then
       echo "Started (pid $pid). Logs: $LOG"
+      # Sims come up only now — they authenticate against this server, so starting
+      # them before it is listening just burns their reconnect backoff.
+      sims start
       return 0
     fi
     # Retry ONLY the address-in-use race. Every other startup failure is a real defect
@@ -122,6 +152,9 @@ start() {
 }
 
 stop() {
+  # Sims first, unconditionally — even when the server is already down, since that
+  # is exactly the state in which orphans accumulate.
+  sims stop
   if ! is_running; then echo "celnet-server not running"; rm -f "$PIDFILE"; return 0; fi
   local pid; pid="$(cat "$PIDFILE")"
   echo "Stopping celnet-server (pid $pid), draining up to ${DRAIN_WAIT}s..."
@@ -159,6 +192,17 @@ status() {
   fi
 }
 
+# The server's status plus the simulator fleet's — one command for "what is up".
+status_all() {
+  local rc=0
+  status || rc=$?
+  if [[ -x "$SIMSCTL" ]]; then
+    echo
+    "$SIMSCTL" status || true
+  fi
+  return $rc
+}
+
 case "${1:-}" in
   start)   start ;;
   stop)    stop ;;
@@ -172,7 +216,11 @@ case "${1:-}" in
     fi
     start
     ;;
-  status)  status ;;
+  status)  status_all ;;
   tail)    tail -n "${2:-50}" -f "$LOG" ;;
-  *) echo "usage: celnetctl {start|stop|restart|status|tail [n]}"; exit 64 ;;
+  # Drive the simulator fleet without touching the server (the escape hatch for an
+  # operator who wants the sims bounced on their own).
+  sims)    [[ -x "$SIMSCTL" ]] || { echo "no simulator deployed on this host"; exit 3; }
+           "$SIMSCTL" "${2:-status}" ;;
+  *) echo "usage: celnetctl {start|stop|restart|status|tail [n]|sims [start|stop|restart|sweep|status]}"; exit 64 ;;
 esac
