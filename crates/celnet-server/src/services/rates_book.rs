@@ -926,12 +926,14 @@ impl RatesPositionStore {
         target_book: &str,
         incoming_net: f64,
         incoming_gross: f64,
+        incoming_dv01: f64,
         exclude_position_ids: &[u64],
     ) -> Result<(), tonic::Status> {
         match self.project_rates_book_breach_multi(
             target_book,
             incoming_net,
             incoming_gross,
+            incoming_dv01,
             exclude_position_ids,
         ) {
             Some(status) => Err(status),
@@ -2349,7 +2351,13 @@ impl RatesPositionStore {
         // gross, and exactly its own prior fact is excluded — byte-identical to the original
         // single-fill gate the routed-fill path runs.
         let n = rates_signed_notional(fill);
-        self.project_rates_book_breach_multi(resolved_book, n, n.abs(), &[fill.position_id])
+        self.project_rates_book_breach_multi(
+            resolved_book,
+            n,
+            n.abs(),
+            rates_linear_exposure(fill),
+            &[fill.position_id],
+        )
     }
 
     /// The general per-book hard-limit projection over an incoming `(net, gross)` notional
@@ -2364,6 +2372,7 @@ impl RatesPositionStore {
         resolved_book: &str,
         incoming_net: f64,
         incoming_gross: f64,
+        incoming_dv01: f64,
         exclude_ids: &[u64],
     ) -> Option<tonic::Status> {
         let limits_map = self
@@ -2395,16 +2404,21 @@ impl RatesPositionStore {
             .inner
             .read()
             .expect("rates position store lock poisoned");
-        let mut own: HashMap<&str, (f64, f64)> = HashMap::new();
+        // Per book: (signed net notional, gross notional, signed DV01). DV01 is summed
+        // SIGNED so equal-and-opposite legs net exactly as they do in the risk roll-up —
+        // a paid-fixed and a received-fixed line of the same size consume no capacity
+        // between them, which is the whole point of an internalising book.
+        let mut own: HashMap<&str, (f64, f64, f64)> = HashMap::new();
         for p in g.iter() {
             if exclude_ids.contains(&p.position_id) {
                 continue;
             }
             if let Some(book) = stamps.get(&p.position_id) {
                 let n = rates_signed_notional(p);
-                let e = own.entry(book.as_str()).or_insert((0.0, 0.0));
+                let e = own.entry(book.as_str()).or_insert((0.0, 0.0, 0.0));
                 e.0 += n;
                 e.1 += n.abs();
+                e.2 += rates_linear_exposure(p);
             }
         }
         for (scope, lim) in scoped {
@@ -2412,10 +2426,12 @@ impl RatesPositionStore {
             // chain passes through `scope` (i.e. the book is in the subtree rooted at `scope`).
             let mut net = incoming_net;
             let mut gross = incoming_gross;
-            for (book, (bnet, bgross)) in &own {
+            let mut dv01 = incoming_dv01;
+            for (book, (bnet, bgross, bdv01)) in &own {
                 if rates_risk_book_chain(&limits_map, book).contains(&scope) {
                     net += bnet;
                     gross += bgross;
+                    dv01 += bdv01;
                 }
             }
             if let Some(cap) = lim.max_net_notional
@@ -2438,8 +2454,23 @@ impl RatesPositionStore {
                     cap,
                 ));
             }
-            // `max_dv01` intentionally skipped — the per-book DV01 cap is the dedicated
-            // rates-risk seam, not this notional-cap gate.
+            // `max_dv01` is now ENFORCED here. It was skipped while this gate had no DV01
+            // numerator; `rates_linear_exposure` supplies one (exact undiscounted annuity
+            // PV01 on the swap/FRA arms, modified-duration based on the bond arm), the same
+            // measure the per-book risk roll-up publishes — so the cap that blocks a trade
+            // and the utilization a trader watches are the SAME number, never two views
+            // that can disagree. Compared on the ABSOLUTE, like the net-notional cap: a
+            // received-fixed book consumes capacity exactly as a paid-fixed one does.
+            if let Some(cap) = lim.max_dv01
+                && dv01.abs() > cap
+            {
+                return Some(rates_risk_book_limit_breached(
+                    scope,
+                    "dv01",
+                    dv01.abs(),
+                    cap,
+                ));
+            }
         }
         None
     }
@@ -4634,6 +4665,93 @@ pub(crate) mod tests {
             store.risk_book_of(ok.position_id).as_deref(),
             Some("BOOK-A")
         );
+    }
+
+    /// The per-book HARD `max_dv01` cap now REJECTS an over-cap routed fill. A 5y 10mm
+    /// pay-fixed OIS charges `10mm · 5 · 1bp = 5,000` of signed linear DV01, so a 4,000
+    /// cap refuses it and the store stays unmutated; a 6,000 cap books it. Before this the
+    /// gate skipped `max_dv01` entirely — the field was configurable and inert, so a trader
+    /// could set a cap and trade straight through it with no rejection and no warning.
+    #[test]
+    fn routed_rates_fill_gated_by_risk_book_dv01_cap() {
+        let cap_at = |cap: f64| {
+            let store = RatesPositionStore::new();
+            store.set_routing(Some(single_book_graph("BOOK-A")));
+            store.set_risk_books(vec![RiskBookLimitDef {
+                id: "BOOK-A".to_owned(),
+                parent_id: None,
+                limits: Some(RiskLimits {
+                    max_net_notional: None,
+                    max_gross_notional: None,
+                    max_dv01: Some(cap),
+                }),
+            }]);
+            store
+        };
+
+        // 5,000 of DV01 against a 4,000 cap → refused, book unmutated.
+        let store = cap_at(4_000.0);
+        let err = store
+            .book(ois(0, 10, 5, 10_000_000.0, Side::Buy))
+            .expect_err("an over-DV01-cap fill must be rejected");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(
+            err.message().contains("risk book limit breached"),
+            "{err:?}"
+        );
+        assert!(
+            err.message().contains("dv01"),
+            "the breach names the metric: {err:?}"
+        );
+        assert_eq!(store.len(), 0, "a rejected fill must not mutate the book");
+
+        // The same fill against a 6,000 cap books — proving the rejection is the CAP, not
+        // the fill being unbookable.
+        let store = cap_at(6_000.0);
+        let ok = store
+            .book(ois(0, 10, 5, 10_000_000.0, Side::Buy))
+            .expect("within the DV01 cap");
+        assert_eq!(
+            store.risk_book_of(ok.position_id).as_deref(),
+            Some("BOOK-A")
+        );
+    }
+
+    /// DV01 is charged on the ABSOLUTE of the signed sum, so a RECEIVED-fixed book consumes
+    /// capacity exactly as a paid-fixed one does — a desk cannot buy headroom by flipping
+    /// direction. And because the roll-up is SIGNED, an equal-and-opposite second leg NETS
+    /// the book back under its cap, which is precisely what an internalising book relies on.
+    #[test]
+    fn dv01_cap_charges_the_magnitude_and_nets_opposing_legs() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("BOOK-A")));
+        store.set_risk_books(vec![RiskBookLimitDef {
+            id: "BOOK-A".to_owned(),
+            parent_id: None,
+            limits: Some(RiskLimits {
+                max_net_notional: None,
+                max_gross_notional: None,
+                max_dv01: Some(4_000.0),
+            }),
+        }]);
+
+        // Receive-fixed carries −5,000; |−5,000| > 4,000 ⇒ still refused.
+        let err = store
+            .book(ois(0, 10, 5, 10_000_000.0, Side::Sell))
+            .expect_err("the short side consumes the same capacity");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+
+        // Under the cap at 2,500 (5y 5mm), then an equal-and-opposite leg nets to ~0 —
+        // the second fill is accepted even though a GROSS charge would have refused it.
+        let first = store
+            .book(ois(0, 10, 5, 5_000_000.0, Side::Buy))
+            .expect("2,500 is within the 4,000 cap");
+        assert!(store.risk_book_of(first.position_id).is_some());
+        let second = store
+            .book(ois(0, 10, 5, 5_000_000.0, Side::Sell))
+            .expect("the offsetting leg NETS the book down, not up");
+        assert!(store.risk_book_of(second.position_id).is_some());
+        assert_eq!(store.len(), 2);
     }
 
     // ---- auto-hedge / internalisation decision (§6) --------------------------

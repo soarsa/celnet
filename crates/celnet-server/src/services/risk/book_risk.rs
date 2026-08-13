@@ -29,8 +29,11 @@
 //!   tracked on the cube, §2.3 — flagged, not silently wrong, because the FI books
 //!   this view serves are single-numeraire in practice.)
 //! - **limit utilization** — for each cap present on the book's [`RiskLimits`] that
-//!   is computable at this seam (net / gross notional), `used / limit` as a fraction
-//!   plus a green/amber/red band.
+//!   is computable at this seam (net / gross notional, and **DV01 whenever the subtree
+//!   holds a rates position**), `used / limit` as a fraction plus a green/amber/red
+//!   band. A cap whose numerator is genuinely unavailable — a DV01 cap on an FX-only
+//!   book — still publishes NO row, because a fabricated `0 / cap` would read as full
+//!   headroom on a book whose exposure is merely unknown here.
 //!
 //! - **net / gross notional, position count** ALSO include the **linear-rates**
 //!   positions routed into the book (the [`RatesPositionStore`] seam): a rates fill
@@ -219,7 +222,7 @@ fn aggregate_facts(
     let limits = book
         .limits
         .as_ref()
-        .map(|l| limit_utilizations(l, net_notional, gross_notional))
+        .map(|l| limit_utilizations(l, net_notional, gross_notional, dv01))
         .unwrap_or_default();
 
     RiskBookRisk {
@@ -242,13 +245,23 @@ fn aggregate_facts(
 
 /// The utilization rows for the caps present on `limits` that are computable at this
 /// seam. `max_net_notional` uses the **absolute** of the signed net (a short book still
-/// consumes net capacity); `max_gross_notional` uses the gross. `max_dv01` is
-/// intentionally omitted while DV01 is a later rates seam (§5.3) — a utilization with no
-/// numerator would be a fabricated number.
+/// consumes net capacity); `max_gross_notional` uses the gross.
+///
+/// `max_dv01` publishes a row **iff a DV01 numerator exists** — i.e. the subtree actually
+/// holds a rates position. The original rule stands and is the reason for the `Option`:
+/// a utilization with no numerator would be a fabricated number, so an FX-only book with
+/// a DV01 cap configured still reports NO dv01 row rather than an invented `0 / cap`
+/// (which would read as "plenty of headroom" on a book whose DV01 is simply unknown
+/// here). What changed is only that the numerator now reaches this function: it was
+/// already computed a few lines above in [`aggregate_facts`] and merely never passed in.
+///
+/// Like the net row, the DV01 magnitude is the **absolute** of the signed sum — a
+/// received-fixed book consumes DV01 capacity exactly as a paid-fixed one does.
 fn limit_utilizations(
     limits: &RiskLimits,
     net_notional: f64,
     gross_notional: f64,
+    dv01: Option<f64>,
 ) -> Vec<LimitUtilization> {
     let mut out = Vec::new();
     if let Some(cap) = limits.max_net_notional {
@@ -261,7 +274,9 @@ fn limit_utilizations(
     if let Some(cap) = limits.max_gross_notional {
         out.push(LimitUtilization::new("gross_notional", gross_notional, cap));
     }
-    // `max_dv01`: deliberately skipped — DV01 is absent (§5.3), so it has no numerator.
+    if let (Some(cap), Some(used)) = (limits.max_dv01, dv01) {
+        out.push(LimitUtilization::new("dv01", used.abs(), cap));
+    }
     out
 }
 
@@ -423,6 +438,110 @@ mod tests {
         assert_eq!(agg.pnl, None);
         // No limits configured ⇒ no utilization rows.
         assert!(agg.limits.is_empty());
+    }
+
+    /// A 10mm 5y OIS: DV01 = 10,000,000 × 5 × 1bp = 5,000. Against a 10,000 cap that is
+    /// half the capacity, so the row publishes 0.5 / GREEN. The numerator was ALWAYS
+    /// computed here — it simply never reached `limit_utilizations`.
+    #[test]
+    fn dv01_utilization_publishes_when_the_subtree_holds_rates() {
+        use celnet_proto::{OisInstrument, RatesInstrument, Side, rates_instrument};
+
+        let book = book_with_limits(
+            "b",
+            Some(RiskLimits {
+                max_net_notional: None,
+                max_gross_notional: None,
+                max_dv01: Some(10_000.0),
+            }),
+        );
+        let ois = RatesPosition {
+            position_id: 0,
+            entity: 1,
+            book: 10,
+            instrument: Some(RatesInstrument {
+                instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
+                    tenor_years: 5,
+                    fixed_rate: 0.04,
+                    notional: 10_000_000.0,
+                    side: Side::Buy as i32,
+                })),
+            }),
+        };
+        let agg = aggregate_facts(&book, &[], &[ois]);
+
+        assert_eq!(agg.dv01, Some(5_000.0), "10mm × 5y × 1bp");
+        let row = agg
+            .limits
+            .iter()
+            .find(|u| u.metric == "dv01")
+            .expect("a rates-holding book with a DV01 cap publishes the row");
+        assert!((row.used - 5_000.0).abs() < 1e-9);
+        assert!((row.limit - 10_000.0).abs() < 1e-9);
+        assert!((row.fraction - 0.5).abs() < 1e-12);
+        assert_eq!(row.band, RagBand::Green);
+    }
+
+    /// The received-fixed (short) side consumes DV01 capacity exactly as the paid-fixed
+    /// side does: the row uses the ABSOLUTE of the signed sum, mirroring the net-notional
+    /// row. A book cannot buy headroom by flipping direction.
+    #[test]
+    fn dv01_utilization_uses_the_absolute_of_the_signed_sum() {
+        use celnet_proto::{OisInstrument, RatesInstrument, Side, rates_instrument};
+
+        let book = book_with_limits(
+            "b",
+            Some(RiskLimits {
+                max_net_notional: None,
+                max_gross_notional: None,
+                max_dv01: Some(10_000.0),
+            }),
+        );
+        let sell = RatesPosition {
+            position_id: 0,
+            entity: 1,
+            book: 10,
+            instrument: Some(RatesInstrument {
+                instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
+                    tenor_years: 5,
+                    fixed_rate: 0.04,
+                    notional: 10_000_000.0,
+                    side: Side::Sell as i32,
+                })),
+            }),
+        };
+        let agg = aggregate_facts(&book, &[], &[sell]);
+
+        // Signed DV01 is negative (receive-fixed is the opposite IR sign)…
+        assert_eq!(agg.dv01, Some(-5_000.0));
+        let row = agg.limits.iter().find(|u| u.metric == "dv01").expect("row");
+        // …but the utilization is the magnitude, so it consumes the same 50% of the cap.
+        assert!((row.used - 5_000.0).abs() < 1e-9);
+        assert!((row.fraction - 0.5).abs() < 1e-12);
+    }
+
+    /// The original rule is preserved: an FX-ONLY book with a DV01 cap configured
+    /// publishes NO dv01 row. A fabricated `0 / cap` would read as full headroom on a
+    /// book whose DV01 is merely unknown at this seam, which is worse than silence.
+    #[test]
+    fn dv01_utilization_is_absent_without_a_numerator() {
+        let book = book_with_limits(
+            "b",
+            Some(RiskLimits {
+                max_net_notional: Some(1_000.0),
+                max_gross_notional: None,
+                max_dv01: Some(10_000.0),
+            }),
+        );
+        let agg = aggregate_facts(&book, &[hand_fact(1, 100.0)], &[]);
+
+        assert_eq!(agg.dv01, None, "an FX-only subtree has no DV01");
+        assert!(
+            agg.limits.iter().all(|u| u.metric != "dv01"),
+            "no numerator ⇒ no fabricated dv01 utilization",
+        );
+        // The notional cap it CAN compute is still published.
+        assert!(agg.limits.iter().any(|u| u.metric == "net_notional"));
     }
 
     /// RAG bands land exactly at the 0.8 / 1.0 boundaries: 0.8 ⇒ AMBER, 1.0 ⇒ RED,
