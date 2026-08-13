@@ -24,9 +24,9 @@
 //!     every `--manual-every`-th (American exercise, or an NDF request on a deliverable
 //!     major) so the venue routes it to the FX desk for manual pricing (no `Quote(S)`).
 //!
-//!   * **esp** — the streaming ESP lifecycle ([`run_esp`]): connect to the server's
+//!   * **rfs** — the streaming RFS lifecycle ([`run_rfs`]): connect to the server's
 //!     reference-data service (`AuthService` over gRPC, `--grpc-addr`), download the top-N
-//!     most-liquid/relevant instruments (`--esp-instruments`, default 15), then open ONE
+//!     most-liquid/relevant instruments (`--rfs-instruments`, default 15), then open ONE
 //!     FIX session and stream **bond RFS** on them — which the venue prices off the
 //!     aggregated-book composite, tiered by the connection's pricing group — while randomly
 //!     LIFTING some (seeded by `--seed`) to book live streaming deals into the blotter,
@@ -100,12 +100,12 @@ enum AssetClass {
     FixedIncome,
     /// A single-leg FX-option RFQ (the [`dialect_fx`] vocabulary).
     FxOption,
-    /// The **streaming ESP** lifecycle: connect, download the top-N reference-data
+    /// The **streaming RFS** lifecycle: connect, download the top-N reference-data
     /// instruments from the server's reference-data service, then subscribe/stream bond
     /// RFS prices on them (which the venue prices off the aggregated-book composite,
     /// tiered by the connection's pricing group) AND randomly lift some — booking live
-    /// streaming deals. See [`run_esp`].
-    Esp,
+    /// streaming deals. See [`run_rfs`].
+    Rfs,
 }
 
 /// The parsed client request — owned so the backing bytes outlive the async send.
@@ -164,14 +164,14 @@ struct Args {
     // the next cycle / lift. Set by `--stream-hold-ms` directly, or `--stream-hold` (whole
     // seconds ×1000); default [`DEFAULT_STREAM_HOLD_MS`]. Only used in `--intent rfs` mode.
     stream_hold_ms: u64,
-    // ESP-mode (`--asset esp`) controls.
+    // RFS-mode (`--asset rfs`) controls.
     /// The gRPC endpoint of the server's reference-data service (`AuthService`), used to
     /// log on and download the top-N instruments to stream. Default `http://127.0.0.1:50051`.
     grpc_addr: String,
     /// How many of the most-liquid/relevant reference-data instruments to download and
-    /// stream in ESP mode (`--asset esp`). Default [`DEFAULT_ESP_INSTRUMENTS`].
-    esp_instruments: usize,
-    /// Service login **email** for the ESP reference-data download (`AuthService.Login`).
+    /// stream in RFS (streaming) mode (`--asset rfs`). Default [`DEFAULT_RFS_INSTRUMENTS`].
+    rfs_instruments: usize,
+    /// Service login **email** for the RFS reference-data download (`AuthService.Login`).
     /// Defaults to the dedicated least-privilege service identity [`DEFAULT_ESP_USER`].
     ///
     /// The matching **password** is deliberately NOT a field here: it is resolved lazily
@@ -179,7 +179,7 @@ struct Args {
     /// (which make no authenticated server call) require no credential at all, and the
     /// secret never sits in a struct that might be `{:?}`-logged.
     user: String,
-    /// Deterministic seed for the ESP random-trade selection (which streamed instruments
+    /// Deterministic seed for the RFS random-trade selection (which streamed instruments
     /// get lifted) — the same seed replays the same trade decisions.
     seed: u64,
 }
@@ -195,12 +195,12 @@ fn print_help() -> ! {
     println!(
         "fix_rfq_client — FIX 4.4 RFQ price-taker (rates OIS or FX option)\n\n\
          Flags (all optional; sensible defaults dial the demo edge):\n  \
-         --asset fi|fx|esp (fi)   --addr HOST:PORT (127.0.0.1:9099)\n  \
+         --asset fi|fx|rfs (fi)   --addr HOST:PORT (127.0.0.1:9099)\n  \
          fi:  --curve USD-OIS  --tenor 5  --notional 10000000|mix  --side pay|receive|two-way|mix\n       \
          --intent rfs|rfq (rfs = request a stream for a size)\n  \
          fx:  --pair EURUSD  --type call|put  --strike 1.10  --expiry-years 1.0\n       \
          --side observe|buy|sell  --settlement deliverable|ndf  --exercise european|american\n  \
-         esp: --grpc-addr http://127.0.0.1:50051  --esp-instruments 15  --seed 0x5EED1234\n       \
+         rfs: --grpc-addr http://127.0.0.1:50051  --rfs-instruments 15  --seed 0x5EED1234\n       \
       (credential via FIXSIM_PASSWORD_FILE=/home/celnet/.fixsim_pw — never a flag)\n  \
          loop: --repeat 0  --interval-ms 750 (or --interval SECS)  --stream-hold-ms 2000  --manual-every 3  --manual-tenor 15  --manual-security XXX-UNKNOWN  --lift-every 3\n  \
          common: --sender CELNET-CPTY  --target CELNET  --req-id RFQ-CLI"
@@ -228,11 +228,11 @@ const DEFAULT_MANUAL_EVERY: u64 = 3;
 /// Default bogus `Symbol(55)` for the unknown-security manual variant (see [`Args`]).
 const DEFAULT_MANUAL_SECURITY: &str = "XXX-UNKNOWN";
 
-/// Default number of top reference-data instruments the ESP client downloads + streams.
-const DEFAULT_ESP_INSTRUMENTS: usize = 15;
+/// Default number of top reference-data instruments the RFS client downloads + streams.
+const DEFAULT_RFS_INSTRUMENTS: usize = 15;
 
-/// The **dedicated least-privilege service identity** the ESP reference-data download
-/// authenticates as. This client acts as a *counterparty* sending RFQ/ESP flow; its only
+/// The **dedicated least-privilege service identity** the RFS reference-data download
+/// authenticates as. This client acts as a *counterparty* sending RFQ/RFS flow; its only
 /// authenticated server call is `ListInstruments`, an `authenticate()`-only RPC gated on
 /// **no** capability at all. It is therefore provisioned as a service account whose
 /// effective capability set is **empty** — it holds no administrative authority.
@@ -242,7 +242,7 @@ const DEFAULT_ESP_INSTRUMENTS: usize = 15;
 /// a default and may travel on the command line; the **password** never does.
 const DEFAULT_ESP_USER: &str = "fix-sim@svc.celnet.local";
 
-/// The ESP service identity from the environment, honouring the same
+/// The RFS service identity from the environment, honouring the same
 /// "set but blank counts as absent" rule the password resolution uses — a blank
 /// `FIXSIM_USER=` in a generated unit file must not select an empty login.
 fn esp_user_from_env() -> Option<String> {
@@ -252,7 +252,7 @@ fn esp_user_from_env() -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-/// Default deterministic seed for the ESP random-trade selection.
+/// Default deterministic seed for the RFS random-trade selection.
 const DEFAULT_ESP_SEED: u64 = 0x5EED_1234;
 
 fn parse_args() -> Args {
@@ -293,7 +293,7 @@ fn parse_args() -> Args {
     let mut stream = true;
     let mut stream_hold_ms = DEFAULT_STREAM_HOLD_MS;
     let mut grpc_addr = String::from("http://127.0.0.1:50051");
-    let mut esp_instruments = DEFAULT_ESP_INSTRUMENTS;
+    let mut rfs_instruments = DEFAULT_RFS_INSTRUMENTS;
     // `FIXSIM_USER` seeds the identity; an explicit `--user` below still overrides it.
     let mut user = esp_user_from_env().unwrap_or_else(|| String::from(DEFAULT_ESP_USER));
     let mut seed = DEFAULT_ESP_SEED;
@@ -315,14 +315,14 @@ fn parse_args() -> Args {
                 asset = match val.to_lowercase().as_str() {
                     "fi" | "rates" | "fixedincome" | "fixed-income" => AssetClass::FixedIncome,
                     "fx" | "options" | "fxo" | "fxoption" => AssetClass::FxOption,
-                    "esp" | "stream" | "streaming" => AssetClass::Esp,
-                    other => usage_and_exit(&format!("--asset must be fi|fx|esp, got `{other}`")),
+                    "rfs" | "stream" | "streaming" => AssetClass::Rfs,
+                    other => usage_and_exit(&format!("--asset must be fi|fx|rfs, got `{other}`")),
                 }
             }
             "--grpc-addr" => grpc_addr = val,
-            "--esp-instruments" => {
-                esp_instruments = val.parse().unwrap_or_else(|_| {
-                    usage_and_exit("--esp-instruments must be a whole number (>= 1)")
+            "--rfs-instruments" => {
+                rfs_instruments = val.parse().unwrap_or_else(|_| {
+                    usage_and_exit("--rfs-instruments must be a whole number (>= 1)")
                 })
             }
             "--user" => user = val,
@@ -496,8 +496,8 @@ fn parse_args() -> Args {
                 },
             };
         }
-        // ESP mode drives its own lifecycle (`run_esp`) — `--side` does not apply.
-        AssetClass::Esp => {}
+        // RFS (streaming) mode drives its own lifecycle (`run_rfs`) — `--side` does not apply.
+        AssetClass::Rfs => {}
     }
 
     // Validate per asset, so an fi run never trips FX-pair rules and vice versa.
@@ -526,9 +526,9 @@ fn parse_args() -> Args {
                 usage_and_exit("--expiry-years must be positive");
             }
         }
-        AssetClass::Esp => {
-            if esp_instruments < 1 {
-                usage_and_exit("--esp-instruments must be >= 1");
+        AssetClass::Rfs => {
+            if rfs_instruments < 1 {
+                usage_and_exit("--rfs-instruments must be >= 1");
             }
             if !(notional > 0.0 && notional.is_finite()) {
                 usage_and_exit("--notional must be positive");
@@ -566,7 +566,7 @@ fn parse_args() -> Args {
         stream,
         stream_hold_ms,
         grpc_addr,
-        esp_instruments,
+        rfs_instruments,
         user,
         seed,
     }
@@ -621,9 +621,9 @@ fn print_quote(quote_id: Option<&[u8]>, bid: f64, offer: f64) {
 async fn main() -> std::io::Result<()> {
     let args = parse_args();
 
-    // ESP mode drives its own connect → download-refdata → stream + random-trade lifecycle.
-    if args.asset == AssetClass::Esp {
-        return run_esp(&args).await;
+    // RFS (streaming) mode drives its own connect → download-refdata → stream + random-trade lifecycle.
+    if args.asset == AssetClass::Rfs {
+        return run_rfs(&args).await;
     }
 
     println!("── celnet FIX RFQ client ─────────────────────────────");
@@ -667,8 +667,8 @@ async fn main() -> std::io::Result<()> {
                 args.pair, type_label, args.strike, args.expiry_years, side_label
             );
         }
-        // ESP returns early (`run_esp`) before this header prints.
-        AssetClass::Esp => unreachable!("ESP mode is handled by run_esp"),
+        // RFS returns early (`run_rfs`) before this header prints.
+        AssetClass::Rfs => unreachable!("RFS (streaming) mode is handled by run_rfs"),
     }
     println!("──────────────────────────────────────────────────────");
 
@@ -1004,8 +1004,8 @@ async fn main() -> std::io::Result<()> {
                 }
                 r
             }
-            // ESP returns early (`run_esp`) before this loop is reached.
-            AssetClass::Esp => unreachable!("ESP mode is handled by run_esp"),
+            // RFS returns early (`run_rfs`) before this loop is reached.
+            AssetClass::Rfs => unreachable!("RFS (streaming) mode is handled by run_rfs"),
         };
 
         // Auto-accept/trade visibility: when the lift policy trades, report the fill.
@@ -1029,11 +1029,11 @@ async fn main() -> std::io::Result<()> {
 }
 
 // ===========================================================================
-// ESP streaming lifecycle (`--asset esp`)
+// RFS streaming lifecycle (`--asset rfs`)
 // ===========================================================================
 
 /// A tiny deterministic PRNG (SplitMix64) — seeded, reproducible, no external dependency.
-/// The ESP random-trade selection draws from this so a run with a given `--seed` replays
+/// The RFS random-trade selection draws from this so a run with a given `--seed` replays
 /// the same lift/observe decisions (gate-testable), matching this module's determinism
 /// ethos while giving genuinely varied, non-periodic trade timing.
 struct SplitMix64(u64);
@@ -1057,7 +1057,7 @@ impl SplitMix64 {
     }
 }
 
-/// One downloaded bond the ESP client streams — the reference-data fields the FIX bond
+/// One downloaded bond the RFS client streams — the reference-data fields the FIX bond
 /// dialect needs on the wire, resolved from the server's [`instrument_def_desc::Definition`].
 struct EspBond {
     instrument_id: String,
@@ -1083,7 +1083,7 @@ fn esp_frequency_from_label(label: &str) -> PaymentFrequency {
 /// Map a reference-data `day_count` label onto the FIX dialect's [`AccrualBasis`]. The bond
 /// dialect wire supports Act/360, Act/365F and 30/360; an `act_act` govvie basis (not on the
 /// wire enum) maps to 30/360 — the RFQ still prices and streams, and the composite two-way
-/// (what ESP demonstrates) is resolved by symbol, independent of the accrual basis.
+/// (what the RFS venue demonstrates) is resolved by symbol, independent of the accrual basis.
 fn esp_day_count_from_label(label: &str) -> AccrualBasis {
     match label.trim().to_ascii_lowercase().as_str() {
         "act_360" | "act360" => AccrualBasis::Act360,
@@ -1092,7 +1092,7 @@ fn esp_day_count_from_label(label: &str) -> AccrualBasis {
     }
 }
 
-/// Resolve the ESP service password — from a restricted **file** or the **environment**,
+/// Resolve the RFS service password — from a restricted **file** or the **environment**,
 /// never from `argv`.
 ///
 /// A process command line is world-readable (`ps -ef`, `/proc/<pid>/cmdline`), so a
@@ -1127,7 +1127,7 @@ fn resolve_esp_password() -> Result<String, String> {
         return Ok(pw);
     }
     Err(
-        "no ESP service credential configured: set FIXSIM_PASSWORD_FILE to a 0600 file \
+        "no RFS service credential configured: set FIXSIM_PASSWORD_FILE to a 0600 file \
          containing the password (preferred), or FIXSIM_PASSWORD in the environment. \
          A password is never accepted on the command line — argv is world-readable."
             .to_string(),
@@ -1138,7 +1138,7 @@ fn resolve_esp_password() -> Result<String, String> {
 /// authenticate (`AuthService.Login`), `ListInstruments`, and keep the bond-family
 /// definitions (with a resolvable maturity) in registry order — the curated benchmark
 /// universe the platform actually makes markets in and the LP feed streams, i.e. the most
-/// liquid/relevant set, NOT a hardcoded client list — capped at `--esp-instruments`.
+/// liquid/relevant set, NOT a hardcoded client list — capped at `--rfs-instruments`.
 async fn download_top_bonds(args: &Args) -> Result<Vec<EspBond>, String> {
     let channel = tonic::transport::Channel::from_shared(args.grpc_addr.clone())
         .map_err(|e| format!("bad --grpc-addr `{}`: {e}", args.grpc_addr))?
@@ -1191,21 +1191,21 @@ async fn download_top_bonds(args: &Args) -> Result<Vec<EspBond>, String> {
                 100.0
             },
         });
-        if out.len() >= args.esp_instruments {
+        if out.len() >= args.rfs_instruments {
             break;
         }
     }
     Ok(out)
 }
 
-/// The streaming **ESP** lifecycle (`--asset esp`): connect to the server's reference-data
+/// The streaming **RFS** lifecycle (`--asset rfs`): connect to the server's reference-data
 /// service, download the top-N most-liquid/relevant instruments, then open ONE FIX session
 /// and stream bond RFS on them — which the venue prices off the aggregated-book composite,
 /// tiered by this connection's pricing group (the composite+tiered outbound seam) — while
 /// randomly LIFTING some to book live streaming deals into the blotter. Deterministic under
 /// `--seed`: the same seed replays the same trade decisions and instrument rotation.
-async fn run_esp(args: &Args) -> std::io::Result<()> {
-    println!("── celnet ESP streaming client ───────────────────────");
+async fn run_rfs(args: &Args) -> std::io::Result<()> {
+    println!("── celnet RFS streaming client ───────────────────────");
     println!("  refdata   {} as {}", args.grpc_addr, args.user);
     println!(
         "  stream    FIX {} as {} → {}",
@@ -1213,7 +1213,7 @@ async fn run_esp(args: &Args) -> std::io::Result<()> {
     );
     println!(
         "  top-N     {}  ·  cadence {}ms  ·  hold {}ms  ·  seed {:#x}",
-        args.esp_instruments, args.interval_ms, args.stream_hold_ms, args.seed
+        args.rfs_instruments, args.interval_ms, args.stream_hold_ms, args.seed
     );
 
     // 1) Download the top-N instruments from the reference-data service.
@@ -1277,7 +1277,7 @@ async fn run_esp(args: &Args) -> std::io::Result<()> {
     loop {
         let bond = &bonds[sim::esp_instrument_index_for(i, bonds.len())];
         let counterparty = sim::counterparty_for(i);
-        // In "mix" notional mode rotate the streamed size per request (ESP always streams),
+        // In "mix" notional mode rotate the streamed size per request (the RFS venue always streams),
         // so booked streaming bond deals — and their DV01 — show a realistic size spread
         // instead of one repeated clip; otherwise use the fixed `--notional`.
         let esp_notional = if args.notional_mix {
@@ -1300,7 +1300,7 @@ async fn run_esp(args: &Args) -> std::io::Result<()> {
 
         // A stable per-instrument MDReqID: re-subscribing the same instrument REPLACES its
         // one live server-side market-data stream (keyed by MDReqID) rather than piling up.
-        let md_req_id = format!("{}-ESP-{}", args.req_id, bond.instrument_id).into_bytes();
+        let md_req_id = format!("{}-RFS-{}", args.req_id, bond.instrument_id).into_bytes();
         let symbol = bond.instrument_id.clone().into_bytes();
         let params = dialect_rates::BondMarketDataRequestParams {
             md_req_id: &md_req_id,
@@ -1320,7 +1320,7 @@ async fn run_esp(args: &Args) -> std::io::Result<()> {
         let outcome = sess
             .md_stream(
                 &sending_time,
-                // An ESP bond lift echoes SecurityType(167)=BOND on its NewOrderSingle.
+                // An RFS bond lift echoes SecurityType(167)=BOND on its NewOrderSingle.
                 dialect_rates::SEC_TYPE_BOND,
                 |hdr, enc| {
                     dialect_rates::build_bond_market_data_request_with_party(
@@ -1335,7 +1335,7 @@ async fn run_esp(args: &Args) -> std::io::Result<()> {
             )
             .await?;
         println!(
-            "[{i}] {counterparty} · {} ({}) ESP — streamed {} snapshot(s)",
+            "[{i}] {counterparty} · {} ({}) RFS — streamed {} snapshot(s)",
             bond.name, bond.instrument_id, outcome.updates
         );
         if let (Some(bid), Some(offer)) = (outcome.result.bid, outcome.result.offer) {
@@ -1364,7 +1364,7 @@ mod tests {
     use super::*;
 
     /// The seeded PRNG is deterministic (same seed ⇒ same sequence) and its bounded roll
-    /// stays in range — so the ESP random-trade selection replays identically under a seed.
+    /// stays in range — so the RFS random-trade selection replays identically under a seed.
     #[test]
     fn splitmix64_is_deterministic_and_bounded() {
         let mut a = SplitMix64::new(0x5EED_1234);

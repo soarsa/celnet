@@ -7,13 +7,30 @@
 # Starts, in dependency order:
 #
 #   1. celnet-server        gRPC 127.0.0.1:50551 · ws://127.0.0.1:8081
-#   2. lp-sim               N liquidity providers -> the LpFeed gRPC ingest
-#   3. fix_rfq_client (RFQ) one-shot quote requests against the FIX acceptor
-#   4. fix_rfq_client (ESP) Market-Data streaming off reference data
+#   2. lp-sim               N liquidity providers -> the LpFeed gRPC ingest.
+#                           Each streams the WHOLE quotable universe: cash bonds,
+#                           the listed Treasury FUTURES complex, the swap/OIS curve
+#                           points and the SOFR STIR strip (`lpsim::quotable_lines`),
+#                           filtered to what is still listed at the settlement date.
+#   3. fix_rfq_client (RFQ) one-shot QuoteRequest(R) -> the FIXED_INCOME_QUOTE venue
+#   4. fix_rfq_client (RFS) MarketDataRequest(V) stream -> the FIXED_INCOME_STREAM venue
 #   5. gui                  Vite dev server on http://localhost:5173
 #
-# Those four inbound connections are exactly what Administration -> LP Panel
-# reports on.
+# Those inbound connections are exactly what Administration -> LP Panel reports on.
+#
+# ## The two FI venues are SEPARATE acceptors, and that is not optional
+#
+# The server gates each dialect on the acceptor's own kind (`rates_intent_for_kind`):
+# a `MarketDataRequest(V)` arriving at the RFQ acceptor is dropped on the floor, and a
+# `QuoteRequest(R)` arriving at the stream acceptor likewise — no reject, no log line.
+# This script used to discover ONE acceptor and point both legs at it, so whichever
+# leg mismatched was silently dead and the stack looked healthy while producing half
+# the flow. It now ensures one venue of EACH kind and gives each leg its own port.
+#
+# "RFS" here is the venue that used to be labelled ESP. It is request-for-stream:
+# the client names an instrument AND its own clip size, and the stream is priced for
+# that clip. An executable streaming price is dealer-published and clip-independent,
+# so this venue cannot serve one.
 #
 # ## It provisions what the fleet needs to actually do anything
 #
@@ -64,8 +81,10 @@
 #   ./run_dev.sh --no-sweep       # do NOT kill a stack already running (see below)
 #
 # Env overrides: CELNET_GRPC_ADDR, CELNET_WS_ADDR, CELNET_GUI_PORT,
-#   CELNET_DEV_FIX_PORT (skip discovery), CELNET_DEV_SIM_USER/_PASSWORD,
-#   CELNET_DEV_LPSIM_MEMBERS, CELNET_DEV_LPSIM_INTERVAL, CELNET_DEV_BOOK.
+#   CELNET_DEV_FIX_RFQ_PORT / CELNET_DEV_FIX_RFS_PORT (skip discovery for that venue),
+#   CELNET_DEV_RFQ_PORT / CELNET_DEV_RFS_PORT (bind ports used when CREATING a venue),
+#   CELNET_DEV_SIM_USER/_PASSWORD, CELNET_DEV_LPSIM_MEMBERS,
+#   CELNET_DEV_LPSIM_INTERVAL, CELNET_DEV_BOOK.
 
 set -euo pipefail
 
@@ -91,6 +110,14 @@ SIM_PASSWORD="${CELNET_DEV_SIM_PASSWORD:-password}"
 LPSIM_MEMBERS="${CELNET_DEV_LPSIM_MEMBERS:-4}"
 LPSIM_INTERVAL="${CELNET_DEV_LPSIM_INTERVAL:-2}"
 DEV_BOOK="${CELNET_DEV_BOOK:-lp-sim-book}"
+# The two fixed-income FIX venues the fleet drives. They MUST be separate
+# acceptors: the server gates each dialect on the acceptor's own kind
+# (`rates_intent_for_kind`), so a MarketDataRequest sent to the RFQ acceptor —
+# or a QuoteRequest sent to the stream acceptor — is silently ignored. Pointing
+# both legs at one port, which this script used to do, therefore left one of the
+# two flows dead with no error anywhere.
+DEV_RFQ_PORT="${CELNET_DEV_RFQ_PORT:-9101}"
+DEV_RFS_PORT="${CELNET_DEV_RFS_PORT:-9102}"
 
 SKIP_BUILD=0
 RUN_GUI=1
@@ -239,12 +266,14 @@ echo
 # 3. Provision what the fleet needs, over the server's own WS contract.
 #    Prints `FIX_PORT=<n>` (empty when no acceptor exists) for the shell to read.
 # ---------------------------------------------------------------------------
-FIX_PORT="${CELNET_DEV_FIX_PORT:-}"
+FIX_RFQ_PORT="${CELNET_DEV_FIX_RFQ_PORT:-}"
+FIX_RFS_PORT="${CELNET_DEV_FIX_RFS_PORT:-}"
 if [[ $RUN_SIMS -eq 1 ]]; then
     PROVISION_JS="$LOG_DIR/provision.mjs"
     cat > "$PROVISION_JS" <<'PROVISION'
 import WebSocket from '../../gui/node_modules/ws/wrapper.mjs';
 const [wsUrl, email, password, bookId, members] = process.argv.slice(2);
+// argv[7]/argv[8] are the RFQ / RFS bind ports (read inside ensureVenue).
 const ws = new WebSocket(wsUrl);
 let id = 1; const pend = new Map();
 const send = (type, body) => new Promise((res, rej) => {
@@ -265,13 +294,57 @@ ws.on('open', async () => {
     const token = login.session_token;
     if (!token) { console.error('[dev] provision: login failed'); ws.close(); return; }
 
-    // The FIX acceptor is operator-created, so its port is environment specific.
-    // Prefer a fixed-income venue (what the RFQ/ESP legs speak); fall back to any
-    // running acceptor rather than none.
-    const conns = (await send('list_fix_connections', { session_token: token })).connections || [];
-    const running = conns.filter((c) => c.running && c.bound_addr);
-    const pick = running.find((c) => c.kind === 1 || c.kind === 2) || running[0];
-    console.log('FIX_PORT=' + (pick ? String(pick.bound_addr).split(':').pop() : ''));
+    // The two fixed-income venues are SEPARATE acceptors, because the server gates
+    // each dialect on the acceptor's own kind: kind 1 (FIXED_INCOME_QUOTE) serves the
+    // one-shot QuoteRequest(R), kind 2 (FIXED_INCOME_STREAM) serves the
+    // MarketDataRequest(V) stream. A leg pointed at the wrong kind is IGNORED, with no
+    // reject and no log — so each leg gets its own port, and a missing venue is
+    // created rather than silently skipped.
+    //
+    // Every connection belongs to a desk (the server rejects a blank one) — but the
+    // desk also decides who SEES the venue's traffic: the server drops RFQ/deal
+    // notifications for a venue whose desk has no user on it, and says so at boot.
+    // So prefer a desk the sim user actually belongs to over just any desk.
+    const me = login.user || {};
+    let desks = (await send('list_desks', { session_token: token })).desks || [];
+    const mine = me.all_desks ? desks.map((d) => d.id) : (me.desk_ids || []);
+    let deskId = mine[0] || '';
+    if (!deskId) {
+      const made = await send('create_desk', { session_token: token, name: 'Dev Desk' });
+      deskId = (made.desk && made.desk.id) || '';
+      if (deskId) {
+        console.error('[dev] created desk `' + deskId + '`');
+        console.error('[dev]   NOTE: ' + (me.email || 'the sim user') + ' is not a member of it, so '
+          + 'desk-routed notifications for the dev venues will be DROPPED until you add them '
+          + '(Administration → Users).');
+      }
+    }
+
+    // Reuse a RUNNING acceptor of each kind; otherwise define one. Idempotent — an
+    // existing venue is never replaced, only adopted.
+    const ensureVenue = async (kind, id, name, port) => {
+      const conns = (await send('list_fix_connections', { session_token: token })).connections || [];
+      const live = conns.find((c) => c.kind === kind && c.running && c.bound_addr);
+      if (live) return String(live.bound_addr).split(':').pop();
+      if (!deskId) { console.error('[dev] no desk — cannot define the ' + name + ' venue'); return ''; }
+      // A defined-but-stopped venue of this kind is left alone rather than fought over.
+      if (conns.some((c) => c.id === id)) {
+        console.error('[dev] ' + name + ' venue `' + id + '` exists but is not running — leaving it as is');
+        return '';
+      }
+      const spec = { id, name, kind, bind_addr: '127.0.0.1:' + port,
+                     sender_comp_id: 'CELNET', target_comp_id: 'CELNET-CPTY',
+                     enabled: true, desk: deskId };
+      const made = await send('create_fix_connection', { session_token: token, spec });
+      if (made.error) { console.error('[dev] could not create ' + name + ': ' + made.error); return ''; }
+      console.error('[dev] created ' + name + ' venue `' + id + '` on 127.0.0.1:' + port);
+      return String(port);
+    };
+
+    const rfqPort = await ensureVenue(1, 'dev-fi-rfq', 'FI RFQ', process.argv[7]);
+    const rfsPort = await ensureVenue(2, 'dev-fi-rfs', 'FI RFS (stream)', process.argv[8]);
+    console.log('FIX_RFQ_PORT=' + rfqPort);
+    console.log('FIX_RFS_PORT=' + rfsPort);
 
     // A provider only streams into a book that lists it as a member; with no such
     // book the feed connects and quotes nothing.
@@ -293,10 +366,10 @@ ws.on('open', async () => {
 });
 PROVISION
     if [[ -d "$REPO_ROOT/gui/node_modules/ws" ]]; then
-        PROV_OUT="$(cd "$LOG_DIR" && node provision.mjs "ws://$WS_ADDR" "$SIM_USER" "$SIM_PASSWORD" "$DEV_BOOK" "$LPSIM_MEMBERS" 2>&1 || true)"
-        echo "$PROV_OUT" | grep -v '^FIX_PORT=' || true
-        DISCOVERED="$(echo "$PROV_OUT" | sed -n 's/^FIX_PORT=//p' | tail -1)"
-        [[ -z "$FIX_PORT" ]] && FIX_PORT="$DISCOVERED"
+        PROV_OUT="$(cd "$LOG_DIR" && node provision.mjs "ws://$WS_ADDR" "$SIM_USER" "$SIM_PASSWORD" "$DEV_BOOK" "$LPSIM_MEMBERS" "$DEV_RFQ_PORT" "$DEV_RFS_PORT" 2>&1 || true)"
+        echo "$PROV_OUT" | grep -v '^FIX_RFQ_PORT=\|^FIX_RFS_PORT=' || true
+        [[ -z "$FIX_RFQ_PORT" ]] && FIX_RFQ_PORT="$(echo "$PROV_OUT" | sed -n 's/^FIX_RFQ_PORT=//p' | tail -1)"
+        [[ -z "$FIX_RFS_PORT" ]] && FIX_RFS_PORT="$(echo "$PROV_OUT" | sed -n 's/^FIX_RFS_PORT=//p' | tail -1)"
     else
         echo "[dev] gui/node_modules absent — skipping auto-provision (run 'npm ci' in gui/)."
     fi
@@ -314,21 +387,43 @@ if [[ $RUN_SIMS -eq 1 ]]; then
         > >(tee "$LOG_DIR/lp-sim.log" | sed -u 's/^/[lp  ] /') 2>&1 &
     PIDS+=($!)
 
-    if [[ -n "$FIX_PORT" ]]; then
-        FIX_CLIENT="$REPO_ROOT/target/debug/examples/fix_rfq_client"
-        echo "[dev] starting FIX RFQ leg → 127.0.0.1:$FIX_PORT"
-        "$FIX_CLIENT" --addr "127.0.0.1:$FIX_PORT" --asset fi --intent rfq \
+    FIX_CLIENT="$REPO_ROOT/target/debug/examples/fix_rfq_client"
+
+    # RFQ flow — one-shot QuoteRequest(R) with SubscriptionRequestType(263)=0 against
+    # the FIXED_INCOME_QUOTE venue. Only that acceptor kind answers it.
+    if [[ -n "$FIX_RFQ_PORT" ]]; then
+        echo "[dev] starting FIX RFQ leg → 127.0.0.1:$FIX_RFQ_PORT"
+        "$FIX_CLIENT" --addr "127.0.0.1:$FIX_RFQ_PORT" --asset fi --intent rfq \
             --repeat 0 --interval 3 \
             > >(tee "$LOG_DIR/fix-rfq.log" | sed -u 's/^/[rfq ] /') 2>&1 &
         PIDS+=($!)
-        echo "[dev] starting FIX ESP leg → 127.0.0.1:$FIX_PORT"
-        "$FIX_CLIENT" --addr "127.0.0.1:$FIX_PORT" --asset esp \
+    else
+        echo "[dev] no FI RFQ venue — SKIPPING the RFQ leg (see the provision output above)."
+    fi
+
+    # The RFS leg downloads its instrument list over gRPC first, so it needs a service
+    # credential. The client REFUSES a password on argv (argv is world-readable) and
+    # prefers a 0600 file over the environment — so hand it exactly that, written under
+    # target/dev/ with the dev credential this script already holds. Without this the
+    # leg exits at startup with "no RFS service credential configured", which is why the
+    # streaming flow has never actually run from this script.
+    FIXSIM_PW_FILE="$LOG_DIR/.fixsim_pw"
+    ( umask 177; printf '%s' "$SIM_PASSWORD" > "$FIXSIM_PW_FILE" )
+    chmod 600 "$FIXSIM_PW_FILE"
+
+    # RFS flow — MarketDataRequest(V) subscribe against the FIXED_INCOME_STREAM venue,
+    # which streams a two-way priced for the CLIENT'S OWN clip and books an RFS deal on
+    # a lift. This is the venue that used to be called ESP; it is request-for-stream,
+    # not an executable streaming price, because the client supplies the notional.
+    if [[ -n "$FIX_RFS_PORT" ]]; then
+        echo "[dev] starting FIX RFS (streaming) leg → 127.0.0.1:$FIX_RFS_PORT"
+        FIXSIM_USER="$SIM_USER" FIXSIM_PASSWORD_FILE="$FIXSIM_PW_FILE" \
+        "$FIX_CLIENT" --addr "127.0.0.1:$FIX_RFS_PORT" --asset rfs \
             --grpc-addr "http://$GRPC_ADDR" --repeat 0 --interval 3 \
-            > >(tee "$LOG_DIR/fix-esp.log" | sed -u 's/^/[esp ] /') 2>&1 &
+            > >(tee "$LOG_DIR/fix-rfs.log" | sed -u 's/^/[rfs ] /') 2>&1 &
         PIDS+=($!)
     else
-        echo "[dev] no running FIX acceptor — SKIPPING the RFQ + ESP legs."
-        echo "[dev]   Define one in Administration → Connections, then re-run."
+        echo "[dev] no FI STREAM venue — SKIPPING the RFS leg (see the provision output above)."
     fi
 fi
 
@@ -348,9 +443,10 @@ echo "[dev] ── stack up ─────────────────�
 echo "[dev]   WS       ws://$WS_ADDR        gRPC  $GRPC_ADDR"
 if [[ $RUN_SIMS -eq 1 ]]; then
     echo "[dev]   sims     lp-sim x$LPSIM_MEMBERS → book '$DEV_BOOK'"
-    [[ -n "$FIX_PORT" ]] && echo "[dev]            FIX RFQ + ESP legs → 127.0.0.1:$FIX_PORT"
+    [[ -n "$FIX_RFQ_PORT" ]] && echo "[dev]            FIX RFQ leg          → 127.0.0.1:$FIX_RFQ_PORT"
+    [[ -n "$FIX_RFS_PORT" ]] && echo "[dev]            FIX RFS stream leg   → 127.0.0.1:$FIX_RFS_PORT"
     echo "[dev]   LP Panel Administration → LP Panel"
 fi
-echo "[dev]   logs     $LOG_DIR/{edge,lp-sim,fix-rfq,fix-esp,gui}.log"
+echo "[dev]   logs     $LOG_DIR/{edge,lp-sim,fix-rfq,fix-rfs,gui}.log"
 echo "[dev] ─────────────────────────────────────────────── Ctrl-C to stop ──"
 wait

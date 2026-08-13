@@ -1,6 +1,6 @@
 ---
 name: run-dev-single-entry-point
-description: "./run_dev.sh is THE local bring-up (server + lp-sim + FIX RFQ/ESP legs + GUI); it auto-discovers the FIX port, provisions the aggregated book, and sweeps a stale stack on entry."
+description: "./run_dev.sh is THE local bring-up (server + lp-sim + FIX RFQ leg + FIX RFS stream leg + GUI); it provisions BOTH FI acceptors + a desk + the book, supplies the RFS service credential, and sweeps a stale stack on entry."
 metadata: 
   node_type: memory
   type: reference
@@ -13,7 +13,7 @@ metadata:
 do not recreate either.
 
 ```
-./run_dev.sh                # server + lp-sim + FIX RFQ leg + FIX ESP leg + GUI
+./run_dev.sh                # server + lp-sim + FIX RFQ leg + FIX RFS stream leg + GUI
 ./run_dev.sh --skip-build   # cached debug binaries
 ./run_dev.sh --no-sims      # server + GUI only
 ./run_dev.sh --demo-edge    # the demo_edge example (what the e2e suites drive)
@@ -51,3 +51,48 @@ A healthy run reports:
 contract(s)` then `692 stream(s) over 4 member(s) × 173 instrument(s)`.
 
 Related: [[open-items-dropdowns-esp-tag-futures-roll]].
+
+
+## The two FI venues are SEPARATE acceptors — fixed 2026-08-13
+
+The server gates each dialect on the acceptor's own kind (`rates_intent_for_kind`):
+`on_market_data_request` returns immediately unless the acceptor is
+`FixedIncomeStream`; `on_quote_request` returns immediately when it IS. A leg
+pointed at the wrong kind is dropped with **no reject and no log line**.
+
+The script used to discover ONE acceptor and point both legs at it, so one of the
+two flows was always silently dead while the stack looked healthy. It now ensures
+one venue of EACH kind — `dev-fi-rfq` (kind 1) and `dev-fi-rfs` (kind 2),
+idempotent — and gives each leg its own port. It CREATES a missing venue rather
+than skipping the leg.
+
+**The streaming leg had never actually run from this script**: it downloads its
+instrument list over gRPC first, so it needs a service credential, and without one
+it exits instantly with `no RFS service credential configured`. The client refuses
+a password on argv by design and prefers a `0600` file, so the script writes
+`target/dev/.fixsim_pw` (gitignored) and passes `FIXSIM_USER` /
+`FIXSIM_PASSWORD_FILE`.
+
+**Desk matters:** a venue whose desk has no user on it has its RFQ/deal
+notifications DROPPED (the server warns at boot). Provisioning prefers a desk the
+sim user belongs to (`login.user.desk_ids` / `all_desks`).
+
+Sim client flag is now `--asset rfs` (was `esp`) — see
+[[open-items-dropdowns-esp-tag-futures-roll]] for why that venue is RFS.
+
+## What the fleet actually streams (measured, not assumed)
+
+`lp-sim` already covers futures — `lpsim::quotable_lines` builds
+**141 cash bonds + 18 Treasury futures + 6 OIS curve points + 8 SOFR STIR
+contracts** = 173 priceable, 692 streams over 4 members.
+
+## Open, characterised not guessed
+
+- **RFS lifts never fill.** 16 subscribes produced 16 published snapshots in
+  `pricing.log`, but `orders.log` and `executions.log` are EMPTY — no
+  NewOrderSingle reaches the order path. Not yet diagnosed.
+- The RFS leg's top-N picks `ust-2y-note` / `acme-5y-corp`, the two instruments
+  the server warns are TRADEABLE BUT UNQUOTABLE.
+- The MD venue's bond arm keys on `SecurityType(167)=BOND`, so **futures are not
+  streamable over the RFS venue** even though lp-sim quotes them — a platform
+  capability gap, not a script gap.
