@@ -1722,6 +1722,95 @@ export type FixConnectionKind =
  * live runtime status (`running`/`boundAddr` are server-owned, read-only).
  * Mirrors `celnet.wire.FixConnectionDesc`.
  */
+/**
+ * One inbound liquidity provider's live feed health, as folded across every
+ * enabled aggregated book that lists it as a member.
+ *
+ * The provider identity is the FIX **connection id** — the same string is the
+ * aggregation venue id and the `lpName` every inbound push carries — so one row
+ * describes a connection, its book membership and its venue at once.
+ */
+export interface LiquidityProvider {
+  /** The provider identity — the FIX connection id / venue id / `lpName`. */
+  connectionId: string;
+  /** The connection's label, or `""` when the id names no managed connection. */
+  name: string;
+  /** The owning desk id, or `""` when unrouted or unresolved. */
+  desk: string;
+  /** Whether a managed connection with this id exists at all. */
+  connectionDefined: boolean;
+  /** Whether the connection is enabled (the operator's on/off switch). */
+  enabled: boolean;
+  /** Whether its acceptor is currently bound and listening. */
+  running: boolean;
+  /** The enabled aggregated books listing this provider as a member. */
+  bookIds: string[];
+  /** Lifetime accepted quote-update pushes — delta across polls for a RATE. */
+  quoteUpdates: number;
+  /** Most recent observation instant across its live quotes (epoch ns); 0 = never. */
+  lastQuoteNanos: number;
+  /** Distinct instruments it currently shows a live two-way on. */
+  instrumentsQuoted: number;
+  /** Live quotes currently contributing to a composite. */
+  freshQuotes: number;
+  /** Live quotes currently excluded (stale or divergent). */
+  staleQuotes: number;
+  /** Instruments where it is setting the consolidated best bid. */
+  bestBidCount: number;
+  /** Instruments where it is setting the consolidated best offer. */
+  bestOfferCount: number;
+  /** Mean normalized composite weight over its contributing quotes, in [0, 1]. */
+  meanWeight: number;
+}
+
+/** One live quote a provider is showing, with the consolidation verdict on it. */
+export interface LiquidityProviderQuote {
+  /** The aggregated book this quote was consolidated into. */
+  bookId: string;
+  /** The canonical server instrument id. */
+  instrumentId: string;
+  /** Reference-data label for the instrument (`""` when unresolved). */
+  displayName: string;
+  /** The provider's own bid. */
+  bid: number;
+  /** The provider's own offer. */
+  offer: number;
+  /** Firm size at its bid. */
+  bidSize: number;
+  /** Firm size at its offer. */
+  offerSize: number;
+  /** The quote's observation instant (epoch ns). */
+  tsNanos: number;
+  /** The quote's age in seconds at the valuation instant. */
+  ageSecs: number;
+  /** Final normalized weight in the composite mid (0 when excluded). */
+  weight: number;
+  /** Absolute deviation from the robust consensus, in mid units. */
+  deviation: number;
+  /** Why it was excluded (`stale` / `divergent` / `non_finite`), or `""`. */
+  excluded: string;
+  /** Whether it is setting the consolidated best bid. */
+  bestBid: boolean;
+  /** Whether it is setting the consolidated best offer. */
+  bestOffer: boolean;
+}
+
+/** The whole inbound-liquidity panel at one valuation instant. */
+export interface LiquidityPanel {
+  /** One row per provider, in `connectionId` order. */
+  providers: LiquidityProvider[];
+  /** The focused provider's live quotes; empty unless one was requested. */
+  quotes: LiquidityProviderQuote[];
+  /**
+   * Whether the firm-wide INBOUND ingest kill-switch is enabled. `false` means
+   * every inbound push is being dropped, so the whole panel is going stale by
+   * design — the first thing an operator needs to know.
+   */
+  inboundEnabled: boolean;
+  /** The instant the fold ran at (epoch ns) — the basis for a tick rate. */
+  asOfNanos: number;
+}
+
 export interface FixConnection {
   /** Stable identifier (the management key). */
   id: string;

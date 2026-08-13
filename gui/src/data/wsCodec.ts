@@ -194,6 +194,9 @@ import type {
   OisDef,
   BondDef,
   FixConnection,
+  LiquidityPanel,
+  LiquidityProvider,
+  LiquidityProviderQuote,
   FixConnectionKind,
   FixConnectionSpec,
   FixMessage,
@@ -3336,6 +3339,75 @@ function fixSpecToWire(spec: FixConnectionSpec): WireObject {
  */
 function adminPrincipal(): WireObject {
   return principalOrGrantAllToWire(undefined);
+}
+
+/**
+ * The inbound-liquidity panel request. `connectionId` narrows the reply to that
+ * one provider's per-instrument drill-down; omitting it keeps the default poll
+ * bounded by the provider count rather than instruments x providers.
+ */
+export function listLiquidityProvidersRequestToWire(
+  connectionId?: string,
+): WireObject {
+  const req: WireObject = { principal: adminPrincipal() };
+  if (connectionId) req["connection_id"] = connectionId;
+  return req;
+}
+
+function liquidityProviderFromWire(o: WireObject): LiquidityProvider {
+  return {
+    connectionId: str(o, "connection_id"),
+    name: str(o, "name"),
+    desk: str(o, "desk"),
+    connectionDefined: o["connection_defined"] === true,
+    enabled: o["enabled"] === true,
+    running: o["running"] === true,
+    bookIds: strArrayOf(o, "book_ids"),
+    quoteUpdates: num(o, "quote_updates"),
+    lastQuoteNanos: num(o, "last_quote_nanos"),
+    instrumentsQuoted: num(o, "instruments_quoted"),
+    freshQuotes: num(o, "fresh_quotes"),
+    staleQuotes: num(o, "stale_quotes"),
+    bestBidCount: num(o, "best_bid_count"),
+    bestOfferCount: num(o, "best_offer_count"),
+    meanWeight: num(o, "mean_weight"),
+  };
+}
+
+function liquidityProviderQuoteFromWire(o: WireObject): LiquidityProviderQuote {
+  return {
+    bookId: str(o, "book_id"),
+    instrumentId: str(o, "instrument_id"),
+    displayName: str(o, "display_name"),
+    bid: num(o, "bid"),
+    offer: num(o, "offer"),
+    bidSize: num(o, "bid_size"),
+    offerSize: num(o, "offer_size"),
+    tsNanos: num(o, "ts_nanos"),
+    ageSecs: num(o, "age_secs"),
+    weight: num(o, "weight"),
+    deviation: num(o, "deviation"),
+    excluded: str(o, "excluded"),
+    bestBid: o["best_bid"] === true,
+    bestOffer: o["best_offer"] === true,
+  };
+}
+
+export function listLiquidityProvidersResponseFromWire(
+  o: WireObject,
+): LiquidityPanel {
+  const providers = o["providers"];
+  const quotes = o["quotes"];
+  return {
+    providers: Array.isArray(providers)
+      ? (providers as WireObject[]).map(liquidityProviderFromWire)
+      : [],
+    quotes: Array.isArray(quotes)
+      ? (quotes as WireObject[]).map(liquidityProviderQuoteFromWire)
+      : [],
+    inboundEnabled: o["inbound_enabled"] === true,
+    asOfNanos: num(o, "as_of_nanos"),
+  };
 }
 
 export function listFixConnectionsRequestToWire(): WireObject {

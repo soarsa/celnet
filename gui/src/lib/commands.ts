@@ -66,6 +66,7 @@ export type WorkspaceId =
   | "streetliquidity"
   | "eventtrace"
   | "connections"
+  | "liquidity"
   | "admin"
   | "permissions"
   | "pricinggroups"
@@ -350,6 +351,7 @@ export const RAIL: readonly {
   // delegating them is a self-escalation vector — they stay hard `isAdmin`-only until
   // an operator explicitly opts into admin delegation.
   { id: "connections", glyph: "⇄", label: "Connections", section: "admin", assets: [], viewCap: { action: "manage_liquidity", asset: "fixed_income" } },
+  { id: "liquidity", glyph: "⇊", label: "LP Panel", section: "admin", subtitle: "Inbound liquidity — who is feeding us, how fast, how fresh", assets: [], viewCap: { action: "manage_liquidity", asset: "fixed_income" } },
   { id: "admin", glyph: "⚇", label: "Admin", section: "admin", assets: [] },
   { id: "permissions", glyph: "⚷", label: "Permissions", section: "admin", assets: [] },
   // Pricing is a Fixed-Income CLIENT-PRICING surface, not identity admin: it lives on
@@ -499,6 +501,7 @@ export interface NavAuth {
  */
 export const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>([
   "connections",
+  "liquidity",
   "admin",
   "permissions",
   "refdata",

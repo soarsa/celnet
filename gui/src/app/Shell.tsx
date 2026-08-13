@@ -35,6 +35,7 @@ import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { XvaWorkspace } from "../workspaces/XvaWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
 import { ConnectionsWorkspace } from "../workspaces/ConnectionsWorkspace";
+import { LiquidityWorkspace } from "../workspaces/LiquidityWorkspace";
 import { AdminWorkspace } from "../workspaces/AdminWorkspace";
 import { PermissionsWorkspace } from "../workspaces/PermissionsWorkspace";
 import { PricingGroupsWorkspace } from "../workspaces/PricingGroupsWorkspace";
@@ -179,6 +180,7 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // `view_analytics` gate. Cross-asset, read-only.
   eventtrace: EventTraceWorkspace,
   connections: ConnectionsWorkspace,
+  liquidity: LiquidityWorkspace,
   admin: AdminWorkspace,
   permissions: PermissionsWorkspace,
   // Pricing: the CONSOLIDATED FI client-pricing surface — a tabbed shell hosting the

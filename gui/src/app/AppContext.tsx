@@ -100,6 +100,7 @@ export type WorkspaceId =
   | "streetliquidity"
   | "eventtrace"
   | "connections"
+  | "liquidity"
   | "admin"
   | "permissions"
   | "pricinggroups"

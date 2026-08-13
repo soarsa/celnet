@@ -84,6 +84,9 @@ import type {
   Execution,
   FixConnection,
   FixConnectionSpec,
+  LiquidityPanel,
+  LiquidityProvider,
+  LiquidityProviderQuote,
   FixMessage,
   FixMessagePage,
   Greeks,
@@ -3393,6 +3396,74 @@ export class MockTransport implements CelnetTransport {
 
   async listFixConnections(): Promise<FixConnection[]> {
     return this.fixConnections.map((c) => ({ ...c }));
+  }
+
+  /**
+   * The offline inbound-liquidity panel. Each mock acceptor is treated as a
+   * provider feeding one book, with a deterministic-but-varying quote profile
+   * derived from its index — enough for the LP Panel to render every state it
+   * distinguishes (live, stale, top-of-book, excluded) without a server, while
+   * a disabled acceptor stays honestly silent.
+   */
+  async listLiquidityProviders(
+    connectionId?: string,
+  ): Promise<LiquidityPanel> {
+    const asOfNanos = BigInt(Date.now()) * 1_000_000n;
+    const providers: LiquidityProvider[] = this.fixConnections.map((c, i) => {
+      const live = c.enabled && c.running;
+      const instruments = live ? 6 + i : 0;
+      const stale = live ? i % 3 : 0;
+      return {
+        connectionId: c.id,
+        name: c.name,
+        desk: c.desk,
+        connectionDefined: true,
+        enabled: c.enabled,
+        running: c.running,
+        bookIds: live ? ["mock-composite"] : [],
+        quoteUpdates: live ? (i + 1) * 250 + this.fixSeqTick() : 0,
+        lastQuoteNanos: live ? Number(asOfNanos) - i * 1.5e9 : 0,
+        instrumentsQuoted: instruments,
+        freshQuotes: Math.max(0, instruments - stale),
+        staleQuotes: stale,
+        bestBidCount: live ? Math.max(0, instruments - 2 * i) : 0,
+        bestOfferCount: live ? Math.max(0, instruments - 2 * i - 1) : 0,
+        meanWeight: live ? 1 / (i + 1.5) : 0,
+      };
+    });
+    const focus = providers.find((p) => p.connectionId === connectionId);
+    const quotes: LiquidityProviderQuote[] = focus
+      ? Array.from({ length: focus.instrumentsQuoted }, (_, k) => {
+          const excluded = k < focus.staleQuotes ? "stale" : "";
+          return {
+            bookId: "mock-composite",
+            instrumentId: `MOCK${String(k).padStart(4, "0")}`,
+            displayName: `Mock Bond ${k + 1}`,
+            bid: 99.5 + k * 0.05,
+            offer: 99.6 + k * 0.05,
+            bidSize: 1_000_000,
+            offerSize: 1_000_000,
+            tsNanos: Number(asOfNanos) - k * 1e8,
+            ageSecs: k * 0.1,
+            weight: excluded ? 0 : 1 / focus.instrumentsQuoted,
+            deviation: k * 0.001,
+            excluded,
+            bestBid: !excluded && k === 0,
+            bestOffer: !excluded && k === 1,
+          };
+        })
+      : [];
+    return {
+      providers,
+      quotes,
+      inboundEnabled: true,
+      asOfNanos: Number(asOfNanos),
+    };
+  }
+
+  /** A slowly-advancing tick so the mock panel shows a non-zero derived rate. */
+  private fixSeqTick(): number {
+    return Math.floor(Date.now() / 1000) % 500;
   }
 
   async createFixConnection(spec: FixConnectionSpec): Promise<FixConnection> {

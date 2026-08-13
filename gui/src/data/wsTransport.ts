@@ -96,6 +96,7 @@ import type {
   SubmitDeskRequestRequest,
   SubmitDeskRequestResponse,
   FixConnection,
+  LiquidityPanel,
   FixConnectionSpec,
   FixMessagePage,
   Instrument,
@@ -180,6 +181,8 @@ import {
   limitStatusResponseFromWire,
   listFixConnectionsRequestToWire,
   listFixConnectionsResponseFromWire,
+  listLiquidityProvidersRequestToWire,
+  listLiquidityProvidersResponseFromWire,
   listFixMessagesRequestToWire,
   listFixMessagesResponseFromWire,
   createDeskRequestToWire,
@@ -1951,6 +1954,15 @@ export class WsTransport implements CelnetTransport {
   }
 
   // --- FixAdminService — manage the inbound FIX acceptor connections ---------
+
+  async listLiquidityProviders(connectionId?: string): Promise<LiquidityPanel> {
+    const reply = await this.conn.request(
+      "list_liquidity_providers",
+      listLiquidityProvidersRequestToWire(connectionId),
+      "liquidity_providers",
+    );
+    return listLiquidityProvidersResponseFromWire(reply);
+  }
 
   async listFixConnections(): Promise<FixConnection[]> {
     const reply = await this.conn.request(

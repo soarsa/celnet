@@ -84,6 +84,7 @@ import type {
   SubmitDeskRequestRequest,
   SubmitDeskRequestResponse,
   FixConnection,
+  LiquidityPanel,
   FixConnectionSpec,
   FixMessagePage,
   Greeks,
@@ -586,6 +587,14 @@ export interface CelnetTransport {
 
   /** FixAdminService.ListConnections — all managed connections + live status. */
   listFixConnections(): Promise<FixConnection[]>;
+
+  /**
+   * FixAdminService.ListLiquidityProviders — the inbound-liquidity (LP) panel:
+   * one row per provider feeding the platform, folded across the enabled
+   * aggregated books. Pass `connectionId` to additionally receive that
+   * provider's per-instrument drill-down.
+   */
+  listLiquidityProviders(connectionId?: string): Promise<LiquidityPanel>;
 
   /** FixAdminService.CreateConnection — define a new acceptor (binds if enabled). */
   createFixConnection(spec: FixConnectionSpec): Promise<FixConnection>;

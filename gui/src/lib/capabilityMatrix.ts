@@ -483,6 +483,20 @@ export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
     readActions: ["manage_liquidity"],
     writeActions: ["manage_liquidity"],
   },
+  // LP Panel — the inbound-liquidity operations view over those same connections
+  // (who is actually feeding us, how fast, how fresh, how much of the composite
+  // they set). Read-only: it reports on venue ops rather than changing it, but
+  // seeing WHICH counterparties price us is itself venue-sensitive, so the read
+  // sits on the same `manage_liquidity` grant as Connections rather than the
+  // `view` floor. No write actions — the surface mutates nothing.
+  {
+    id: "liquidity",
+    label: "LP Panel (inbound liquidity)",
+    section: "fixed_income",
+    assets: ["fixed_income"],
+    readActions: ["manage_liquidity"],
+    writeActions: [],
+  },
   // Hedging — the auto-hedge / internalisation surface (exit-policy graph, thresholds,
   // monitor). The WHOLE surface is `hedge`-gated (the top-level Hedging tab hides
   // without it), so BOTH Read and Write require `hedge` (held back from the default

@@ -59,6 +59,7 @@ export type WorkspaceId =
   | "streetliquidity"
   | "eventtrace"
   | "connections"
+  | "liquidity"
   | "admin"
   | "permissions"
   | "pricinggroups"
@@ -91,6 +92,7 @@ const WORKSPACES: readonly WorkspaceId[] = [
   "streetliquidity",
   "eventtrace",
   "connections",
+  "liquidity",
   "admin",
   "permissions",
   "pricinggroups",

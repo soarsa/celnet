@@ -1,0 +1,245 @@
+/* LiquidityWorkspace — the inbound-liquidity (LP) panel. */
+
+.root {
+  height: 100%;
+  padding: var(--space-5);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.banner {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: color-mix(in oklch, var(--danger, oklch(62% 0.2 25)) 12%, transparent);
+  color: var(--text-primary);
+  font-size: var(--type-caption);
+}
+
+/* The firm-wide inbound kill-switch. Louder than an error banner on purpose:
+   with ingest off, every number below is expected to decay, and an operator
+   reading staleness without this context would chase the wrong fault. */
+.killSwitch {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  border: 1px solid color-mix(in oklch, var(--danger, oklch(62% 0.2 25)) 55%, transparent);
+  background: color-mix(in oklch, var(--danger, oklch(62% 0.2 25)) 16%, transparent);
+  color: var(--text-primary);
+  font-size: var(--type-body);
+}
+
+/* --- summary strip ------------------------------------------------------- */
+
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+.stat {
+  flex: 1 1 8rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: color-mix(in oklch, var(--text-primary) 3%, transparent);
+}
+
+.statValue {
+  font-size: var(--type-display, 1.75rem);
+  font-weight: var(--weight-header);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+
+/* The denominator in "3/8 live" — present but subordinate to the count. */
+.statOf {
+  font-size: var(--type-body);
+  font-weight: var(--weight-body, 400);
+  color: var(--text-secondary);
+}
+
+.statLabel {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+}
+
+/* Only ever set when the count is non-zero, so colour carries meaning rather
+   than decoration: a tile that is tinted is a tile that needs an operator. */
+.statAlert {
+  border-color: color-mix(in oklch, var(--warn, oklch(75% 0.15 75)) 55%, transparent);
+  background: color-mix(in oklch, var(--warn, oklch(75% 0.15 75)) 12%, transparent);
+}
+
+/* --- table --------------------------------------------------------------- */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--type-body);
+}
+.table th {
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--hairline);
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.table td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--hairline);
+  vertical-align: middle;
+}
+.table tbody tr:hover {
+  background: color-mix(in oklch, var(--text-primary) 4%, transparent);
+}
+
+.rowOpen {
+  background: color-mix(in oklch, var(--accent) 10%, transparent);
+}
+.rowOpen:hover {
+  background: color-mix(in oklch, var(--accent) 14%, transparent);
+}
+
+/* A sortable column header — a real button so it is keyboard-reachable and
+   carries aria-sort, styled to sit flush in the header row. */
+.sortHead {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.sortHead:hover {
+  color: var(--text-primary);
+}
+.sortHead:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-xs, 2px);
+}
+
+.sortMark {
+  font-size: 0.7em;
+  color: var(--accent);
+  /* Reserved whether or not this column is the active sort, so activating a
+     sort never reflows the header row. */
+  min-width: 0.7em;
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.actionsCol {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* --- provider identity --------------------------------------------------- */
+
+.nameCell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.providerName {
+  color: var(--text-primary);
+  font-weight: var(--weight-header);
+}
+
+/* The raw connection id under the label: it is the join key across Aggregation,
+   Connections and the LpQuote stream, so an operator diagnosing a mismatch
+   needs to read it exactly. */
+.providerId {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+
+/* --- status pills -------------------------------------------------------- */
+
+.pill {
+  display: inline-block;
+  padding: 2px var(--space-3);
+  border-radius: 999px;
+  border: var(--hairline);
+  font-size: var(--type-caption);
+  white-space: nowrap;
+}
+
+.pill_good {
+  border-color: color-mix(in oklch, var(--success, oklch(70% 0.16 150)) 55%, transparent);
+  background: color-mix(in oklch, var(--success, oklch(70% 0.16 150)) 14%, transparent);
+  color: var(--text-primary);
+}
+.pill_warn {
+  border-color: color-mix(in oklch, var(--warn, oklch(75% 0.15 75)) 55%, transparent);
+  background: color-mix(in oklch, var(--warn, oklch(75% 0.15 75)) 14%, transparent);
+  color: var(--text-primary);
+}
+.pill_bad {
+  border-color: color-mix(in oklch, var(--danger, oklch(62% 0.2 25)) 55%, transparent);
+  background: color-mix(in oklch, var(--danger, oklch(62% 0.2 25)) 14%, transparent);
+  color: var(--text-primary);
+}
+/* Deliberately uncoloured: a disabled provider is an operator's own choice, not
+   a fault, so it must not compete for attention with a real problem. */
+.pill_idle {
+  color: var(--text-secondary);
+}
+
+.warnText {
+  color: var(--warn, oklch(75% 0.15 75));
+}
+
+/* A price this provider is setting the composite best at. */
+.best {
+  color: var(--accent);
+  font-weight: var(--weight-header);
+}
+
+/* --- empty state --------------------------------------------------------- */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.emptyTitle {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--type-body);
+  font-weight: var(--weight-header);
+}
+
+.emptyHint {
+  margin: 0;
+  max-width: 48ch;
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+  line-height: 1.5;
+}
