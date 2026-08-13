@@ -238,8 +238,9 @@ impl TransferApplier {
             TransferAsset::Fx => {
                 let slices = self.read_fx_slices(source_book, position_ids)?;
                 let plan = plan_position_moves(&slices, quantity, || self.store.mint_position_id());
-                let (net, gross) = incoming_from_plan(&plan, &slices);
+                let (net, gross, _dv01) = incoming_from_plan(&plan, &slices);
                 // Gate the target BEFORE any mutation — a breach leaves the store unmutated.
+                // FX vanilla carries no DV01, so the FX store's gate takes none.
                 self.store
                     .check_risk_book_headroom(target_book, net, gross, position_ids)?;
                 for mv in &plan {
@@ -268,9 +269,9 @@ impl TransferApplier {
             TransferAsset::Rates => {
                 let slices = self.read_rates_slices(source_book, position_ids)?;
                 let plan = plan_position_moves(&slices, quantity, || self.rates.mint_position_id());
-                let (net, gross) = incoming_from_plan(&plan, &slices);
+                let (net, gross, dv01) = incoming_from_plan(&plan, &slices);
                 self.rates
-                    .check_risk_book_headroom(target_book, net, gross, position_ids)?;
+                    .check_risk_book_headroom(target_book, net, gross, dv01, position_ids)?;
                 for mv in &plan {
                     match mv.kind {
                         MoveKind::Whole => {
@@ -521,22 +522,34 @@ fn moved_fraction(slices: &[PositionSlice], quantity: TransferQuantity) -> f64 {
 fn incoming_from_plan(
     plan: &[celnet_risk_transfer::PositionMove],
     slices: &[PositionSlice],
-) -> (f64, f64) {
+) -> (f64, f64, f64) {
     let mut net = 0.0f64;
     let mut gross = 0.0f64;
+    let mut dv01 = 0.0f64;
     for mv in plan {
+        let slice = slices
+            .iter()
+            .find(|s| s.position_id == mv.source_position_id);
         let moved = match mv.kind {
-            MoveKind::Whole => slices
-                .iter()
-                .find(|s| s.position_id == mv.source_position_id)
-                .map(|s| s.signed_notional)
-                .unwrap_or(0.0),
+            MoveKind::Whole => slice.map(|s| s.signed_notional).unwrap_or(0.0),
             MoveKind::Split { moved_notional, .. } => moved_notional,
+        };
+        // DV01 moves with the notional it belongs to: a WHOLE move carries the slice's
+        // entire DV01, a SPLIT carries it PRO-RATA on the moved fraction (DV01 is linear
+        // in notional at fixed duration). Passing 0.0 here would let a transfer push a
+        // book past its DV01 cap unseen — the cap would under-count exactly the risk it
+        // exists to bound.
+        dv01 += match mv.kind {
+            MoveKind::Whole => slice.map(|s| s.risk.dv01).unwrap_or(0.0),
+            MoveKind::Split { moved_notional, .. } => slice
+                .filter(|s| s.signed_notional != 0.0)
+                .map(|s| s.risk.dv01 * (moved_notional / s.signed_notional))
+                .unwrap_or(0.0),
         };
         net += moved;
         gross += moved.abs();
     }
-    (net, gross)
+    (net, gross, dv01)
 }
 
 /// The pure slice for an FX view: canonical option greeks, no DV01 (FX vanilla carries
