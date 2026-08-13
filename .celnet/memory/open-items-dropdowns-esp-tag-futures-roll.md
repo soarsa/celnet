@@ -1,101 +1,78 @@
 ---
 name: open-items-dropdowns-esp-tag-futures-roll
-description: "Three carried-over build items (instrument dropdowns, ESP/RFS tag mislabel, futures front-month auto-roll) with the exact file:line evidence already gathered, so a fresh session starts at implementation not investigation."
+description: "All three carried-over items (instrument picker, ESP→RFS desk-kind, futures front-month auto-roll) are DONE on local main — including the two prior-session diagnoses that turned out to be wrong."
 metadata: 
   node_type: memory
   type: project
-  originSessionId: 8d80fdd4-c0ec-4f58-9709-ea1816fd9391
-  modified: 2026-08-13T18:12:15.663Z
+  originSessionId: 37108ac7-fabe-4b2a-bb57-ca650635433a
+  modified: 2026-08-13T19:02:21.901Z
 ---
 
-Three items agreed on 2026-08-13 but NOT started — the session hit ~$540 and was
-cut to preserve budget. All the investigation is done; each entry below is at the
-"write the code" stage. Ordered by user-stated value.
+✅ **All three DONE 2026-08-13** on local `main` — gates green (2274 GUI / 647 Excel
+tests, both production builds, full Rust suite, fmt + clippy `-D warnings`).
+**NOT pushed to `origin/main`, NOT deployed to UAT.**
 
-## 1. Instrument dropdowns instead of free-text (the user's headline ask)
+Two of the three prior-session diagnoses were **wrong**. The corrections below are the
+durable part: a hypothesis recorded in memory is a lead, not a finding.
 
-**Problem, in the user's words:** "when we have hedge vehicles we should have
-dropdowns of all the instruments so the user does not have to type them in. Or we
-should have an easy suggestion to auto populate values based on trading
-information." Explicitly extended to "all wizards that shows portfolios etc."
+## 1. Instrument dropdowns — the cause was a SILENT CODEC MISDECODE
 
-Today `Hedge vehicles` (Hedging → Vehicles) makes a trader TYPE a contract id like
-`ZFU26` and a DV01-per-unit by hand. Screenshot showed `0 rows`. The guided-setup
-wizard has the same shape for portfolios/desks.
+Not a missing UI. `celnet.proto` has always carried `BondFutureDef bond_future = 12`
+in the `InstrumentDef` oneof, and the server seeds the whole listed Treasury complex
+with a **derived DV01 per contract**. But `gui/src/data/wsCodec.ts::instrumentDefFromWire`
+had no `bond_future` arm and **fell through to `bond` for anything unrecognised** — so
+every seeded future decoded as a cash bond with an all-zero `BondDef` (zero coupon,
+1970 maturity). The data was on the wire; the client destroyed it. That is why the
+trader was typing `ZFU26` and a DV01 by hand.
 
-**Why this is now easy and wasn't before:** the data exists and is enumerable.
-The running server reports **337 tradeable** instruments, and lp-sim quotes
-**173** of them. The LP Panel already proves *which* have live liquidity, so the
-picker can be filtered to instruments that can actually FILL rather than merely
-exist — the difference between a hedge that executes and one that backstops.
+Fixed: `bond_future` decoded end-to-end; the fallthrough now **throws** on an unknown
+family rather than guessing. New `gui/src/lib/instrumentPicker.ts` (pure, 6 tests) +
+`gui/src/components/InstrumentPicker.tsx` (WAI-ARIA combobox). Picking a future
+auto-populates DV01/unit + whole-lot flag + unit label; **a cash bond pre-fills
+nothing** — its DV01 is a function of the live curve, not a static term.
 
-**Shape to build:**
-- A picker sourced from reference data, grouped (cash bond / Treasury future /
-  SOFR STIR / OIS point), filtered to instruments with a live composite.
-- DV01-per-unit auto-populated from the contract's own terms rather than typed —
-  it is derivable (`TreasuryFutureSpec::dv01_per_contract`, and
-  `StirContractTerms::basis_point_value` for the STIR strip).
-- Same treatment for the wizard's portfolio/desk dropdowns.
+Also deleted: `INSTRUMENT_OPTIONS = ["AGG-OIS","AGG-US10Y","AGG-EURUSD","AGG-UK5Y"]`,
+hardcoded in **both** `HedgingWorkspace.tsx` and the setup wizard — four invented ids
+that looked like configuration. `ExitActionEditor` needed no change: it already offers
+a registered-vehicle `<select>`, correct by design.
 
-**Files:** `gui/src/workspaces/hedging/HedgeVehicleRegistry.tsx`,
-`gui/src/workspaces/hedging/ExitActionEditor.tsx`, the guided-setup wizard, and
-`gui/src/lib/hedgeVehicle.ts`. Server side already exposes reference data
-(`ListInstruments`) — the ESP sim leg uses it.
+## 2. ESP/RFS — the `EspOrRfq` proto3-zero hypothesis was WRONG
 
-## 2. ESP/RFS tag mislabel
+The blotter badge is `DeskRequestKind`, whose zero is `UNSPECIFIED` — there was no
+default-value bug. The real cause: `DeskRequestKind::Esp` had exactly **one** writer,
+`fix.rs:1659/1668`, the `FixedIncomeStream` venue — which decodes a **client-supplied
+notional** and streams a two-way priced for that clip. That is request-for-stream by
+definition; an ESP is dealer-published and clip-independent. The platform already
+called that venue RFS in two places (`RatesIntent::Rfs`, the GUI connection label)
+while stamping its rows ESP.
 
-**Symptom:** the quotes blotter badges `1y OIS` rows **ESP**. The user: "you can't
-RFS and have ESP."
+`DESK_REQUEST_KIND_ESP` → `DESK_REQUEST_KIND_RFS`, **tag 3 unchanged** so the encoding
+is byte-identical. Pricing-group `esp_pipeline` / `EspOrRfq` **deliberately not
+renamed** — that is a separate, coherent taxonomy where RFS is grouped with RFQ.
+Latent bug fixed en route: the Excel `deskRequestKind` codec stopped at tag 2 and
+could not decode an inbound RFS notification at all.
 
-**Cause found:** `EspOrRfq` is proto3 with `ESP_OR_RFQ_ESP = 0` as the **zero
-default**, so any writer that leaves the field unset reads as ESP. The genuine RFQ
-paths DO stamp it explicitly — `crates/celnet-server/src/services/quote.rs:2579`
-and `crates/celnet-server/src/services/aggregation.rs:1229` both set
-`EspOrRfq::Rfq` — which is why only *some* rows are wrong.
+## 3. Futures front-month auto-roll — wired
 
-**What is left:** find the writer that never sets it and stamp the real channel.
-I deliberately did not guess.
+New `celnet_refdata::{is_product_symbol, front_contract_id}` (legacy floor symbols
+aliased, so `FV` resolves `ZF`) + `rates_book.rs::roll_to_front_month`, applied inside
+`resolve_hedge_vehicle`. A registry row may name a **product** (`ZF`) and re-points
+itself at each quarterly roll — test-verified across the real cessation boundary
+(`ZFU26` → `ZFZ26`). An explicit delivery month is **never** silently re-pointed; a
+product whose listed cycle has fully expired resolves to `None`, so the caller falls
+back to the self-hedge and logs why rather than routing at an invented code.
 
-**Related, and NOT a code change:** `PricingSourceMode::ProductSplit` (enum value
-2) is already fully implemented at
-`crates/celnet-server/src/services/fix.rs:1311` — `if is_bond { composite } else
-{ curve }`, i.e. exactly the user's "quotes onto internal swap curves and quotes
-onto the aggregated book". It is a **setting on the pricing group** in
-Administration → Pricing Groups. Do NOT change the platform default
-(`CompositeFirstCurveFallback`) — its doc comment correctly warns that would
-regress book-fed bond streams.
+The roll lives in the **server**, not `celnet-hedge-routing` — that crate's charter is
+"no server, wire, or market-data dependency".
 
-## 3. Futures front-month auto-roll
+## Incidental / still open
 
-`celnet_refdata::front_contract(symbol, as_of)` exists in
-`crates/celnet-refdata/src/futures.rs` and is exported from `lib.rs`, but is
-**wired nowhere** (verified by repo-wide search: only its own definition and the
-re-export).
-
-Consequence: `HedgeVehicle::Future { contract_id }`
-(`crates/celnet-hedge-routing/src/vehicle.rs`) names a FIXED delivery month, so a
-policy set to `ZFU26` keeps pointing at Sep-26 after the September roll — at
-which point the contract has stopped trading. `front_contract`'s own doc states
-the intent: *"a hedge policy names a product, not a delivery month … that answer
-changes four times a year at the quarterly roll."* The design is there; the
-connection is not.
-
-**Shape:** let a vehicle name the PRODUCT (`ZF`) and resolve to the front contract
-at use time. Touches the vehicle enum, the registry resolver, and the GUI picker —
-so it composes naturally with item 1.
-
-## Context a fresh session needs
-
-- **5-year Treasury future = `ZF`** (legacy `FV`); ids `ZFU26` / `ZFZ26`. Quoted
-  live by lp-sim at `108.6328 / 108.6484` on the quarter-of-a-32nd grid.
-- **`./run_dev.sh`** is the single dev entry point — see
-  [[run-dev-single-entry-point]].
-- Hedge sizing already works: `units = position_DV01 / vehicle_DV01_per_contract`,
-  rounded to whole contracts with the residual reported, and the `Dv01Basis` label
-  carried to the screen so a proxy ratio is never mistaken for an exact one.
-- Also open, lower priority: **European futures** (Bund/Gilt) need a EUR/GBP cash
-  securities-master first — refdata's committed universe is US Treasuries only
-  (267 records), and anchoring them without one would fabricate a price handle.
-- The server warns `TRADEABLE BUT UNQUOTABLE` for `acme-5y-corp` and
-  `ust-2y-note`: advertised as tradeable, quoted by no LP, so a hedge on either
-  backstops to the composite.
+- `gui/test/commands.test.ts` was **already red on `main`** before this work (the LP
+  Panel's `liquidity` rail row landed in `43c02a6a` without updating two rail
+  assertions). Verified pre-existing by stashing, then fixed.
+- Unchanged: European futures need a EUR/GBP cash securities-master first (refdata is
+  US-only, 267 records). The picker's `onRawCommit` escape hatch keeps such an
+  instrument expressible meanwhile, flagged unknown.
+- Live-liquidity marking is **supported but unwired** on the Vehicles screen: the
+  picker takes an optional `liquidIds`, and that config screen carries no book context
+  to source a composite from without opening a book stream.

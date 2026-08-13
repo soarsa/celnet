@@ -1,6 +1,6 @@
 # Memory index
 
-- [Open items: dropdowns · ESP tag · futures roll](open-items-dropdowns-esp-tag-futures-roll.md) — the three carried-over builds, each already investigated to file:line so a fresh session starts at code, not discovery.
+- [Dropdowns · ESP→RFS · futures roll — ALL DONE](open-items-dropdowns-esp-tag-futures-roll.md) — shipped on local main (not pushed/deployed); two of the three prior diagnoses were wrong — read it before trusting a recorded hypothesis.
 - [run_dev.sh is THE local bring-up](run-dev-single-entry-point.md) — one entry point (server + sims + GUI); auto-discovers the FIX port, provisions the book, sweeps a stale stack on entry.
 - [Bond hedge offsetting leg — FIXED + LIVE](bond-hedge-books-no-offsetting-leg.md) — ✅ UAT f5c3b37e: a bond hedge now books the SAME security sold back (DV01 ratio ≡ 1, no duration input needed — the earlier "needs real quant work" diagnosis was wrong), so bond risk actually reduces. Also: `celnetctl restart` AddrInUse race FIXED+deployed; orphaned-on-box-build hazard; deploy.yml does NOT re-provision control scripts.
 - [Hedge wash/LP/analytics fix + IA reorg](hedge-wash-lp-analytics-and-ia-reorg.md) — wash-book now honors internal policy (no bogus B2B), real LP hedge source wired off the agg book (venue=Lp/lp_won), LP analytics attribution, exactly-one hedge record; + Hedging→"Hedging Rules" (rules only) and Risk gains Client/Hedge blotters + Hedge flows. Local main abf51e2b/213d2721, NOT deployed (UAT still b71767bb).
