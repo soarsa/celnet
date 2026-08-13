@@ -71,22 +71,35 @@ function formatPrice(price: number): string {
 
 /**
  * The single sentence describing a provider's state, used as the status pill's
- * label AND its accessible name. The order encodes escalating severity: a member
- * with no connection behind it is a misconfiguration, a provider in no book is
- * being dropped at ingest, a stopped acceptor cannot receive anything, and only
- * then does quiet-vs-live matter.
+ * label AND its accessible name.
+ *
+ * Precedence is deliberately EVIDENCE-FIRST rather than registry-first: recent
+ * ticks prove a provider is working, so nothing a registry says can override
+ * them. Only once a provider is not demonstrably live do the configuration
+ * faults rank — dropped at ingest (in no book), then the acceptor-backed states,
+ * then quiet-vs-stale.
  */
 function providerState(
   p: LiquidityProvider,
   secs: number | null,
 ): { label: string; tone: "bad" | "warn" | "good" | "idle" } {
-  if (!p.connectionDefined) return { label: "no connection", tone: "bad" };
+  // Evidence of quoting outranks everything: a provider whose ticks are arriving
+  // IS live, whatever the registries say. This matters because not every provider
+  // is a FIX acceptor — an LP streaming over the gRPC LpFeed ingest (lp-sim, and
+  // any API-adapter venue) has no FIX connection row at all, so treating a missing
+  // one as a fault would flag every healthy gRPC feed as broken.
+  if (secs !== null && secs <= STALE_WARN_SECS) return { label: "live", tone: "good" };
+  // In no enabled book ⇒ its pushes are dropped at ingest, whatever else is true.
   if (p.bookIds.length === 0) return { label: "in no book", tone: "bad" };
-  if (!p.enabled) return { label: "disabled", tone: "idle" };
-  if (!p.running) return { label: "not bound", tone: "bad" };
-  if (secs === null) return { label: "silent", tone: "warn" };
-  if (secs > STALE_WARN_SECS) return { label: "stale", tone: "warn" };
-  return { label: "live", tone: "good" };
+  // The acceptor-backed states only mean anything when an acceptor exists.
+  if (p.connectionDefined && !p.enabled) return { label: "disabled", tone: "idle" };
+  if (p.connectionDefined && !p.running) return { label: "not bound", tone: "bad" };
+  if (secs !== null) return { label: "stale", tone: "warn" };
+  // Never quoted. Silent-with-an-acceptor is a warning; silent with no acceptor
+  // and no ticks is the genuine misconfiguration — an id matching nothing.
+  return p.connectionDefined
+    ? { label: "silent", tone: "warn" }
+    : { label: "unresolved id", tone: "bad" };
 }
 
 export function LiquidityWorkspace(): React.ReactElement {
@@ -158,8 +171,15 @@ export function LiquidityWorkspace(): React.ReactElement {
     setAscending(key === "connectionId");
   };
 
-  const header = (key: SortKey, label: string, hint?: string): React.ReactElement => (
-    <th>
+  // Numeric columns right-align their DATA (`.num`), so the header must too —
+  // otherwise every figure sits visibly right of the label naming it.
+  const header = (
+    key: SortKey,
+    label: string,
+    hint?: string,
+    numeric = true,
+  ): React.ReactElement => (
+    <th className={numeric ? styles.num : undefined}>
       <button
         type="button"
         className={styles.sortHead}
@@ -233,12 +253,15 @@ export function LiquidityWorkspace(): React.ReactElement {
             <thead>
               <tr>
                 <th>Status</th>
-                {header("connectionId", "Provider")}
-                <th>Books</th>
+                {header("connectionId", "Provider", undefined, false)}
+                <th className={styles.num}>Books</th>
                 {header("rate", "Rate /s", "Quote updates per second, measured across polls")}
                 {header("instrumentsQuoted", "Instruments")}
                 {header("freshQuotes", "Fresh", "Quotes currently contributing to a composite")}
-                <th title="Quotes excluded from the composite as stale or divergent">
+                <th
+                  className={styles.num}
+                  title="Quotes excluded from the composite as stale or divergent"
+                >
                   Excluded
                 </th>
                 {header(
@@ -275,7 +298,7 @@ export function LiquidityWorkspace(): React.ReactElement {
                       <span className={styles.providerName}>{r.name || r.connectionId}</span>
                       <span className={styles.providerId}>{r.connectionId}</span>
                     </td>
-                    <td>
+                    <td className={styles.num}>
                       {r.bookIds.length === 0 ? (
                         <span
                           className={styles.warnText}

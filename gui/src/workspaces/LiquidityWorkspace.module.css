@@ -149,6 +149,21 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* `.table th` sets `text-align: left` at specificity (0,1,1), which OUT-RANKS a
+   bare `.num` at (0,1,0) — so a plain numeric header silently stayed left while
+   its figures went right. Qualify the selector to win. */
+.table th.num {
+  text-align: right;
+}
+
+/* A sortable header is an inline-flex BUTTON, so `text-align` on the cell does
+   not move it — the button must justify its own content to the right, or the
+   label drifts left of the column of figures it names. */
+.num .sortHead {
+  justify-content: flex-end;
+  width: 100%;
+}
+
 .actionsCol {
   text-align: right;
   white-space: nowrap;

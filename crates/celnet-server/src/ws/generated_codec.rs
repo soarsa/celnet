@@ -10784,3 +10784,53 @@ pub fn decode_apply_corporate_action_response(
 ) -> DResult<ApplyCorporateActionResponse> {
     decode(ApplyCorporateActionResponse::MESSAGE, o)
 }
+
+#[cfg(test)]
+mod lp_panel_wire_probe {
+    use super::*;
+
+    /// The LP panel's 64-bit fields must survive the descriptor-driven encode.
+    /// `quote_updates` (u64) and `last_quote_nanos` / `as_of_nanos` (i64) are the
+    /// tick-rate and freshness inputs — a client that reads them as 0 renders
+    /// "never" and a dead rate while the roster's u32 counters look healthy, which
+    /// is exactly the symptom this pins.
+    #[test]
+    fn lp_panel_wire_carries_the_64bit_fields() {
+        let r = ListLiquidityProvidersResponse {
+            providers: vec![LiquidityProviderDesc {
+                connection_id: "LP-SIM-01".into(),
+                name: String::new(),
+                desk: String::new(),
+                connection_defined: false,
+                enabled: false,
+                running: false,
+                book_ids: vec!["ust-composite".into()],
+                quote_updates: 12_345,
+                last_quote_nanos: 1_786_000_000_000_000_000,
+                instruments_quoted: 159,
+                fresh_quotes: 159,
+                stale_quotes: 0,
+                best_bid_count: 142,
+                best_offer_count: 159,
+                mean_weight: 0.5,
+            }],
+            quotes: vec![],
+            inbound_enabled: true,
+            as_of_nanos: 1_786_000_000_000_000_001,
+            correlation_id: None,
+        };
+        let json = encode_list_liquidity_providers_response(&r);
+        println!("WIRE JSON = {json}");
+        let p = &json["providers"][0];
+        assert_eq!(p["instruments_quoted"], 159, "u32 field");
+        assert_eq!(p["quote_updates"], 12_345_u64, "u64 field");
+        assert_eq!(
+            p["last_quote_nanos"], 1_786_000_000_000_000_000_i64,
+            "i64 field"
+        );
+        assert_eq!(
+            json["as_of_nanos"], 1_786_000_000_000_000_001_i64,
+            "top-level i64"
+        );
+    }
+}
