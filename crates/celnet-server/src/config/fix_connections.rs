@@ -32,10 +32,17 @@ pub enum AcceptorKind {
     /// one-shot `Quote(S)` through the shared rates path
     /// ([`crate::services::fix`] dispatches it to `celnet_fix::dialect_rates`).
     FixedIncomeQuote,
-    /// The fixed-income (linear-rates / OIS) streaming RFS dialect: an inbound
-    /// `QuoteRequest(R)` carrying `SubscriptionRequestType(263)=1` subscribes to a
-    /// streamed request-for-stream, served by the same rates dialect.
+    /// The fixed-income **request-for-stream** dialect: an inbound
+    /// `MarketDataRequest(V)` subscribe opens a stream priced for the CLIENT'S OWN clip
+    /// (the notional the request carries), and a lift books an RFS deal.
     FixedIncomeStream,
+    /// The fixed-income **executable streaming price** dialect. Also opened by a
+    /// `MarketDataRequest(V)` subscribe, but the venue streams at ITS OWN published clip
+    /// and IGNORES any notional the client carries. That clip-independence is the whole
+    /// difference from [`FixedIncomeStream`](Self::FixedIncomeStream): a price nobody
+    /// requested a size for is dealer-published, so it is shaped by the pricing group's
+    /// ESP pipeline rather than its request-driven one, and a lift books an ESP deal.
+    FixedIncomeEsp,
     // Phase 2: `SpotFx` — a strike/expiry-less spot two-way dialect.
 }
 
@@ -47,6 +54,7 @@ impl AcceptorKind {
             AcceptorKind::Options => "options",
             AcceptorKind::FixedIncomeQuote => "fixed_income_quote",
             AcceptorKind::FixedIncomeStream => "fixed_income_stream",
+            AcceptorKind::FixedIncomeEsp => "fixed_income_esp",
         }
     }
 
@@ -57,6 +65,7 @@ impl AcceptorKind {
             "options" => Some(AcceptorKind::Options),
             "fixed_income_quote" => Some(AcceptorKind::FixedIncomeQuote),
             "fixed_income_stream" => Some(AcceptorKind::FixedIncomeStream),
+            "fixed_income_esp" => Some(AcceptorKind::FixedIncomeEsp),
             _ => None,
         }
     }

@@ -52,23 +52,34 @@ function renderWizard(can: (a: CapabilityAction, s: CapabilityAsset) => boolean)
 }
 
 describe("FixConnectionWizard — fixed-income dialect cards", () => {
-  it("enables both FI cards when the caller holds the FI capabilities", () => {
+  it("enables all three FI cards when the caller holds the FI capabilities", () => {
     renderWizard(() => true);
     expect(
       screen.getByRole("button", { name: /Fixed Income — Quote \(RFQ\)/ }),
     ).toBeEnabled();
+    // The two STREAMING venues are offered separately, because they are different
+    // flows: RFS prices the client's own clip, ESP publishes the venue's.
     expect(
-      screen.getByRole("button", { name: /Fixed Income — Streaming \(RFS\)/ }),
+      screen.getByRole("button", { name: /Fixed Income — Request for Stream \(RFS\)/ }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", {
+        name: /Fixed Income — Executable Streaming Price \(ESP\)/,
+      }),
     ).toBeEnabled();
   });
 
-  it("disables the FI-streaming card (with a tooltip) when the caller lacks stream·fixed_income", () => {
+  it("disables BOTH streaming cards (with a tooltip) when the caller lacks stream·fixed_income", () => {
     renderWizard((action, asset) => !(action === "stream" && asset === "fixed_income"));
-    const streamCard = screen.getByRole("button", {
-      name: /Fixed Income — Streaming \(RFS\)/,
-    });
-    expect(streamCard).toBeDisabled();
-    expect(streamCard).toHaveAttribute("title", expect.stringContaining("stream"));
+    // Both publish a continuous price, so both sit behind the same Stream capability.
+    for (const name of [
+      /Fixed Income — Request for Stream \(RFS\)/,
+      /Fixed Income — Executable Streaming Price \(ESP\)/,
+    ]) {
+      const card = screen.getByRole("button", { name });
+      expect(card).toBeDisabled();
+      expect(card).toHaveAttribute("title", expect.stringContaining("stream"));
+    }
     // The quote card stays enabled — the gate is per-dialect.
     expect(
       screen.getByRole("button", { name: /Fixed Income — Quote \(RFQ\)/ }),

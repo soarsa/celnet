@@ -43,7 +43,9 @@ function kindLabel(c: FixConnection): string {
     case "FIXED_INCOME_QUOTE":
       return "Fixed Income — Quote (RFQ)";
     case "FIXED_INCOME_STREAM":
-      return "Fixed Income — Streaming (RFS)";
+      return "Fixed Income — Request for Stream (RFS)";
+    case "FIXED_INCOME_ESP":
+      return "Fixed Income — Executable Streaming Price (ESP)";
   }
 }
 

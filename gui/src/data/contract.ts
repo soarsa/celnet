@@ -1709,13 +1709,18 @@ export interface LimitStatusResponse {
 /**
  * The dialect an inbound FIX acceptor speaks (`celnet.wire.FixAcceptorKind`).
  * `"OPTIONS"` is the FX-options dialect; `"FIXED_INCOME_QUOTE"` is the rates/OIS
- * one-shot RFQ dialect and `"FIXED_INCOME_STREAM"` the rates/OIS streaming RFS
+ * one-shot RFQ dialect, `"FIXED_INCOME_STREAM"` the rates/OIS request-for-stream
+ * dialect (priced for the client's own clip) and `"FIXED_INCOME_ESP"` the executable
+ * streaming-price dialect (the venue's own clip, client names no size)
  * dialect — standing either FI venue up requires the matching FI capability
  * (`quote_respond` / `stream` on `fixed_income`). Kind-generic: the spot dialect
  * adds a member in a later phase without reshaping the contract or the UI.
  */
 export type FixConnectionKind =
-  "OPTIONS" | "FIXED_INCOME_QUOTE" | "FIXED_INCOME_STREAM";
+  | "OPTIONS"
+  | "FIXED_INCOME_QUOTE"
+  | "FIXED_INCOME_STREAM"
+  | "FIXED_INCOME_ESP";
 
 /**
  * A managed inbound FIX-acceptor connection: the persisted definition plus its
@@ -5452,10 +5457,11 @@ export interface CombinedTailRiskResponse {
  * counterparty opened a market-data stream for a named instrument AND its own clip
  * size, and lifted the continuously-streamed line. It is RFS rather than ESP
  * precisely because the client supplies the notional and the stream is priced for
- * that clip; an executable streaming price is dealer-published and clip-independent.
+ * that clip. An `ESP` is the other side of that axis: the venue was publishing a
+ * two-way at ITS OWN clip and the counterparty lifted it, having named no size.
  * Purpose-named, vendor-neutral.
  */
-export type DeskRequestKind = "RFQ" | "IOI" | "RFS";
+export type DeskRequestKind = "RFQ" | "IOI" | "RFS" | "ESP";
 
 /**
  * The lifecycle state of a `DeskRequest` (`celnet.wire.DeskRequestState`, proto

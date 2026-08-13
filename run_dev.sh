@@ -13,8 +13,11 @@
 #                           points and the SOFR STIR strip (`lpsim::quotable_lines`),
 #                           filtered to what is still listed at the settlement date.
 #   3. fix_rfq_client (RFQ) one-shot QuoteRequest(R) -> the FIXED_INCOME_QUOTE venue
-#   4. fix_rfq_client (RFS) MarketDataRequest(V) stream -> the FIXED_INCOME_STREAM venue
-#   5. gui                  Vite dev server on http://localhost:5173
+#   4. fix_rfq_client (RFS) MarketDataRequest(V) stream -> the FIXED_INCOME_STREAM venue,
+#                           priced for the CLIENT'S OWN clip
+#   5. fix_rfq_client (ESP) the same subscribe -> the FIXED_INCOME_ESP venue, which
+#                           streams at ITS OWN clip and ignores any size the client sends
+#   6. gui                  Vite dev server on http://localhost:5173
 #
 # Those inbound connections are exactly what Administration -> LP Panel reports on.
 #
@@ -118,6 +121,7 @@ DEV_BOOK="${CELNET_DEV_BOOK:-lp-sim-book}"
 # two flows dead with no error anywhere.
 DEV_RFQ_PORT="${CELNET_DEV_RFQ_PORT:-9101}"
 DEV_RFS_PORT="${CELNET_DEV_RFS_PORT:-9102}"
+DEV_ESP_PORT="${CELNET_DEV_ESP_PORT:-9103}"
 
 SKIP_BUILD=0
 RUN_GUI=1
@@ -268,6 +272,7 @@ echo
 # ---------------------------------------------------------------------------
 FIX_RFQ_PORT="${CELNET_DEV_FIX_RFQ_PORT:-}"
 FIX_RFS_PORT="${CELNET_DEV_FIX_RFS_PORT:-}"
+FIX_ESP_PORT="${CELNET_DEV_FIX_ESP_PORT:-}"
 if [[ $RUN_SIMS -eq 1 ]]; then
     PROVISION_JS="$LOG_DIR/provision.mjs"
     cat > "$PROVISION_JS" <<'PROVISION'
@@ -308,16 +313,21 @@ ws.on('open', async () => {
     const me = login.user || {};
     let desks = (await send('list_desks', { session_token: token })).desks || [];
     const mine = me.all_desks ? desks.map((d) => d.id) : (me.desk_ids || []);
-    let deskId = mine[0] || '';
+    // Preference order, and the fallbacks matter: a desk the sim user is ON (so its
+    // notifications actually reach them) > any existing desk (the venue still binds and
+    // trades; only desk-routed notifications are dropped) > a freshly created one. The
+    // middle step is what stops a second run failing, since `create_desk` collides with
+    // the desk the first run already made.
+    let deskId = mine[0] || (desks[0] && desks[0].id) || '';
     if (!deskId) {
       const made = await send('create_desk', { session_token: token, name: 'Dev Desk' });
       deskId = (made.desk && made.desk.id) || '';
-      if (deskId) {
-        console.error('[dev] created desk `' + deskId + '`');
-        console.error('[dev]   NOTE: ' + (me.email || 'the sim user') + ' is not a member of it, so '
-          + 'desk-routed notifications for the dev venues will be DROPPED until you add them '
-          + '(Administration → Users).');
-      }
+      if (deskId) console.error('[dev] created desk `' + deskId + '`');
+    }
+    if (deskId && !mine.includes(deskId)) {
+      console.error('[dev] NOTE: ' + (me.email || 'the sim user') + ' is not a member of desk `'
+        + deskId + '`, so desk-routed notifications for the dev venues are DROPPED '
+        + '(Administration → Users → add the desk). Quoting and booking are unaffected.');
     }
 
     // Reuse a RUNNING acceptor of each kind; otherwise define one. Idempotent — an
@@ -342,9 +352,11 @@ ws.on('open', async () => {
     };
 
     const rfqPort = await ensureVenue(1, 'dev-fi-rfq', 'FI RFQ', process.argv[7]);
-    const rfsPort = await ensureVenue(2, 'dev-fi-rfs', 'FI RFS (stream)', process.argv[8]);
+    const rfsPort = await ensureVenue(2, 'dev-fi-rfs', 'FI RFS (client clip)', process.argv[8]);
+    const espPort = await ensureVenue(3, 'dev-fi-esp', 'FI ESP (venue clip)', process.argv[9]);
     console.log('FIX_RFQ_PORT=' + rfqPort);
     console.log('FIX_RFS_PORT=' + rfsPort);
+    console.log('FIX_ESP_PORT=' + espPort);
 
     // A provider only streams into a book that lists it as a member; with no such
     // book the feed connects and quotes nothing.
@@ -366,10 +378,11 @@ ws.on('open', async () => {
 });
 PROVISION
     if [[ -d "$REPO_ROOT/gui/node_modules/ws" ]]; then
-        PROV_OUT="$(cd "$LOG_DIR" && node provision.mjs "ws://$WS_ADDR" "$SIM_USER" "$SIM_PASSWORD" "$DEV_BOOK" "$LPSIM_MEMBERS" "$DEV_RFQ_PORT" "$DEV_RFS_PORT" 2>&1 || true)"
-        echo "$PROV_OUT" | grep -v '^FIX_RFQ_PORT=\|^FIX_RFS_PORT=' || true
+        PROV_OUT="$(cd "$LOG_DIR" && node provision.mjs "ws://$WS_ADDR" "$SIM_USER" "$SIM_PASSWORD" "$DEV_BOOK" "$LPSIM_MEMBERS" "$DEV_RFQ_PORT" "$DEV_RFS_PORT" "$DEV_ESP_PORT" 2>&1 || true)"
+        echo "$PROV_OUT" | grep -v '^FIX_[A-Z]*_PORT=' || true
         [[ -z "$FIX_RFQ_PORT" ]] && FIX_RFQ_PORT="$(echo "$PROV_OUT" | sed -n 's/^FIX_RFQ_PORT=//p' | tail -1)"
         [[ -z "$FIX_RFS_PORT" ]] && FIX_RFS_PORT="$(echo "$PROV_OUT" | sed -n 's/^FIX_RFS_PORT=//p' | tail -1)"
+        [[ -z "$FIX_ESP_PORT" ]] && FIX_ESP_PORT="$(echo "$PROV_OUT" | sed -n 's/^FIX_ESP_PORT=//p' | tail -1)"
     else
         echo "[dev] gui/node_modules absent — skipping auto-provision (run 'npm ci' in gui/)."
     fi
@@ -423,7 +436,23 @@ if [[ $RUN_SIMS -eq 1 ]]; then
             > >(tee "$LOG_DIR/fix-rfs.log" | sed -u 's/^/[rfs ] /') 2>&1 &
         PIDS+=($!)
     else
-        echo "[dev] no FI STREAM venue — SKIPPING the RFS leg (see the provision output above)."
+        echo "[dev] no FI RFS venue — SKIPPING the RFS leg (see the provision output above)."
+    fi
+
+    # ESP flow — the SAME MarketDataRequest(V) subscribe against the FIXED_INCOME_ESP
+    # venue, except the client names no clip: the venue streams at its own published size
+    # and a lift books an ESP deal. That is the entire difference between the two
+    # streaming flows, and it is why they are separate acceptors rather than one venue
+    # with two labels.
+    if [[ -n "$FIX_ESP_PORT" ]]; then
+        echo "[dev] starting FIX ESP (streaming) leg → 127.0.0.1:$FIX_ESP_PORT"
+        FIXSIM_USER="$SIM_USER" FIXSIM_PASSWORD_FILE="$FIXSIM_PW_FILE" \
+        "$FIX_CLIENT" --addr "127.0.0.1:$FIX_ESP_PORT" --asset esp \
+            --grpc-addr "http://$GRPC_ADDR" --repeat 0 --interval 4 \
+            > >(tee "$LOG_DIR/fix-esp.log" | sed -u 's/^/[esp ] /') 2>&1 &
+        PIDS+=($!)
+    else
+        echo "[dev] no FI ESP venue — SKIPPING the ESP leg (see the provision output above)."
     fi
 fi
 
@@ -444,9 +473,10 @@ echo "[dev]   WS       ws://$WS_ADDR        gRPC  $GRPC_ADDR"
 if [[ $RUN_SIMS -eq 1 ]]; then
     echo "[dev]   sims     lp-sim x$LPSIM_MEMBERS → book '$DEV_BOOK'"
     [[ -n "$FIX_RFQ_PORT" ]] && echo "[dev]            FIX RFQ leg          → 127.0.0.1:$FIX_RFQ_PORT"
-    [[ -n "$FIX_RFS_PORT" ]] && echo "[dev]            FIX RFS stream leg   → 127.0.0.1:$FIX_RFS_PORT"
+    [[ -n "$FIX_RFS_PORT" ]] && echo "[dev]            FIX RFS leg (client clip) → 127.0.0.1:$FIX_RFS_PORT"
+    [[ -n "$FIX_ESP_PORT" ]] && echo "[dev]            FIX ESP leg (venue clip)  → 127.0.0.1:$FIX_ESP_PORT"
     echo "[dev]   LP Panel Administration → LP Panel"
 fi
-echo "[dev]   logs     $LOG_DIR/{edge,lp-sim,fix-rfq,fix-rfs,gui}.log"
+echo "[dev]   logs     $LOG_DIR/{edge,lp-sim,fix-rfq,fix-rfs,fix-esp,gui}.log"
 echo "[dev] ─────────────────────────────────────────────── Ctrl-C to stop ──"
 wait

@@ -19,7 +19,14 @@
  */
 
 import { act } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// These mount the FULL universe leaf and drive it through real user interaction, so a
+// single case takes ~2-3s on an idle machine — right under the 5s default. Under the
+// parallel load of the whole suite that margin disappears and they time out, which reads
+// as a correctness failure when it is only contention. Give them a budget matched to what
+// they actually do rather than letting the suite go red at random.
+vi.setConfig({ testTimeout: 30_000 });
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import { AppProvider } from "../src/app/AppContext";

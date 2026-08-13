@@ -600,6 +600,7 @@ fn kind_to_wire(kind: AcceptorKind) -> i32 {
         AcceptorKind::Options => FixAcceptorKind::Options as i32,
         AcceptorKind::FixedIncomeQuote => FixAcceptorKind::FixedIncomeQuote as i32,
         AcceptorKind::FixedIncomeStream => FixAcceptorKind::FixedIncomeStream as i32,
+        AcceptorKind::FixedIncomeEsp => FixAcceptorKind::FixedIncomeEsp as i32,
     }
 }
 
@@ -612,6 +613,7 @@ fn kind_from_wire(kind: i32) -> Result<AcceptorKind, Status> {
         Ok(FixAcceptorKind::Options) => Ok(AcceptorKind::Options),
         Ok(FixAcceptorKind::FixedIncomeQuote) => Ok(AcceptorKind::FixedIncomeQuote),
         Ok(FixAcceptorKind::FixedIncomeStream) => Ok(AcceptorKind::FixedIncomeStream),
+        Ok(FixAcceptorKind::FixedIncomeEsp) => Ok(AcceptorKind::FixedIncomeEsp),
         Err(_) => Err(Status::invalid_argument(format!(
             "unrecognised FIX acceptor kind `{kind}`"
         ))),
@@ -623,7 +625,8 @@ fn kind_from_wire(kind: i32) -> Result<AcceptorKind, Status> {
 ///
 /// * a fixed-income **quote** (one-shot RFQ) venue needs `QuoteRespond` on
 ///   [`AssetClass::FixedIncome`];
-/// * a fixed-income **stream** (RFS) venue needs `Stream` on the same asset class;
+/// * a fixed-income **stream** (RFS) and **ESP** venue each need `Stream` on the same
+///   asset class — both publish a continuous price, differing only in whose clip sizes it;
 /// * an FX-**options** venue needs nothing beyond administration (returns `None`).
 ///
 /// So an administrator who is explicitly denied the relevant FI capability cannot
@@ -633,7 +636,9 @@ fn required_dialect_capability(kind: AcceptorKind) -> Option<(Action, AssetClass
     match kind {
         AcceptorKind::Options => None,
         AcceptorKind::FixedIncomeQuote => Some((Action::QuoteRespond, AssetClass::FixedIncome)),
-        AcceptorKind::FixedIncomeStream => Some((Action::Stream, AssetClass::FixedIncome)),
+        AcceptorKind::FixedIncomeStream | AcceptorKind::FixedIncomeEsp => {
+            Some((Action::Stream, AssetClass::FixedIncome))
+        }
     }
 }
 
@@ -646,7 +651,9 @@ fn required_dialect_capability(kind: AcceptorKind) -> Option<(Action, AssetClass
 fn connection_manage_asset(kind: AcceptorKind) -> AssetClass {
     match kind {
         AcceptorKind::Options => AssetClass::FxOptions,
-        AcceptorKind::FixedIncomeQuote | AcceptorKind::FixedIncomeStream => AssetClass::FixedIncome,
+        AcceptorKind::FixedIncomeQuote
+        | AcceptorKind::FixedIncomeStream
+        | AcceptorKind::FixedIncomeEsp => AssetClass::FixedIncome,
     }
 }
 

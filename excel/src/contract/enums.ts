@@ -342,12 +342,12 @@ export const margining = enumCodec<Margining>(["EQUITY_STYLE", "FUTURES_STYLE"])
 export const basketKind = enumCodec<BasketKind>(["BASKET", "BEST_OF", "WORST_OF"]);
 
 /**
- * `DeskRequestKind` ↔ proto `DeskRequestKind` (UNSPECIFIED=0, RFQ=1, IOI=2, RFS=3).
+ * `DeskRequestKind` ↔ proto `DeskRequestKind` (UNSPECIFIED=0, RFQ=1, IOI=2, RFS=3, ESP=4).
  * Named members start at tag 1; carried on a `Notification.request_kind`. `RFS` must
  * be listed or an inbound request-for-stream notification fails to decode — the
  * add-in previously stopped at tag 2 and could not read one.
  */
-export const deskRequestKind = offsetEnumCodec<DeskRequestKind>(["RFQ", "IOI", "RFS"], 1);
+export const deskRequestKind = offsetEnumCodec<DeskRequestKind>(["RFQ", "IOI", "RFS", "ESP"], 1);
 
 /**
  * `NotificationKind` ↔ proto `NotificationKind` (UNSPECIFIED=0, RFQ_RECEIVED=1,

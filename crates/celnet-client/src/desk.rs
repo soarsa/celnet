@@ -64,6 +64,10 @@ pub enum DeskRequestKind {
     /// streaming price, which is dealer-published and clip-independent — this venue
     /// prices the client's supplied notional, so nothing it serves is an ESP.
     Rfs,
+    /// A lift of an **executable streaming price**: the venue was publishing a two-way at
+    /// ITS OWN clip and the counterparty took it, having named no size. The axis that
+    /// separates this from [`Rfs`](Self::Rfs) is whose clip the price was made for.
+    Esp,
 }
 
 impl DeskRequestKind {
@@ -72,6 +76,7 @@ impl DeskRequestKind {
             DeskRequestKind::Rfq => WireDeskRequestKind::Rfq,
             DeskRequestKind::Ioi => WireDeskRequestKind::Ioi,
             DeskRequestKind::Rfs => WireDeskRequestKind::Rfs,
+            DeskRequestKind::Esp => WireDeskRequestKind::Esp,
         }
     }
 
@@ -83,6 +88,7 @@ impl DeskRequestKind {
             Ok(WireDeskRequestKind::Rfq) => Ok(DeskRequestKind::Rfq),
             Ok(WireDeskRequestKind::Ioi) => Ok(DeskRequestKind::Ioi),
             Ok(WireDeskRequestKind::Rfs) => Ok(DeskRequestKind::Rfs),
+            Ok(WireDeskRequestKind::Esp) => Ok(DeskRequestKind::Esp),
             _ => Err(ClientError::Wire(WireError::UnknownEnum {
                 kind: "DeskRequestKind",
                 tag,

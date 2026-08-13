@@ -382,11 +382,15 @@ export const enforcement = enumCodec<Enforcement>(["SOFT", "HARD"]);
 
 /**
  * `DeskRequestKind` ↔ proto `DeskRequestKind`
- * (DESK_REQUEST_KIND_UNSPECIFIED=0, RFQ=1, IOI=2, RFS=3). The GUI union names only
- * the meaningful members, so the codec offsets the first named member to tag 1; an
- * `RFS` fill (a request-for-stream market-data lift) rides at tag 3.
+ * (DESK_REQUEST_KIND_UNSPECIFIED=0, RFQ=1, IOI=2, RFS=3, ESP=4). The GUI union names
+ * only the meaningful members, so the codec offsets the first named member to tag 1;
+ * an `RFS` fill (priced for the client's clip) rides at tag 3 and an `ESP` fill (the
+ * venue's own clip) at tag 4.
  */
-export const deskRequestKind = offsetEnumCodec<DeskRequestKind>(["RFQ", "IOI", "RFS"], 1);
+export const deskRequestKind = offsetEnumCodec<DeskRequestKind>(
+  ["RFQ", "IOI", "RFS", "ESP"],
+  1,
+);
 
 /**
  * `DeskRequestState` ↔ proto `DeskRequestState` (UNSPECIFIED=0, PENDING=1,

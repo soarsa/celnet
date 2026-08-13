@@ -324,6 +324,11 @@ pub(crate) struct RatesAutoQuotePolicy {
     /// The on-the-run tenors (whole years) the venue will auto-quote; any other tenor
     /// routes to a desk.
     pub tenors: std::collections::HashSet<u32>,
+    /// The clip an **ESP** venue publishes at. An executable streaming price is
+    /// dealer-published: the client names no size, so the venue streams its own
+    /// standard amount and any notional an ESP subscribe happens to carry is IGNORED.
+    /// Unused by the RFQ and RFS venues, which price the size the client asked for.
+    pub esp_standard_notional: f64,
 }
 
 impl Default for RatesAutoQuotePolicy {
@@ -331,6 +336,10 @@ impl Default for RatesAutoQuotePolicy {
         Self {
             max_notional: 25_000_000.0,
             tenors: [1, 2, 3, 5, 7, 10].into_iter().collect(),
+            // Deliberately NOT equal to the RFS client's typical clip: an ESP is a
+            // smaller standing streaming amount, and keeping the two distinct is also
+            // what makes the override observable rather than merely asserted.
+            esp_standard_notional: 5_000_000.0,
         }
     }
 }
@@ -796,7 +805,8 @@ impl FixSession {
                     .await;
                 return;
             }
-            Some(RatesIntent::Rfs) => return,
+            // Neither streaming venue serves `QuoteRequest(R)` — both speak Market Data.
+            Some(RatesIntent::Rfs | RatesIntent::Esp) => return,
             None => {}
         }
 
@@ -1120,8 +1130,10 @@ impl FixSession {
     /// **this connection's** pricing group when one resolves — the seam that makes the FIX
     /// RFS outbound composite-based **and tiered**, matching the gRPC/WS RFQ path
     /// ([`super::quote::QuoteEdge::book_composite_for_caller`]). A grouped connection prices
-    /// off the book's RAW consolidated composite through its own effective RFS/RFQ pipeline
-    /// (`share_pipeline ? esp : rfq`); an ungrouped one receives the book-default composite.
+    /// off the book's RAW consolidated composite through the pipeline its VENUE selects —
+    /// the group's ESP pipeline on an ESP venue, its effective RFS/RFQ pipeline
+    /// (`share_pipeline ? esp : rfq`) on the request-driven venues; an ungrouped
+    /// connection receives the book-default composite.
     ///
     /// `instrument_id` is the **canonical book identity** of the line, already derived by
     /// the caller ([`Self::composite_id_for`]): a cash bond's CUSIP / govvie slug is the
@@ -1142,10 +1154,19 @@ impl FixSession {
         let comp = match resolver
             .resolve_for_connection(&self.ctx.connection_id, (!desk.is_empty()).then_some(desk))
         {
+            // WHICH pipeline shapes the outbound price is decided by the venue, not by
+            // the transport: an ESP venue publishes a price nobody requested a size for,
+            // which is what the group's ESP pipeline exists to shape, while the RFQ and
+            // RFS venues are both request-driven and share the group's RFS/RFQ pipeline
+            // (the taxonomy the pricing-group editor already presents as "RFQ / RFS").
             Some(group) => hub.resolve_rfq_composite_priced(
                 instrument_id,
                 &group.id,
-                group.rfq_effective_pipeline(),
+                if rates_intent_for_kind(self.ctx.kind) == Some(RatesIntent::Esp) {
+                    group.esp_effective_pipeline()
+                } else {
+                    group.rfq_effective_pipeline()
+                },
             ),
             None => hub.resolve_rfq_composite(instrument_id),
         };
@@ -1565,10 +1586,12 @@ impl FixSession {
         st: &[u8],
         out: &mut Vec<Vec<u8>>,
     ) {
-        // Market-data streaming is the STREAM venue's contract only.
-        if rates_intent_for_kind(self.ctx.kind) != Some(RatesIntent::Rfs) {
+        // Market-data streaming is the two STREAMING venues' contract: request-for-stream
+        // (priced for the client's clip) and executable streaming price (the venue's own).
+        let Some(intent) = rates_intent_for_kind(self.ctx.kind).filter(|i| i.is_market_data())
+        else {
             return;
-        }
+        };
         let view = messages::MarketDataRequestView::new(*frame);
         let Some(md_req_id) = view.md_req_id().map(<[u8]>::to_vec) else {
             return;
@@ -1604,10 +1627,19 @@ impl FixSession {
         let curve = self.live_rates_curve();
         // Decode the single instrument block. `SecurityType(167)=BOND` selects the cash-bond
         // arm (the family an aggregated book covers); every other request is the OIS arm.
+        // THE ESP/RFS DIVIDE. An RFS subscribe is priced for the notional the CLIENT
+        // carried; an ESP subscribe is a price the dealer publishes, so the client named
+        // no size and whatever tag 38 happens to hold is IGNORED in favour of the venue's
+        // own standard clip. Everything downstream — the desk row, the snapshot, a lift —
+        // then uses one size, so a booked ESP fill can never claim a clip the venue never
+        // showed. Resolved BEFORE the instrument decode so both arms share it.
+        let esp_clip =
+            (intent == RatesIntent::Esp).then_some(self.ctx.auto_quote.esp_standard_notional);
         let (line, notional, record) = if frame.get(167) == Some(dialect_rates::SEC_TYPE_BOND) {
-            let Ok((instrument, notional)) = dialect_rates::decode_bond_instrument(frame) else {
+            let Ok((instrument, requested)) = dialect_rates::decode_bond_instrument(frame) else {
                 return;
             };
+            let notional = esp_clip.unwrap_or(requested);
             let rfq = dialect_rates::BondRfq {
                 quote_req_id: md_req_id.clone(),
                 symbol: symbol.clone(),
@@ -1620,10 +1652,11 @@ impl FixSession {
             };
             (line, notional, MdRecord::Bond(rfq))
         } else {
-            let Ok((tenor_years, notional, side)) = dialect_rates::decode_ois_instrument(frame)
+            let Ok((tenor_years, requested, side)) = dialect_rates::decode_ois_instrument(frame)
             else {
                 return;
             };
+            let notional = esp_clip.unwrap_or(requested);
             let rfq = dialect_rates::RatesRfq {
                 quote_req_id: md_req_id.clone(),
                 symbol: symbol.clone(),
@@ -1653,14 +1686,17 @@ impl FixSession {
         let counterparty = self.display_counterparty(frame);
         // Record the desk-inbox row first (its id rides the stream so a lift books a deal).
         let request_id = match &record {
-            // A market-data STREAM subscribe is the REQUEST-FOR-STREAM venue: the client
-            // named an instrument AND its own clip, and the stream below is priced for
-            // that clip. It is therefore RFS, not ESP — an executable streaming price is
-            // dealer-published and clip-independent. A lift of a streamed top-of-book
-            // books an RFS deal (distinct from a one-off RFQ).
-            MdRecord::Bond(rfq) => {
-                self.record_bond_rfq(rfq, &counterparty, &curve, DeskRequestKind::Rfs, &admission)
-            }
+            // Both streaming venues arrive here, and the desk row records WHICH: an RFS
+            // fill was priced for the size the client asked for, an ESP fill was taken off
+            // a price the dealer was already publishing at its own clip. The blotter shows
+            // them apart because they are different flows, not different labels.
+            MdRecord::Bond(rfq) => self.record_bond_rfq(
+                rfq,
+                &counterparty,
+                &curve,
+                intent.desk_request_kind(),
+                &admission,
+            ),
             MdRecord::Ois(rfq) => {
                 let side = rates_side_to_side(rfq.side);
                 self.record_rates_rfq(
@@ -1668,7 +1704,7 @@ impl FixSession {
                     &counterparty,
                     side,
                     &curve,
-                    DeskRequestKind::Rfs,
+                    intent.desk_request_kind(),
                     &admission,
                 )
             }
@@ -2640,8 +2676,31 @@ fn blend_curve_toward_composite(curve: &PricedLine, comp: &PricedLine, w: f64) -
 enum RatesIntent {
     /// A one-shot quote venue: `SubscriptionRequestType(263)=0` (snapshot).
     Rfq,
-    /// A streaming venue: `SubscriptionRequestType(263)=1`/`2` (subscribe/unsubscribe).
+    /// A request-for-stream venue: a `MarketDataRequest(V)` subscribe opens a stream
+    /// priced for the CLIENT'S OWN clip (the notional the request carries).
     Rfs,
+    /// An executable-streaming-price venue: also opened by a `MarketDataRequest(V)`
+    /// subscribe, but the venue streams at ITS OWN published clip and ignores any
+    /// notional the client carries. Clip-independence is the whole difference from
+    /// [`Rfs`](Self::Rfs) — see [`RatesIntent::esp_standard_notional`].
+    Esp,
+}
+
+impl RatesIntent {
+    /// Whether this intent is served over `MarketDataRequest(V)` rather than
+    /// `QuoteRequest(R)`. Both streaming venues are; the one-shot RFQ venue is not.
+    fn is_market_data(self) -> bool {
+        matches!(self, RatesIntent::Rfs | RatesIntent::Esp)
+    }
+
+    /// The desk-inbox kind a lift on this venue books as.
+    fn desk_request_kind(self) -> DeskRequestKind {
+        match self {
+            RatesIntent::Rfq => DeskRequestKind::Rfq,
+            RatesIntent::Rfs => DeskRequestKind::Rfs,
+            RatesIntent::Esp => DeskRequestKind::Esp,
+        }
+    }
 }
 
 /// The rates intent a fixed-income acceptor kind serves, or `None` for the
@@ -2651,6 +2710,7 @@ fn rates_intent_for_kind(kind: AcceptorKind) -> Option<RatesIntent> {
         AcceptorKind::Options => None,
         AcceptorKind::FixedIncomeQuote => Some(RatesIntent::Rfq),
         AcceptorKind::FixedIncomeStream => Some(RatesIntent::Rfs),
+        AcceptorKind::FixedIncomeEsp => Some(RatesIntent::Esp),
     }
 }
 
@@ -2665,7 +2725,7 @@ fn subscription_matches_intent(
     use dialect_rates::SubscriptionRequest::{Snapshot, Subscribe, Unsubscribe};
     match intent {
         RatesIntent::Rfq => matches!(subscription, Snapshot),
-        RatesIntent::Rfs => matches!(subscription, Subscribe | Unsubscribe),
+        RatesIntent::Rfs | RatesIntent::Esp => matches!(subscription, Subscribe | Unsubscribe),
     }
 }
 
@@ -4189,6 +4249,59 @@ mod tests {
         assert_eq!(
             rates_intent_for_kind(AcceptorKind::FixedIncomeStream),
             Some(RatesIntent::Rfs)
+        );
+        assert_eq!(
+            rates_intent_for_kind(AcceptorKind::FixedIncomeEsp),
+            Some(RatesIntent::Esp)
+        );
+    }
+
+    /// **The ESP/RFS divide.** Both streaming venues speak Market Data and neither
+    /// serves `QuoteRequest(R)` — so what separates them is not the transport but WHOSE
+    /// CLIP the streamed price is made for, and which pipeline shapes it. Pinning that
+    /// here stops the two collapsing back into one venue with two labels, which is
+    /// exactly what they were before.
+    #[test]
+    fn the_two_streaming_venues_differ_only_in_whose_clip_they_price() {
+        // Both are market-data venues; the one-shot RFQ venue is not.
+        assert!(RatesIntent::Rfs.is_market_data());
+        assert!(RatesIntent::Esp.is_market_data());
+        assert!(!RatesIntent::Rfq.is_market_data());
+
+        // Both admit a subscribe, and neither admits a one-shot snapshot.
+        for intent in [RatesIntent::Rfs, RatesIntent::Esp] {
+            assert!(subscription_matches_intent(
+                intent,
+                SubscriptionRequest::Subscribe
+            ));
+            assert!(!subscription_matches_intent(
+                intent,
+                SubscriptionRequest::Snapshot
+            ));
+        }
+
+        // A fill on each books a DIFFERENT desk kind, so the blotter can tell a price
+        // made for the client's size from one taken off a standing dealer price.
+        assert_eq!(RatesIntent::Rfq.desk_request_kind(), DeskRequestKind::Rfq);
+        assert_eq!(RatesIntent::Rfs.desk_request_kind(), DeskRequestKind::Rfs);
+        assert_eq!(RatesIntent::Esp.desk_request_kind(), DeskRequestKind::Esp);
+        assert_ne!(
+            RatesIntent::Esp.desk_request_kind(),
+            RatesIntent::Rfs.desk_request_kind(),
+            "an ESP fill and an RFS fill must never book as the same kind"
+        );
+
+        // The venue publishes a real, positive clip of its own — an ESP that streamed
+        // size zero would be a price nobody could trade.
+        let policy = RatesAutoQuotePolicy::default();
+        assert!(
+            policy.esp_standard_notional.is_finite() && policy.esp_standard_notional > 0.0,
+            "the ESP venue must publish a tradeable standard clip"
+        );
+        assert!(
+            policy.esp_standard_notional <= policy.max_notional,
+            "the venue's own published clip must be inside its auto-quote cap, or every \
+             ESP subscribe would route to a human desk instead of streaming"
         );
     }
 

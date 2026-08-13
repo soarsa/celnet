@@ -137,6 +137,14 @@
   color: color-mix(in oklab, var(--bid) 62%, var(--text-primary));
 }
 
+/* ESP — a lift of a price the venue was publishing at its OWN clip. Tinted with the
+   offer token so the two streaming flows read apart at a glance: an RFS fill was made
+   for the size the client asked for, an ESP fill was taken off a standing price. */
+.kindEsp {
+  background: color-mix(in oklab, var(--offer, var(--accent)) 20%, transparent);
+  color: color-mix(in oklab, var(--offer, var(--accent)) 62%, var(--text-primary));
+}
+
 .product {
   display: inline-block;
   font: var(--type-micro) / 1 var(--font-mono);

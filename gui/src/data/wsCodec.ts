@@ -3283,6 +3283,7 @@ export type { StrategyKind };
 const FIX_KIND_OPTIONS = 0;
 const FIX_KIND_FIXED_INCOME_QUOTE = 1;
 const FIX_KIND_FIXED_INCOME_STREAM = 2;
+const FIX_KIND_FIXED_INCOME_ESP = 3;
 
 /** Domain kind → wire enum tag. */
 export function fixConnectionKindToWire(kind: FixConnectionKind): number {
@@ -3291,6 +3292,8 @@ export function fixConnectionKindToWire(kind: FixConnectionKind): number {
       return FIX_KIND_FIXED_INCOME_QUOTE;
     case "FIXED_INCOME_STREAM":
       return FIX_KIND_FIXED_INCOME_STREAM;
+    case "FIXED_INCOME_ESP":
+      return FIX_KIND_FIXED_INCOME_ESP;
     case "OPTIONS":
       return FIX_KIND_OPTIONS;
   }
@@ -3303,6 +3306,8 @@ export function fixConnectionKindFromWire(tag: number): FixConnectionKind {
       return "FIXED_INCOME_QUOTE";
     case FIX_KIND_FIXED_INCOME_STREAM:
       return "FIXED_INCOME_STREAM";
+    case FIX_KIND_FIXED_INCOME_ESP:
+      return "FIXED_INCOME_ESP";
     default:
       return "OPTIONS";
   }

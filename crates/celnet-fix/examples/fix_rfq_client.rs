@@ -106,6 +106,11 @@ enum AssetClass {
     /// tiered by the connection's pricing group) AND randomly lift some — booking live
     /// streaming deals. See [`run_rfs`].
     Rfs,
+    /// The **executable streaming price** venue: the same market-data lifecycle as
+    /// [`Rfs`](Self::Rfs), except the client names NO clip of its own — the venue
+    /// publishes at its own standard size. That is the whole difference between the two
+    /// streaming venues, so it is the one thing this mode does differently.
+    Esp,
 }
 
 /// The parsed client request — owned so the backing bytes outlive the async send.
@@ -195,7 +200,7 @@ fn print_help() -> ! {
     println!(
         "fix_rfq_client — FIX 4.4 RFQ price-taker (rates OIS or FX option)\n\n\
          Flags (all optional; sensible defaults dial the demo edge):\n  \
-         --asset fi|fx|rfs (fi)   --addr HOST:PORT (127.0.0.1:9099)\n  \
+         --asset fi|fx|rfs|esp (fi)   --addr HOST:PORT (127.0.0.1:9099)\n  \
          fi:  --curve USD-OIS  --tenor 5  --notional 10000000|mix  --side pay|receive|two-way|mix\n       \
          --intent rfs|rfq (rfs = request a stream for a size)\n  \
          fx:  --pair EURUSD  --type call|put  --strike 1.10  --expiry-years 1.0\n       \
@@ -316,7 +321,10 @@ fn parse_args() -> Args {
                     "fi" | "rates" | "fixedincome" | "fixed-income" => AssetClass::FixedIncome,
                     "fx" | "options" | "fxo" | "fxoption" => AssetClass::FxOption,
                     "rfs" | "stream" | "streaming" => AssetClass::Rfs,
-                    other => usage_and_exit(&format!("--asset must be fi|fx|rfs, got `{other}`")),
+                    "esp" => AssetClass::Esp,
+                    other => {
+                        usage_and_exit(&format!("--asset must be fi|fx|rfs|esp, got `{other}`"))
+                    }
                 }
             }
             "--grpc-addr" => grpc_addr = val,
@@ -497,7 +505,7 @@ fn parse_args() -> Args {
             };
         }
         // RFS (streaming) mode drives its own lifecycle (`run_rfs`) — `--side` does not apply.
-        AssetClass::Rfs => {}
+        AssetClass::Rfs | AssetClass::Esp => {}
     }
 
     // Validate per asset, so an fi run never trips FX-pair rules and vice versa.
@@ -533,6 +541,17 @@ fn parse_args() -> Args {
             if !(notional > 0.0 && notional.is_finite()) {
                 usage_and_exit("--notional must be positive");
             }
+            if grpc_addr.trim().is_empty() {
+                usage_and_exit("--grpc-addr must be a non-empty gRPC endpoint");
+            }
+        }
+        AssetClass::Esp => {
+            if rfs_instruments < 1 {
+                usage_and_exit("--rfs-instruments must be >= 1");
+            }
+            // Deliberately NO `--notional` check: on the ESP venue the client names no
+            // size at all — the venue publishes its own clip — so requiring one here
+            // would demand a number that is then thrown away.
             if grpc_addr.trim().is_empty() {
                 usage_and_exit("--grpc-addr must be a non-empty gRPC endpoint");
             }
@@ -622,7 +641,7 @@ async fn main() -> std::io::Result<()> {
     let args = parse_args();
 
     // RFS (streaming) mode drives its own connect → download-refdata → stream + random-trade lifecycle.
-    if args.asset == AssetClass::Rfs {
+    if matches!(args.asset, AssetClass::Rfs | AssetClass::Esp) {
         return run_rfs(&args).await;
     }
 
@@ -668,7 +687,9 @@ async fn main() -> std::io::Result<()> {
             );
         }
         // RFS returns early (`run_rfs`) before this header prints.
-        AssetClass::Rfs => unreachable!("RFS (streaming) mode is handled by run_rfs"),
+        AssetClass::Rfs | AssetClass::Esp => {
+            unreachable!("both streaming venues are handled by run_rfs")
+        }
     }
     println!("──────────────────────────────────────────────────────");
 
@@ -1005,7 +1026,9 @@ async fn main() -> std::io::Result<()> {
                 r
             }
             // RFS returns early (`run_rfs`) before this loop is reached.
-            AssetClass::Rfs => unreachable!("RFS (streaming) mode is handled by run_rfs"),
+            AssetClass::Rfs | AssetClass::Esp => {
+                unreachable!("both streaming venues are handled by run_rfs")
+            }
         };
 
         // Auto-accept/trade visibility: when the lift policy trades, report the fill.
@@ -1205,7 +1228,14 @@ async fn download_top_bonds(args: &Args) -> Result<Vec<EspBond>, String> {
 /// randomly LIFTING some to book live streaming deals into the blotter. Deterministic under
 /// `--seed`: the same seed replays the same trade decisions and instrument rotation.
 async fn run_rfs(args: &Args) -> std::io::Result<()> {
-    println!("── celnet RFS streaming client ───────────────────────");
+    println!(
+        "── celnet {} streaming client ───────────────────────",
+        if args.asset == AssetClass::Esp {
+            "ESP"
+        } else {
+            "RFS"
+        }
+    );
     println!("  refdata   {} as {}", args.grpc_addr, args.user);
     println!(
         "  stream    FIX {} as {} → {}",
@@ -1280,7 +1310,14 @@ async fn run_rfs(args: &Args) -> std::io::Result<()> {
         // In "mix" notional mode rotate the streamed size per request (the RFS venue always streams),
         // so booked streaming bond deals — and their DV01 — show a realistic size spread
         // instead of one repeated clip; otherwise use the fixed `--notional`.
-        let esp_notional = if args.notional_mix {
+        // WHOSE clip this stream is priced for is the ESP/RFS divide, and it is settled
+        // SERVER-side: an RFS venue prices the notional this frame carries, an ESP venue
+        // discards it and streams its own published clip. The frame still carries a valid
+        // size either way — `OrderQty(38)` is required by the dialect, and a zero would be
+        // rejected at decode rather than read as "no size" — so on the ESP leg this is
+        // simply the size the venue is about to ignore, which is what makes the
+        // clip-independence observable: the streamed amount comes back different.
+        let stream_notional = if args.notional_mix {
             sim::rates_notional_for(i)
         } else {
             args.notional
@@ -1300,7 +1337,12 @@ async fn run_rfs(args: &Args) -> std::io::Result<()> {
 
         // A stable per-instrument MDReqID: re-subscribing the same instrument REPLACES its
         // one live server-side market-data stream (keyed by MDReqID) rather than piling up.
-        let md_req_id = format!("{}-RFS-{}", args.req_id, bond.instrument_id).into_bytes();
+        let venue_tag = if args.asset == AssetClass::Esp {
+            "ESP"
+        } else {
+            "RFS"
+        };
+        let md_req_id = format!("{}-{venue_tag}-{}", args.req_id, bond.instrument_id).into_bytes();
         let symbol = bond.instrument_id.clone().into_bytes();
         let params = dialect_rates::BondMarketDataRequestParams {
             md_req_id: &md_req_id,
@@ -1310,7 +1352,7 @@ async fn run_rfs(args: &Args) -> std::io::Result<()> {
             day_count: bond.day_count,
             maturity: bond.maturity,
             redemption: bond.redemption,
-            notional: esp_notional,
+            notional: stream_notional,
             side: Side::TwoWay,
             subscription: SubscriptionRequest::Subscribe,
         };
@@ -1335,7 +1377,7 @@ async fn run_rfs(args: &Args) -> std::io::Result<()> {
             )
             .await?;
         println!(
-            "[{i}] {counterparty} · {} ({}) RFS — streamed {} snapshot(s)",
+            "[{i}] {counterparty} · {} ({}) {venue_tag} — streamed {} snapshot(s)",
             bond.name, bond.instrument_id, outcome.updates
         );
         if let (Some(bid), Some(offer)) = (outcome.result.bid, outcome.result.offer) {

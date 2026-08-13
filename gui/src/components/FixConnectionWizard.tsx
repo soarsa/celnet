@@ -58,8 +58,14 @@ const KIND_OPTIONS: readonly KindOption[] = [
   },
   {
     kind: "FIXED_INCOME_STREAM",
-    name: "Fixed Income — Streaming (RFS)",
-    desc: "The rates/OIS streaming RFS dialect — a subscribe (263=1) opens a streamed two-way rate quote, priced through the same engine path.",
+    name: "Fixed Income — Request for Stream (RFS)",
+    desc: "A MarketDataRequest(V) subscribe opens a stream priced for the CLIENT'S OWN clip — the notional the request carries. Use this when counterparties ask for a price in their size.",
+    cap: { action: "stream", asset: "fixed_income" },
+  },
+  {
+    kind: "FIXED_INCOME_ESP",
+    name: "Fixed Income — Executable Streaming Price (ESP)",
+    desc: "The same subscribe, but the venue streams at ITS OWN published clip and ignores any size the client carries. Shaped by the pricing group's ESP pipeline rather than its RFQ/RFS one; a lift books an ESP deal.",
     cap: { action: "stream", asset: "fixed_income" },
   },
 ];

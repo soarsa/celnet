@@ -3540,11 +3540,20 @@ enum FixAcceptorKind {
   // Quote(S). Standing one up requires the QuoteRespond capability on the
   // FixedIncome asset class (in addition to connection administration).
   FIX_ACCEPTOR_KIND_FIXED_INCOME_QUOTE = 1;
-  // The fixed-income (linear-rates / OIS) streaming RFS dialect: an inbound
-  // QuoteRequest(R) with SubscriptionRequestType(263)=1 subscribes to a streamed
-  // request-for-stream. Standing one up requires the Stream capability on the
-  // FixedIncome asset class (in addition to connection administration).
+  // The fixed-income (linear-rates / OIS) REQUEST-FOR-STREAM dialect: an inbound
+  // MarketDataRequest(V) subscribe opens a stream priced for the CLIENT'S OWN clip
+  // (the notional it carries), and a lift books an RFS deal. Standing one up requires
+  // the Stream capability on the FixedIncome asset class (in addition to connection
+  // administration).
   FIX_ACCEPTOR_KIND_FIXED_INCOME_STREAM = 2;
+  // The fixed-income EXECUTABLE STREAMING PRICE dialect. Also opened by a
+  // MarketDataRequest(V) subscribe, but the venue streams at ITS OWN published clip
+  // and IGNORES any notional the client carries — that clip-independence is the whole
+  // difference from `FIXED_INCOME_STREAM`, which prices the size the client asked for.
+  // A price nobody requested a size for is dealer-published, so it is shaped by the
+  // pricing group's ESP pipeline rather than its request-driven RFQ/RFS one, and a lift
+  // books a `DESK_REQUEST_KIND_ESP` deal. Same Stream capability requirement.
+  FIX_ACCEPTOR_KIND_FIXED_INCOME_ESP = 3;
 }
 
 // A managed inbound FIX-acceptor connection: the persisted definition plus its
@@ -8743,6 +8752,11 @@ enum DeskRequestKind {
   // nothing this venue serves can be one. Stamped on the booked `Deal` so the blotter
   // shows an RFS fill distinctly from an RFQ.
   DESK_REQUEST_KIND_RFS = 3;
+  // Executable streaming price: the counterparty lifted a top-of-book the venue was
+  // publishing at ITS OWN clip, having named no size of its own. Distinct from
+  // `RFS` precisely on that axis — an RFS fill is priced for the size the client
+  // asked for, an ESP fill is taken off a price the dealer was already showing.
+  DESK_REQUEST_KIND_ESP = 4;
 }
 
 // The lifecycle state of an inbound desk request (one current fact per id).

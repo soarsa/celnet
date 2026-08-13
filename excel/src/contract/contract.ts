@@ -1940,12 +1940,12 @@ export interface XvaResult {
 
 /**
  * The flavour of an inbound desk request (`celnet.wire.DeskRequestKind`, proto
- * RFQ=1, IOI=2, RFS=3): a firm-price request-for-quote, a non-firm
+ * RFQ=1, IOI=2, RFS=3, ESP=4): a firm-price request-for-quote, a non-firm
  * indication-of-interest, or a request-for-stream lift — the counterparty opened a
  * market-data stream for a named instrument and its own clip size and lifted the
  * streamed line. Carried on a `Notification.requestKind`.
  */
-export type DeskRequestKind = "RFQ" | "IOI" | "RFS";
+export type DeskRequestKind = "RFQ" | "IOI" | "RFS" | "ESP";
 
 /**
  * What a pushed notification concerns (`celnet.wire.NotificationKind`, proto
