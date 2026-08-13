@@ -10,7 +10,7 @@
 #   5) Settings (addresses, CompIDs)          q) Quit
 #
 # If a FIX acceptor is already listening (e.g. you ran
-#   CELNET_FIX_ADDR=127.0.0.1:9099 ./tools/dev.sh
+#   CELNET_FIX_ADDR=127.0.0.1:9099 ./run_dev.sh
 # yourself) the script uses it as-is and never starts/stops its own.
 #
 # Usage:
@@ -39,8 +39,8 @@ fi
 # ---------------------------------------------------------------------------
 FIX_ADDR="${CELNET_FIX_ADDR:-127.0.0.1:9099}"
 # A self-started edge only needs its FIX acceptor; its gRPC/WS ports are incidental.
-# Default them OFF the standard 50551/8081 that `tools/dev.sh` uses, so this script
-# can stand up a FIX edge alongside a running dev.sh without an AddrInUse collision.
+# Default them OFF the standard 50551/8081 that `run_dev.sh` uses, so this script
+# can stand up a FIX edge alongside a running run_dev.sh without an AddrInUse collision.
 GRPC_ADDR="${CELNET_GRPC_ADDR:-127.0.0.1:50599}"
 WS_ADDR="${CELNET_WS_ADDR:-127.0.0.1:8099}"
 SENDER="${CELNET_FIX_TARGET:-CELNET-CPTY}"   # our SenderCompID == the venue's expected counterparty
