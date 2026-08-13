@@ -23,9 +23,10 @@ use celnet_proto::fix_admin_service_server::FixAdminService;
 use celnet_proto::{
     CreateFixConnectionRequest, CreateFixConnectionResponse, DeleteFixConnectionRequest,
     DeleteFixConnectionResponse, FixAcceptorKind, FixConnectionDesc, FixConnectionSpec, FixMessage,
-    FixMsgDirection, ListFixConnectionsRequest, ListFixConnectionsResponse, ListFixMessagesRequest,
-    ListFixMessagesResponse, SetFixConnectionEnabledRequest, SetFixConnectionEnabledResponse,
-    UpdateFixConnectionRequest, UpdateFixConnectionResponse,
+    FixMsgDirection, LiquidityProviderDesc, LiquidityProviderQuote, ListFixConnectionsRequest,
+    ListFixConnectionsResponse, ListFixMessagesRequest, ListFixMessagesResponse,
+    ListLiquidityProvidersRequest, ListLiquidityProvidersResponse, SetFixConnectionEnabledRequest,
+    SetFixConnectionEnabledResponse, UpdateFixConnectionRequest, UpdateFixConnectionResponse,
 };
 use tonic::{Request, Response, Status};
 
@@ -158,6 +159,116 @@ impl FixAdminService for FixAdminEdge {
             .collect();
         Ok(Response::new(ListFixConnectionsResponse {
             connections,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn list_liquidity_providers(
+        &self,
+        request: Request<ListLiquidityProvidersRequest>,
+    ) -> Result<Response<ListLiquidityProvidersResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        // Reading who is feeding the platform IS venue ops, so the panel sits on the
+        // same `manage_liquidity` capability as the connection administration it
+        // reports on — not the `ReadAny` floor the plain connection list uses. The
+        // panel is cross-dialect (it folds FX and FI venues into one roster), so the
+        // gate is exercised on fixed income, the asset every aggregated book serves.
+        authorize_caller(
+            self.store.access_mode(),
+            &caller,
+            "FixAdminService/ListLiquidityProviders",
+            RequiredAuthority::Capability(Action::ManageLiquidity, AssetClass::FixedIncome),
+            req.correlation_id,
+        )?;
+
+        let focus = req
+            .connection_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        // Without a hub (the standalone demo edge) there is no inbound liquidity at
+        // all: the roster is empty rather than fabricated, and `inbound_enabled`
+        // reports the honest "nothing is being ingested" default.
+        let panel = self
+            .registry
+            .aggregation_hub()
+            .map(|hub| hub.liquidity_panel(focus))
+            .unwrap_or_default();
+
+        // Join the connection registry onto the hub roster so a provider carries its
+        // human identity and live bind status, and so `connection_defined` can call
+        // out a book member that names no managed connection. Desk scoping matches
+        // `ListConnections`: a desk-scoped caller resolves identity only for its own
+        // desk's connections, so a foreign connection stays an unresolved id rather
+        // than leaking another desk's naming.
+        let scope = caller.desk_scope();
+        let known: std::collections::HashMap<String, ConnectionStatus> = self
+            .registry
+            .list()
+            .await
+            .into_iter()
+            .filter(|s| scope.allows(&s.def.desk))
+            .map(|s| (s.def.id.clone(), s))
+            .collect();
+
+        let providers = panel
+            .providers
+            .iter()
+            .map(|p| {
+                let status = known.get(&p.connection_id);
+                LiquidityProviderDesc {
+                    connection_id: p.connection_id.clone(),
+                    name: status.map(|s| s.def.name.clone()).unwrap_or_default(),
+                    desk: status.map(|s| s.def.desk.clone()).unwrap_or_default(),
+                    connection_defined: status.is_some(),
+                    enabled: status.is_some_and(|s| s.def.enabled),
+                    running: status.is_some_and(|s| s.running),
+                    book_ids: p.book_ids.clone(),
+                    quote_updates: p.quote_updates,
+                    last_quote_nanos: p.last_quote_nanos,
+                    instruments_quoted: p.instruments_quoted,
+                    fresh_quotes: p.fresh_quotes,
+                    stale_quotes: p.stale_quotes,
+                    best_bid_count: p.best_bid_count,
+                    best_offer_count: p.best_offer_count,
+                    mean_weight: p.mean_weight,
+                }
+            })
+            .collect();
+
+        let quotes = panel
+            .quotes
+            .iter()
+            .map(|q| LiquidityProviderQuote {
+                book_id: q.book_id.clone(),
+                instrument_id: q.instrument_id.clone(),
+                display_name: q.display_name.clone(),
+                bid: q.bid,
+                offer: q.offer,
+                bid_size: q.bid_size,
+                offer_size: q.offer_size,
+                ts_nanos: q.ts_nanos,
+                age_secs: q.age_secs,
+                weight: q.weight,
+                deviation: q.deviation,
+                excluded: q.excluded.clone(),
+                best_bid: q.best_bid,
+                best_offer: q.best_offer,
+            })
+            .collect();
+
+        Ok(Response::new(ListLiquidityProvidersResponse {
+            providers,
+            quotes,
+            inbound_enabled: panel.inbound_enabled,
+            as_of_nanos: panel.as_of_nanos,
             correlation_id: req.correlation_id,
         }))
     }

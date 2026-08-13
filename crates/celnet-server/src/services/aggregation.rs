@@ -50,6 +50,10 @@ use celnet_refdata::{CrosswalkBasis, IdentifierCrosswalk, IdentifierSet};
 use celnet_tiering::{FeatureKind, FeaturePipeline, PricedResult, PricingCtx, QuoteCtx, TwoWay};
 use celnet_types::{Ccy, CommodityRef, Symbol, Tenor, Underlying};
 
+mod lp_health;
+
+pub use lp_health::{LpFeedHealth, LpFeedQuote, LpPanel};
+
 use crate::clock::Clock;
 use crate::config::identity::{
     AggregatedBookDef, AggregationParams, IdentityStore, PricingGroupResolver, Scope,

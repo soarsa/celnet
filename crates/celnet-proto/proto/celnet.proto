@@ -3755,12 +3755,146 @@ message ListFixMessagesResponse {
   optional uint64 correlation_id = 3;
 }
 
+// ===========================================================================
+// LP panel — the INBOUND-LIQUIDITY operations view.
+//
+// One row per liquidity provider actually feeding the platform, folded across
+// every enabled aggregated book that lists it as a member. The provider identity
+// is the FIX **connection id**: `AggregatedBookDef.member_connection_ids` entries
+// are matched by string equality against the `LpQuote.lp_name` each inbound push
+// carries, so one id names the connection, the book membership and the venue.
+//
+// Everything here is derived ON QUERY, off the pinned pricing core: the roster
+// comes from the book member lists, the tick tally from the hub's existing
+// per-LP counter, and the live prices / consolidation verdicts from the
+// latest-quote sink the composite already maintains. No new hot-path bookkeeping
+// and no background timer (guardrail 11).
+// ===========================================================================
+
+// One inbound liquidity provider's live feed health.
+message LiquidityProviderDesc {
+  // The provider identity — the FIX connection id, which is ALSO the aggregation
+  // `VenueId` and the `LpQuote.lp_name` its pushes carry.
+  string connection_id = 1;
+  // The connection's human-friendly label, resolved from the FIX connection
+  // registry; empty when the id names no managed connection (a book member that
+  // does not correspond to a defined connection — a misconfiguration the panel
+  // exists to surface).
+  string name = 2;
+  // The owning desk id, from the connection registry; empty when unrouted or
+  // unresolved.
+  string desk = 3;
+  // Whether a managed connection with this id exists at all. False ⇒ the id is a
+  // book member with no connection behind it.
+  bool connection_defined = 4;
+  // Whether the connection is enabled (the operator's on/off switch).
+  bool enabled = 5;
+  // Whether its acceptor is currently bound and listening.
+  bool running = 6;
+  // The aggregated books that list this provider as a member (enabled books only
+  // — a disabled book stands up no engine and consumes no liquidity). Empty ⇒ the
+  // provider feeds nothing: its pushes are dropped at ingest.
+  repeated string book_ids = 7;
+  // Lifetime count of accepted quote-update pushes from this provider since the
+  // edge started. A client deltas this across polls to render a tick RATE.
+  uint64 quote_updates = 8;
+  // The most recent observation instant across this provider's live quotes,
+  // epoch nanoseconds (UTC). 0 ⇒ it has never quoted.
+  int64 last_quote_nanos = 9;
+  // Distinct instruments this provider currently shows a live two-way on.
+  uint32 instruments_quoted = 10;
+  // Live quotes currently CONTRIBUTING to a composite (not aged out past the
+  // book's max quote age, not gated as a divergent outlier).
+  uint32 fresh_quotes = 11;
+  // Live quotes currently EXCLUDED from the composite (stale or divergent).
+  uint32 stale_quotes = 12;
+  // Instruments where this provider is setting the consolidated best bid.
+  uint32 best_bid_count = 13;
+  // Instruments where this provider is setting the consolidated best offer.
+  uint32 best_offer_count = 14;
+  // Mean normalized composite weight across this provider's contributing quotes,
+  // `∈ [0, 1]` — how much of the composite mid it actually drives. 0 when it
+  // contributes nothing.
+  double mean_weight = 15;
+}
+
+// One live quote a provider is currently showing, with the consolidation verdict
+// the composite reached on it. The per-provider drill-down.
+message LiquidityProviderQuote {
+  // The aggregated book this quote was consolidated into.
+  string book_id = 1;
+  // The canonical server `instrument_id`.
+  string instrument_id = 2;
+  // Human-friendly instrument label from reference data (empty if unresolved).
+  string display_name = 3;
+  // The provider's own bid.
+  double bid = 4;
+  // The provider's own offer.
+  double offer = 5;
+  // Firm size available at its bid.
+  double bid_size = 6;
+  // Firm size available at its offer.
+  double offer_size = 7;
+  // The quote's observation instant, epoch nanoseconds (UTC).
+  int64 ts_nanos = 8;
+  // The quote's age in seconds at the valuation instant.
+  double age_secs = 9;
+  // Final normalized weight in the composite mid (0 when excluded).
+  double weight = 10;
+  // Absolute deviation of this provider's mid from the robust consensus, in mid
+  // units. NaN when the provider never entered the consensus.
+  double deviation = 11;
+  // Why the provider was excluded from the composite, or empty when it
+  // contributed (`stale` past the book's max quote age, `divergent` when gated
+  // as an outlier, `non_finite` for an unusable quote).
+  string excluded = 12;
+  // Whether this provider is setting the consolidated best bid.
+  bool best_bid = 13;
+  // Whether this provider is setting the consolidated best offer.
+  bool best_offer = 14;
+}
+
+// Read the inbound-liquidity panel.
+message ListLiquidityProvidersRequest {
+  // When set, the response additionally carries this provider's per-instrument
+  // drill-down (`quotes`). Absent ⇒ the roster only, so the panel's default poll
+  // stays bounded by the provider count rather than instruments × providers.
+  optional string connection_id = 1;
+  // The client-asserted entitlement principal (`manage_liquidity`-gated).
+  optional EntitlementPrincipal principal = 2;
+  // Echoed back so a multiplexed client joins reply to request.
+  optional uint64 correlation_id = 3;
+  // The bearer session token from `AuthService.Login`; the server authenticates
+  // the caller from it. A secret.
+  optional string session_token = 4;
+}
+// The inbound-liquidity roster and (optionally) one provider's live quotes.
+message ListLiquidityProvidersResponse {
+  // One row per provider, in `connection_id` order.
+  repeated LiquidityProviderDesc providers = 1;
+  // The requested provider's live quotes, in (`book_id`, `instrument_id`) order.
+  // Empty unless the request named a `connection_id`.
+  repeated LiquidityProviderQuote quotes = 2;
+  // Whether the firm-wide INBOUND ingest kill-switch is currently enabled. False
+  // ⇒ every inbound push is being dropped, so the whole panel is going stale by
+  // design — the first thing an operator needs to know.
+  bool inbound_enabled = 3;
+  // The valuation instant the ages/verdicts were computed at, epoch nanoseconds
+  // (UTC) — the client's basis for deltaing `quote_updates` into a rate.
+  int64 as_of_nanos = 4;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 5;
+}
+
 // Manage the inbound FIX acceptor connections the edge binds (admin surface,
 // entitlement-gated like RiskService). Definitions persist to disk and auto-load
 // on startup; create/update/enable/delete take effect at runtime.
 service FixAdminService {
   // List all managed connections with their live status.
   rpc ListConnections(ListFixConnectionsRequest) returns (ListFixConnectionsResponse);
+  // Read the inbound-liquidity panel: per-provider feed health folded across the
+  // enabled aggregated books, plus one provider's live quotes on request.
+  rpc ListLiquidityProviders(ListLiquidityProvidersRequest) returns (ListLiquidityProvidersResponse);
   // Define a new connection (binds immediately when enabled).
   rpc CreateConnection(CreateFixConnectionRequest) returns (CreateFixConnectionResponse);
   // Replace an existing connection's definition (restarts the acceptor).

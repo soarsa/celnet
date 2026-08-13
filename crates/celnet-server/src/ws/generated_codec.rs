@@ -42,19 +42,21 @@ use celnet_proto::{
     DeleteFixConnectionResponse, Digital, DoubleBarrier, EntitlementPrincipal, EntitlementRule,
     EquityRef, Execution, FixConnectionDesc, FixConnectionSpec, FixMessage, FixingSchedule,
     ForwardStart, FraInstrument, FxForward, FxSwap, Greeks, Instrument, JointTailScenario, Leg,
-    ListFixConnectionsRequest, ListFixConnectionsResponse, ListFixMessagesRequest,
-    ListFixMessagesResponse, ListedFutureOption, Lookback, MarketContext, MetalPair,
-    MultiDealerQuote, Ndf, OisFixedPeriod, OisInstrument, OisPillar, OisSwapLeg, Owner,
-    PerpetualOption, PillarTenor, Pivot, PriceRequest, PriceResponse, PriceXvaRequest,
-    PriceXvaResponse, Quantity, Quanto, Quote, QuoteAccept, QuoteReject, QuoteRequest,
-    RateSensitivities, RatesInstrument, RatesPriceRequest, RatesPriceResponse, RatesPricingResult,
-    RatesQuote, RatesQuoteRequest, RejectAck, RiskScope, SetFixConnectionEnabledRequest,
-    SetFixConnectionEnabledResponse, SingleBarrier, Solve, Strategy, StrikeOrDelta, Symbol,
-    TailRiskCurvePillar, TailRiskFiPosition, TailRiskKeyRate, TailRiskOptionLeg, Tarf, Tenor,
-    Touch, TwoWayPrice, Underlying, UpdateFixConnectionRequest, UpdateFixConnectionResponse,
-    Vanilla, VanillaIrsInstrument, VarEs, VarianceSwap, VolatilitySwap, WindowBarrier,
-    XvaResult as WireXvaResult, XvaSurvivalCurve, XvaTrade, instrument, pillar_tenor,
-    rate_sensitivities, rates_instrument, strike_or_delta, tail_risk_fi_position,
+    LiquidityProviderDesc, LiquidityProviderQuote, ListFixConnectionsRequest,
+    ListFixConnectionsResponse, ListFixMessagesRequest, ListFixMessagesResponse,
+    ListLiquidityProvidersRequest, ListLiquidityProvidersResponse, ListedFutureOption, Lookback,
+    MarketContext, MetalPair, MultiDealerQuote, Ndf, OisFixedPeriod, OisInstrument, OisPillar,
+    OisSwapLeg, Owner, PerpetualOption, PillarTenor, Pivot, PriceRequest, PriceResponse,
+    PriceXvaRequest, PriceXvaResponse, Quantity, Quanto, Quote, QuoteAccept, QuoteReject,
+    QuoteRequest, RateSensitivities, RatesInstrument, RatesPriceRequest, RatesPriceResponse,
+    RatesPricingResult, RatesQuote, RatesQuoteRequest, RejectAck, RiskScope,
+    SetFixConnectionEnabledRequest, SetFixConnectionEnabledResponse, SingleBarrier, Solve,
+    Strategy, StrikeOrDelta, Symbol, TailRiskCurvePillar, TailRiskFiPosition, TailRiskKeyRate,
+    TailRiskOptionLeg, Tarf, Tenor, Touch, TwoWayPrice, Underlying, UpdateFixConnectionRequest,
+    UpdateFixConnectionResponse, Vanilla, VanillaIrsInstrument, VarEs, VarianceSwap,
+    VolatilitySwap, WindowBarrier, XvaResult as WireXvaResult, XvaSurvivalCurve, XvaTrade,
+    instrument, pillar_tenor, rate_sensitivities, rates_instrument, strike_or_delta,
+    tail_risk_fi_position,
 };
 // Wave-3 verb families (arch item G — `ws-codec-from-proto`): the surface
 // (`GetSmile`/`MarkSurface`/`Scenario`), server-side risk (`ListPositions` /
@@ -2845,6 +2847,20 @@ impl WireBuilder for FixConnectionSpec {
     }
 }
 
+impl WireBuilder for ListLiquidityProvidersRequest {
+    const MESSAGE: &'static str = "ListLiquidityProvidersRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "connection_id" => self.connection_id = opt_string(value, "connection_id")?,
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for ListFixConnectionsRequest {
     const MESSAGE: &'static str = "ListFixConnectionsRequest";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -3028,6 +3044,87 @@ impl WireAdapter for FixMessage {
             _ => None,
         }
     }
+}
+
+/// Decode a [`ListLiquidityProvidersRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A malformed `principal` body, as a [`CodecError`].
+pub fn decode_list_liquidity_providers_request(
+    o: &Map<String, Value>,
+) -> DResult<ListLiquidityProvidersRequest> {
+    decode(ListLiquidityProvidersRequest::MESSAGE, o)
+}
+
+impl WireAdapter for LiquidityProviderDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "connection_id" => Some(WireVal::Str(&self.connection_id)),
+            "name" => Some(WireVal::Str(&self.name)),
+            "desk" => Some(WireVal::Str(&self.desk)),
+            "connection_defined" => Some(WireVal::Bool(self.connection_defined)),
+            "enabled" => Some(WireVal::Bool(self.enabled)),
+            "running" => Some(WireVal::Bool(self.running)),
+            "book_ids" => Some(WireVal::RepeatedStr(&self.book_ids)),
+            "quote_updates" => Some(WireVal::U64(self.quote_updates)),
+            "last_quote_nanos" => Some(WireVal::I64(self.last_quote_nanos)),
+            "instruments_quoted" => Some(WireVal::U64(u64::from(self.instruments_quoted))),
+            "fresh_quotes" => Some(WireVal::U64(u64::from(self.fresh_quotes))),
+            "stale_quotes" => Some(WireVal::U64(u64::from(self.stale_quotes))),
+            "best_bid_count" => Some(WireVal::U64(u64::from(self.best_bid_count))),
+            "best_offer_count" => Some(WireVal::U64(u64::from(self.best_offer_count))),
+            "mean_weight" => Some(WireVal::F64(self.mean_weight)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for LiquidityProviderQuote {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "book_id" => Some(WireVal::Str(&self.book_id)),
+            "instrument_id" => Some(WireVal::Str(&self.instrument_id)),
+            "display_name" => Some(WireVal::Str(&self.display_name)),
+            "bid" => Some(WireVal::F64(self.bid)),
+            "offer" => Some(WireVal::F64(self.offer)),
+            "bid_size" => Some(WireVal::F64(self.bid_size)),
+            "offer_size" => Some(WireVal::F64(self.offer_size)),
+            "ts_nanos" => Some(WireVal::I64(self.ts_nanos)),
+            "age_secs" => Some(WireVal::F64(self.age_secs)),
+            "weight" => Some(WireVal::F64(self.weight)),
+            "deviation" => Some(WireVal::F64(self.deviation)),
+            "excluded" => Some(WireVal::Str(&self.excluded)),
+            "best_bid" => Some(WireVal::Bool(self.best_bid)),
+            "best_offer" => Some(WireVal::Bool(self.best_offer)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListLiquidityProvidersResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "providers" => Some(WireVal::RepeatedMsg(
+                self.providers
+                    .iter()
+                    .map(|p| p as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "quotes" => Some(WireVal::RepeatedMsg(
+                self.quotes.iter().map(|q| q as &dyn WireAdapter).collect(),
+            )),
+            "inbound_enabled" => Some(WireVal::Bool(self.inbound_enabled)),
+            "as_of_nanos" => Some(WireVal::I64(self.as_of_nanos)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+/// Encode a [`ListLiquidityProvidersResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_liquidity_providers_response(r: &ListLiquidityProvidersResponse) -> Value {
+    encode("ListLiquidityProvidersResponse", r)
 }
 
 impl WireAdapter for ListFixConnectionsResponse {

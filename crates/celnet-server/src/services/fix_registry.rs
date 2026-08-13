@@ -188,6 +188,14 @@ impl FixAcceptorRegistry {
         let _ = self.aggregation_hub.set(hub);
     }
 
+    /// The injected aggregation hub, or `None` when the edge runs without one (the
+    /// standalone demo path). Read by the inbound-liquidity panel, which folds the
+    /// hub's per-LP feed state onto the connection roster this registry owns.
+    #[must_use]
+    pub fn aggregation_hub(&self) -> Option<Arc<crate::services::aggregation::AggregationHub>> {
+        self.aggregation_hub.get().cloned()
+    }
+
     /// Inject the firm-wide runtime pricing kill-switch each managed acceptor's outbound
     /// pricing is gated by. Called once at boot after the control is built, before
     /// [`Self::start_enabled`]. Idempotent (set-once); absent ⇒ acceptors keep the

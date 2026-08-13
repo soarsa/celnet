@@ -1171,6 +1171,19 @@ async fn handle_unary(
                 generated_codec::encode_list_fix_connections_response
             )
         }
+        // The inbound-liquidity panel read. Same `manage_liquidity` boundary as the
+        // connection administration it reports on — enforced inside the service, so
+        // the gRPC front and this WS mirror share one decision.
+        "list_liquidity_providers" => {
+            let req = decode!(generated_codec::decode_list_liquidity_providers_request(o));
+            call!(
+                services
+                    .fix_admin
+                    .list_liquidity_providers(Request::new(req)),
+                "liquidity_providers",
+                generated_codec::encode_list_liquidity_providers_response
+            )
+        }
         "create_fix_connection" => {
             let req = decode!(generated_codec::decode_create_fix_connection_request(o));
             call!(
