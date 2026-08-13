@@ -842,7 +842,7 @@ function VehiclesTab({
 
 /**
  * ExitModeTab — the per-scope AUTO-vs-SUGGEST bindings ({@link ExitModeConfig}). SUGGEST
- * means the sized hedge lands as a STANDING row on Risk → Hedge flows, never as a popup.
+ * means the sized hedge lands as a STANDING row on Fixed Income → Book → Hedge flows, never as a popup.
  */
 function ExitModeTab({
   app,
@@ -926,7 +926,7 @@ function ExecutionTab({
           How the engine ACTS on the policy: the kill-switch, the execution mode (Advisory dry-run vs
           LP&nbsp;panel / Composite / LP&nbsp;panel&nbsp;→&nbsp;Composite), and the max-clip / max-hedges /
           daily-cap guard-rails. Run Advisory while you calibrate, then arm a live mode. Watch the fired
-          hedges under <strong>Risk → Hedge flows</strong>.{" "}
+          hedges under <strong>Fixed Income → Book → Hedge flows</strong>.{" "}
           {readOnly ? "Read-only view." : "hedge · FI edit."}
         </p>
         <HelpButton helpId="concept.hedge-execution-mode" subject="the hedge execution mode" />

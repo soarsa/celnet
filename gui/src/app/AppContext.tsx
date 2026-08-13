@@ -86,6 +86,7 @@ export type WorkspaceId =
   | "tiering"
   | "riskbooks"
   | "riskdashboard"
+  | "filedgers"
   | "riskrouting"
   | "hedging"
   | "acceptance"

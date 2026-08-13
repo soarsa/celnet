@@ -186,7 +186,7 @@ const TOUR_LIST: readonly Tour[] = [
     steps: [
       {
         title: "Configure auto-hedging",
-        body: "The idea in one line: internalise the risk you capture up to a threshold, then hedge the overflow above it. We'll walk the Hedging Rules tabs — Thresholds (the budget), Exit Policy (the rules), and Execution mode (arming). The LIVE monitor lives under Risk → Hedge flows (the last step points you there). Authoring needs the hedge · FI capability; without it every tab is read-only.",
+        body: "The idea in one line: internalise the risk you capture up to a threshold, then hedge the overflow above it. We'll walk the Hedging Rules tabs — Thresholds (the budget), Exit Policy (the rules), and Execution mode (arming). The LIVE monitor lives under Fixed Income → Book → Hedge flows (the last step points you there). Authoring needs the hedge · FI capability; without it every tab is read-only.",
         placement: "center",
       },
       {
@@ -225,8 +225,8 @@ const TOUR_LIST: readonly Tour[] = [
         placement: "bottom",
       },
       {
-        title: "Step 6 — watch it fire under Risk → Hedge flows",
-        body: "The live monitor is no longer part of Hedging Rules — it moved to the Risk surface's “Hedge flows” tab (open Fixed Income → Risk → Hedge flows). It shows the engine-status strip, the per-book RAG strip (latest band + utilisation %), the live advisory-intent stream (each row badged ADVISORY when armed dry-run), and the fired-provenance audit trail (When · Book · instrument · Band · Action · Internal · External · LP · Mode) — the immutable answer to “why did the system hedge this book, at what price, on whose policy?”. The executed-hedge ledger sits alongside it as “Hedge blotter”. Confirm the bands and intents there before you arm live.",
+        title: "Step 6 — watch it fire under Fixed Income → Book → Hedge flows",
+        body: "The live monitor is no longer part of Hedging Rules — it moved to the Risk surface's “Hedge flows” tab (open Fixed Income → Fixed Income → Book → Hedge flows). It shows the engine-status strip, the per-book RAG strip (latest band + utilisation %), the live advisory-intent stream (each row badged ADVISORY when armed dry-run), and the fired-provenance audit trail (When · Book · instrument · Band · Action · Internal · External · LP · Mode) — the immutable answer to “why did the system hedge this book, at what price, on whose policy?”. The executed-hedge ledger sits alongside it as “Hedge blotter”. Confirm the bands and intents there before you arm live.",
         placement: "center",
       },
     ],

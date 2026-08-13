@@ -293,39 +293,41 @@ describe("RiskDashboardWorkspace", () => {
 describe("RiskDashboardWorkspace — the consolidated 9-way Risk host", () => {
   const emptyBooks = { risk: [] as RiskBookRisk[], books: [] as RiskBook[] };
 
-  it("renders all nine tab toggles for an admin, defaulting to Dashboard", async () => {
-    state.app = makeApp(emptyBooks); // admin can() => true ⇒ every tab visible
+  it("splits management tabs (Risk) from ledger tabs (Fixed Income → Book)", async () => {
+    state.app = makeApp(emptyBooks); // admin can() => true ⇒ every tab its host presents
+    const MGMT = ["dashboard", "portfolios", "routing", "acceptance"] as const;
+    const LEDGER = ["positions", "quotes", "clientblotter", "hedgeblotter", "hedgeflows"] as const;
+
+    // The Risk host presents the four MANAGEMENT tabs and NONE of the ledgers — the
+    // ledgers moved to the Fixed-Income "Book" host. An admin sees everything each host
+    // presents, so a missing tab here is a routing fault, never a capability one.
     await act(async () => {
       render(<RiskDashboardWorkspace />);
     });
-    // The FI position-ledger views (Positions/Quotes/Client blotter) are TOP-LEVEL
-    // tabs; the old "Scenario" tab (and its FI netted rates scenario-risk surface) is
-    // gone. The hedge side — Hedge blotter (executed hedges) + Hedge flows (the live
-    // monitor moved from the Hedging Rules surface) — are the last two tabs.
-    for (const tab of [
-      "dashboard",
-      "portfolios",
-      "routing",
-      "acceptance",
-      "positions",
-      "quotes",
-      "clientblotter",
-      "hedgeblotter",
-      "hedgeflows",
-    ] as const) {
-      expect(screen.getByTestId(`risk-tab-${tab}`)).toBeInTheDocument();
-    }
-    expect(screen.queryByTestId("risk-tab-scenario")).not.toBeInTheDocument();
-    // The old single "Deals" tab is replaced by the split Client/Hedge blotters.
-    expect(screen.queryByTestId("risk-tab-deals")).not.toBeInTheDocument();
+    for (const tab of MGMT) expect(screen.getByTestId(`risk-tab-${tab}`)).toBeInTheDocument();
+    for (const tab of LEDGER) expect(screen.queryByTestId(`risk-tab-${tab}`)).toBeNull();
+    // The retired sub-views stay retired.
+    expect(screen.queryByTestId("risk-tab-scenario")).toBeNull();
+    expect(screen.queryByTestId("risk-tab-deals")).toBeNull();
     // Default lands on Dashboard (the routed-risk roll-up).
     expect(screen.getByTestId("risk-tab-dashboard")).toHaveAttribute("aria-pressed", "true");
+
+    cleanup();
+
+    // The ledger host is the mirror image: the five blotters, none of the management
+    // tabs, defaulting to Positions (its own first tab, not the other host's default).
+    await act(async () => {
+      render(<RiskDashboardWorkspace variant="ledgers" />);
+    });
+    for (const tab of LEDGER) expect(screen.getByTestId(`risk-tab-${tab}`)).toBeInTheDocument();
+    for (const tab of MGMT) expect(screen.queryByTestId(`risk-tab-${tab}`)).toBeNull();
+    expect(screen.getByTestId("risk-tab-positions")).toHaveAttribute("aria-pressed", "true");
   });
 
   it("mounts the split blotters + the self-fetching monitor on their tabs", async () => {
     state.app = makeApp(emptyBooks);
     await act(async () => {
-      render(<RiskDashboardWorkspace />);
+      render(<RiskDashboardWorkspace variant="ledgers" />);
     });
 
     // Client blotter → the received (client) deals blotter, WITHOUT the client/hedge
@@ -376,9 +378,8 @@ describe("RiskDashboardWorkspace — the consolidated 9-way Risk host", () => {
 
   it("hides the Acceptance tab from a risk_manage holder lacking manage_acceptance", async () => {
     // risk_manage·FI (reaches the host + Dashboard/Portfolios/Routing) but NOT
-    // manage_acceptance and NOT hedge ⇒ the Acceptance tab AND the Hedge flows tab are
-    // hidden; the ledger tabs (Positions/Quotes/Client blotter/Hedge blotter) stay
-    // (view floor).
+    // manage_acceptance ⇒ the Acceptance tab is hidden. The ledger tabs are no longer
+    // on this host at all — they live on the Fixed-Income "Book" host.
     state.app = makeApp({
       ...emptyBooks,
       auth: {
@@ -391,20 +392,10 @@ describe("RiskDashboardWorkspace — the consolidated 9-way Risk host", () => {
     await act(async () => {
       render(<RiskDashboardWorkspace />);
     });
-    for (const tab of [
-      "dashboard",
-      "portfolios",
-      "routing",
-      "positions",
-      "quotes",
-      "clientblotter",
-      "hedgeblotter",
-    ] as const) {
+    for (const tab of ["dashboard", "portfolios", "routing"] as const) {
       expect(screen.getByTestId(`risk-tab-${tab}`)).toBeInTheDocument();
     }
     expect(screen.queryByTestId("risk-tab-acceptance")).not.toBeInTheDocument();
-    // Hedge flows is hedge-gated (the hedge-engine monitor) — hidden without `hedge`.
-    expect(screen.queryByTestId("risk-tab-hedgeflows")).not.toBeInTheDocument();
     // Default Dashboard still active (it is visible for this identity).
     expect(screen.getByTestId("risk-tab-dashboard")).toHaveAttribute("aria-pressed", "true");
   });
@@ -430,8 +421,9 @@ describe("RiskDashboardWorkspace — the consolidated 9-way Risk host", () => {
 
   it("shows a view-only FI trader ONLY the ledger tabs (Positions/Quotes/Client blotter/Hedge blotter — the view floor)", async () => {
     // A booking-only FI trader (view·FI, no risk_manage / manage_acceptance / hedge)
-    // sees only the four view-floor ledger tabs and clamps onto the first (Positions) —
-    // the rates position ledger mounts.
+    // reaches the LEDGER host and sees the four view-floor tabs. This identity holds no
+    // `risk_manage`, so under the old combined host the whole surface was out of reach —
+    // splitting the ledgers onto the `view` floor is exactly what makes them reachable.
     state.app = makeApp({
       ...emptyBooks,
       auth: {
@@ -441,14 +433,14 @@ describe("RiskDashboardWorkspace — the consolidated 9-way Risk host", () => {
       },
     });
     await act(async () => {
-      render(<RiskDashboardWorkspace />);
+      render(<RiskDashboardWorkspace variant="ledgers" />);
     });
     for (const tab of ["positions", "quotes", "clientblotter", "hedgeblotter"] as const) {
       expect(screen.getByTestId(`risk-tab-${tab}`)).toBeInTheDocument();
     }
     // Clamps onto the first visible tab (Positions), never an empty pane.
     expect(screen.getByTestId("risk-tab-positions")).toHaveAttribute("aria-pressed", "true");
-    // Hedge flows needs `hedge`; the management tabs need their own caps — all hidden.
+    // Hedge flows needs `hedge` (hidden here); the management tabs are on the other host.
     for (const tab of ["dashboard", "portfolios", "routing", "acceptance", "hedgeflows"] as const) {
       expect(screen.queryByTestId(`risk-tab-${tab}`)).not.toBeInTheDocument();
     }

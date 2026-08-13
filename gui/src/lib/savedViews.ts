@@ -45,6 +45,7 @@ export type WorkspaceId =
   | "tiering"
   | "riskbooks"
   | "riskdashboard"
+  | "filedgers"
   | "riskrouting"
   | "hedging"
   | "acceptance"
@@ -76,6 +77,7 @@ const WORKSPACES: readonly WorkspaceId[] = [
   "tiering",
   "riskbooks",
   "riskdashboard",
+  "filedgers",
   "riskrouting",
   "hedging",
   "acceptance",

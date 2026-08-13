@@ -122,6 +122,12 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // manage_acceptance / view). The retired `riskbooks` / `riskrouting` / `acceptance`
   // ids deep-link straight onto their folded tab.
   riskdashboard: RiskDashboardWorkspace,
+  // The FI LEDGER host ("Book") — the SAME tabbed shell mounted with its ledger tab set
+  // (Positions · Quotes · Client blotter · Hedge blotter · Hedge flows). One component,
+  // two tab sets: the blotters and the risk-management views share every grid, filter
+  // and live-subscription behaviour, so splitting the NAVIGATION does not fork the
+  // implementation. FI-only; each tab keeps its original gate.
+  filedgers: () => <RiskDashboardWorkspace variant="ledgers" />,
   // Risk Routing is CONSOLIDATED into the "Risk" host as its "Routing" tab (no
   // standalone rail row). This id stays valid so any deep-link lands straight on that
   // tab within the merged surface. FI-only.

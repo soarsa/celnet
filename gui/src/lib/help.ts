@@ -789,13 +789,13 @@ const ENTRY_LIST: readonly HelpEntry[] = [
     title: "Exit mode — auto vs suggest",
     purpose: "Decide whether a resolved hedge fires by itself, or waits for you as a standing row.",
     howItWorks:
-      "AUTO is the existing behaviour: a breach resolves the exit policy and trades. SUGGEST changes only the last step — the engine still measures the book, still resolves the policy and still SIZES the hedge in its vehicle, then trades nothing and publishes a STANDING suggestion onto Risk → Hedge flows with a “Hedge now” button beside it. It is deliberately NOT a confirmation dialog: nothing pops up, nothing interrupts, and the row is not lost if you ignore it. That is the point — a modal is dismissed reflexively and takes the decision with it, whereas a standing row waits until someone acts on it. Bindings use the same desk / book / instrument scoping and the same most-specific-wins resolution (instrument > book > desk) as the warehouse thresholds and the LP panels. An unbound scope is Auto.",
+      "AUTO is the existing behaviour: a breach resolves the exit policy and trades. SUGGEST changes only the last step — the engine still measures the book, still resolves the policy and still SIZES the hedge in its vehicle, then trades nothing and publishes a STANDING suggestion onto Fixed Income → Book → Hedge flows with a “Hedge now” button beside it. It is deliberately NOT a confirmation dialog: nothing pops up, nothing interrupts, and the row is not lost if you ignore it. That is the point — a modal is dismissed reflexively and takes the decision with it, whereas a standing row waits until someone acts on it. Bindings use the same desk / book / instrument scoping and the same most-specific-wins resolution (instrument > book > desk) as the warehouse thresholds and the LP panels. An unbound scope is Auto.",
     example: {
       scenario: "The credit book is bound to SUGGEST; the rates book is left on AUTO.",
       rows: [
         { label: "Rates book breaches", value: "policy resolves → hedge TRADES immediately" },
         { label: "Credit book breaches", value: "policy resolves, hedge is sized — nothing trades" },
-        { label: "What you see", value: "a standing row on Risk → Hedge flows: “Sell 318 contracts of TY-DEC26”" },
+        { label: "What you see", value: "a standing row on Fixed Income → Book → Hedge flows: “Sell 318 contracts of TY-DEC26”" },
         { label: "Hedge now", value: "fires the sized hedge — no confirmation step" },
         { label: "Dismiss", value: "drops the row and trades nothing" },
         { label: "Ignore it", value: "the row stays; nothing is lost" },
@@ -807,7 +807,7 @@ const ENTRY_LIST: readonly HelpEntry[] = [
       "Press “+ Bind a scope” and pick desk, book or instrument, then its id.",
       "Choose Auto (fire on breach) or Suggest (raise a standing row).",
       "Save; the binding is committed with the rest of the engine config.",
-      "Watch the standing rows under Risk → Hedge flows → Suggestions.",
+      "Watch the standing rows under Fixed Income → Book → Hedge flows → Suggestions.",
     ],
     whenToUse:
       "Use Suggest where a hedge deserves a human eye before it goes out — a benchmark-future hedge on an illiquid corporate, an unusually large clip, or a book you are still calibrating. Keep Auto where the flow is routine and latency matters.",
@@ -838,7 +838,7 @@ const ENTRY_LIST: readonly HelpEntry[] = [
       takeaway: "The headline is what to do; the residual and the warning are what it will NOT do.",
     },
     howToConfigure: [
-      "Open Risk → Hedge flows; standing suggestions sit at the top under “Suggestions”.",
+      "Open Fixed Income → Book → Hedge flows; standing suggestions sit at the top under “Suggestions”.",
       "Read the headline, then check the residual's wording — under-hedged or over-hedged.",
       "If the approximate-size warning is present, verify the size against your own duration before acting.",
       "Press “Hedge now” to fire it, or “Dismiss” to drop it. Neither asks for confirmation.",

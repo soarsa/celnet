@@ -52,6 +52,7 @@ export type WorkspaceId =
   | "tiering"
   | "riskbooks"
   | "riskdashboard"
+  | "filedgers"
   | "riskrouting"
   | "hedging"
   | "acceptance"
@@ -239,7 +240,20 @@ export const RAIL: readonly {
   // Cross-asset now that a portfolio declares the franchise it buckets, so it serves BOTH
   // classes and its viewCap is an any-of over both — `risk_manage` on EITHER reveals the
   // row, matching `domainAccessible("risk")` so the tab and the rail agree.
-  { id: "riskdashboard", glyph: "◉", label: "Risk", subtitle: "Dashboard · portfolios · routing · acceptance · positions · quotes · deals", section: "risk", assets: CAPABILITY_ASSETS, viewCap: { action: "risk_manage", asset: CAPABILITY_ASSETS } },
+  { id: "riskdashboard", glyph: "◉", label: "Risk", subtitle: "Dashboard · portfolios · routing · acceptance", section: "risk", assets: CAPABILITY_ASSETS, viewCap: { action: "risk_manage", asset: CAPABILITY_ASSETS } },
+  // The FI LEDGER host — the read-side blotters (Positions · Quotes · Client blotter ·
+  // Hedge blotter · Hedge flows) that previously sat as tabs on the "Risk" host. Split
+  // out because the two answer different questions for different people: "Risk" is how
+  // the desk is CONFIGURED (portfolios / routing / acceptance — `risk_manage`-class,
+  // touched rarely by a risk manager), these are what actually HAPPENED (the per-deal
+  // record a trader reads all day). Nine tabs on one strip served neither.
+  //
+  // Single-asset FI and deliberately carries NO `viewCap`: the four ledgers sit on the
+  // `view·FI` floor and the Hedge-flows tab gates internally on `hedge`, so an ordinary
+  // FI trader reaches their own blotters WITHOUT the `risk_manage` grant the Risk host
+  // demands. That is the point of the split — the ledgers stop being gated behind a
+  // risk-management capability a booking trader has no reason to hold.
+  { id: "filedgers", glyph: "≣", label: "Book", subtitle: "Positions · quotes · client & hedge blotters", section: "risk", assets: ["fixed_income"] },
   // Auto-Hedging (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md): the
   // trader-composed EXIT-POLICY graph (internalise below the threshold, hedge the
   // overflow above), the warehouse-threshold config, and the live hedge monitor.

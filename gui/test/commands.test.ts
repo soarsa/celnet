@@ -368,9 +368,13 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
         // "tiering" is CONSOLIDATED into the "Pricing" workspace as its "Tiering" tab —
         // no standalone rail row (the id deep-links to that tab).
         // "riskdashboard" (with its consolidated "riskbooks" / "riskrouting" /
-        // "acceptance" tabs) is NO LONGER an FI rail row: firm-wide risk management is
+        // "acceptance" tabs) is NO LONGER an FI rail row: firm-wide risk MANAGEMENT is
         // hoisted to its own top-level Risk tab, beside Hedging. Each portfolio now
         // declares the franchise it buckets, so one surface carries both classes.
+        // "filedgers" IS an FI row — the read-side LEDGER host ("Book") split back out
+        // of that management surface: positions / quotes / client + hedge blotters /
+        // hedge flows, on the `view·FI` floor rather than behind `risk_manage`.
+        "filedgers",
         // Risk Transfer is CONSOLIDATED into ONE row: the initiate ticket + inbox +
         // audit are tabs of the "risktransfer" host. The former "transferinbox" /
         // "transferaudit" rows are retired (deep-link aliases to that host).
@@ -550,12 +554,14 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
   it("the Fixed-Income rail groups into the four labelled sections, in order", () => {
     const groups = railSections(visible("fixed_income", signedOut));
     // NOTE: signed-out `can` is permissive, so the viewCap-gated Pricing rows ARE
-    // visible here. There is NO "Risk" section under Fixed Income any more: its only
-    // row (riskdashboard) is hoisted to the top-level Risk tab, so FI shows four
-    // sections (incl. Reference Data holding Corporate Actions).
+    // visible here. FI carries a "Risk" section holding exactly ONE row — the LEDGER
+    // host ("Book": positions / quotes / client + hedge blotters / hedge flows). The
+    // MANAGEMENT host (riskdashboard: portfolios / routing / acceptance / dashboard)
+    // is hoisted to the top-level Risk tab and does NOT appear here.
     expect(groups.map((g) => g.section.label)).toEqual([
       "Markets & Liquidity",
       "Pricing",
+      "Risk",
       "Transfers",
       "Reference Data",
     ]);
@@ -565,11 +571,11 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
     expect(byLabel("Markets & Liquidity")).toEqual(["fistreaming", "aggbook", "surface", "quoting"]);
     // "tiering" is folded into "pricinggroups" as its Tiering tab — one Pricing row.
     expect(byLabel("Pricing")).toEqual(["pricinggroups"]);
-    // There is NO FI "Risk" section: the consolidated "riskdashboard" host (Portfolios /
-    // Routing / Acceptance / Positions / Quotes / Deals) is hoisted to its own top-level
-    // Risk tab beside Hedging, so it renders under that domain instead. The cross-asset
-    // "risk" Scenario grid stays dropped from the FI rail.
-    expect(groups.some((g) => g.section.label === "Risk")).toBe(false);
+    // The FI "Risk" section holds the LEDGER host ONLY. The management host
+    // ("riskdashboard") is hoisted to its own top-level Risk tab beside Hedging, and the
+    // cross-asset "risk" Scenario grid stays dropped from the FI rail.
+    expect(byLabel("Risk")).toEqual(["filedgers"]);
+    expect(groups.some((g) => g.rows.some((r) => r.id === "riskdashboard"))).toBe(false);
     expect(railForDomain("risk").map((r) => r.id)).toEqual(["riskdashboard"]);
     // Risk Transfer is CONSOLIDATED into ONE row (initiate + inbox + audit as tabs);
     // the former "transferinbox" / "transferaudit" rows are retired deep-link aliases.
@@ -608,11 +614,14 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
     expect(labels).not.toContain("Pricing");
     // Every rendered group is non-empty (the empty-section invariant).
     for (const g of groups) expect(g.rows.length).toBeGreaterThan(0);
-    // The FI "Risk" section ALSO vanishes for a view-only trader: the only FI Risk row
-    // is the consolidated "riskdashboard" host, gated on `risk_manage·FI` — hidden here
-    // — and the cross-asset "risk" Scenario grid is off the FI rail (DOMAIN_RAIL_EXCLUDED).
-    // So the section header drops entirely.
-    expect(labels).not.toContain("Risk");
+    // The FI "Risk" section SURVIVES for a view-only trader — and that is precisely the
+    // point of splitting the ledgers out of the management host. The ledger row carries
+    // no viewCap, so it sits on the `view·FI` floor: a booking trader reaches their own
+    // positions and blotters WITHOUT the `risk_manage` grant the old combined host
+    // demanded. The management host itself stays hidden (still `risk_manage`-gated).
+    expect(labels).toContain("Risk");
+    const riskRows = groups.find((g) => g.section.label === "Risk")!.rows.map((r) => r.id);
+    expect(riskRows).toEqual(["filedgers"]);
     // Markets survives too (Agg Book / Market Data are plain view·FI).
     expect(labels).toContain("Markets & Liquidity");
   });

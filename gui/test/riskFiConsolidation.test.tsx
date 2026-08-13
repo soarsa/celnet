@@ -70,13 +70,17 @@ async function seededDeskTransport(): Promise<MockTransport> {
   return t;
 }
 
-/** Render the consolidated Risk panel under Fixed Income, backed by the transport. */
+/**
+ * Render the Fixed-Income LEDGER panel ("Book"), backed by the transport. These are the
+ * read-side blotters — they host under Fixed Income, NOT under the top-level Risk tab
+ * (which keeps only the management views: dashboard / portfolios / routing / acceptance).
+ */
 async function renderRiskPanel(transport: MockTransport): Promise<void> {
   window.history.replaceState(null, "", "/?mock&dom=fixed_income");
   await act(async () => {
     render(
       <AppProvider transport={transport}>
-        <RiskDashboardWorkspace />
+        <RiskDashboardWorkspace variant="ledgers" />
       </AppProvider>,
     );
   });

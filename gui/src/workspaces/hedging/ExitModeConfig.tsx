@@ -101,7 +101,7 @@ export function ExitModeConfig({
         existing behaviour — a breach trades. <strong>Suggest</strong> changes only the last
         step: the engine still measures, resolves the policy and sizes the hedge in its
         vehicle, then trades nothing and puts a <strong>standing row</strong> on{" "}
-        <strong>Risk → Hedge flows</strong> with a “Hedge now” button. It is deliberately{" "}
+        <strong>Fixed Income → Book → Hedge flows</strong> with a “Hedge now” button. It is deliberately{" "}
         <strong>not a confirmation dialog</strong> — nothing pops up, and the row waits there
         until you act on it. Scopes resolve most-specific-wins: instrument &gt; book &gt; desk;
         an unbound scope is Auto.
@@ -143,7 +143,7 @@ export function ExitModeConfig({
                   </td>
                   <td>
                     {b.mode === "suggest"
-                      ? "Sized, then a standing row on Risk → Hedge flows. Nothing trades."
+                      ? "Sized, then a standing row on Fixed Income → Book → Hedge flows. Nothing trades."
                       : "Trades immediately."}
                   </td>
                   {!readOnly && (

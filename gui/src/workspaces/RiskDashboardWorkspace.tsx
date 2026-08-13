@@ -115,12 +115,32 @@ const RISK_TABS: readonly { tab: RiskDashboardTab; label: string; cap: Capabilit
   { tab: "portfolios", label: "Portfolios", cap: "risk_manage" },
   { tab: "routing", label: "Routing", cap: "risk_manage" },
   { tab: "acceptance", label: "Acceptance", cap: "manage_acceptance" },
+];
+
+/**
+ * The **ledger** tab set — the read-side blotters, hosted under **Fixed Income**
+ * (rail row `filedgers`) rather than under the Risk tab.
+ *
+ * The split is by QUESTION ASKED, not by implementation. Risk answers "how is the desk
+ * CONFIGURED, and what is it carrying" — portfolios, routing, acceptance, the roll-up
+ * dashboard: firm-shape management surfaces, `risk_manage`-class, set up rarely. These
+ * five answer "what actually HAPPENED" — the per-deal record a trader reads all day.
+ * Together they made a nine-tab strip mixing two audiences.
+ *
+ * Each tab KEEPS its original gate (the `view` floor for the four ledgers, `hedge` for
+ * the live hedge-flow monitor), so the move changes only WHERE a surface is reached —
+ * never WHO can reach it.
+ */
+const LEDGER_TABS: readonly { tab: RiskDashboardTab; label: string; cap: CapabilityAction }[] = [
   { tab: "positions", label: "Positions", cap: "view" },
   { tab: "quotes", label: "Quotes", cap: "view" },
   { tab: "clientblotter", label: "Client blotter", cap: "view" },
   { tab: "hedgeblotter", label: "Hedge blotter", cap: "view" },
   { tab: "hedgeflows", label: "Hedge flows", cap: "hedge" },
 ];
+
+/** Which tab set a mounted instance presents (see {@link LEDGER_TABS}). */
+export type RiskWorkspaceVariant = "risk" | "ledgers";
 
 /**
  * Compact magnitude formatting — the SHARED app formatter (`lib/format.fmtCompact`),
@@ -773,17 +793,26 @@ export function DashboardPanel({
  * row on the FX rail, only WITHDRAWN from the FI rail (DOMAIN_RAIL_EXCLUDED).
  */
 export function RiskDashboardWorkspace({
-  initialTab = "dashboard",
+  initialTab,
+  variant = "risk",
 }: {
   /** The initial tab — the `riskbooks` deep-link opens on `portfolios`, `riskrouting`
    * on `routing`, `acceptance` on `acceptance`; the rail's "Risk" entry (and
-   * stories/tests) default to `dashboard`. */
+   * stories/tests) default to `dashboard`. Omitted ⇒ the variant's first tab. */
   initialTab?: RiskDashboardTab;
+  /** Which tab set to present: the Risk-tab management views (default) or the
+   * Fixed-Income ledger blotters ({@link LEDGER_TABS}). */
+  variant?: RiskWorkspaceVariant;
 } = {}): React.ReactElement {
+  const tabSet = variant === "ledgers" ? LEDGER_TABS : RISK_TABS;
+  // Default to the variant's OWN first tab, so the ledgers host opens on Positions
+  // rather than a `dashboard` tab it does not present (which would clamp anyway, but
+  // via the fallback path rather than by intent).
+  const firstTab = tabSet[0]?.tab ?? "dashboard";
   const { auth } = useApp();
   const { pending: acceptanceSeed } = useAcceptanceSeed();
 
-  const [tab, setTab] = useState<RiskDashboardTab>(initialTab);
+  const [tab, setTab] = useState<RiskDashboardTab>(initialTab ?? firstTab);
   const [wizardOpen, setWizardOpen] = useState(false);
   // A pending acceptance-seed (from a Deals/Quotes row "Create acceptance rule") reveals
   // AND switches to the Acceptance tab. The reveal is sticky so a non-`manage_acceptance`
@@ -809,7 +838,7 @@ export function RiskDashboardWorkspace({
     }
   }, [acceptanceSeed, isAcceptanceHost]);
 
-  const visibleTabs = RISK_TABS.filter(
+  const visibleTabs = tabSet.filter(
     (t) =>
       auth.can(t.cap, "fixed_income") || (t.tab === "acceptance" && seedRevealAcceptance),
   );
@@ -817,7 +846,7 @@ export function RiskDashboardWorkspace({
   // cannot view falls to the first tab it can, never an empty pane.
   const activeTab: RiskDashboardTab = visibleTabs.some((t) => t.tab === tab)
     ? tab
-    : (visibleTabs[0]?.tab ?? "dashboard");
+    : (visibleTabs[0]?.tab ?? firstTab);
 
   // The guided-setup launcher shows for anyone who can actually run any part of the
   // wizard — the risk books/routing half (`risk_manage`) or the acceptance half
