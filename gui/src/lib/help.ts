@@ -473,6 +473,55 @@ const ENTRY_LIST: readonly HelpEntry[] = [
     tourId: "build-pricing-group",
   },
   {
+    id: "feature.lp-panel",
+    category: "feature",
+    title: "LP PANEL — INBOUND LIQUIDITY",
+    purpose:
+      "See which liquidity providers are actually feeding the platform, and how much of each composite they really set.",
+    howItWorks:
+      "Administration → LP Panel folds one row per provider across every ENABLED aggregated book that lists it as a member. A provider is identified by its FIX connection id — the same string is the aggregation venue id and the lp_name each inbound quote carries — so one row ties a connection, its book membership and its venue together. Rate is quote-updates per second, measured by differencing the server's lifetime counter across polls. Fresh vs Excluded is the consolidation's own verdict: a quote aged past the book's max quote age, or gated as a divergent outlier, sets no price. Top of book counts the instruments where the provider is on the best bid / best offer, and Weight is its mean share of the composite mid. Open Quotes on a row for the per-instrument detail behind those numbers.",
+    example: {
+      scenario: "A venue that looks healthy on Connections but is contributing nothing.",
+      rows: [
+        { label: "Connections says", value: "◉ running, bound on 127.0.0.1:56003" },
+        { label: "LP Panel says", value: "stale · 8 instruments · 0 fresh · 8 excluded" },
+        { label: "Quotes drill-down", value: "every line verdict = stale, weight 0%" },
+        { label: "Diagnosis", value: "the feed is connected but its ticks are older than the book's max quote age" },
+      ],
+      takeaway:
+        "Bound is not the same as contributing — only this screen distinguishes a live venue from a silent or excluded one.",
+    },
+    howToConfigure: [
+      "Open Administration → LP Panel (requires the Manage Liquidity capability).",
+      "Read the summary strip first: if the inbound kill-switch banner is showing, ingest is off firm-wide and every row below is expected to go stale.",
+      "Sort by Rate to find silent providers, or by Weight to see who actually drives the composite.",
+      "Check the Books column — 'none' means the provider is in no enabled book, so its pushes are dropped at ingest.",
+      "A blank provider name with 'no connection' means a book lists a member id that matches no managed FIX connection; fix the id in Aggregation or define the connection in Connections.",
+      "Click Quotes on a row to inspect its live prices, ages, weights and per-instrument verdicts.",
+    ],
+    whenToUse:
+      "Whenever composite pricing looks wrong, thin, or unexpectedly wide — and after any change to a book's membership, to confirm the intended venues are genuinely contributing.",
+    risks:
+      "Rate needs two polls before it reads anything, so a just-opened panel shows a dash rather than zero. The counter is lifetime since the edge started, so an edge restart resets it. A provider excluded everywhere reports 0% weight — that is a real exclusion, not a missing measurement.",
+    keywords: [
+      "lp",
+      "lp panel",
+      "inbound",
+      "liquidity",
+      "provider",
+      "venue",
+      "feed",
+      "stale",
+      "top of book",
+      "composite",
+      "aggregated book",
+      "contribution",
+      "weight",
+      "simulator",
+      "lp-sim",
+    ],
+  },
+  {
     id: "concept.esp-vs-rfs",
     category: "concept",
     title: "ESP vs RFS / RFQ",

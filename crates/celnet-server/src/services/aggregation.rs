@@ -1722,6 +1722,144 @@ mod tests {
         hub
     }
 
+    // --- inbound-liquidity panel (`lp_health`) -------------------------------
+
+    #[test]
+    fn panel_rosters_every_book_member_even_when_silent() {
+        // The whole point of the roster: an LP that has never pushed a quote must
+        // still appear, because a silent venue is exactly what an operator opens
+        // this screen to find. An absent row would read as "no such provider".
+        let hub = hub_with(def("b", &["LP-1", "LP-2"], params(false, 1, 60_000)));
+        assert!(hub.ingest(&lp_quote("LP-1", "CUSIP-A", 99.90, 100.10, NOW)));
+
+        let panel = hub.liquidity_panel(None);
+        let ids: Vec<&str> = panel
+            .providers
+            .iter()
+            .map(|p| p.connection_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["LP-1", "LP-2"], "both members rostered, sorted");
+
+        let silent = &panel.providers[1];
+        assert_eq!(silent.quote_updates, 0);
+        assert_eq!(silent.last_quote_nanos, 0, "never quoted");
+        assert_eq!(silent.instruments_quoted, 0);
+        assert_eq!(silent.book_ids, vec!["b".to_string()], "still a member");
+    }
+
+    #[test]
+    fn panel_counts_ticks_instruments_and_top_of_book() {
+        let hub = hub_with(def("b", &["LP-1", "LP-2"], params(false, 1, 60_000)));
+        // LP-1 sets the best bid on A and quotes B; LP-2 sets the best offer on A.
+        assert!(hub.ingest(&lp_quote("LP-1", "CUSIP-A", 99.95, 100.10, NOW)));
+        assert!(hub.ingest(&lp_quote("LP-1", "CUSIP-B", 98.00, 98.20, NOW)));
+        assert!(hub.ingest(&lp_quote("LP-2", "CUSIP-A", 99.90, 100.05, NOW)));
+
+        let panel = hub.liquidity_panel(None);
+        let lp1 = &panel.providers[0];
+        let lp2 = &panel.providers[1];
+
+        assert_eq!(lp1.quote_updates, 2, "two accepted pushes");
+        assert_eq!(lp1.instruments_quoted, 2);
+        assert_eq!(lp1.last_quote_nanos, NOW);
+        assert_eq!(lp1.fresh_quotes, 2, "both contribute");
+        assert_eq!(lp1.stale_quotes, 0);
+        // On A, LP-1 has the higher bid; on B it is the sole member, so it holds
+        // BOTH sides there — two best bids, one best offer.
+        assert_eq!(lp1.best_bid_count, 2);
+        assert_eq!(lp1.best_offer_count, 1);
+
+        assert_eq!(lp2.quote_updates, 1);
+        assert_eq!(lp2.instruments_quoted, 1);
+        assert_eq!(lp2.best_bid_count, 0, "outbid on A");
+        assert_eq!(lp2.best_offer_count, 1, "but sets the best offer");
+        assert!(lp2.mean_weight > 0.0 && lp2.mean_weight <= 1.0);
+    }
+
+    #[test]
+    fn panel_reports_an_aged_out_quote_as_excluded_not_absent() {
+        // A quote past the book's hard max age sets no price. It must be counted as
+        // EXCLUDED rather than dropped — "quoting but ignored" and "not quoting" are
+        // different faults and the panel exists to tell them apart.
+        let hub = hub_with(def("b", &["LP-1", "LP-2"], params(false, 1, 5_000)));
+        assert!(hub.ingest(&lp_quote("LP-1", "CUSIP-A", 99.95, 100.10, NOW)));
+        // 60s old against a 5s cutoff.
+        assert!(hub.ingest(&lp_quote("LP-2", "CUSIP-A", 99.99, 100.01, NOW - 60 * S)));
+
+        let panel = hub.liquidity_panel(None);
+        let stale = &panel.providers[1];
+        assert_eq!(stale.instruments_quoted, 1, "it IS quoting");
+        assert_eq!(stale.fresh_quotes, 0);
+        assert_eq!(stale.stale_quotes, 1, "and it is excluded");
+        assert_eq!(
+            stale.best_bid_count, 0,
+            "an excluded member never counts as top of book, however keen its price"
+        );
+        assert_eq!(stale.mean_weight, 0.0, "contributes nothing to the mid");
+    }
+
+    #[test]
+    fn panel_drill_down_is_returned_only_for_the_focused_provider() {
+        let hub = hub_with(def("b", &["LP-1", "LP-2"], params(false, 1, 60_000)));
+        assert!(hub.ingest(&lp_quote("LP-1", "CUSIP-A", 99.95, 100.10, NOW)));
+        assert!(hub.ingest(&lp_quote("LP-2", "CUSIP-A", 99.90, 100.05, NOW)));
+
+        // Unfocused: roster only, so the default poll stays bounded by the provider
+        // count rather than instruments x providers.
+        assert!(hub.liquidity_panel(None).quotes.is_empty());
+
+        let focused = hub.liquidity_panel(Some("LP-1"));
+        assert_eq!(focused.quotes.len(), 1);
+        let q = &focused.quotes[0];
+        assert_eq!(q.book_id, "b");
+        assert_eq!(q.instrument_id, "CUSIP-A");
+        assert!((q.bid - 99.95).abs() < 1e-12);
+        assert!(q.best_bid, "LP-1 has the higher bid");
+        assert!(!q.best_offer, "LP-2 has the better offer");
+        assert!(q.excluded.is_empty(), "contributing");
+        assert!(q.bid_size > 0.0 && q.offer_size > 0.0);
+    }
+
+    #[test]
+    fn panel_surfaces_a_provider_that_belongs_to_no_book() {
+        // A push from a non-member is dropped at ingest. The pusher must still be
+        // rostered with an empty book list, otherwise a misconfigured LP is
+        // invisible precisely when someone is looking for why it has no effect.
+        let hub = hub_with(def("b", &["LP-1"], params(false, 1, 60_000)));
+        assert!(hub.ingest(&lp_quote("LP-1", "CUSIP-A", 99.95, 100.10, NOW)));
+        assert!(
+            !hub.ingest(&lp_quote("LP-STRAY", "CUSIP-A", 99.99, 100.01, NOW)),
+            "a non-member push is rejected"
+        );
+
+        let panel = hub.liquidity_panel(None);
+        // A rejected push is not tallied, so the stray only appears once it has been
+        // seen at all; here it never enters the tally and so never enters the roster.
+        assert!(
+            panel
+                .providers
+                .iter()
+                .all(|p| p.connection_id != "LP-STRAY"),
+            "a push rejected outright leaves no trace to report"
+        );
+        assert_eq!(panel.providers.len(), 1);
+        assert_eq!(panel.providers[0].book_ids, vec!["b".to_string()]);
+    }
+
+    #[test]
+    fn panel_reports_the_inbound_kill_switch_and_a_valuation_instant() {
+        let hub = hub_with(def("b", &["LP-1"], params(false, 1, 60_000)));
+        let panel = hub.liquidity_panel(None);
+        assert!(
+            panel.inbound_enabled,
+            "a default-constructed hub ingests (both-enabled control)"
+        );
+        assert_eq!(
+            panel.as_of_nanos, NOW,
+            "ages are measured against the hub's own valuation clock"
+        );
+    }
+
     #[test]
     fn composite_bbo_is_best_across_fresh_members() {
         let hub = hub_with(def(
