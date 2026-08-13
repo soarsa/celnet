@@ -29,6 +29,24 @@
 #
 # Both are idempotent — an existing acceptor/book is used as-is, never replaced.
 #
+# ## It clears the decks first
+#
+# A previous stack — crashed, backgrounded, or left in another terminal — keeps
+# its ports bound, and the server then dies on startup with
+# `Os { code: 48, AddrInUse }`. Teardown-on-exit cannot help: the whole problem is
+# a process that did NOT exit cleanly. So the script sweeps on ENTRY too.
+#
+# It kills by PORT OWNERSHIP (whatever holds gRPC / WS / the GUI port, found via
+# `lsof`) rather than by name, so it reclaims the ports it actually needs whoever
+# owns them, and by process IMAGE for the simulators, which bind nothing and so
+# cannot be found by port. Then it WAITS for the ports to be released: SIGKILL is
+# asynchronous, and returning before the kernel has torn the socket down is
+# exactly what re-creates the AddrInUse it was trying to prevent.
+#
+# `--no-sweep` opts out — use it when deliberately running a second stack on
+# different ports, since the simulator sweep is image-matched and would take the
+# other stack's sims with it.
+#
 # ## Teardown
 #
 # Ctrl-C tears the fleet down, and the EXIT trap also sweeps by process IMAGE. A
@@ -43,6 +61,7 @@
 #   ./run_dev.sh --no-sims        # server + GUI only
 #   ./run_dev.sh --no-gui         # server + sims only
 #   ./run_dev.sh --demo-edge      # run the demo_edge example (what the e2e suites drive)
+#   ./run_dev.sh --no-sweep       # do NOT kill a stack already running (see below)
 #
 # Env overrides: CELNET_GRPC_ADDR, CELNET_WS_ADDR, CELNET_GUI_PORT,
 #   CELNET_DEV_FIX_PORT (skip discovery), CELNET_DEV_SIM_USER/_PASSWORD,
@@ -77,12 +96,14 @@ SKIP_BUILD=0
 RUN_GUI=1
 RUN_SIMS=1
 DEMO_EDGE=0
+SWEEP=1
 for arg in "$@"; do
     case "$arg" in
         --skip-build) SKIP_BUILD=1 ;;
         --no-gui)     RUN_GUI=0 ;;
         --no-sims)    RUN_SIMS=0 ;;
         --demo-edge)  DEMO_EDGE=1 ;;
+        --no-sweep)   SWEEP=0 ;;
         -h|--help)
             awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"
             exit 0
@@ -117,6 +138,58 @@ cleanup() {
     exit "$code"
 }
 trap cleanup EXIT INT TERM
+
+# ---------------------------------------------------------------------------
+# 0. Clear the decks — see the header note on why entry-sweep is not optional.
+# ---------------------------------------------------------------------------
+port_owners() {  # port_owners <port…> -> pids holding a LISTEN socket
+    command -v lsof >/dev/null 2>&1 || return 0
+    local args=() p
+    for p in "$@"; do args+=(-iTCP:"$p"); done
+    lsof -nP "${args[@]}" -sTCP:LISTEN -t 2>/dev/null | sort -u || true
+}
+
+port_free() {  # port_free <host> <port>
+    ! (exec 3<>"/dev/tcp/$1/$2") 2>/dev/null
+}
+
+preflight_sweep() {
+    local grpc_port="${GRPC_ADDR##*:}" ws_port="${WS_ADDR##*:}"
+    local victims
+    # Whoever holds the ports we need, plus the simulators (which bind nothing,
+    # so they can only be matched by image).
+    victims="$(port_owners "$grpc_port" "$ws_port" "$GUI_PORT")"
+    victims="$victims
+$(pgrep -u "$(id -u)" -f 'target/debug/lp-sim|examples/fix_rfq_client' 2>/dev/null || true)"
+    victims="$(echo "$victims" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u || true)"
+    [[ -z "$victims" ]] && return 0
+
+    echo "[dev] a stack is already running — reclaiming ports $grpc_port/$ws_port/$GUI_PORT"
+    # shellcheck disable=SC2086
+    kill -TERM $victims 2>/dev/null || true
+    sleep 1
+    # shellcheck disable=SC2086
+    kill -KILL $victims 2>/dev/null || true
+
+    # SIGKILL is asynchronous: wait for the sockets to actually be released, or the
+    # bind below races a corpse that still holds them.
+    local waited=0
+    while (( waited < 20 )); do
+        if port_free "${GRPC_ADDR%:*}" "$grpc_port" && port_free "${WS_ADDR%:*}" "$ws_port"; then
+            echo "[dev] ports released."
+            return 0
+        fi
+        sleep 0.5
+        waited=$(( waited + 1 ))
+    done
+    echo "[dev] WARNING: a port is still bound after 10s — the bind below may fail." >&2
+}
+
+# NOT `[[ … ]] && preflight_sweep` — with --no-sweep that whole statement evaluates
+# false, and under `set -e` a false statement at top level exits the script.
+if [[ $SWEEP -eq 1 ]]; then
+    preflight_sweep
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Build
