@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../../../app/AppContext";
+import { useReferenceData } from "../../../hooks/useReferenceData";
 import type { DeskDesc, FixConnection, WarehouseThreshold } from "../../../data/contract";
 import { newDefaultHedgeRule, type HedgeRule } from "../../../lib/hedgeRules";
 import { newRuleId, type RiskRule } from "../../../lib/riskRules";
@@ -59,6 +60,17 @@ const STEP_META: readonly StepMeta[] = [
 
 export function SetupWizard({ onClose }: SetupWizardProps): React.ReactElement {
   const app = useApp();
+  // The aggregation instruments a CROSS_INTERNAL exit may target — real ids from the
+  // reference-data registry, not a curated list of made-up ones.
+  const refData = useReferenceData(app.transport, app.auth.user != null);
+  const instrumentOptions = useMemo(
+    () =>
+      refData.instruments
+        .map((d) => d.instrumentId)
+        .filter((id) => id.length > 0)
+        .sort((a, b) => a.localeCompare(b)),
+    [refData.instruments],
+  );
   const { auth } = app;
   const canRisk = auth.can("risk_manage", "fixed_income");
   const canHedge = auth.can("hedge", "fixed_income");
@@ -201,6 +213,7 @@ export function SetupWizard({ onClose }: SetupWizardProps): React.ReactElement {
           onChangeThreshold={setThreshold}
           onChangeHedgeRules={setHedgeRules}
           onChangePolicyScope={setPolicyScope}
+          instrumentOptions={instrumentOptions}
         />
       )}
       {step === 3 && <ReviewStep draft={draft} canRisk={canRisk} canHedge={canHedge} />}

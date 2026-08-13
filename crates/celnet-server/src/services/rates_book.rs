@@ -1793,6 +1793,17 @@ impl RatesPositionStore {
                 &ctx.product,
                 &ctx.ccy,
                 hedge_maturity_years(fill),
+                // The valuation date the futures FRONT MONTH is resolved on, so a vehicle
+                // configured as a product (`ZF`) trades the contract that is live today
+                // rather than the one that was live when the policy was written.
+                {
+                    let d = time::OffsetDateTime::now_utc().date();
+                    celnet_refdata::CivilYmd::new(
+                        d.year(),
+                        u32::from(u8::from(d.month())),
+                        u32::from(d.day()),
+                    )
+                },
             )
             .and_then(|(rule, whole_units)| {
                 plan_hedge_ratio(
@@ -2657,8 +2668,12 @@ fn hedge_maturity_years(fill: &RatesPosition) -> Option<f64> {
 /// - [`HedgeVehicle::Instrument`] / [`HedgeVehicle::Future`] ⇒ the registry row that names
 ///   that hedge instrument, which is where its DV01 per unit comes from.
 ///
-/// `None` for a named-but-unregistered vehicle, or a `Benchmark` that matches nothing. The
-/// caller then falls back to the **self-hedge** — never to a guessed DV01 (guardrail 2).
+/// `None` for a named-but-unregistered vehicle, a `Benchmark` that matches nothing, or a
+/// product-symbol vehicle whose listed cycle has run out. The caller then falls back to the
+/// **self-hedge** — never to a guessed DV01 or an invented contract code (guardrail 2).
+///
+/// `as_of` is the valuation date the FRONT MONTH is resolved on — see
+/// [`roll_to_front_month`].
 fn resolve_hedge_vehicle(
     registry: &HedgeVehicleRegistry,
     vehicle: &HedgeVehicle,
@@ -2666,6 +2681,7 @@ fn resolve_hedge_vehicle(
     product: &str,
     ccy: &str,
     maturity_years: Option<f64>,
+    as_of: celnet_refdata::CivilYmd,
 ) -> Option<(HedgeVehicleRule, bool)> {
     let rule = match vehicle {
         HedgeVehicle::SelfInstrument => return None,
@@ -2673,11 +2689,66 @@ fn resolve_hedge_vehicle(
         HedgeVehicle::Instrument { instrument_id: id }
         | HedgeVehicle::Future { contract_id: id } => registry.by_hedge_instrument(id)?,
     };
-    // Whole-lot rounding applies when EITHER the leaf declares a future or the registry
-    // row does — a desk that types a contract id gets contract semantics regardless of how
-    // the row was configured.
-    let whole = rule.is_future || vehicle.is_future();
-    Some((rule.clone(), whole))
+    // A row naming a PRODUCT resolves to the delivery month that product trades today.
+    let rolled = roll_to_front_month(rule, as_of)?;
+    // Whole-lot rounding applies when the leaf declares a future, the registry row does,
+    // or the row rolled onto a listed contract — a desk that types a contract id gets
+    // contract semantics regardless of how the row was configured.
+    let whole = rolled.is_future || vehicle.is_future();
+    Some((rolled, whole))
+}
+
+/// Re-point a registry row that names a futures **PRODUCT** (`ZF`) at the delivery month
+/// that product actually trades on `as_of` (`ZFU26` before the September roll, `ZFZ26`
+/// after it).
+///
+/// # Why this exists
+///
+/// A hedge policy names a product, not a delivery month — but a delivery month is what a
+/// venue quotes, and it stops trading four times a year. Without this step a registry row
+/// configured once as `ZFU26` keeps routing hedges at Sep-26 after the September roll, at
+/// which point the contract has stopped trading and every hedge routed at it strands. The
+/// roll resolves off the SAME committed cycle the venue quotes and the reference registry
+/// seeds, so the id it yields is by construction one the venue is quoting.
+///
+/// A row naming a specific delivery month (`ZFU26`) or a cash security is returned
+/// UNCHANGED: an explicit delivery month is a deliberate choice and must never be silently
+/// re-pointed. A product whose whole listed cycle has expired yields `None` rather than a
+/// stale or invented code — the caller then declines and says why (guardrail 2).
+///
+/// The row's configured `dv01_per_unit` is carried across untouched. That is deliberate: it
+/// is the trader's configured DV01 for ONE CONTRACT OF THAT PRODUCT, which is exactly what
+/// the sizing ratio needs, and substituting a number the desk did not author would be a
+/// silent change to every size computed off this row.
+fn roll_to_front_month(
+    rule: &HedgeVehicleRule,
+    as_of: celnet_refdata::CivilYmd,
+) -> Option<HedgeVehicleRule> {
+    let id = rule.hedge_instrument_id.trim();
+    if !celnet_refdata::is_product_symbol(id) {
+        return Some(rule.clone());
+    }
+    let Some(front) = celnet_refdata::front_contract_id(id, as_of) else {
+        tracing::warn!(
+            vehicle_rule = %rule.id,
+            product = %id,
+            "hedge vehicle names a futures PRODUCT but no contract of it is listed on the \
+             valuation date — the committed listed cycle needs rolling. Declining rather \
+             than routing a hedge at an expired contract",
+        );
+        return None;
+    };
+    tracing::debug!(
+        vehicle_rule = %rule.id,
+        product = %id,
+        front_contract = %front,
+        "hedge vehicle names a futures product — resolved to its front month",
+    );
+    Some(HedgeVehicleRule {
+        hedge_instrument_id: front,
+        is_future: true,
+        ..rule.clone()
+    })
 }
 
 fn internalise_instrument_label(fill: &RatesPosition) -> String {
@@ -5930,6 +6001,10 @@ pub(crate) mod tests {
         );
     }
 
+    /// A valuation date inside the committed listed cycle, so front-month resolution is
+    /// deterministic rather than dependent on when the suite happens to run.
+    const AS_OF: celnet_refdata::CivilYmd = celnet_refdata::CivilYmd::new(2026, 6, 1);
+
     /// The firm registry: US bonds 7–12y hedge into the 10Y future at 78 DV01 a contract.
     fn ty_registry() -> HedgeVehicleRegistry {
         HedgeVehicleRegistry::new(vec![HedgeVehicleRule {
@@ -5956,6 +6031,7 @@ pub(crate) mod tests {
             "BOND",
             "USD",
             Some(9.0),
+            AS_OF,
         )
         .expect("a 9y USD corp resolves the 10Y bucket");
         assert_eq!(rule.hedge_instrument_id, "TY-DEC26");
@@ -5973,7 +6049,8 @@ pub(crate) mod tests {
                 "XS-CORP-9Y",
                 "BOND",
                 "USD",
-                Some(9.0)
+                Some(9.0),
+                AS_OF,
             )
             .is_none()
         );
@@ -5993,7 +6070,8 @@ pub(crate) mod tests {
                 "XS-CORP-9Y",
                 "BOND",
                 "USD",
-                Some(9.0)
+                Some(9.0),
+                AS_OF,
             )
             .is_none(),
             "an unregistered contract has no known DV01 — sizing it would be a guess"
@@ -6006,9 +6084,103 @@ pub(crate) mod tests {
                 "XS-CORP-30Y",
                 "BOND",
                 "USD",
-                Some(30.0)
+                Some(30.0),
+                AS_OF,
             )
             .is_none()
+        );
+    }
+
+    /// A registry row naming the 5-Year **product** rather than a delivery month.
+    fn zf_product_registry() -> HedgeVehicleRegistry {
+        HedgeVehicleRegistry::new(vec![HedgeVehicleRule {
+            id: "US-BOND-5Y".into(),
+            product: "BOND".into(),
+            ccy: "USD".into(),
+            min_maturity_years: 4.0,
+            max_maturity_years: 6.0,
+            // The whole point: a PRODUCT, not `ZFU26`.
+            hedge_instrument_id: "ZF".into(),
+            is_future: true,
+            dv01_per_unit: 47.0,
+            unit_label: "contract".into(),
+            ..HedgeVehicleRule::default()
+        }])
+    }
+
+    /// **A vehicle configured as a product rolls itself.** A registry row naming `ZF`
+    /// resolves to whichever 5-Year contract is trading on the valuation date — Sep-26
+    /// before the roll, Dec-26 after it — with NO edit to the policy. Before this, a row
+    /// pinned to a delivery month kept routing hedges at a contract that had stopped
+    /// trading.
+    #[test]
+    fn a_product_symbol_vehicle_rolls_to_the_front_contract() {
+        let reg = zf_product_registry();
+        let resolve = |as_of| {
+            resolve_hedge_vehicle(
+                &reg,
+                &HedgeVehicle::Benchmark,
+                "UST-5Y",
+                "BOND",
+                "USD",
+                Some(5.0),
+                as_of,
+            )
+        };
+
+        let (before, whole) = resolve(AS_OF).expect("a 5y USD bond resolves the ZF bucket");
+        assert_eq!(
+            before.hedge_instrument_id, "ZFU26",
+            "a product-symbol vehicle resolves to the front delivery month, not to `ZF`"
+        );
+        assert!(whole, "a rolled futures vehicle still trades in whole lots");
+        assert_eq!(
+            before.dv01_per_unit, 47.0,
+            "the trader's configured DV01 per contract is carried across untouched"
+        );
+
+        // Past the 5-Year's cessation the SAME row points at the next quarterly contract.
+        // The 5-Year trades THROUGH month end, so its last trading day is the last
+        // business day of the delivery month — the first day of the following month is
+        // the nearest date that is unambiguously after it AND always a real calendar date.
+        let ltd = celnet_refdata::front_contract("ZF", AS_OF)
+            .expect("a front 5-Year")
+            .last_trading_date;
+        let after = if ltd.month == 12 {
+            celnet_refdata::CivilYmd::new(ltd.year + 1, 1, 1)
+        } else {
+            celnet_refdata::CivilYmd::new(ltd.year, ltd.month + 1, 1)
+        };
+        assert_eq!(
+            resolve(after)
+                .expect("still resolves after the roll")
+                .0
+                .hedge_instrument_id,
+            "ZFZ26",
+            "the vehicle rolls with the market rather than stranding on a dead contract"
+        );
+
+        // An explicit delivery month is a deliberate choice and is NEVER re-pointed.
+        let (pinned, _) = resolve_hedge_vehicle(
+            &ty_registry(),
+            &HedgeVehicle::Benchmark,
+            "XS-CORP-9Y",
+            "BOND",
+            "USD",
+            Some(9.0),
+            after,
+        )
+        .expect("the pinned row still resolves");
+        assert_eq!(
+            pinned.hedge_instrument_id, "TY-DEC26",
+            "a row naming a specific instrument must never be silently re-pointed"
+        );
+
+        // Cycle fully expired ⇒ decline, so the caller falls back to the self-hedge
+        // rather than routing at an invented contract code (guardrail 2).
+        assert!(
+            resolve(celnet_refdata::CivilYmd::new(2030, 1, 1)).is_none(),
+            "no listed contract ⇒ refuse, never fabricate a delivery month"
         );
     }
 

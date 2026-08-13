@@ -1,15 +1,15 @@
 /**
- * BOND security identity + ESP deal-kind on the Deals blotter.
+ * BOND security identity + RFS deal-kind on the Deals blotter.
  *
  * The server now threads a bond's identity (`instrument_id` / `display_name`, the SAME
- * descriptor the Agg Book tile shows) onto a fill and gains an `ESP` deal kind (a
- * market-data streaming lift, wire tag 3). These tests pin the two GUI seams:
+ * descriptor the Agg Book tile shows) onto a fill and gains an `RFS` deal kind (a
+ * request-for-stream market-data lift, wire tag 3). These tests pin the two GUI seams:
  *
  *  (a) codec — `dealFromWire` decodes `deal.instrument.bond.{instrument_id,display_name}`
  *      onto `Deal.{bondSecurityId,bondDisplayName}` (present only for BOND; empty
- *      `display_name` ⇒ absent, never fabricated), and decodes `kind: 3` → `"ESP"`;
- *  (b) DealsBlotter — a BOND ESP row shows the security descriptor + id in the SECURITY
- *      cell and the ESP type chip; an OIS row shows no security (a plain em dash) and
+ *      `display_name` ⇒ absent, never fabricated), and decodes `kind: 3` → `"RFS"`;
+ *  (b) DealsBlotter — a BOND RFS row shows the security descriptor + id in the SECURITY
+ *      cell and the RFS type chip; an OIS row shows no security (a plain em dash) and
  *      its RFQ chip, all against the REAL blotter under the real AppProvider.
  */
 import { act } from "react";
@@ -23,7 +23,7 @@ import { dealFromWire } from "../src/data/wsCodec";
 import type { CelnetTransport } from "../src/data/transport";
 import type { Deal, ListDealsResponse } from "../src/data/contract";
 
-/** A wire BOND deal, `kind` overridable (RFQ=1/IOI=2/ESP=3), bond identity overridable. */
+/** A wire BOND deal, `kind` overridable (RFQ=1/IOI=2/RFS=3), bond identity overridable. */
 function wireBondDeal(
   kind: number,
   bond: Record<string, unknown>,
@@ -67,13 +67,13 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("dealFromWire — BOND identity + ESP kind", () => {
-  it("threads instrument_id + display_name onto a BOND deal and decodes kind 3 → ESP", () => {
+describe("dealFromWire — BOND identity + RFS kind", () => {
+  it("threads instrument_id + display_name onto a BOND deal and decodes kind 3 → RFS", () => {
     const deal = dealFromWire(
       wireBondDeal(3, { instrument_id: "91282CJP7", display_name: "UST 10Y 4.375%" }),
     );
     expect(deal.productKind).toBe("BOND");
-    expect(deal.kind).toBe("ESP");
+    expect(deal.kind).toBe("RFS");
     expect(deal.bondSecurityId).toBe("91282CJP7");
     expect(deal.bondDisplayName).toBe("UST 10Y 4.375%");
   });
@@ -130,23 +130,23 @@ function fiDeal(over: Partial<Deal>): Deal {
 
 function blotterTransport(): CelnetTransport {
   const t = createMockTransport();
-  const bondEsp = fiDeal({
-    dealId: "deal-bond-esp",
+  const bondRfs = fiDeal({
+    dealId: "deal-bond-rfs",
     counterparty: "Millennium Capital",
-    kind: "ESP",
+    kind: "RFS",
     productKind: "BOND",
     instrument: { tenorYears: 10, fixedRate: 0.04375, notional: 6e7, direction: "PAY_FIXED" },
     bondSecurityId: "91282CJP7",
     bondDisplayName: "UST 10Y 4.375%",
   });
   const ois = fiDeal({ dealId: "deal-ois", counterparty: "Point72" });
-  const deals: Deal[] = [bondEsp, ois];
+  const deals: Deal[] = [bondRfs, ois];
   t.listDeals = async (): Promise<ListDealsResponse> => ({ deals });
   return t;
 }
 
-describe("DealsBlotterWorkspace — BOND security cell + ESP type chip (FI domain)", () => {
-  it("shows the descriptor + id for a BOND ESP fill, and no security for an OIS RFQ fill", async () => {
+describe("DealsBlotterWorkspace — BOND security cell + RFS type chip (FI domain)", () => {
+  it("shows the descriptor + id for a BOND RFS fill, and no security for an OIS RFQ fill", async () => {
     window.history.replaceState(null, "", "/?mock&dom=fixed_income");
     await act(async () => {
       render(
@@ -157,12 +157,12 @@ describe("DealsBlotterWorkspace — BOND security cell + ESP type chip (FI domai
     });
     await settle();
 
-    // The BOND ESP row: the SECURITY cell shows the Agg-Book-style descriptor + the id,
-    // and the TYPE chip reads ESP.
+    // The BOND RFS row: the SECURITY cell shows the Agg-Book-style descriptor + the id,
+    // and the TYPE chip reads RFS.
     const bondRow = screen.getByText("Millennium Capital").closest("tr") as HTMLElement;
     expect(within(bondRow).getByText("UST 10Y 4.375%")).toBeInTheDocument();
     expect(within(bondRow).getByText("91282CJP7")).toBeInTheDocument();
-    expect(within(bondRow).getByText("ESP")).toBeInTheDocument();
+    expect(within(bondRow).getByText("RFS")).toBeInTheDocument();
 
     // The OIS RFQ row: no security identity (a plain em dash), and the RFQ chip.
     const oisRow = screen.getByText("Point72").closest("tr") as HTMLElement;

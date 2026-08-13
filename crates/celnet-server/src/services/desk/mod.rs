@@ -821,7 +821,7 @@ impl RfqDeskEdge {
     /// price.
     ///
     /// Books at the auto-quote's own level (the streamed price the request carries). A
-    /// market-data (ESP) lift resolved through the last-look policy instead books at its
+    /// market-data (RFS) lift resolved through the last-look policy instead books at its
     /// ACTUAL fill price — see [`Self::book_fix_lift_priced`].
     #[must_use]
     pub fn book_fix_lift(&self, request_id: &str) -> Option<Deal> {
@@ -2357,13 +2357,15 @@ pub(crate) mod tests {
         edge.book_fix_lift(&id).expect("fix lift books a deal")
     }
 
-    /// Part B: a lift of a market-data STREAM (ESP) subscription books a `Deal` stamped
-    /// `DeskRequestKind::Esp`, so the blotter shows an ESP fill distinctly from an RFQ. The
-    /// ESP kind is set at ingest (the FIX MD-venue path passes it) and flows onto the deal.
+    /// Part B: a lift of a market-data STREAM (request-for-stream) subscription books a
+    /// `Deal` stamped `DeskRequestKind::Rfs`, so the blotter shows an RFS fill distinctly
+    /// from an RFQ. The RFS kind is set at ingest (the FIX MD-venue path passes it) and
+    /// flows onto the deal. It is RFS and not ESP because the venue prices the clip the
+    /// client asked for, which is the whole difference between the two channels.
     #[tokio::test]
-    async fn esp_ingest_books_a_deal_stamped_esp() {
+    async fn rfs_ingest_books_a_deal_stamped_rfs() {
         let edge = edge();
-        // The FIX MD-venue records the streamed line as an ESP auto-quote (QUOTED).
+        // The FIX MD-venue records the streamed line as an RFS auto-quote (QUOTED).
         let stored = edge.ingest_fix_rfq(
             "g10",
             "CELER_RATES",
@@ -2371,7 +2373,7 @@ pub(crate) mod tests {
             curve(),
             Side::Buy,
             25_000_000.0,
-            DeskRequestKind::Esp,
+            DeskRequestKind::Rfs,
             RfqIngestOutcome::AutoQuoted(DeskQuote {
                 price: 0.0411,
                 notional: 25_000_000.0,
@@ -2381,16 +2383,16 @@ pub(crate) mod tests {
         );
         assert_eq!(
             stored.kind,
-            DeskRequestKind::Esp as i32,
-            "the desk row is stamped ESP"
+            DeskRequestKind::Rfs as i32,
+            "the desk row is stamped RFS"
         );
         let deal = edge
             .book_fix_lift(&stored.request_id)
-            .expect("an ESP lift books a deal");
+            .expect("an RFS lift books a deal");
         assert_eq!(
             deal.kind,
-            DeskRequestKind::Esp as i32,
-            "the booked deal carries the ESP kind"
+            DeskRequestKind::Rfs as i32,
+            "the booked deal carries the RFS kind"
         );
     }
 

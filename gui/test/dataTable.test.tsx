@@ -61,7 +61,7 @@ const DEALS: readonly Deal[] = [
   { id: "d1", cpty: "Citadel", ccy: "USD", notional: 100, kind: "RFQ" },
   { id: "d2", cpty: "Balyasny", ccy: "EUR", notional: 9, kind: "IOI" },
   { id: "d3", cpty: "Point72", ccy: "USD", notional: 50, kind: "RFQ" },
-  { id: "d4", cpty: "Millennium", ccy: "GBP", notional: 1000, kind: "ESP" },
+  { id: "d4", cpty: "Millennium", ccy: "GBP", notional: 1000, kind: "RFS" },
 ];
 
 const COLUMNS: ReadonlyArray<ColumnDef<Deal>> = [
@@ -514,7 +514,7 @@ describe("DataTable — rich cells, filters and the empty state", () => {
     // exists to prevent, so it is asserted structurally.
     render(<Harness />);
     expect(screen.getByTestId("kind-badge-d1")).toHaveTextContent("RFQ");
-    expect(screen.getByTestId("kind-badge-d4")).toHaveTextContent("ESP");
+    expect(screen.getByTestId("kind-badge-d4")).toHaveTextContent("RFS");
   });
 
   it("the filter band is hidden until toggled, and the badge counts active filters", () => {

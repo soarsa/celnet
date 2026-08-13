@@ -59,8 +59,11 @@ pub enum DeskRequestKind {
     Rfq,
     /// A non-firm axe for the desk to work.
     Ioi,
-    /// A lift of a continuously-streamed executable price (the ESP / FixedIncomeStream venue).
-    Esp,
+    /// A lift of a stream the counterparty REQUESTED for its own clip size (the
+    /// request-for-stream / `FixedIncomeStream` venue). Distinct from an executable
+    /// streaming price, which is dealer-published and clip-independent — this venue
+    /// prices the client's supplied notional, so nothing it serves is an ESP.
+    Rfs,
 }
 
 impl DeskRequestKind {
@@ -68,7 +71,7 @@ impl DeskRequestKind {
         match self {
             DeskRequestKind::Rfq => WireDeskRequestKind::Rfq,
             DeskRequestKind::Ioi => WireDeskRequestKind::Ioi,
-            DeskRequestKind::Esp => WireDeskRequestKind::Esp,
+            DeskRequestKind::Rfs => WireDeskRequestKind::Rfs,
         }
     }
 
@@ -79,7 +82,7 @@ impl DeskRequestKind {
         match WireDeskRequestKind::try_from(tag) {
             Ok(WireDeskRequestKind::Rfq) => Ok(DeskRequestKind::Rfq),
             Ok(WireDeskRequestKind::Ioi) => Ok(DeskRequestKind::Ioi),
-            Ok(WireDeskRequestKind::Esp) => Ok(DeskRequestKind::Esp),
+            Ok(WireDeskRequestKind::Rfs) => Ok(DeskRequestKind::Rfs),
             _ => Err(ClientError::Wire(WireError::UnknownEnum {
                 kind: "DeskRequestKind",
                 tag,

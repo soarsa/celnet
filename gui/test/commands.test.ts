@@ -399,6 +399,9 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
     it("Administration = exactly the admin/ops rows (Pricing Groups moved to Fixed Income)", () => {
       expect(railForDomain("admin").map((r) => r.id)).toEqual([
         "connections",
+        // The LP Panel (inbound liquidity per provider), alongside the FIX
+        // connections it reports on.
+        "liquidity",
         "admin",
         "permissions",
         "refdata",
@@ -632,6 +635,9 @@ describe("grouped rail sections — RAIL_SECTIONS / railSections", () => {
     expect(groups.map((g) => g.section.label)).toEqual(["Administration"]);
     expect(groups[0]!.rows.map((r) => r.id)).toEqual([
       "connections",
+      // The LP Panel — inbound liquidity per provider — sits with the other
+      // connectivity surfaces, immediately after the FIX connections it reports on.
+      "liquidity",
       "admin",
       "permissions",
       "refdata",

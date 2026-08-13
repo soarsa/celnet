@@ -2116,7 +2116,13 @@ export const COUPON_TYPES: readonly CouponType[] = ["fixed", "frn", "zero"];
 
 /** The family discriminant of an {@link InstrumentDef} (the wire family token). */
 export type InstrumentFamily =
-  "deposit" | "fra" | "stir_future" | "vanilla_irs" | "ois" | "bond";
+  | "deposit"
+  | "fra"
+  | "stir_future"
+  | "vanilla_irs"
+  | "ois"
+  | "bond"
+  | "bond_future";
 
 /** The full set of {@link InstrumentFamily} tokens, in canonical order. */
 export const INSTRUMENT_FAMILIES: readonly InstrumentFamily[] = [
@@ -2126,6 +2132,7 @@ export const INSTRUMENT_FAMILIES: readonly InstrumentFamily[] = [
   "vanilla_irs",
   "ois",
   "bond",
+  "bond_future",
 ];
 
 /** Human-friendly labels for each family (UI display only; never on the wire). */
@@ -2138,7 +2145,27 @@ export const INSTRUMENT_FAMILY_LABELS: Readonly<
   vanilla_irs: "Vanilla IRS",
   ois: "OIS",
   bond: "Bond",
+  bond_future: "Treasury future",
 };
+
+/**
+ * The families an administrator may AUTHOR in Reference Data.
+ *
+ * `bond_future` is excluded deliberately: the listed Treasury futures complex is
+ * SEEDED from the committed contract cycle (the same one the venue quotes and the LP
+ * feed streams), so hand-authoring a contract would create a tradeable instrument
+ * outside that cycle — advertised by the registry but quoted by nobody. Existing
+ * seeded contracts still render and edit; only creating/switching-to the family is
+ * withheld.
+ */
+export type AuthorableInstrumentFamily = Exclude<
+  InstrumentFamily,
+  "bond_future"
+>;
+
+/** The authorable families, in canonical order. */
+export const AUTHORABLE_INSTRUMENT_FAMILIES: readonly AuthorableInstrumentFamily[] =
+  ["deposit", "fra", "stir_future", "vanilla_irs", "ois", "bond"];
 
 /** A money-market deposit's terms. */
 export interface DepositDef {
@@ -2218,6 +2245,44 @@ export interface BondDef {
   calendars: Calendar[];
 }
 
+/**
+ * A listed bond (Treasury) **futures** contract's terms — the benchmark vehicle an
+ * interest-rate exposure is transferred into. Every field is a published contract term
+ * except {@link dv01PerContractAtNotionalYield}, which is derived.
+ */
+export interface BondFutureDef {
+  /** The listed contract code, e.g. `ZFU26` (product symbol + month letter + year). */
+  contractCode: string;
+  /** The PRODUCT symbol without the delivery month (`ZT`/`ZF`/`ZN`/`TN`/`ZB`/`UB`). */
+  contractSymbol: string;
+  underlyingIssuer: string;
+  /** Face value at maturity of the deliverable, per contract (e.g. 100000). */
+  contractFaceValue: number;
+  /** The minimum outright price increment, in points of 100 face. */
+  tickSizePoints: number;
+  /** The cash value of one minimum price increment, per contract. */
+  tickValue: number;
+  /** The notional coupon the conversion factor is defined against (0.06 = 6%). */
+  notionalCouponRate: number;
+  deliverableMinMonths: number;
+  deliverableMaxMonths: number;
+  deliveryMonthStart: BrokenDate;
+  firstDeliveryDate: BrokenDate;
+  /** The last day the contract trades — after this it is not a market. */
+  lastTradingDate: BrokenDate;
+  lastDeliveryDate: BrokenDate;
+  /**
+   * The contract's STANDARDIZED DV01 per contract, evaluated at its own 6% notional
+   * yield. DERIVED, not published: a futures contract has no constant basis-point
+   * value — the live figure is the cheapest-to-deliver security's DV01 over its
+   * conversion factor and moves daily. Use it as the displayable, stable figure and
+   * as a sensible DEFAULT when configuring a hedge vehicle, but understand that it
+   * understates the live value whenever yields sit below 6%.
+   */
+  dv01PerContractAtNotionalYield: number;
+  calendars: Calendar[];
+}
+
 /** The fields every instrument definition carries, regardless of family. */
 interface InstrumentDefBase {
   /** Stable id; blank on create ⇒ the server mints one from the name. */
@@ -2242,7 +2307,11 @@ export type InstrumentDef =
   | (InstrumentDefBase & { family: "stir_future"; stirFuture: StirFutureDef })
   | (InstrumentDefBase & { family: "vanilla_irs"; vanillaIrs: VanillaIrsDef })
   | (InstrumentDefBase & { family: "ois"; ois: OisDef })
-  | (InstrumentDefBase & { family: "bond"; bond: BondDef });
+  | (InstrumentDefBase & { family: "bond"; bond: BondDef })
+  | (InstrumentDefBase & {
+      family: "bond_future";
+      bondFuture: BondFutureDef;
+    });
 
 /**
  * The create/update payload (`AuthService.{Create,Update}Instrument`). It is the
@@ -5377,13 +5446,16 @@ export interface CombinedTailRiskResponse {
 
 /**
  * The flavour of an inbound dealer request (`celnet.wire.DeskRequestKind`,
- * proto RFQ=1 / IOI=2 / ESP=3): an `RFQ` is a firm request-for-quote the desk
+ * proto RFQ=1 / IOI=2 / RFS=3): an `RFQ` is a firm request-for-quote the desk
  * responds to with a price; an `IOI` is an indication-of-interest (an advertised
- * axe the desk may also price); an `ESP` is an executable streaming-price lift —
- * a market-data (streaming) venue fill booked off the continuously-streamed line,
- * distinct from the request-driven RFQ/IOI flow. Purpose-named, vendor-neutral.
+ * axe the desk may also price); an `RFS` is a request-for-stream fill — the
+ * counterparty opened a market-data stream for a named instrument AND its own clip
+ * size, and lifted the continuously-streamed line. It is RFS rather than ESP
+ * precisely because the client supplies the notional and the stream is priced for
+ * that clip; an executable streaming price is dealer-published and clip-independent.
+ * Purpose-named, vendor-neutral.
  */
-export type DeskRequestKind = "RFQ" | "IOI" | "ESP";
+export type DeskRequestKind = "RFQ" | "IOI" | "RFS";
 
 /**
  * The lifecycle state of a `DeskRequest` (`celnet.wire.DeskRequestState`, proto

@@ -1,0 +1,154 @@
+/* InstrumentPicker — a searchable, grouped instrument combobox.
+
+   Built entirely on the shared semantic tokens, so it inherits both themes and the
+   platform's density rather than carrying its own palette. The popup is absolutely
+   positioned over the form: a picker that pushed the layout would move the very field
+   the trader is aiming at. */
+
+.root {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  font: var(--type-body) var(--font-ui);
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--duration-fast, 150ms) var(--ease-out);
+}
+
+.input:hover:not(:disabled) {
+  border-color: var(--border-subtle);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* The terms line under a made selection — what the trader confirms they picked the
+   right instrument by, without reopening the list. */
+.selectedMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font: var(--type-micro) var(--font-ui);
+  color: var(--text-tertiary);
+}
+
+.unknownMeta {
+  margin: 0;
+  font: var(--type-micro) var(--font-ui);
+  color: var(--warn);
+}
+
+/* A vehicle that re-points itself at the quarterly roll. Called out because the
+   alternative — a pinned delivery month — silently stops trading. */
+.rollBadge,
+.liveBadge {
+  padding: 0 5px;
+  font: var(--type-micro) var(--font-mono);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: var(--radius-pill);
+}
+
+.rollBadge {
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+  color: var(--text-accent);
+}
+
+/* Tinted with the bid/streaming token, matching how a live price reads elsewhere. */
+.liveBadge {
+  background: color-mix(in oklab, var(--bid, var(--success)) 20%, transparent);
+  color: color-mix(in oklab, var(--bid, var(--success)) 62%, var(--text-primary));
+}
+
+.popup {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-panel, var(--shadow-1));
+}
+
+.list,
+.groupList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.groupHeading {
+  position: sticky;
+  top: 0;
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  font: var(--type-micro) var(--font-ui);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+}
+
+/* One highlight for BOTH pointer hover and keyboard navigation: the row Enter would
+   choose must be the row that looks chosen, however the trader got there. */
+.optionActive {
+  background: var(--bg-accent-soft);
+}
+
+.optionLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: var(--type-callout) var(--font-ui);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+
+.optionSub {
+  font: var(--type-micro) var(--font-ui);
+  color: var(--text-secondary);
+}
+
+.empty {
+  padding: var(--space-3);
+  font: var(--type-caption) var(--font-ui);
+  color: var(--text-tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .input {
+    transition: none;
+  }
+}

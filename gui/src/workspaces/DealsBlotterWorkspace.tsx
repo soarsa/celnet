@@ -99,13 +99,13 @@ function productLabel(d: Deal): string {
 }
 
 /**
- * The CSS chip class for a deal's request kind: RFQ (accent), IOI (warn), or ESP —
- * an executable streaming-price lift, tinted with the bid/streaming token so it reads
- * distinctly from the request-driven flows.
+ * The CSS chip class for a deal's request kind: RFQ (accent), IOI (warn), or RFS —
+ * a request-for-stream lift, tinted with the bid/streaming token so it reads
+ * distinctly from the one-shot request flows.
  */
 function kindClass(kind: Deal["kind"]): string {
   if (kind === "IOI") return styles.kindIoi ?? "";
-  if (kind === "ESP") return styles.kindEsp ?? "";
+  if (kind === "RFS") return styles.kindRfs ?? "";
   return styles.kindRfq ?? "";
 }
 

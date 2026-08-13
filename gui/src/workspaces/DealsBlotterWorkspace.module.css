@@ -129,10 +129,10 @@
   color: var(--warn);
 }
 
-/* ESP — an executable streaming-price lift (market-data venue). Tinted with the
-   bid/streaming semantic token so it reads distinctly from RFQ (accent) and IOI
-   (warn) and themes automatically. */
-.kindEsp {
+/* RFS — a request-for-stream lift (market-data venue, client-supplied clip). Tinted
+   with the bid/streaming semantic token so it reads distinctly from RFQ (accent) and
+   IOI (warn) and themes automatically. */
+.kindRfs {
   background: color-mix(in oklab, var(--bid) 20%, transparent);
   color: color-mix(in oklab, var(--bid) 62%, var(--text-primary));
 }

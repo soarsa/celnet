@@ -819,17 +819,21 @@ const ENTRY_LIST: readonly HelpEntry[] = [
       "Press “+ Add hedge vehicle” and give it a unique id.",
       "Narrow the match as far as you need — leave instrument / product / currency empty for “any”.",
       "Set the maturity bucket [min, max) in years; leave both at 0 for any maturity.",
-      "Name the hedge instrument and tick “Future” if it trades in whole contracts (this also sets the unit label).",
-      "Enter the DV01 per unit — it must be greater than zero, or nothing can be sized off the row.",
+      "Pick the hedge instrument from the search box — it lists the real reference-data universe, and a “live” tag marks the ones an LP is currently quoting (those are the ones that can actually fill).",
+      "Prefer a rolling product (“ZF — front month”) over a specific delivery month: it re-points itself at each quarterly roll, so the row keeps working. A pinned month like ZFU26 stops trading and strands every hedge routed at it.",
+      "Picking a future fills in the DV01 per unit, the whole-contract flag and the unit label from its published terms — check the figure rather than retyping it.",
+      "For a cash bond nothing is pre-filled: its DV01 depends on the live curve, not on any static term, so enter it yourself. It must be greater than zero, or nothing can be sized off the row.",
+      "An instrument reference data does not carry (a EUR or GBP future today) can still be typed in and committed — it is flagged as unknown until it is added.",
       "Save; the row is committed with the rest of the engine config.",
     ],
     whenToUse:
       "Before authoring any rule that hedges with a Benchmark, Named instrument or Named future — those vehicles cannot resolve or size without a row here.",
     risks:
-      "The DV01 per unit is entered, not derived, so it drifts as the benchmark rolls — review it when contracts roll or the curve moves materially. Overlapping maturity buckets make which row wins ambiguous; keep them disjoint. Deleting a row that a live rule names leaves that rule unpriceable and the server will reject it on the next save.",
+      "A future's pre-filled DV01 is its STANDARDIZED figure at the contract's own 6% notional yield — a futures contract has no constant basis-point value, so it understates the live figure whenever yields sit below 6%. Override it if the desk sizes off the live curve. Overlapping maturity buckets make which row wins ambiguous; keep them disjoint. A row pinned to a delivery month rather than a product goes stale at the quarterly roll. Deleting a row that a live rule names leaves that rule unpriceable and the server will reject it on the next save.",
     keywords: [
       "registry", "vehicle", "roster", "dv01 per unit", "maturity bucket", "benchmark", "future", "contract",
       "unit label", "hedge instrument", "product", "currency", "match",
+      "picker", "dropdown", "front month", "roll", "auto-roll", "live liquidity", "reference data",
     ],
   },
   {

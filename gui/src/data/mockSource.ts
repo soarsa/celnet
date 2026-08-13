@@ -5591,6 +5591,15 @@ export class MockTransport implements CelnetTransport {
         return MockTransport.tenorToPillar(def.ois.tenor, referenceDate);
       case "bond":
         return { kind: "date", maturityDate: def.bond.maturityDate };
+      case "bond_future":
+        // A listed futures contract is NOT a curve-pillar instrument: its price is a
+        // function of the deliverable basket and the cheapest-to-deliver, not a single
+        // par-rate observation at one maturity. Refusing is the honest answer — picking
+        // a date (delivery month? deliverable maturity?) would build the curve off a
+        // point the contract does not actually observe.
+        throw new Error(
+          `instrument \`${def.instrumentId}\` is a listed Treasury future and cannot be a curve pillar`,
+        );
     }
   }
 
@@ -6203,9 +6212,9 @@ export class MockTransport implements CelnetTransport {
       { counterpartyIdx: 5, productKind: "OIS", tenorYears: 10, notionalMm: 80, side: "SELL", profileIdx: 1 },
       { counterpartyIdx: 6, productKind: "IRS", tenorYears: 2, notionalMm: 200, side: "BUY", profileIdx: 2 },
       { counterpartyIdx: 7, productKind: "IRS", tenorYears: 7, notionalMm: 90, side: "SELL", profileIdx: 0 },
-      // The BOND 10Y — an ESP streaming lift, external-shed (profile 2 = B2B/red), the
+      // The BOND 10Y — an RFS streaming lift, external-shed (profile 2 = B2B/red), the
       // parent of the seeded hedge execution (positionId 9001).
-      { counterpartyIdx: 8, productKind: "BOND", tenorYears: 10, notionalMm: 60, side: "BUY", profileIdx: 2, kind: "ESP", refdataIdx: 5, positionId: 9001n },
+      { counterpartyIdx: 8, productKind: "BOND", tenorYears: 10, notionalMm: 60, side: "BUY", profileIdx: 2, kind: "RFS", refdataIdx: 5, positionId: 9001n },
       { counterpartyIdx: 9, productKind: "BOND", tenorYears: 30, notionalMm: 35, side: "SELL", profileIdx: 1, refdataIdx: 6 },
     ];
     const seedBase = nowNanos();

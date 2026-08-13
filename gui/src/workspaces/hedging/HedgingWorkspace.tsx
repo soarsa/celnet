@@ -66,6 +66,7 @@ import { HedgeRulesTable } from "./HedgeRulesTable";
 import { HedgeTracePanel } from "./HedgeTracePanel";
 import { ExitModeConfig } from "./ExitModeConfig";
 import { HedgeVehicleRegistry } from "./HedgeVehicleRegistry";
+import { useReferenceData } from "../../hooks/useReferenceData";
 import { LpPanelConfig } from "./LpPanelConfig";
 import { SetupWizard } from "./SetupWizard/SetupWizard";
 import { ThresholdConfig } from "./ThresholdConfig";
@@ -83,7 +84,24 @@ type SaveState =
 
 const EMPTY_GRAPH: HedgeGraph = { entry: 0, nodes: [] };
 /** Advisory aggregation instruments a CROSS_INTERNAL can target. */
-const INSTRUMENT_OPTIONS: readonly string[] = ["AGG-OIS", "AGG-US10Y", "AGG-EURUSD", "AGG-UK5Y"];
+/**
+ * The aggregation instruments a CROSS_INTERNAL exit may target, drawn from the live
+ * reference-data registry rather than a hardcoded list. A curated set of made-up ids
+ * looked like configuration but named nothing the platform could cross against.
+ */
+function useAggregationInstrumentOptions(
+  app: ReturnType<typeof useApp>,
+): readonly string[] {
+  const refData = useReferenceData(app.transport, app.auth.user != null);
+  return useMemo(
+    () =>
+      refData.instruments
+        .map((d) => d.instrumentId)
+        .filter((id) => id.length > 0)
+        .sort((a, b) => a.localeCompare(b)),
+    [refData.instruments],
+  );
+}
 /** Advisory LP ids an RFQ_OUT can fan to. */
 const LP_OPTIONS: readonly string[] = ["LP-1", "LP-2", "LP-3", "LP-4"];
 
@@ -218,6 +236,7 @@ function PolicyTab({
   app: ReturnType<typeof useApp>;
   readOnly: boolean;
 }): React.ReactElement {
+  const instrumentOptions = useAggregationInstrumentOptions(app);
   const [rules, setRules] = useState<HedgeRule[]>([]);
   const [baseline, setBaseline] = useState<string>("[]");
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -466,7 +485,7 @@ function PolicyTab({
         draft={mode.draft}
         isNew={mode.index === null}
         readOnly={readOnly}
-        instrumentOptions={INSTRUMENT_OPTIONS}
+        instrumentOptions={instrumentOptions}
         lpOptions={LP_OPTIONS}
         vehicles={vehicles}
         onSave={onEditorSave}
@@ -817,6 +836,11 @@ function VehiclesTab({
   readOnly: boolean;
 }): React.ReactElement {
   const { config, busy, loadError, saveError, commit } = useHedgeConfigTab(app, "hedge vehicle");
+  // The instrument registry backing the vehicle pickers, so a trader CHOOSES a real
+  // contract (and inherits its published DV01 per contract) instead of typing a code
+  // and a number from memory. Loaded here rather than inside the registry component so
+  // the component stays a pure view over the data it is handed.
+  const refData = useReferenceData(app.transport, app.auth.user != null);
 
   return (
     <div className={styles.singleTab}>
@@ -825,9 +849,16 @@ function VehiclesTab({
           {loadError}
         </p>
       )}
+      {refData.error !== null && (
+        <p className={styles.errorText} role="alert">
+          Instrument reference data failed to load ({refData.error}) — the vehicle
+          pickers will be empty; any already-configured instrument still shows.
+        </p>
+      )}
       {config !== null && (
         <HedgeVehicleRegistry
           vehicles={config.vehicles}
+          instruments={refData.instruments}
           readOnly={readOnly}
           busy={busy}
           saveError={saveError}

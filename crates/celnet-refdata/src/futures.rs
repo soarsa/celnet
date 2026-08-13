@@ -663,6 +663,49 @@ pub fn front_contracts(as_of: CivilYmd) -> Vec<TreasuryFutureSpec> {
         .collect()
 }
 
+/// Whether `id` names a listed futures **product** (`ZT`/`ZF`/`ZN`/`TN`/`ZB`/`UB`, or
+/// one of the published legacy floor symbols) rather than one of that product's
+/// delivery months.
+///
+/// This is the predicate that separates the two things a hedge policy may name. A
+/// delivery month (`ZFU26`) is a specific market that stops trading on a specific day;
+/// a product (`ZF`) is the standing intent "hedge in the 5-Year contract", whose answer
+/// is whichever contract is currently the front one. The distinction is decidable from
+/// the committed terms table alone — no parsing of month codes, so a malformed id is
+/// simply not a product and is passed through untouched.
+#[must_use]
+pub fn is_product_symbol(id: &str) -> bool {
+    TREASURY_FUTURES_TERMS.iter().any(|t| {
+        t.symbol == id || (!t.legacy_floor_symbol.is_empty() && t.legacy_floor_symbol == id)
+    })
+}
+
+/// The front-month **contract code** for a product symbol as of `as_of` — the id a
+/// policy that names a product should actually trade today.
+///
+/// The companion to [`is_product_symbol`]: together they let a hedge vehicle be
+/// configured once as `ZF` and resolve to `ZFU26` before the September roll and
+/// `ZFZ26` after it, off the SAME committed cycle the venue quotes and the registry
+/// seeds — so the id returned is by construction one the venue is quoting.
+///
+/// Accepts a legacy floor symbol (`FV`) as an alias for its electronic product, since
+/// that is what a desk that has traded the contract for twenty years will type.
+///
+/// `None` when `symbol` is not a listed product, or when every listed contract for it
+/// has expired — the caller must then decline rather than fabricate a contract code
+/// (the committed cycle needs rolling; see [`LISTED_CYCLE_START`]).
+#[must_use]
+pub fn front_contract_id(symbol: &str, as_of: CivilYmd) -> Option<String> {
+    let electronic = TREASURY_FUTURES_TERMS
+        .iter()
+        .find(|t| {
+            t.symbol == symbol
+                || (!t.legacy_floor_symbol.is_empty() && t.legacy_floor_symbol == symbol)
+        })?
+        .symbol;
+    front_contract(electronic, as_of).map(|s| s.instrument_id)
+}
+
 /// Every product's contract for one delivery month (`month` must be a quarterly
 /// cycle month — March, June, September or December; any other month yields an
 /// empty vector, since no such contract is listed).
@@ -1196,6 +1239,66 @@ mod tests {
         assert!(front_contract("ZN", CivilYmd::new(2030, 1, 1)).is_none());
         // An unlisted product code never resolves.
         assert!(front_contract("XX", before).is_none());
+    }
+
+    /// A hedge vehicle configured as a PRODUCT rolls itself; one configured as a
+    /// delivery month does not. This is the pair a hedge policy is resolved through:
+    /// `is_product_symbol` decides whether an id is standing intent or a fixed market,
+    /// and `front_contract_id` answers what that intent trades today.
+    #[test]
+    fn a_product_symbol_resolves_to_the_front_contract_and_rolls_with_it() {
+        // A product symbol is intent; a delivery month is a specific market.
+        assert!(is_product_symbol("ZF"), "ZF is the 5-Year product");
+        assert!(
+            !is_product_symbol("ZFU26"),
+            "a delivery month is NOT a product — it must never be silently re-pointed"
+        );
+        assert!(
+            !is_product_symbol("US912810TM0"),
+            "a cash bond is not a product"
+        );
+        assert!(!is_product_symbol(""), "an empty id is not a product");
+
+        // A desk that has traded the contract for twenty years types the floor symbol.
+        assert!(
+            is_product_symbol("FV"),
+            "FV is the legacy 5-Year floor symbol"
+        );
+        let before = CivilYmd::new(2026, 6, 1);
+        assert_eq!(
+            front_contract_id("FV", before).as_deref(),
+            Some("ZFU26"),
+            "a legacy floor symbol resolves to its electronic product's front month"
+        );
+
+        // The roll: the SAME configured vehicle points at Sep-26 before the 10-Year's
+        // cessation and at Dec-26 after it, with no edit to the policy.
+        assert_eq!(front_contract_id("ZN", before).as_deref(), Some("ZNU26"));
+        let ltd = front_contract("ZN", before)
+            .expect("a front 10-Year")
+            .last_trading_date;
+        let after = CivilYmd::new(ltd.year, ltd.month, ltd.day + 1);
+        assert_eq!(
+            front_contract_id("ZN", after).as_deref(),
+            Some("ZNZ26"),
+            "past the front contract's last trading day the vehicle rolls itself"
+        );
+
+        // Every id it returns is one the venue is quoting on that date — the invariant
+        // that stops a rolled hedge from being routed at a dead market.
+        let listed = listed_universe_on(after);
+        for terms in &TREASURY_FUTURES_TERMS {
+            if let Some(id) = front_contract_id(terms.symbol, after) {
+                assert!(
+                    listed.iter().any(|s| s.instrument_id == id),
+                    "front contract {id} must be in the listed universe on that date"
+                );
+            }
+        }
+
+        // Declines rather than fabricates: an unlisted product, and a cycle fully past.
+        assert!(front_contract_id("XX", before).is_none());
+        assert!(front_contract_id("ZN", CivilYmd::new(2030, 1, 1)).is_none());
     }
 
     #[test]

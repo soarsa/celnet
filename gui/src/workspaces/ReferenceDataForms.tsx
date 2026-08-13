@@ -21,7 +21,7 @@ import {
   COUPON_TYPES,
   EXTERNAL_ID_SCHEMES,
   FREQUENCIES,
-  INSTRUMENT_FAMILIES,
+  AUTHORABLE_INSTRUMENT_FAMILIES,
   INSTRUMENT_FAMILY_LABELS,
   RATES_DAY_COUNTS,
   ROLL_CONVENTIONS,
@@ -36,7 +36,7 @@ import {
   type FraDef,
   type Frequency,
   type InstrumentDef,
-  type InstrumentFamily,
+  type AuthorableInstrumentFamily,
   type InstrumentInput,
   type OisDef,
   type RatesDayCount,
@@ -126,8 +126,16 @@ function defaultBond(): BondDef {
   };
 }
 
-/** A fresh definition for `family` with empty base fields (create defaults). */
-export function defaultInstrument(family: InstrumentFamily): InstrumentDef {
+/**
+ * A fresh definition for `family` with empty base fields (create defaults).
+ *
+ * Takes an {@link AuthorableInstrumentFamily}: a listed Treasury future is seeded from
+ * the committed contract cycle, never hand-authored, so there is no such thing as a
+ * blank one to default.
+ */
+export function defaultInstrument(
+  family: AuthorableInstrumentFamily,
+): InstrumentDef {
   const base = {
     instrumentId: "",
     name: "",
@@ -152,7 +160,10 @@ export function defaultInstrument(family: InstrumentFamily): InstrumentDef {
 }
 
 /** Re-key a draft to a different family, preserving the base fields. */
-function changeFamily(def: InstrumentDef, family: InstrumentFamily): InstrumentDef {
+function changeFamily(
+  def: InstrumentDef,
+  family: AuthorableInstrumentFamily,
+): InstrumentDef {
   const fresh = defaultInstrument(family);
   return {
     ...fresh,
@@ -581,7 +592,9 @@ export function InstrumentForm({
             ? draft.vanillaIrs
             : draft.family === "ois"
               ? draft.ois
-              : draft.bond;
+              : draft.family === "bond"
+                ? draft.bond
+                : draft.bondFuture;
   const calendarCount = familyDef.calendars.length;
   const canSubmit = name.length > 0 && currency.length > 0 && calendarCount > 0;
 
@@ -607,10 +620,12 @@ export function InstrumentForm({
           id="rd-family"
           label="Family"
           value={draft.family}
-          options={INSTRUMENT_FAMILIES}
+          options={AUTHORABLE_INSTRUMENT_FAMILIES}
           labelOf={(f) => INSTRUMENT_FAMILY_LABELS[f]}
           disabled={isEditing}
-          onChange={(f) => setDraft((d) => changeFamily(d, f as InstrumentFamily))}
+          onChange={(f) =>
+            setDraft((d) => changeFamily(d, f as AuthorableInstrumentFamily))
+          }
         />
         <TextField id="rd-name" label="Name" value={draft.name} onChange={(v) => setDraft((d) => ({ ...d, name: v }) as InstrumentDef)} placeholder="e.g. USD SOFR OIS 5Y" />
         <TextField id="rd-ccy" label="Currency" value={draft.currency} onChange={(v) => setDraft((d) => ({ ...d, currency: v }) as InstrumentDef)} placeholder="e.g. USD" />

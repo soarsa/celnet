@@ -250,9 +250,25 @@ face amount are not interchangeable units.
 
 The roster saves with the rest of the engine config — there is no separate CRUD step.
 
-> **⚠ The DV01 per unit is entered, not derived.** It drifts as the benchmark rolls. Review it
-> when contracts roll or the curve moves materially, and keep maturity buckets **disjoint** —
-> overlapping buckets make it ambiguous which row a benchmark resolves through.
+**Pick the hedge instrument, do not type it.** The field is a searchable picker over the real
+reference-data universe. A `live` tag marks the instruments an LP is currently quoting — those
+are the ones a hedge can actually FILL, as opposed to merely exist. Choosing a listed future
+fills in its **DV01 per unit**, the whole-contract flag and the unit label from that contract's
+published terms. An instrument reference data does not carry (a EUR or GBP future today) can
+still be typed and committed; it is flagged as unknown until it is added.
+
+**Prefer the rolling product over a delivery month.** The picker offers both `ZF — front month`
+and the specific months (`ZFU26`, `ZFZ26`). Choose the product: the server resolves it to
+whichever contract is trading on the day, so the row survives the quarterly roll. A row pinned
+to a delivery month stops trading four times a year and strands every hedge routed at it.
+
+> **⚠ A future's pre-filled DV01 is its STANDARDIZED figure**, evaluated at the contract's own
+> 6% notional yield. A futures contract has no constant basis-point value — the live figure is
+> the cheapest-to-deliver's DV01 over its conversion factor and moves daily — so this
+> understates the live value whenever yields sit below 6%. Override it if the desk sizes off the
+> live curve. A **cash bond pre-fills nothing**: enter its DV01 yourself. And keep maturity
+> buckets **disjoint** — overlapping buckets make it ambiguous which row a benchmark resolves
+> through.
 
 ---
 

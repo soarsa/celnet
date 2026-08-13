@@ -142,7 +142,13 @@ describe("the hedge-vehicle registry tab", () => {
     fireEvent.click(await screen.findByTestId("vehicle-add"));
 
     fireEvent.change(screen.getByTestId("vehicle-id"), { target: { value: "uk-gilt-3-7y" } });
-    fireEvent.change(screen.getByTestId("vehicle-hedge-instrument"), { target: { value: "G-MAR27" } });
+    // The hedge instrument is a PICKER now. Reference data is US-only today, so a gilt
+    // future is named through the picker's raw-commit escape hatch (typed, then blurred)
+    // rather than chosen from the list — the path a desk uses for any instrument the
+    // committed universe does not carry.
+    const hedgeInstrument = screen.getByTestId("vehicle-hedge-instrument");
+    fireEvent.change(hedgeInstrument, { target: { value: "G-MAR27" } });
+    fireEvent.blur(hedgeInstrument);
     fireEvent.change(screen.getByTestId("vehicle-dv01"), { target: { value: "64" } });
     fireEvent.change(screen.getByTestId("vehicle-min-maturity"), { target: { value: "3" } });
     fireEvent.change(screen.getByTestId("vehicle-max-maturity"), { target: { value: "7" } });

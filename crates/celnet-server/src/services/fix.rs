@@ -290,7 +290,7 @@ pub(crate) struct FixContext {
     /// `Arc` with every gRPC/WS edge, so the FIX venue sees the same firm/pair caps.
     store: Arc<PositionStore>,
     /// The live aggregated-book composite + pricing-group registry a fixed-income
-    /// **stream** venue prices its outbound RFS/ESP two-way off (`docs/FI-PRICING-GROUPS-
+    /// **stream** venue prices its outbound RFS two-way off (`docs/FI-PRICING-GROUPS-
     /// DESIGN.md` §5): when the streamed instrument is covered by an enabled aggregated
     /// book, the pushed two-way is the book's consolidated composite run through THIS
     /// connection's pricing-group pipeline (resolved by connection id, then desk) —
@@ -304,7 +304,7 @@ pub(crate) struct FixContext {
     /// The firm-wide **outbound** pricing kill-switch. Read (a cheap `Relaxed` load on
     /// the FIX session ticker task, never the pinned pricer) before every outbound
     /// pricing emission: when outbound is disabled, RFQ auto-quotes are suppressed and
-    /// RFS/ESP streams pause (they re-check each tick, so they resume from live on
+    /// RFS streams pause (they re-check each tick, so they resume from live on
     /// re-enable). Inbound LP consumption, the desk-inbox RFQ recording, and internal
     /// book updates are untouched. Defaulted to a both-enabled control by the
     /// constructors (byte-identical to before the kill-switch); the boot path shares
@@ -471,7 +471,7 @@ impl FixContext {
     }
 
     /// Share the firm-wide runtime **pricing kill-switch** so this venue's outbound
-    /// pricing (RFQ auto-quotes + RFS/ESP streams) is gated by `SetPricingControl`.
+    /// pricing (RFQ auto-quotes + RFS streams) is gated by `SetPricingControl`.
     /// Takes an `Option` so the managed registry can pass its set-once handle (or `None`
     /// in tests that never wire it, keeping the default both-enabled control). Builder-
     /// style; a no-op wire keeps existing callers/tests byte-identical.
@@ -487,7 +487,7 @@ impl FixContext {
     }
 
     /// Wire the live aggregated-book composite + pricing-group registry a fixed-income
-    /// **stream** venue prices its outbound RFS/ESP off (see the field docs). Builder-
+    /// **stream** venue prices its outbound RFS off (see the field docs). Builder-
     /// style so existing callers/tests that don't wire a hub are unchanged (the stream
     /// then keeps the standalone P0 demo re-price). A no-op wire for an FX-options
     /// acceptor, whose path never streams a composite.
@@ -847,7 +847,7 @@ impl FixSession {
         // "Quote publish (tick→quote)"): bracket the quote-ready → frame-emitted span (mint the
         // two-way tokens, build the `Quote(S)` wire frame, push it) with a monotonic `Instant`,
         // recorded into the shared telemetry hub before returning. Shared by the FX-options RFQ
-        // auto-quote, the rates RFQ auto-quote, and the RFS/ESP stream tick, so every outbound
+        // auto-quote, the rates RFQ auto-quote, and the RFS stream tick, so every outbound
         // maker quote folds into this stage. The async FIX edge, never the pinned pricing core.
         let publish_t0 = std::time::Instant::now();
         let now = self.ctx.clock.now_nanos();
@@ -1118,7 +1118,7 @@ impl FixSession {
 
     /// Resolve the aggregated-book composite two-way for a streamed instrument, applying
     /// **this connection's** pricing group when one resolves — the seam that makes the FIX
-    /// RFS/ESP outbound composite-based **and tiered**, matching the gRPC/WS RFQ path
+    /// RFS outbound composite-based **and tiered**, matching the gRPC/WS RFQ path
     /// ([`super::quote::QuoteEdge::book_composite_for_caller`]). A grouped connection prices
     /// off the book's RAW consolidated composite through its own effective RFS/RFQ pipeline
     /// (`share_pipeline ? esp : rfq`); an ungrouped one receives the book-default composite.
@@ -1225,7 +1225,7 @@ impl FixSession {
             .record(trace_id, stage, symbol, details);
     }
 
-    /// This session's resolved **market-data (ESP) last-look policy**
+    /// This session's resolved **market-data (RFS) last-look policy**
     /// `(mode, tolerance_bps, giveback_pct)`: the last-look settings of the pricing group
     /// this FIX session resolves to (by connection id, then desk fallback), or the platform
     /// defaults when no hub is wired or no group claims this session. Read on the async FIX
@@ -1653,10 +1653,13 @@ impl FixSession {
         let counterparty = self.display_counterparty(frame);
         // Record the desk-inbox row first (its id rides the stream so a lift books a deal).
         let request_id = match &record {
-            // A market-data STREAM subscribe is the ESP venue — a lift of a streamed
-            // top-of-book books an ESP deal (distinct from a one-off RFQ).
+            // A market-data STREAM subscribe is the REQUEST-FOR-STREAM venue: the client
+            // named an instrument AND its own clip, and the stream below is priced for
+            // that clip. It is therefore RFS, not ESP — an executable streaming price is
+            // dealer-published and clip-independent. A lift of a streamed top-of-book
+            // books an RFS deal (distinct from a one-off RFQ).
             MdRecord::Bond(rfq) => {
-                self.record_bond_rfq(rfq, &counterparty, &curve, DeskRequestKind::Esp, &admission)
+                self.record_bond_rfq(rfq, &counterparty, &curve, DeskRequestKind::Rfs, &admission)
             }
             MdRecord::Ois(rfq) => {
                 let side = rates_side_to_side(rfq.side);
@@ -1665,7 +1668,7 @@ impl FixSession {
                     &counterparty,
                     side,
                     &curve,
-                    DeskRequestKind::Esp,
+                    DeskRequestKind::Rfs,
                     &admission,
                 )
             }
@@ -2506,7 +2509,7 @@ const RFS_STREAM_INTERVAL_SECS: u64 = 5;
 const RFS_STREAM_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(RFS_STREAM_INTERVAL_SECS);
 
-/// The verdict of the configurable market-data (ESP) last-look policy for one lift.
+/// The verdict of the configurable market-data (RFS) last-look policy for one lift.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum MdLastLook {
     /// Book the lift at this **fill price** — the client's requested price `q`, possibly
@@ -3566,7 +3569,7 @@ mod tests {
     }
 
     /// Build a by-symbol BUY `NewOrderSingle(D)` lifting `symbol` at `price` (the streamed
-    /// offer) — the market-data lift the ESP sends (no `QuoteID(117)`).
+    /// offer) — the market-data lift an RFS client sends (no `QuoteID(117)`).
     fn md_buy_order(cl_ord_id: &[u8], symbol: &[u8], price: f64) -> Vec<u8> {
         let hdr = Header {
             sender: b"CELNET",
@@ -3589,7 +3592,7 @@ mod tests {
     }
 
     /// Build a BUY `NewOrderSingle(D)` lifting `symbol` at `price` by **QuoteID(117)** (plus
-    /// the `SecurityType(167)`) — the ESP lift a client sends after reading a `35=W` QuoteID.
+    /// the `SecurityType(167)`) — the RFS lift a client sends after reading a `35=W` QuoteID.
     fn md_buy_order_by_quote_id(
         cl_ord_id: &[u8],
         quote_id: &[u8],
@@ -3670,7 +3673,7 @@ mod tests {
         );
     }
 
-    /// The ESP lift-by-QuoteID path: after a subscribe publishes a top-of-book with a
+    /// The RFS lift-by-QuoteID path: after a subscribe publishes a top-of-book with a
     /// `QuoteID(117)`, a `NewOrderSingle(D)` that ECHOES that QuoteID (+ `SecurityType(167)`)
     /// resolves through the reverse index to the symbol's live token and FILLS — the
     /// client-visible handle books the SAME token a by-symbol lift would.
@@ -3769,7 +3772,7 @@ mod tests {
     }
 
     /// Build a by-symbol SELL `NewOrderSingle(D)` hitting `symbol`'s bid at `price` — the
-    /// market-data lift the ESP sends to sell into the streamed bid (no `QuoteID(117)`).
+    /// market-data lift an RFS client sends to sell into the streamed bid (no `QuoteID(117)`).
     fn md_sell_order(cl_ord_id: &[u8], symbol: &[u8], price: f64) -> Vec<u8> {
         let hdr = Header {
             sender: b"CELNET",

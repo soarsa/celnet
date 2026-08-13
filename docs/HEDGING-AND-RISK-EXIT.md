@@ -679,10 +679,27 @@ Read this section before relying on the numbers.
    instrument actually traded, so the audit trail stays truthful even where the position store
    is approximate.
 
-8. **`dv01_per_unit` is configured, not derived.** A registry row's DV01 per contract is entered
-   by an administrator and is static until they change it. A real futures DV01 moves with the
-   CTD and the curve. The engine will never *guess* one (an unregistered vehicle refuses to
-   size), but it also does not currently *re-derive* one.
+8. **`dv01_per_unit` is configured, and PRE-FILLED from reference data.** A registry row's DV01
+   per contract is still the administrator's number and is static until they change it — but it
+   is no longer typed from memory. Picking a listed future in the Vehicles roster fills it from
+   that contract's own seeded terms (its **standardized** DV01 at the contract's 6% notional
+   yield), along with the whole-lot flag and the unit label. A cash bond pre-fills nothing: its
+   DV01 is a function of the live curve, not a static term, so the trader supplies it and
+   nothing is invented. The engine still never *guesses* one — an unregistered vehicle refuses
+   to size — and it still does not *re-derive* one at execution: the standardized figure
+   understates the live value whenever yields sit below 6%, which is why the field stays
+   editable.
+
+8b. **A vehicle may name a PRODUCT, and then it rolls itself.** A registry row's
+   `hedge_instrument_id` may be a futures product symbol (`ZF`) rather than a delivery month
+   (`ZFU26`). `resolve_hedge_vehicle` re-points it at the front contract on the valuation date
+   via `celnet_refdata::front_contract_id`, off the same committed listed cycle the venue quotes
+   and the reference registry seeds — so the id it yields is by construction one the venue is
+   quoting. A row naming an explicit delivery month is **never** silently re-pointed; that is a
+   deliberate choice. A product whose whole listed cycle has expired resolves to nothing, and
+   the caller falls back to the self-hedge and logs why, rather than routing at an invented
+   contract code. Without this, a row configured once as `ZFU26` kept routing hedges at Sep-26
+   after the September roll, at which point the contract has stopped trading.
 
 9. **The vehicle ratio uses a par-yield assumption when no dealt price is available.** The
    analytic bond DV01 is taken at the yield implied by the dealt clean price when the booking

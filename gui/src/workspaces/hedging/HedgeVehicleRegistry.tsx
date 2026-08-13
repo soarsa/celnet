@@ -19,8 +19,9 @@ import { useMemo, useState } from "react";
 
 import { DataTable } from "../../components/DataTable";
 import { HelpButton } from "../../components/HelpButton";
+import { InstrumentPicker } from "../../components/InstrumentPicker";
 import { NumberField } from "../../components/NumberField";
-import type { HedgeVehicleRule } from "../../data/contract";
+import type { HedgeVehicleRule, InstrumentDef } from "../../data/contract";
 import { useGridState } from "../../hooks/useGridState";
 import type { ColumnDef } from "../../lib/grid";
 import {
@@ -31,10 +32,25 @@ import {
   newHedgeVehicleRule,
   validateHedgeVehicleRule,
 } from "../../lib/hedgeVehicle";
+import {
+  hedgeVehicleOptions,
+  type InstrumentOption,
+} from "../../lib/instrumentPicker";
 import styles from "./HedgingWorkspace.module.css";
 
 interface HedgeVehicleRegistryProps {
   vehicles: readonly HedgeVehicleRule[];
+  /**
+   * The reference-data registry the instrument pickers are sourced from. Empty until
+   * the first load resolves — the pickers then simply offer nothing and the previously
+   * configured id still renders, rather than the field appearing to have been cleared.
+   */
+  instruments: readonly InstrumentDef[];
+  /**
+   * The identifiers a live composite currently covers, so the picker can mark which
+   * vehicles can actually FILL. Omit when unknown.
+   */
+  liquidIds?: ReadonlySet<string>;
   readOnly: boolean;
   busy: boolean;
   /** A server-side rejection to surface, or `null`. */
@@ -55,6 +71,8 @@ function newDraftId(existing: readonly HedgeVehicleRule[]): string {
 
 export function HedgeVehicleRegistry({
   vehicles,
+  instruments,
+  liquidIds,
   readOnly,
   busy,
   saveError,
@@ -200,6 +218,35 @@ export function HedgeVehicleRegistry({
   const setRule = (p: Partial<HedgeVehicleRule>): void =>
     setDraft((d) => (d === null ? d : { ...d, rule: { ...d.rule, ...p } }));
 
+  // The vehicles a rule may hedge INTO — rolling futures products first (the option that
+  // survives the quarterly roll), then specific delivery months, then cash bonds.
+  const vehicleOptions = useMemo(
+    () => hedgeVehicleOptions({ defs: instruments, liquidIds }),
+    [instruments, liquidIds],
+  );
+
+  /**
+   * Adopt a picked hedge instrument AND everything the definition already knows about
+   * it. The DV01 per contract, the whole-lot flag and the unit label are all facts of
+   * the contract's own published terms — the trader was previously retyping them from
+   * memory, which is the failure this picker exists to remove. A definition that does
+   * NOT carry a DV01 (every cash bond — its DV01 is a function of the live curve, not a
+   * static term) leaves the field alone for the trader to supply: pre-filling a number
+   * nobody derived would be a guess.
+   */
+  const chooseHedgeInstrument = (opt: InstrumentOption | null): void => {
+    if (opt === null) {
+      setRule({ hedgeInstrumentId: "" });
+      return;
+    }
+    setRule({
+      hedgeInstrumentId: opt.value,
+      isFuture: opt.isFuture,
+      unitLabel: opt.unitLabel,
+      ...(opt.dv01PerUnit === null ? {} : { dv01PerUnit: opt.dv01PerUnit }),
+    });
+  };
+
   const onSaveDraft = (): void => {
     if (draft === null || draftErrors.length > 0) return;
     const trimmed: HedgeVehicleRule = {
@@ -282,17 +329,18 @@ export function HedgeVehicleRegistry({
                 onChange={(e) => setRule({ id: e.target.value })}
               />
             </label>
-            <label className={styles.formField}>
+            <div className={styles.formField}>
               <span className={styles.fieldLabel}>Instrument (empty ⇒ any)</span>
-              <input
-                className={styles.input}
-                type="text"
+              <InstrumentPicker
+                label="Match instrument (empty matches any)"
+                options={vehicleOptions}
                 value={draft.rule.instrumentId}
-                placeholder="e.g. XS2034-ACME-4H"
-                data-testid="vehicle-instrument-id"
-                onChange={(e) => setRule({ instrumentId: e.target.value })}
+                placeholder="Any instrument"
+                testId="vehicle-instrument-id"
+                onChange={(opt) => setRule({ instrumentId: opt?.value ?? "" })}
+                onRawCommit={(raw) => setRule({ instrumentId: raw })}
               />
-            </label>
+            </div>
             <label className={styles.formField}>
               <span className={styles.fieldLabel}>Product (empty ⇒ any)</span>
               <input
@@ -333,17 +381,18 @@ export function HedgeVehicleRegistry({
                 onChange={(e) => setRule({ maxMaturityYears: Number(e.target.value) })}
               />
             </label>
-            <label className={styles.formField}>
+            <div className={styles.formField}>
               <span className={styles.fieldLabel}>Hedge instrument</span>
-              <input
-                className={styles.input}
-                type="text"
+              <InstrumentPicker
+                label="Hedge instrument"
+                options={vehicleOptions}
                 value={draft.rule.hedgeInstrumentId}
-                placeholder="e.g. TY-DEC26"
-                data-testid="vehicle-hedge-instrument"
-                onChange={(e) => setRule({ hedgeInstrumentId: e.target.value })}
+                placeholder="Search futures and bonds…"
+                testId="vehicle-hedge-instrument"
+                onChange={chooseHedgeInstrument}
+                onRawCommit={(raw) => setRule({ hedgeInstrumentId: raw })}
               />
-            </label>
+            </div>
             <label className={styles.formField}>
               <span className={styles.fieldLabel}>DV01 per unit</span>
               <NumberField
@@ -352,6 +401,13 @@ export function HedgeVehicleRegistry({
                 data-testid="vehicle-dv01"
                 onChange={(e) => setRule({ dv01PerUnit: Number(e.target.value) })}
               />
+              <span className={styles.fieldHint}>
+                Pre-filled from a picked future&apos;s published terms — its{" "}
+                <strong>standardized</strong> DV01 at the contract&apos;s 6% notional
+                yield. A futures contract has no constant basis-point value, so this
+                understates the live figure whenever yields sit below 6%. Override it
+                with your own if the desk sizes off the live curve.
+              </span>
             </label>
             <label className={styles.formField}>
               <span className={styles.fieldLabel}>Unit label</span>

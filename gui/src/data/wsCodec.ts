@@ -178,6 +178,7 @@ import type {
   LpContribution,
   InstrumentDef,
   InstrumentInput,
+  BondFutureDef,
   ExternalIdEntry,
   ExternalIdScheme,
   BrokenDate,
@@ -286,7 +287,12 @@ import type {
   XvaResult,
   XvaSurvivalCurve,
 } from "./contract";
-import { curveInterpolationCode, curveInterpolationFromCode, TRACE_STAGE_ORDER } from "./contract";
+import {
+  curveInterpolationCode,
+  curveInterpolationFromCode,
+  INSTRUMENT_FAMILIES,
+  TRACE_STAGE_ORDER,
+} from "./contract";
 import * as e from "./enums";
 
 /** A decoded server frame is a JSON object with a `type` discriminator. */
@@ -6051,6 +6057,49 @@ function bondFromWire(o: WireObject): BondDef {
   return def;
 }
 
+function bondFutureToWire(d: BondFutureDef): WireObject {
+  return {
+    contract_code: d.contractCode,
+    contract_symbol: d.contractSymbol,
+    underlying_issuer: d.underlyingIssuer,
+    contract_face_value: d.contractFaceValue,
+    tick_size_points: d.tickSizePoints,
+    tick_value: d.tickValue,
+    notional_coupon_rate: d.notionalCouponRate,
+    deliverable_min_months: d.deliverableMinMonths,
+    deliverable_max_months: d.deliverableMaxMonths,
+    delivery_month_start: brokenDateToWire(d.deliveryMonthStart),
+    first_delivery_date: brokenDateToWire(d.firstDeliveryDate),
+    last_trading_date: brokenDateToWire(d.lastTradingDate),
+    last_delivery_date: brokenDateToWire(d.lastDeliveryDate),
+    dv01_per_contract_at_notional_yield: d.dv01PerContractAtNotionalYield,
+    calendars: d.calendars,
+  };
+}
+
+function bondFutureFromWire(o: WireObject): BondFutureDef {
+  return {
+    contractCode: str(o, "contract_code"),
+    contractSymbol: str(o, "contract_symbol"),
+    underlyingIssuer: str(o, "underlying_issuer"),
+    contractFaceValue: num(o, "contract_face_value"),
+    tickSizePoints: num(o, "tick_size_points"),
+    tickValue: num(o, "tick_value"),
+    notionalCouponRate: num(o, "notional_coupon_rate"),
+    deliverableMinMonths: num(o, "deliverable_min_months"),
+    deliverableMaxMonths: num(o, "deliverable_max_months"),
+    deliveryMonthStart: brokenDateFromWire(child(o, "delivery_month_start")),
+    firstDeliveryDate: brokenDateFromWire(child(o, "first_delivery_date")),
+    lastTradingDate: brokenDateFromWire(child(o, "last_trading_date")),
+    lastDeliveryDate: brokenDateFromWire(child(o, "last_delivery_date")),
+    dv01PerContractAtNotionalYield: num(
+      o,
+      "dv01_per_contract_at_notional_yield",
+    ),
+    calendars: strArray(o, "calendars") as Calendar[],
+  };
+}
+
 /** An instrument definition → its wire form (single family sub-object). */
 export function instrumentDefToWire(def: InstrumentDef): WireObject {
   const wire: WireObject = {
@@ -6078,6 +6127,9 @@ export function instrumentDefToWire(def: InstrumentDef): WireObject {
       break;
     case "bond":
       wire.bond = bondToWire(def.bond);
+      break;
+    case "bond_future":
+      wire.bond_future = bondFutureToWire(def.bondFuture);
       break;
   }
   return wire;
@@ -6121,8 +6173,25 @@ export function instrumentDefFromWire(o: WireObject): InstrumentDef {
   if (has("ois")) {
     return { ...base, family: "ois", ois: oisFromWire(child(o, "ois")) };
   }
-  // Exactly one family is always present; bond is the remaining case.
-  return { ...base, family: "bond", bond: bondFromWire(child(o, "bond")) };
+  if (has("bond_future")) {
+    return {
+      ...base,
+      family: "bond_future",
+      bondFuture: bondFutureFromWire(child(o, "bond_future")),
+    };
+  }
+  // Bond is the LAST arm, and it must be detected rather than assumed. Falling through
+  // to `bond` for anything unrecognised is how every seeded Treasury future silently
+  // decoded as a bond carrying an all-zero `BondDef` — a mis-typed instrument reads as
+  // a real security with a zero coupon and a 1970 maturity, which is worse than an
+  // error. An unknown family is a codec/proto skew and must say so.
+  if (has("bond")) {
+    return { ...base, family: "bond", bond: bondFromWire(child(o, "bond")) };
+  }
+  throw new Error(
+    `instrumentDefFromWire: instrument ${base.instrumentId || "<unnamed>"} carries no ` +
+      `recognised family sub-object (expected one of ${INSTRUMENT_FAMILIES.join(", ")})`,
+  );
 }
 
 export function listInstrumentsRequestToWire(): WireObject {

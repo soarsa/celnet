@@ -48,7 +48,7 @@ interface BenchRow {
 
 const CPTYS = ["Millennium", "Balyasny", "Point72", "Citadel", "Brevan Howard", "Man AHL"];
 const DESKS = ["Rates NY", "Rates LDN", "Credit LDN", "Macro NY"];
-const KINDS = ["RFQ", "IOI", "ESP"];
+const KINDS = ["RFQ", "IOI", "RFS"];
 const PRODUCTS = ["OIS", "IRS", "FRA", "BOND"];
 const CCYS = ["USD", "EUR", "GBP", "JPY"];
 const SIDES = ["BUY", "SELL", "2-WAY"];

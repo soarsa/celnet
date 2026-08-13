@@ -8735,11 +8735,14 @@ enum DeskRequestKind {
   DESK_REQUEST_KIND_RFQ = 1;
   // Indication-of-interest: a non-firm axe for the desk to work.
   DESK_REQUEST_KIND_IOI = 2;
-  // Executable streaming price (ESP): the counterparty subscribed to a continuous
-  // market-data STREAM (the FixedIncomeStream venue) and lifted a streamed top-of-book,
-  // rather than requesting a one-off quote. Stamped on the booked `Deal` so the blotter
-  // shows an ESP fill distinctly from an RFQ. Additive value.
-  DESK_REQUEST_KIND_ESP = 3;
+  // Request-for-stream: the counterparty opened a continuous market-data STREAM on the
+  // FixedIncomeStream venue for a named instrument AND ITS OWN CLIP SIZE, then lifted a
+  // streamed top-of-book rather than requesting a one-off quote. It is RFS and not ESP
+  // precisely because the client supplies the notional and the stream is priced for that
+  // clip — an executable streaming price is dealer-published and clip-independent, so
+  // nothing this venue serves can be one. Stamped on the booked `Deal` so the blotter
+  // shows an RFS fill distinctly from an RFQ.
+  DESK_REQUEST_KIND_RFS = 3;
 }
 
 // The lifecycle state of an inbound desk request (one current fact per id).

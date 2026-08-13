@@ -59,8 +59,7 @@ import { NumberField } from "../../../components/NumberField";
 // Re-export the shared steps so the wizard host imports all four step surfaces from here.
 export { PortfoliosStep, RoutingStep } from "../../setupWizard/PortfolioRoutingSteps";
 
-/** Advisory aggregation instruments a CROSS_INTERNAL can target (mirrors HedgingWorkspace). */
-const INSTRUMENT_OPTIONS: readonly string[] = ["AGG-OIS", "AGG-US10Y", "AGG-EURUSD", "AGG-UK5Y"];
+
 /** Advisory LP ids an RFQ_OUT can fan to. */
 const LP_OPTIONS: readonly string[] = ["LP-1", "LP-2", "LP-3", "LP-4"];
 /** The hedge risk-state fields the wizard curates (the full registry is on the power surface). */
@@ -112,6 +111,7 @@ export function HedgingStep({
   onChangeThreshold,
   onChangeHedgeRules,
   onChangePolicyScope,
+  instrumentOptions,
 }: {
   includeThreshold: boolean;
   threshold: WarehouseThreshold;
@@ -123,6 +123,12 @@ export function HedgingStep({
   onChangeThreshold: (next: WarehouseThreshold) => void;
   onChangeHedgeRules: (next: HedgeRule[]) => void;
   onChangePolicyScope: (next: WizardPolicyScope) => void;
+  /**
+   * The aggregation instruments a CROSS_INTERNAL exit may target, from the live
+   * reference-data registry. The wizard used to offer four hardcoded ids that looked
+   * like configuration but named nothing the platform could actually cross against.
+   */
+  instrumentOptions: readonly string[];
 }): React.ReactElement {
   const bookTargets = useMemo(() => books.filter((b) => b.name.trim().length > 0), [books]);
   const scopeNoun = policyScope.scopeKind === "bucket" ? "portfolio" : "book";
@@ -359,7 +365,7 @@ export function HedgingStep({
                   <ExitActionEditor
                     action={r.action}
                     readOnly={readOnly}
-                    instrumentOptions={INSTRUMENT_OPTIONS}
+                    instrumentOptions={instrumentOptions}
                     lpOptions={LP_OPTIONS}
                     onChange={(action: ExitAction) => replaceRule(r.id, { ...r, action })}
                   />
