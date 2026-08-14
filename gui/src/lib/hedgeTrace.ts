@@ -23,7 +23,12 @@ import type {
   RouteOp,
   RouteValue,
 } from "../data/contract";
-import { hedgeFieldKind, opValidForHedgeField } from "./hedgeFields";
+import {
+  hedgeFieldKind,
+  hedgeFieldSpec,
+  hedgeFieldUnprovidedReason,
+  opValidForHedgeField,
+} from "./hedgeFields";
 import { type CtxValue, evalOp } from "./routeTrace";
 
 /**
@@ -177,6 +182,7 @@ export interface HedgeValidationIssue {
     | "value_type_mismatch"
     | "value_unset"
     | "action_target_missing"
+    | "unprovided_field"
     | "empty_graph";
   /** A trader-readable description. */
   message: string;
@@ -257,6 +263,14 @@ function actionTargetIssue(action: ExitAction): string | null {
 /**
  * Collect EVERY well-formedness defect of `graph` — the client mirror of
  * `HedgeGraph::validate`. An empty result means the server will accept the graph.
+ *
+ * "The server will accept it" is a claim this function has to keep EXACTLY, not
+ * approximately: every check the server makes must have a counterpart here, or a trader
+ * builds a graph that passes locally and is refused on save with no way to see why. The
+ * `unprovided_field` check is one such counterpart — the server refuses a condition on a
+ * field nothing populates (`HedgeError::UnprovidedField`), so this must too, carrying the
+ * SAME reason text (mirrored in `hedgeFields.ts`, drift-guarded against the Rust source by
+ * `test/hedgeFieldProviderParity.test.ts`).
  */
 export function validateHedgeGraph(graph: HedgeGraph): HedgeValidationIssue[] {
   const issues: HedgeValidationIssue[] = [];
@@ -306,6 +320,20 @@ export function validateHedgeGraph(graph: HedgeGraph): HedgeValidationIssue[] {
         node: node.id,
         code: "value_type_mismatch",
         message: "The value type does not match the operator.",
+      });
+    }
+    // A well-typed condition on a field nothing populates is still dead: its operand is the
+    // context default forever. Checked INDEPENDENTLY of the operator/value defects above
+    // (not chained onto the `else if`) so the author sees every reason at once — exactly as
+    // the server's `HedgeGraph::validate` accumulates it.
+    const unprovided = hedgeFieldUnprovidedReason(c.field);
+    if (unprovided !== null) {
+      issues.push({
+        node: node.id,
+        code: "unprovided_field",
+        message:
+          `${hedgeFieldSpec(c.field).label} has no production source, so this rule could ` +
+          `never fire (${unprovided}).`,
       });
     }
   }

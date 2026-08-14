@@ -35,7 +35,7 @@ use crate::services::consensus::{ConsensusHandle, rates_book_key};
 use celnet_acceptance::AcceptanceGraph;
 use celnet_hedge_routing::{
     Dv01Basis, HedgeContext, HedgeGraph, HedgeRatioPlan, HedgeVehicle, HedgeVehicleRegistry,
-    HedgeVehicleRule, plan_hedge_ratio,
+    HedgeVehicleRule, WarehouseThreshold, plan_hedge_ratio,
 };
 use celnet_limits::{
     IncrementalTrade, LimitCheck, LimitScope, LimitSpec, LimitTree, NonAdditiveExposure,
@@ -1394,6 +1394,239 @@ impl RatesPositionStore {
         Ok(position)
     }
 
+    /// The signed net risk of one book restricted to a single product FAMILY ("BOND"/"OIS"/…),
+    /// measured in `metric` — the family-scoped analogue of [`Self::book_net_dv01`].
+    ///
+    /// The family restriction exists because DV01 is not fungible across families: a bond's
+    /// PV01 does not offset a FRA's in any executable sense, so pooling them would claim an
+    /// internal cross that could not actually be done. `GrossNotional` and `NetVega` yield
+    /// `0.0` — a gross measure never nets (it has no direction to offset) and a linear-rates
+    /// cell carries no vega — matching the budget-basis switch in [`Self::stamp_internalise`].
+    #[must_use]
+    fn book_risk_in_family(&self, book: &str, family: &str, metric: HedgeMetric) -> f64 {
+        self.positions_in_risk_book(book)
+            .iter()
+            .filter(|p| internalise_instrument_label(p) == family)
+            .map(|p| match metric {
+                HedgeMetric::Dv01 => rates_linear_exposure(p),
+                HedgeMetric::NetNotional | HedgeMetric::NetDelta => rates_signed_notional(p),
+                // A gross roll-up is unsigned and never nets down, so it names no opposing
+                // side to cross against; likewise a linear cell carries no vega.
+                HedgeMetric::GrossNotional | HedgeMetric::NetVega => 0.0,
+            })
+            .sum()
+    }
+
+    /// The opposing internal risk this book could cross against **right now** — the
+    /// [`HedgeField::InternalOffsetAvailable`] operand.
+    ///
+    /// Scope: the net risk held by the **sibling books under the same immediate parent**,
+    /// restricted to the same product family, netted across the sibling set first and then
+    /// tested for opposition. Each part of that is a deliberate narrowing:
+    ///
+    /// - *Sibling subtree, not firm-wide.* Crossing risk with an unrelated part of the firm is
+    ///   a transfer requiring consent, not something a rule may silently assume is available.
+    ///   A book with no parent (a root) has no siblings and therefore no offset.
+    /// - *Same family.* See [`Self::book_risk_in_family`].
+    /// - *Netted, then opposing.* Two siblings at `+50` and `−50` have nothing to cross;
+    ///   summing their opposing legs separately would overstate the pool.
+    ///
+    /// Every one of those narrowings can only ever **understate** the offset, so the engine
+    /// externalises more than strictly necessary rather than assuming a cross it cannot do —
+    /// the safe direction to err in.
+    ///
+    /// Returns the magnitude of the sibling pool when it opposes `book_risk`, else `0.0`. It
+    /// is NOT clamped to `|book_risk|`: the field answers "how much opposing flow exists",
+    /// which is a property of the pool, not of what this fill happens to need.
+    ///
+    /// **Known limitation.** The pool cannot be currency-filtered: a stored [`RatesPosition`]
+    /// carries no settlement currency (`ccy` lives on the [`RatesRoutingAttribution`], not on
+    /// the position), so a parent nesting EUR and USD books of one family would overstate the
+    /// offset. Either avoid that nesting or add a currency to the position record.
+    #[must_use]
+    fn internal_offset_available(
+        &self,
+        policy: &RatesHedgePolicy,
+        book: &str,
+        family: &str,
+        metric: HedgeMetric,
+        book_risk: f64,
+    ) -> f64 {
+        // No direction to offset ⇒ nothing to cross, whatever the siblings hold.
+        if !book_risk.is_finite() || book_risk == 0.0 {
+            return 0.0;
+        }
+        // `book_ancestors` is nearest-first, so the head is the immediate parent.
+        let Some(parent) = policy
+            .book_ancestors
+            .get(book)
+            .and_then(|a| a.first())
+            .map(String::as_str)
+        else {
+            return 0.0; // a root book has no siblings.
+        };
+        // The sibling set = the parent's subtree, minus this book's own subtree, minus the
+        // parent itself (the parent's own risk is a level up, not a peer's to cross).
+        let empty = Vec::new();
+        let own_subtree = policy.book_descendants.get(book).unwrap_or(&empty);
+        let pool: f64 = policy
+            .book_descendants
+            .get(parent)
+            .unwrap_or(&empty)
+            .iter()
+            .filter(|b| b.as_str() != book && !own_subtree.iter().any(|d| d == *b))
+            .map(|b| self.book_risk_in_family(b, family, metric))
+            .sum();
+        if !pool.is_finite() || pool == 0.0 {
+            return 0.0;
+        }
+        // Opposing only: a sibling pool on the SAME side adds to the firm's risk, it does
+        // not relieve this book's.
+        if (pool > 0.0) == (book_risk > 0.0) {
+            return 0.0;
+        }
+        pool.abs()
+    }
+
+    /// The current external hedge-cost estimate in basis points — the
+    /// [`HedgeField::HedgeCostBp`] operand.
+    ///
+    /// Prefers the **live** cost: the distance from the reference `mid` to the best executable
+    /// LP top-of-book on the side this risk would have to shed, expressed in bp via `bp_scale`
+    /// (the same convention [`dealer_edge_bps`](crate::services::internalise::dealer_edge_bps)
+    /// and `composite_hedge_price` use). With no live panel — or a non-finite level — it falls
+    /// back to the desk's configured `composite_spread_bp`, which is exactly what a composite
+    /// fill would actually pay, so the estimate degrades to the real backstop cost rather than
+    /// to zero.
+    ///
+    /// Probing the panel here is side-effect-free and correctly sized-agnostic: the
+    /// aggregation hub's `best_fill` ignores its `size` argument entirely and is a pure read
+    /// of member top-of-book, so no shed need be sized first.
+    ///
+    /// **This is the crossing half-spread only — it does NOT include market impact**, because
+    /// no depth or ADV data exists anywhere in the system to derive impact from. A large clip
+    /// will cost more than this reports.
+    #[must_use]
+    fn live_hedge_cost_bp(
+        &self,
+        instrument: &str,
+        book_risk: f64,
+        mid: f64,
+        bp_scale: f64,
+        composite_spread_bp: f64,
+    ) -> f64 {
+        let composite = composite_spread_bp.max(0.0);
+        if !mid.is_finite() || !bp_scale.is_finite() || bp_scale <= 0.0 {
+            return composite;
+        }
+        let Some(source) = self.lp_hedge_source.get() else {
+            return composite;
+        };
+        // `size` is ignored by the hub's implementation; `book_risk`'s sign selects the side
+        // (a long sheds by hitting a bid, a short by lifting an offer).
+        let Some(fill) = source.best_fill(instrument, book_risk, 0.0) else {
+            return composite;
+        };
+        if !fill.price.is_finite() {
+            return composite;
+        }
+        let cost = (fill.price - mid).abs() / bp_scale;
+        if cost.is_finite() { cost } else { composite }
+    }
+
+    /// Assemble the one production [`HedgeContext`] — the rule-evaluation input for a booked
+    /// rates fill.
+    ///
+    /// **Every field is named explicitly; there is deliberately no `..Default::default()`.**
+    /// That struct-update shorthand is what let five fields ship as silent zeros: a field
+    /// could be added to [`HedgeContext`], given a type, a doc comment, an operator matrix and
+    /// a UI chip, and still reach this — the only production builder in the codebase — with
+    /// nothing populating it, because the shorthand absorbed it without a word. Naming every
+    /// field makes a future addition a compile error **here**, at the point where the question
+    /// "what actually produces this?" has to be answered.
+    ///
+    /// The fields with no production source are set to their inert value with the reason
+    /// stated inline; the authoritative declaration is
+    /// [`HedgeField::provider`](celnet_hedge_routing::HedgeField::provider), which
+    /// `HedgeGraph::validate` reads to reject a rule that branches on one of them.
+    fn build_hedge_context(&self, i: &HedgeContextInputs<'_>) -> HedgeContext {
+        HedgeContext {
+            // The product FAMILY ("BOND"/"OIS"/…) — the axis the hedge-vehicle registry
+            // buckets on alongside maturity, and a rule-condition field in its own right.
+            product: i.instrument.to_owned(),
+            instrument_id: i.instrument.to_owned(),
+            execution_instrument_id: i.execution_instrument.clone(),
+            ccy: i.attribution.ccy.clone(),
+            book: i.book.to_owned(),
+            // UNPROVIDED. A booked rates fill carries no desk: the desk belongs to the
+            // FIX/RFQ session that priced the quote, not to the position that resulted, and
+            // is unrecoverable here — which is why `resolve_hedging_model` and
+            // `resolve_hedge_threshold` are both already called with an empty desk operand on
+            // this path. `HedgeField::Desk` is declared `Unprovided`, so a `desk`-scoped rule
+            // is rejected at authoring time rather than silently never matching.
+            desk: String::new(),
+            // The originating counterparty of THIS fill — the same party id the Deal /
+            // blotter and the risk-routing attribution carry — so a hedge rule
+            // `counterparty == "X"` back-to-backs a given client's flow (a property of the
+            // incoming fill, not a per-counterparty net position).
+            counterparty: i.attribution.counterparty.clone(),
+            // `net_dv01` and `net_notional` are two DISTINCT, honestly-different risk measures
+            // of the SAME scope, NOT one mirrored onto the other:
+            //  - `net_dv01`      = signed DV01 (linear PV01 proxy) — the warehouse-cap basis the
+            //    default `Dv01`-metric threshold classifies (RAG band / overflow / sizing).
+            //  - `net_notional`  = signed face notional — the operand a `NetNotional`/`NetDelta`
+            //    rule CONDITION compares against, so a trader's "net notional > 1M" rule fires on
+            //    true notional (a two-way rates book nets to low-thousands DV01 but tens of
+            //    millions face — mirroring DV01 here would make such a rule never fire).
+            // A threshold whose metric IS explicitly `NetNotional`/`NetDelta` then measures the
+            // cap against `net_notional` too (the trader owns denominating that cap in notional).
+            net_dv01: i.book_net_dv01,
+            net_notional: i.book_net_notional,
+            gross_notional: i.book_gross_notional,
+            // UNPROVIDED (both). Only linear-rates cells ever reach this builder, and they
+            // carry no volatility or convexity risk, so zero is the honest value — but a rule
+            // reading it is still unconditionally dead, so both are declared `Unprovided` and
+            // such a rule is refused. Wiring an options cell that builds a context is what
+            // would make them real.
+            net_vega: 0.0,
+            net_gamma: 0.0,
+            // The direction of the risk, in the SAME metric the bands below classify — so it
+            // always agrees with `breached` / `utilization` / `overflow` rather than
+            // disagreeing whenever the budget is not denominated in DV01.
+            inventory_sign: inventory_sign(i.book_risk),
+            // Classified in the THRESHOLD'S metric (`book_risk`), not unconditionally in
+            // DV01 — so a `breached` / `utilization` / `overflow` rule condition reads the
+            // same basis the engine sizes off.
+            threshold: i.wh.cap,
+            utilization: i.wh.utilization(i.book_risk),
+            overflow: i.wh.overflow(i.book_risk),
+            breached: i.wh.breached(i.book_risk),
+            // UNPROVIDED. Deriving markout needs the post-fill mark trajectory of the flow,
+            // which nothing retains; no per-counterparty toxicity score is computed anywhere.
+            counterparty_toxicity: 0.0,
+            // UNPROVIDED. A stored `RatesPosition` carries no acquisition timestamp at all, so
+            // the age of the risk cannot be derived. Adding one is a wire + store change; it
+            // is NOT invented here.
+            inventory_age_secs: 0.0,
+            internal_offset_available: self.internal_offset_available(
+                i.policy,
+                i.book,
+                i.instrument,
+                i.metric,
+                i.book_risk,
+            ),
+            // Priced off the tradeable security when the cell resolves one — the family label
+            // is not a security and could only miss the panel.
+            hedge_cost_bp: self.live_hedge_cost_bp(
+                i.execution_instrument.as_deref().unwrap_or(i.instrument),
+                i.book_risk,
+                i.mid,
+                i.bp_scale,
+                i.policy.config.composite_spread_bp,
+            ),
+        }
+    }
+
     /// Resolve and stamp this fill's auto-hedge / internalisation decision (§6), when a hedge
     /// policy is primed, the fill routed to a book, and the booking path supplied a priced
     /// reference mid + dealt price. Reads the routed book's post-fill net DV01, builds a
@@ -1581,44 +1814,24 @@ impl RatesPositionStore {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
             .unwrap_or(0);
-        let ctx = HedgeContext {
-            // The product FAMILY ("BOND"/"OIS"/…) — the axis the hedge-vehicle registry
-            // buckets on alongside maturity, and a rule-condition field in its own right.
-            // It was previously left empty, which made a `product == "BOND"` rule (and now a
-            // product-scoped vehicle row) unable to match anything.
-            product: instrument.clone(),
-            instrument_id: instrument,
-            execution_instrument_id: execution_instrument.clone(),
-            ccy: attribution.ccy.clone(),
-            book: book.to_owned(),
-            // The originating counterparty of THIS fill — the same party id the Deal /
-            // blotter and the risk-routing attribution carry — so a hedge rule
-            // `counterparty == "X"` back-to-backs a given client's flow (a property of the
-            // incoming fill, not a per-counterparty net position).
-            counterparty: attribution.counterparty.clone(),
-            // `net_dv01` and `net_notional` are two DISTINCT, honestly-different risk measures
-            // of the SAME scope, NOT one mirrored onto the other:
-            //  - `net_dv01`      = signed DV01 (linear PV01 proxy) — the warehouse-cap basis the
-            //    default `Dv01`-metric threshold classifies (RAG band / overflow / sizing).
-            //  - `net_notional`  = signed face notional — the operand a `NetNotional`/`NetDelta`
-            //    rule CONDITION compares against, so a trader's "net notional > 1M" rule fires on
-            //    true notional (a two-way rates book nets to low-thousands DV01 but tens of
-            //    millions face — mirroring DV01 here would make such a rule never fire).
-            // A threshold whose metric IS explicitly `NetNotional`/`NetDelta` then measures the
-            // cap against `net_notional` too (the trader owns denominating that cap in notional).
-            net_dv01: book_net_dv01,
-            net_notional: book_net_notional,
-            gross_notional: book_gross_notional,
-            // Classified in the THRESHOLD'S metric (`book_risk`), not unconditionally in
-            // DV01 — so a `breached` / `utilization` / `overflow` rule condition reads the
-            // same basis the engine sizes off.
-            breached: wh.breached(book_risk),
-            threshold: wh.cap,
-            utilization: wh.utilization(book_risk),
-            overflow: wh.overflow(book_risk),
-            internal_offset_available: 0.0,
-            ..HedgeContext::default()
-        };
+        // `execution_instrument` is CLONED rather than moved: the street-routing seam below
+        // still needs it for the decision journal's `symbol` (and the executor's order), so
+        // the context builder may not consume it.
+        let ctx = self.build_hedge_context(&HedgeContextInputs {
+            book,
+            instrument: &instrument,
+            execution_instrument: execution_instrument.clone(),
+            attribution,
+            policy: &policy,
+            metric: thr_def.metric,
+            wh: &wh,
+            book_net_dv01,
+            book_net_notional,
+            book_gross_notional,
+            book_risk,
+            mid,
+            bp_scale: kind.bp_scale(),
+        });
         // Best-order timer: bracket the auto-hedge decision (`OpKind::HedgeFire`) — the pure
         // engine's threshold-breach → hedge-action evaluation on this fill's post-book book
         // risk. Measured at the call site (not inside the engine) so the pinned/pure engine
@@ -3070,6 +3283,53 @@ fn roll_to_front_month(
         is_future: true,
         ..rule.clone()
     })
+}
+
+/// The already-resolved scope measures a [`HedgeContext`] is assembled from — the inputs to
+/// [`RatesPositionStore::build_hedge_context`], grouped so the builder reads as a mapping
+/// rather than a twelve-argument call.
+struct HedgeContextInputs<'a> {
+    /// The risk book the fill routed into.
+    book: &'a str,
+    /// The product FAMILY label ("BOND"/"OIS"/…) thresholds and provenance are scoped by.
+    instrument: &'a str,
+    /// The tradeable security behind that family label, when the fill resolves one.
+    execution_instrument: Option<String>,
+    /// The fill's risk-routing attribution (counterparty, currency, dealt/mid levels).
+    attribution: &'a RatesRoutingAttribution,
+    /// The hedge-policy snapshot governing this fill (book tree + engine config).
+    policy: &'a RatesHedgePolicy,
+    /// The resolved threshold's budget metric — the basis every band/offset measure uses.
+    metric: HedgeMetric,
+    /// The resolved warehouse threshold (the "100") for this fill's scope.
+    wh: &'a WarehouseThreshold,
+    /// Signed net DV01 over the decision's scope.
+    book_net_dv01: f64,
+    /// Signed net face notional over the same scope.
+    book_net_notional: f64,
+    /// Gross face notional over the same scope.
+    book_gross_notional: f64,
+    /// The scope's net risk expressed in [`Self::metric`] — the band/sizing basis.
+    book_risk: f64,
+    /// The engine's reference mid for this fill, in the instrument's quote convention.
+    mid: f64,
+    /// One basis point in that quote convention (`QuoteKind::bp_scale`).
+    bp_scale: f64,
+}
+
+/// The three-way sign of a risk measure: `+1` long, `−1` short, `0` flat.
+///
+/// Deliberately NOT [`f64::signum`], which returns `+1.0` for `+0.0` and would report a flat
+/// book as long — and likewise not `signum` on a NaN, which is not a direction at all.
+#[must_use]
+fn inventory_sign(risk: f64) -> f64 {
+    if !risk.is_finite() || risk == 0.0 {
+        0.0
+    } else if risk > 0.0 {
+        1.0
+    } else {
+        -1.0
+    }
 }
 
 fn internalise_instrument_label(fill: &RatesPosition) -> String {
@@ -5290,6 +5550,214 @@ pub(crate) mod tests {
             reference_mid: Some(mid),
             request_id: None,
         }
+    }
+
+    /// A 5-year OIS on `side` — `Buy` (pay fixed) is `+5000` DV01, `Sell` (receive fixed)
+    /// `−5000`, so two of them in different books make an offsetting pair.
+    fn ois_leg(side: Side) -> RatesPosition {
+        RatesPosition {
+            position_id: 0,
+            entity: 1,
+            book: 10,
+            instrument: Some(RatesInstrument {
+                instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
+                    tenor_years: 5,
+                    fixed_rate: 0.04,
+                    notional: 10_000_000.0,
+                    side: side as i32,
+                })),
+            }),
+        }
+    }
+
+    /// A book state deliberately chosen to drive EVERY computed context field off its
+    /// default: a breaching own book, an opposing sibling under a shared parent, and a live
+    /// LP away from mid. Returns the assembled context.
+    fn context_under_full_book_state() -> HedgeContext {
+        let store = RatesPositionStore::new();
+        let lp = StubLp {
+            lp: "LP1",
+            bid: 99.5,
+            offer: 100.5,
+        };
+        store.set_lp_hedge_source(Arc::new(lp));
+        // +5000 DV01 in the fill's own book; −5000 in a SIBLING under the same parent, so a
+        // real opposing pool exists to cross against.
+        store
+            .book_into_risk_book(ois_leg(Side::Buy), "OWN")
+            .expect("own leg books");
+        store
+            .book_into_risk_book(ois_leg(Side::Sell), "SIB")
+            .expect("sibling leg books");
+
+        let policy = RatesHedgePolicy {
+            book_ancestors: HashMap::from([("OWN".to_owned(), vec!["PARENT".to_owned()])]),
+            book_descendants: HashMap::from([(
+                "PARENT".to_owned(),
+                vec!["OWN".to_owned(), "SIB".to_owned()],
+            )]),
+            ..hedge_policy("OWN", 1_000.0, 0.5)
+        };
+        // Cap 1000 against 5000 DV01 ⇒ utilization 5, over the red band, with real overflow.
+        let thr = HedgeThresholdDef {
+            scope_kind: HedgeScopeKind::Book,
+            metric: HedgeMetric::Dv01,
+            cap: 1_000.0,
+            amber: 0.8,
+            red: 0.9,
+            target_fraction: 0.8,
+            min_clip: 0.0,
+            max_clip: f64::INFINITY,
+            ramped: false,
+            ramp_k: 1.0,
+        };
+        let wh = thr.to_threshold();
+        let book_risk = store.book_net_dv01("OWN");
+        let attribution = priced_attribution(100.25, 100.0);
+        store.build_hedge_context(&HedgeContextInputs {
+            book: "OWN",
+            instrument: "OIS",
+            execution_instrument: None,
+            attribution: &attribution,
+            policy: &policy,
+            metric: thr.metric,
+            wh: &wh,
+            book_net_dv01: book_risk,
+            book_net_notional: store.book_net_notional("OWN"),
+            book_gross_notional: store.book_gross_notional("OWN"),
+            book_risk,
+            mid: 100.0,
+            // A clean-price convention: one bp is 0.01 price points.
+            bp_scale: 1e-2,
+        })
+    }
+
+    /// THE anti-regression test for the silent-zero defect: what
+    /// [`HedgeField::provider`] DECLARES and what the production builder actually
+    /// produces must agree, in BOTH directions.
+    ///
+    /// A field declared `Computed` that comes back at its default is a dead rule shipped as a
+    /// live one — the original bug. A field declared `Unprovided` that carries a real value is
+    /// the inverse error: the validator would be refusing rules that would in fact have fired.
+    #[test]
+    fn every_computed_field_is_populated_and_every_unprovided_field_is_not() {
+        use celnet_hedge_routing::{FieldProvider, HedgeField};
+        let ctx = context_under_full_book_state();
+        let default = HedgeContext::default();
+        for f in HedgeField::ALL {
+            match f.provider() {
+                FieldProvider::Computed { basis } => assert_ne!(
+                    ctx.get(f),
+                    default.get(f),
+                    "{f:?} is declared Computed ({basis}) but the production builder left it \
+                     at its default — a rule on it would be dead"
+                ),
+                FieldProvider::Unprovided { reason } => assert_eq!(
+                    ctx.get(f),
+                    default.get(f),
+                    "{f:?} is declared Unprovided ({reason}) but the production builder gave \
+                     it a value — the declaration is now wrong and rules on it are being \
+                     refused for no reason"
+                ),
+            }
+        }
+    }
+
+    /// The three fixed fields, at their exact expected values — the declaration test above
+    /// only proves they are non-default, not that they are RIGHT.
+    #[test]
+    fn the_three_repaired_fields_carry_their_derived_values() {
+        let ctx = context_under_full_book_state();
+        // A +5000 DV01 book is LONG.
+        assert_eq!(ctx.inventory_sign, 1.0);
+        // The sibling's −5000 opposes the own book's +5000, so the whole pool is crossable.
+        assert_eq!(ctx.internal_offset_available, 5_000.0);
+        // Long ⇒ sheds by hitting the 99.50 bid, 0.50 price points below the 100.00 mid,
+        // which at 0.01 points per bp is 50 bp of crossing cost.
+        assert!(
+            (ctx.hedge_cost_bp - 50.0).abs() < 1e-9,
+            "hedge_cost_bp = {}",
+            ctx.hedge_cost_bp
+        );
+    }
+
+    /// `inventory_sign` is a THREE-way test, not `f64::signum` — which returns `+1.0` for
+    /// `+0.0` and would report a flat book as long.
+    #[test]
+    fn inventory_sign_reports_flat_as_zero_not_long() {
+        assert_eq!(inventory_sign(12.5), 1.0);
+        assert_eq!(inventory_sign(-12.5), -1.0);
+        assert_eq!(inventory_sign(0.0), 0.0);
+        assert_eq!(inventory_sign(-0.0), 0.0);
+        // A non-finite risk is not a direction.
+        assert_eq!(inventory_sign(f64::NAN), 0.0);
+        // The trap this guards, stated as an assertion.
+        assert_eq!(f64::signum(0.0), 1.0);
+    }
+
+    /// The internal-offset pool is narrowed three ways, each of which can only UNDERSTATE it.
+    #[test]
+    fn internal_offset_is_zero_without_an_opposing_same_family_sibling() {
+        let store = RatesPositionStore::new();
+        store
+            .book_into_risk_book(ois_leg(Side::Buy), "OWN")
+            .expect("own leg books");
+        let base = hedge_policy("OWN", 1_000.0, 0.5);
+
+        // (1) A ROOT book has no siblings, so nothing is crossable however much the firm holds.
+        store
+            .book_into_risk_book(ois_leg(Side::Sell), "SIB")
+            .expect("sibling leg books");
+        let rootless = RatesHedgePolicy {
+            book_ancestors: HashMap::new(),
+            ..hedge_policy("OWN", 1_000.0, 0.5)
+        };
+        assert_eq!(
+            store.internal_offset_available(&rootless, "OWN", "OIS", HedgeMetric::Dv01, 5_000.0),
+            0.0
+        );
+
+        let parented = RatesHedgePolicy {
+            book_ancestors: HashMap::from([("OWN".to_owned(), vec!["PARENT".to_owned()])]),
+            book_descendants: HashMap::from([(
+                "PARENT".to_owned(),
+                vec!["OWN".to_owned(), "SIB".to_owned()],
+            )]),
+            ..base
+        };
+        // (2) A DIFFERENT product family does not offset — a bond's PV01 is not a swap's.
+        assert_eq!(
+            store.internal_offset_available(&parented, "OWN", "BOND", HedgeMetric::Dv01, 5_000.0),
+            0.0
+        );
+        // (3) A sibling on the SAME side adds risk, it does not relieve any.
+        assert_eq!(
+            store.internal_offset_available(&parented, "OWN", "OIS", HedgeMetric::Dv01, -5_000.0),
+            0.0
+        );
+        // With family and side both matching, the pool IS available.
+        assert_eq!(
+            store.internal_offset_available(&parented, "OWN", "OIS", HedgeMetric::Dv01, 5_000.0),
+            5_000.0
+        );
+    }
+
+    /// With no live panel the hedge cost degrades to the desk's CONFIGURED composite spread —
+    /// what a composite fill would actually pay — never to a misleading zero.
+    #[test]
+    fn hedge_cost_falls_back_to_the_composite_spread_on_an_lp_miss() {
+        let store = RatesPositionStore::new();
+        store.set_lp_hedge_source(Arc::new(NoFillLp));
+        assert!((store.live_hedge_cost_bp("OIS", 5_000.0, 100.0, 1e-2, 0.75) - 0.75).abs() < 1e-12);
+        // A store that was never given a panel at all behaves the same way.
+        let unwired = RatesPositionStore::new();
+        assert!(
+            (unwired.live_hedge_cost_bp("OIS", 5_000.0, 100.0, 1e-2, 0.75) - 0.75).abs() < 1e-12
+        );
+        // A non-finite mid cannot yield a distance; fall back rather than emit NaN.
+        assert!(
+            (unwired.live_hedge_cost_bp("OIS", 5_000.0, f64::NAN, 1e-2, 0.75) - 0.75).abs() < 1e-12
+        );
     }
 
     /// Making money + under the warehouse cap ⇒ the fill is FULLY internalised (warehoused),

@@ -699,6 +699,49 @@ const ENTRY_LIST: readonly HelpEntry[] = [
     keywords: ["scope", "firm", "book", "bucket", "portfolio", "aggregate", "subtree", "clear risk", "flatten", "override", "policy"],
   },
   {
+    id: "concept.hedge-field-availability",
+    category: "concept",
+    title: "Why some risk-state fields are unavailable",
+    purpose: "Understand the greyed-out condition fields, and why a rule on one is refused.",
+    howItWorks:
+      "A hedge condition is only meaningful if something actually MEASURES the field it tests. Most of the vocabulary is computed on every fill — net DV01, net notional, utilisation, overflow, breached, inventory sign, internal offset available, hedge cost, and the identity fields (instrument, currency, product, book, counterparty). A few are not, because the data they would need does not exist anywhere in the platform: DESK (a booked fill carries no desk — the desk belongs to the FIX/RFQ session that priced the quote, not to the resulting position), NET VEGA and NET GAMMA (only linear-rates cells are evaluated, and they carry no volatility or convexity risk), COUNTERPARTY TOXICITY (no post-fill mark trajectory is retained, so markout cannot be derived) and INVENTORY AGE (a stored position carries no acquisition timestamp). A condition on one of those would compare against a permanent zero, so it could never fire — it would sit in your policy looking live and silently do nothing. Rather than let that happen, the field is shown greyed-out with its reason, the builder refuses to select it, and the server refuses to save a policy containing it. The fields are shown rather than hidden on purpose: an older policy may still reference one, and you need to see why it stopped being selectable.",
+    example: {
+      scenario: "A trader tries to write “counterparty toxicity > 0.6 → submit market order”.",
+      rows: [
+        { label: "In the palette", value: "the chip is dashed and greyed, and states the reason in place of its hint" },
+        { label: "In the rule editor", value: "the dropdown entry reads “Counterparty toxicity — unavailable” and cannot be picked" },
+        { label: "If a policy still holds one", value: "the field stays selected and shown, with a warning that Save will be refused" },
+        { label: "The workable form", value: "name the client directly: Counterparty contains “TOXIC” → submit market order" },
+      ],
+      takeaway: "An unavailable field is a missing measurement, not a missing feature — express the intent with a field that is measured.",
+    },
+    howToConfigure: [
+      "Read the greyed chip's reason in the risk-state field palette before reaching for it.",
+      "Replace an intent that needs toxicity or inventory age with one the platform measures — counterparty identity, utilisation, overflow, or hedge cost.",
+      "Scope by BOOK rather than DESK: the book is carried on every fill, the desk is not.",
+      "If an existing policy shows the Save-will-be-refused warning, rebind that condition to an available field and Save again.",
+    ],
+    whenToUse:
+      "Whenever a field you expected to use is greyed out, or a policy that looks correct is refused on save. The reason shown is the same one the server gives.",
+    risks:
+      "These fields are unavailable because nothing measures them — not because they are switched off. Do not read a greyed field as “enable it somewhere”; the intent has to be re-expressed against a measured field.",
+    keywords: [
+      "unavailable",
+      "greyed",
+      "disabled",
+      "field",
+      "toxicity",
+      "counterparty toxicity",
+      "inventory age",
+      "desk",
+      "net vega",
+      "net gamma",
+      "refused",
+      "validation",
+      "condition",
+    ],
+  },
+  {
     id: "concept.hedge-rule-from-pricing-group",
     category: "concept",
     title: "Create a hedging rule from a pricing group",

@@ -283,6 +283,28 @@
 .chip:active {
   cursor: grabbing;
 }
+
+/*
+ * A field the server does not populate. Deliberately still RENDERED — a trader needs to see
+ * that it exists and read why it cannot be used, rather than hunt for a missing chip. The
+ * hint slot carries the reason, so the treatment is muted, not hidden; `white-space` is
+ * released because that reason is a sentence, not a label.
+ */
+.chip[data-unavailable="true"] {
+  cursor: not-allowed;
+  opacity: 0.55;
+  border-style: dashed;
+  background: var(--bg-sunken, var(--bg-raised));
+}
+.chip[data-unavailable="true"]:hover {
+  transform: none;
+  box-shadow: none;
+  border-color: var(--hairline);
+}
+.chip[data-unavailable="true"] .chipHint {
+  white-space: normal;
+  overflow: visible;
+}
 .chipBook {
   background: linear-gradient(180deg, var(--brand-soft, transparent), var(--bg-raised));
   border-color: var(--brand-soft, var(--hairline));
@@ -695,6 +717,16 @@
 .fieldHint {
   font-size: var(--type-micro);
   color: var(--text-tertiary);
+}
+/*
+ * The inline "this will be refused on save" note under a condition's field select. Warning-
+ * coloured rather than error-coloured: the graph is not yet invalid to hold, it is invalid
+ * to SAVE, and the trader is mid-edit.
+ */
+.fieldWarning {
+  font-size: var(--type-micro);
+  color: var(--warn, var(--text-secondary));
+  max-width: 34ch;
 }
 .fieldStatic {
   font-size: var(--type-body);

@@ -53,7 +53,12 @@ fn known(items: &[&str]) -> BTreeSet<String> {
 /// offset floor):
 ///
 /// - 0: `breached == false`               ? WAREHOUSE (1)          : 2
-/// - 2: `counterparty_toxicity > 0.6`     ? SUBMIT_MARKET_ORDER (3): 4   (toxic → back-to-back)
+/// - 2: `counterparty contains "TOXIC"`  ? SUBMIT_MARKET_ORDER (3): 4   (toxic → back-to-back)
+///
+/// Node 2 expresses "this client's flow goes straight back to the street" via the
+/// COUNTERPARTY, not via `counterparty_toxicity`: no markout series is retained anywhere, so
+/// that field has no production source and `validate` now refuses a rule branching on it
+/// (`HedgeField::provider`). Naming the client is the form of the rule a desk can actually run.
 /// - 4: `internal_offset_available > 10k` ? CROSS_INTERNAL (5)     : 6   (offset exists → net internally)
 /// - 6: `overflow > 50k`                  ? RFQ_OUT (7)            : SPLIT (8)
 fn policy_graph() -> HedgeGraph {
@@ -72,9 +77,9 @@ fn policy_graph() -> HedgeGraph {
     nodes.insert(
         2,
         cond(
-            HedgeField::CounterpartyToxicity,
-            RouteOp::Gt,
-            RouteValue::Num(0.6),
+            HedgeField::Counterparty,
+            RouteOp::Contains,
+            RouteValue::Text("TOXIC".into()),
             3,
             4,
         ),
@@ -138,15 +143,19 @@ fn policy_lps() -> BTreeSet<String> {
 }
 
 /// A risk state with the policy's relevant fields set; others defaulted.
-fn state(breached: bool, toxicity: f64, offset: f64, overflow: f64) -> HedgeContext {
+fn state(breached: bool, counterparty: &str, offset: f64, overflow: f64) -> HedgeContext {
     HedgeContext {
         breached,
-        counterparty_toxicity: toxicity,
+        counterparty: counterparty.to_owned(),
         internal_offset_available: offset,
         overflow,
         ..Default::default()
     }
 }
+
+/// A counterparty whose flow node 2 routes straight back to back, and one it does not.
+const TOXIC_CP: &str = "TOXIC-ALPHA";
+const BENIGN_CP: &str = "BENIGN-CO";
 
 #[test]
 fn policy_graph_is_valid() {
@@ -158,43 +167,43 @@ fn policy_graph_is_valid() {
 #[test]
 fn exit_policy_truth_table() {
     let g = policy_graph();
-    // (breached, toxicity, offset, overflow) -> expected action kind, with why.
-    let cases: &[(bool, f64, f64, f64, &str, &str)] = &[
+    // (breached, counterparty, offset, overflow) -> expected action kind, with why.
+    let cases: &[(bool, &str, f64, f64, &str, &str)] = &[
         (
             false,
-            0.9,
+            TOXIC_CP,
             0.0,
             99_999.0,
             "WAREHOUSE",
-            "not breached → warehouse",
+            "not breached → warehouse, whoever the client is",
         ),
         (
             true,
-            0.7,
+            TOXIC_CP,
             0.0,
             10_000.0,
             "SUBMIT_MARKET_ORDER",
-            "toxic (0.7>0.6) → back-to-back",
+            "toxic client → back-to-back",
         ),
         (
             true,
-            0.61,
+            "PREFIX-TOXIC-DESK",
             0.0,
             10_000.0,
             "SUBMIT_MARKET_ORDER",
-            "toxic just over 0.6",
+            "`contains` matches a family of session ids, not just an exact name",
         ),
         (
             true,
-            0.6,
+            BENIGN_CP,
             20_000.0,
             10_000.0,
             "CROSS_INTERNAL",
-            "toxicity == 0.6 (Gt strict false) & offset 20k>10k → cross",
+            "benign client & offset 20k>10k → cross",
         ),
         (
             true,
-            0.5,
+            BENIGN_CP,
             15_000.0,
             10_000.0,
             "CROSS_INTERNAL",
@@ -202,7 +211,7 @@ fn exit_policy_truth_table() {
         ),
         (
             true,
-            0.5,
+            BENIGN_CP,
             10_000.0,
             60_000.0,
             "RFQ_OUT",
@@ -210,7 +219,7 @@ fn exit_policy_truth_table() {
         ),
         (
             true,
-            0.5,
+            BENIGN_CP,
             5_000.0,
             60_000.0,
             "RFQ_OUT",
@@ -218,7 +227,7 @@ fn exit_policy_truth_table() {
         ),
         (
             true,
-            0.5,
+            BENIGN_CP,
             5_000.0,
             40_000.0,
             "SPLIT",
@@ -226,7 +235,7 @@ fn exit_policy_truth_table() {
         ),
         (
             true,
-            0.0,
+            "",
             0.0,
             0.0,
             "SPLIT",
@@ -234,8 +243,8 @@ fn exit_policy_truth_table() {
         ),
     ];
 
-    for (breached, tox, offset, overflow, expected, why) in cases {
-        let ctx = state(*breached, *tox, *offset, *overflow);
+    for (breached, cp, offset, overflow, expected, why) in cases {
+        let ctx = state(*breached, cp, *offset, *overflow);
         let r = HedgeRouter::resolve(&g, &ctx).expect("validated graph is total");
         assert_eq!(r.action.kind(), *expected, "case: {why}");
     }
@@ -244,11 +253,11 @@ fn exit_policy_truth_table() {
 #[test]
 fn resolution_records_the_policy_path() {
     let g = policy_graph();
-    // Toxic breach walks 0 → 2 → 3.
-    let r = HedgeRouter::resolve(&g, &state(true, 0.9, 0.0, 1.0)).unwrap();
+    // A toxic client's breach walks 0 → 2 → 3.
+    let r = HedgeRouter::resolve(&g, &state(true, TOXIC_CP, 0.0, 1.0)).unwrap();
     assert_eq!(r.path, vec![0, 2, 3]);
     // Benign, offset present walks 0 → 2 → 4 → 5.
-    let r2 = HedgeRouter::resolve(&g, &state(true, 0.1, 20_000.0, 1.0)).unwrap();
+    let r2 = HedgeRouter::resolve(&g, &state(true, BENIGN_CP, 20_000.0, 1.0)).unwrap();
     assert_eq!(r2.path, vec![0, 2, 4, 5]);
 }
 
@@ -337,7 +346,7 @@ fn graph_json_round_trips() {
     let json = serde_json::to_string(&g).expect("serialize");
     let back: HedgeGraph = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(g, back, "graph must survive a JSON round-trip");
-    let ctx = state(true, 0.9, 0.0, 1.0);
+    let ctx = state(true, TOXIC_CP, 0.0, 1.0);
     assert_eq!(
         HedgeRouter::action(&back, &ctx).unwrap().kind(),
         HedgeRouter::action(&g, &ctx).unwrap().kind()
@@ -369,12 +378,12 @@ proptest! {
     #[test]
     fn resolution_is_deterministic(
         breached in any::<bool>(),
-        tox in -1.0f64..2.0,
+        cp in "[A-Z-]{0,12}",
         offset in -1e9f64..1e9,
         overflow in -1e9f64..1e9,
     ) {
         let g = policy_graph();
-        let ctx = state(breached, tox, offset, overflow);
+        let ctx = state(breached, &cp, offset, overflow);
         let a = HedgeRouter::resolve(&g, &ctx).expect("validated graph is total");
         let b = HedgeRouter::resolve(&g, &ctx).expect("validated graph is total");
         prop_assert_eq!(a.action.kind(), b.action.kind());
@@ -401,17 +410,18 @@ proptest! {
 const GEN_INSTR: &[&str] = &["EURUSD", "GBPUSD", "USDJPY"];
 const GEN_LPS: &[&str] = &["LP-1", "LP-2", "LP-3"];
 
-const FIELDS: &[HedgeField] = &[
-    HedgeField::NetDv01,
-    HedgeField::NetNotional,
-    HedgeField::Utilization,
-    HedgeField::Overflow,
-    HedgeField::CounterpartyToxicity,
-    HedgeField::InternalOffsetAvailable,
-    HedgeField::Ccy,
-    HedgeField::Breached,
-    HedgeField::InstrumentId,
-];
+/// The fields a generated graph may branch on: every field that has a production source.
+///
+/// Derived from [`HedgeField::ALL`] rather than hand-listed, so it can never drift out of
+/// step with the provenance declaration — a newly-wired field is generated automatically, and
+/// a field found to have no source drops out instead of generating graphs that
+/// `validate` (correctly) refuses.
+fn generated_fields() -> Vec<HedgeField> {
+    HedgeField::ALL
+        .into_iter()
+        .filter(|f| f.unprovided_reason().is_none())
+        .collect()
+}
 
 fn valid_ops(kind: celnet_hedge_routing::FieldKind) -> &'static [RouteOp] {
     use RouteOp::*;
@@ -495,7 +505,8 @@ fn build_valid_graph(seeds: &[NodeSeed]) -> HedgeGraph {
         let node = if *is_action || is_last {
             act(action_for(*sel))
         } else {
-            let field = FIELDS[(*field_sel as usize) % FIELDS.len()];
+            let fields = generated_fields();
+            let field = fields[(*field_sel as usize) % fields.len()];
             let ops = valid_ops(field.kind());
             let op = ops[(*op_sel as usize) % ops.len()];
             let value = value_for(field.kind(), op, *num, *num2, text.clone(), list.clone());
@@ -520,15 +531,17 @@ fn arb_context() -> impl Strategy<Value = HedgeContext> {
         any::<f64>(),
     )
         .prop_map(
-            |(instrument_id, ccy, breached, net_dv01, overflow, toxicity, offset)| HedgeContext {
-                instrument_id,
-                ccy,
-                breached,
-                net_dv01,
-                overflow,
-                counterparty_toxicity: toxicity,
-                internal_offset_available: offset,
-                ..Default::default()
+            |(instrument_id, ccy, breached, net_dv01, overflow, hedge_cost_bp, offset)| {
+                HedgeContext {
+                    instrument_id,
+                    ccy,
+                    breached,
+                    net_dv01,
+                    overflow,
+                    hedge_cost_bp,
+                    internal_offset_available: offset,
+                    ..Default::default()
+                }
             },
         )
 }

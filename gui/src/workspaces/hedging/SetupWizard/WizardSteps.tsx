@@ -83,9 +83,17 @@ const METRIC_LABEL: Record<HedgeMetric, string> = {
 // Step 3 — Internalisation & hedging
 // ---------------------------------------------------------------------------
 
+// A curated field is still shown when the server populates nothing for it — carrying its
+// reason, so the option renders disabled and explains itself. `counterparty_toxicity` is
+// exactly that case today: it was offered here as a live chip while no producer existed,
+// so a wizard-built rule on it passed the client and was refused on save.
 const HEDGE_FIELD_OPTS: readonly FieldOpt[] = HEDGE_FIELD_REGISTRY.filter((s) =>
   WIZARD_HEDGE_FIELDS.includes(s.field),
-).map((s) => ({ value: s.field, label: s.label }));
+).map((s) => ({
+  value: s.field,
+  label: s.label,
+  ...(s.provider.state === "unprovided" ? { unavailable: s.provider.reason } : {}),
+}));
 
 function hedgeEnum(field: string): ValueOption[] {
   switch (field as HedgeField) {
