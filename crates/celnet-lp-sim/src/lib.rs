@@ -53,6 +53,25 @@
 //!   bounded seeded perturbation) priced to a clean bond price via
 //!   [`celnet_bond::clean_price`], for soak/demo realism.
 //!
+//! ## Named simulated counterparties (see [`roster`])
+//!
+//! The panel is **not** an anonymous `LP-SIM-01…0N` fleet. Every member is a named
+//! simulated counterparty from [`OTC_ROSTER`] — `marketaccess-sim`,
+//! `traderweb-sim`, `citigroup-sim`, `jpm-sim` — each with its own persistent,
+//! reproducible pricing personality (spread, directional axe, size appetite, quoted
+//! depth, response latency, refresh cadence). A booked fill therefore stamps a name
+//! a trader recognises into `HedgeProvenance.lp_won`, and the counterparties really
+//! do fill different amounts of the same order.
+//!
+//! ## Orders and fills (see [`execution`] and [`orders`])
+//!
+//! The simulators do not only publish prices: they **take orders and report fills**
+//! over the same FIX `NewOrderSingle(D)` → `ExecutionReport(8)` contract the rest of
+//! the estate speaks. [`execution`] is the pure matching core (market / limit /
+//! previously-quoted, `TimeInForce` FOK and IOC, per-counterparty quoted depth);
+//! [`orders`] binds it to a real socket. Every rejection and every partial fill
+//! carries a machine-readable reason — nothing is ever dropped silently.
+//!
 //! ## Public surface
 //!
 //! - [`SimLp`] — one LP implementing [`VenueFeed`](celnet_aggregation::VenueFeed),
@@ -62,29 +81,34 @@
 //! - [`fleet`] / [`FleetConfig`] / [`FleetInstrument`] — a factory that spins up N
 //!   decorrelated, reproducible LPs; [`into_feeds`] boxes them for the
 //!   consolidator.
+//! - [`OrderVenue`] / [`serve_orders`] — the FIX order acceptor a simulator binds so
+//!   a taker can actually trade against the prices it streams.
 //!
-//! ## Scope note — real-socket LP adapter is future work
+//! ## Scope note — listed futures live in their own simulator
 //!
-//! This crate is library-only and models LPs as in-process `VenueFeed`s. A
-//! **FIX-emitting adapter** (a real-socket LP over [`celnet_fix`], as the FIX
-//! quote sim does) is deliberately **out of scope** here; it would sit behind the
-//! same `VenueFeed` seam — a network `VenueFeed` implementation that returns its
-//! most recent tick — so nothing in the consolidator or this simulator's fleet
-//! model would need to change to admit it later.
+//! Listed Treasury futures used to be priced here, as one more arm of the generic
+//! LP feed. They are now a **dedicated venue simulator** (`celnet-cme-sim`), because
+//! a listed contract is not a dealer quote: it has one central market rather than a
+//! panel, it trades in whole contracts on a published tick grid, and it rolls across
+//! delivery months. This crate keeps the over-the-counter universe (cash government
+//! bonds, the swap/OIS curve and the listed STIR strip anchored to it) and lends the
+//! futures simulator its shared price/quote vocabulary.
 
 #![forbid(unsafe_code)]
 
 pub mod books;
 pub mod credentials;
+pub mod execution;
 pub mod fleet;
-pub mod futures;
 pub mod lp;
 pub mod lpsim;
 pub mod net;
 pub mod ois;
+pub mod orders;
 pub mod price;
 pub mod quoted;
 mod rng;
+pub mod roster;
 pub mod stir;
 pub mod universe;
 
@@ -92,17 +116,22 @@ pub use books::{
     BookScope, BookView, StreamDiff, StreamKey, StreamPlan, resolve_from_descs, resolve_plan,
 };
 pub use credentials::{CredentialError, ServiceCredentials};
+pub use execution::{
+    DepthLadder, DepthLevel, Execution, Fill, OrderRequest, OrderType, PartialReason, RejectReason,
+    Side, TimeInForce, VenueRules, execute,
+};
 pub use fleet::{FleetConfig, FleetInstrument, fleet, into_feeds};
-pub use futures::{FuturesContract, futures_lines, load_futures_universe};
 pub use lp::{Fault, InstrumentModel, LpParams, SimLp};
 pub use lpsim::{
     BondComposite, DEFAULT_LP_NAME, LpQuoteSnapshot, LpSimConfig, build_fleet, composite_for,
-    quotable_lines,
+    depth_for, quotable_lines,
 };
 pub use net::{BookFeedOptions, FaultSchedule, LoginCredentials, run_book_aware_feed};
 pub use ois::{OisCurvePoint, USD_OIS_CURVE, load_ois_universe, ois_instrument_id, ois_lines};
+pub use orders::{OrderVenue, QuotedMarket, run_order_acceptor, serve_orders};
 pub use price::{MidSource, RateModel, YieldModel};
 pub use quoted::QuotedLine;
+pub use roster::{LISTED_ROSTER, OTC_ROSTER, SimLpProfile, VenueArchetype};
 pub use stir::{StirContract, load_stir_universe, stir_lines};
 pub use universe::{
     SecurityType, TreasuryBond, bond_lines, load_coupon_universe, load_curated_universe,

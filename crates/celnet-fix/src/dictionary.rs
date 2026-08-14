@@ -414,6 +414,15 @@ pub const TAGS: &[TagSpec] = &[
         field_type: FieldType::Char,
         name: "OrdType",
     },
+    // The order's time-in-force. Declared here so an inbound value is type-checked
+    // by `validate` rather than being read as an opaque byte: a venue that cannot
+    // honour a resting TIF must be able to tell a MALFORMED order from a
+    // well-formed one it declines, and answer each differently.
+    TagSpec {
+        tag: 59,
+        field_type: FieldType::Char,
+        name: "TimeInForce",
+    },
     TagSpec {
         tag: 44,
         field_type: FieldType::Float,

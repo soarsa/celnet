@@ -90,7 +90,7 @@ mod vehicle;
 
 pub use band::{HedgeSizing, NettingSplit, WarehouseThreshold, netting_split};
 pub use context::HedgeContext;
-pub use field::{HedgeField, HedgeFieldKind};
+pub use field::{FieldProvider, HedgeField, HedgeFieldKind};
 pub use graph::{ExecStyle, ExitAction, HedgeError, HedgeGraph, HedgeNode, HedgeSize, NodeId};
 pub use lp_panel::{HedgeLpPanel, LpPanelError};
 pub use mode::HedgeExitMode;

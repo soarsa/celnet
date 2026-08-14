@@ -145,6 +145,9 @@ export function FixConnectionWizard({
   const [port, setPort] = useState("9100");
   const [senderCompId, setSenderCompId] = useState(DEFAULT_SENDER);
   const [targetCompId, setTargetCompId] = useState(DEFAULT_TARGET);
+  // Where WE dial to send this counterparty a hedge order. Optional: a member may
+  // legitimately quote us without being tradeable-to.
+  const [orderEndpoint, setOrderEndpoint] = useState("");
   const [desk, setDesk] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -159,6 +162,7 @@ export function FixConnectionWizard({
     setHost("127.0.0.1");
     setPort("9100");
     setSenderCompId(DEFAULT_SENDER);
+    setOrderEndpoint("");
     setTargetCompId(DEFAULT_TARGET);
     setDesk("");
     setEnabled(true);
@@ -244,6 +248,7 @@ export function FixConnectionWizard({
       targetCompId: targetCompId.trim(),
       enabled,
       desk: desk.trim(),
+      orderEndpoint: orderEndpoint.trim(),
     };
     try {
       await onCreate(spec);
@@ -252,7 +257,18 @@ export function FixConnectionWizard({
       setError(e instanceof Error ? e.message : "could not create the connection");
       setSubmitting(false);
     }
-  }, [nameTrimmed, kind, bindAddr, senderCompId, targetCompId, desk, enabled, onCreate, onClose]);
+  }, [
+    nameTrimmed,
+    kind,
+    bindAddr,
+    senderCompId,
+    targetCompId,
+    desk,
+    enabled,
+    orderEndpoint,
+    onCreate,
+    onClose,
+  ]);
 
   const advance = useCallback((): void => {
     if (!stepValid) return;
@@ -500,6 +516,23 @@ export function FixConnectionWizard({
                 />
               </label>
               {compIdError && <p className={styles.error}>{compIdError}</p>}
+              <p className={styles.hint}>
+                The bind address above is where this counterparty reaches <em>us</em>.
+                The order route below is where <em>we</em> reach <em>it</em> — the
+                address we dial to send it a hedge order. Leave it blank if this
+                counterparty only ever quotes: a hedge order to a member with no order
+                route is answered <code>no_order_endpoint</code> and is never filled
+                from its standing quote.
+              </p>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Order route (optional, host:port)</span>
+                <input
+                  className={styles.input}
+                  value={orderEndpoint}
+                  placeholder="e.g. 127.0.0.1:5701"
+                  onChange={(e) => setOrderEndpoint(e.target.value)}
+                />
+              </label>
             </div>
           )}
 
@@ -525,6 +558,18 @@ export function FixConnectionWizard({
                 <div className={styles.summaryRow}>
                   <dt>TargetCompID</dt>
                   <dd>{targetCompId.trim()}</dd>
+                </div>
+                <div className={styles.summaryRow}>
+                  <dt>Order route</dt>
+                  <dd>
+                    {orderEndpoint.trim().length === 0 ? (
+                      <span className={styles.warn}>
+                        ⚠ None — we cannot send this counterparty orders
+                      </span>
+                    ) : (
+                      orderEndpoint.trim()
+                    )}
+                  </dd>
                 </div>
                 <div className={styles.summaryRow}>
                   <dt>Routing desk</dt>

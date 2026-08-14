@@ -62,7 +62,9 @@ tab and decide, for each book/portfolio you want managed:
    - **Net DV01** (`dv01`) — the natural first-order rate risk for FI/rates books.
    - **Net notional** (`net_notional`) — the simplest cash form of "100".
    - **Net delta** (`net_delta`) — base-currency directional risk for FX.
-   - **Net vega** (`net_vega`) — vol risk for an options book.
+   - **Net vega** (`net_vega`) — vol risk for an options book. **Not yet usable:** only
+     linear-rates cells reach the engine, so a vega budget measures a constant zero and can
+     never breach.
 
 One desk can warehouse to a DV01 budget while another uses net notional — the metric is set
 per threshold row.
@@ -138,16 +140,46 @@ invalid).
 
 | Group | Fields |
 |---|---|
-| **Identity** | `instrument_id`, `ccy`, `product`, `book`, `desk`, `counterparty` |
-| **Risk state** | `net_dv01`, `net_notional`, `net_vega`, `net_gamma`, `inventory_sign` (+1 long / −1 short) |
+| **Identity** | `instrument_id`, `ccy`, `product`, `book`, `counterparty`, ~~`desk`~~ |
+| **Risk state** | `net_dv01`, `net_notional`, `inventory_sign` (+1 long / −1 short / 0 flat), ~~`net_vega`~~, ~~`net_gamma`~~ |
 | **Budget state** | `threshold`, `utilization` (`|risk|/threshold`), `overflow`, `breached` (`true`/`false` — the red-band trigger) |
-| **Flow quality** | `counterparty_toxicity` (markout; high ⇒ hedge sooner), `inventory_age_secs` |
-| **Market state** | `internal_offset_available` (opposing internal flow you could cross now), `hedge_cost_bp` |
+| **Flow quality** | ~~`counterparty_toxicity`~~, ~~`inventory_age_secs`~~ |
+| **Market state** | `internal_offset_available` (opposing internal flow you could cross now), `hedge_cost_bp` (the crossing half-spread) |
+
+> **Struck-through fields have no data source and cannot be used in a rule.** Saving a
+> rule that branches on one is **rejected** with the reason. You see this **before** you
+> save, not only on rejection: in the builder the field's palette chip is greyed out and
+> shows the reason in place of its hint, the rule editor's field dropdown marks it
+> "— unavailable" and will not select it, and the client-side policy check reports the same
+> reason the server would. A policy authored earlier that still references one keeps the
+> field visible, with a warning that Save will be refused. They are still listed here
+> because they remain part of the field vocabulary and will become usable if a source is
+> wired. Why each is unavailable:
+>
+> | Field | Why | Use instead |
+> |---|---|---|
+> | `desk` | A booked fill carries no desk — the desk belongs to the FIX/RFQ session that priced the quote, not to the resulting position. | `book` |
+> | `net_vega`, `net_gamma` | Only linear-rates cells are evaluated; they carry no vol or convexity risk, so the value is a constant zero and the rule can never fire. | `net_dv01` |
+> | `counterparty_toxicity` | No post-fill mark trajectory is retained, so markout cannot be derived. | `counterparty` (name the client directly) |
+> | `inventory_age_secs` | A stored position carries no acquisition timestamp. | `utilization` / `overflow` |
+
+Two notes on the two market-state fields, which ARE live but are narrower than they sound:
+
+- `internal_offset_available` is the netted **opposing** risk held by the **sibling books
+  under the same immediate parent**, in the **same product family**. It is deliberately not
+  firm-wide (crossing with an unrelated desk is a transfer requiring consent) and not
+  cross-family (a bond's PV01 does not offset a FRA's). Each narrowing can only understate
+  the offset, so the engine externalises more rather than assuming a cross it cannot do.
+- `hedge_cost_bp` is the **crossing half-spread only** — the distance from mid to the best
+  executable LP top-of-book, falling back to the desk's configured composite spread when no
+  LP is up. It does **not** include market impact, because no depth or ADV data exists to
+  derive impact from. A large clip will cost more than this field reports.
 
 Numeric fields support `> ≥ < ≤ = ≠ between in`; enum/string fields (`ccy`, `product`,
-`book`, `desk`, `breached`, `instrument_id`, `counterparty`) support `= ≠` (and
+`book`, `breached`, `instrument_id`, `counterparty`) support `= ≠` (and
 `contains`/`in` for the string fields `instrument_id`/`counterparty`). A malformed rule
-such as `net_dv01 contains "x"` is rejected by validation and is unrepresentable in the UI.
+such as `net_dv01 contains "x"` is rejected by validation and is unrepresentable in the UI,
+as is a rule on a field with no data source (the struck-through rows above).
 
 Hedging **by counterparty** and **by book** are the two identity dimensions a desk reaches
 for most: `book` scopes the policy to one risk book, while `counterparty` (the originating
@@ -191,7 +223,7 @@ to sanity-check ordering before saving.
 
 ```
 IF breached == false                          → WAREHOUSE
-IF counterparty_toxicity > 0.6                → SUBMIT_MARKET_ORDER { size: Overflow, style: Immediate }   // toxic → back-to-back now
+IF counterparty contains "TOXIC"              → SUBMIT_MARKET_ORDER { size: Overflow, style: Immediate }   // this client's flow → back-to-back now
 IF internal_offset_available > overflow       → CROSS_INTERNAL { instrument: AGG-OIS, size: Overflow }     // benign & offset exists → net internally
 IF overflow > 50000000                        → RFQ_OUT { LPs: [LP-1, LP-2, LP-3], size: Overflow }        // big residual → work an RFQ panel
 (catch-all, no conditions)                    → SPLIT { internal-first, size: Overflow, style: Worked }    // net what we can, work the rest

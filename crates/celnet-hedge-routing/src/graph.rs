@@ -278,6 +278,17 @@ pub enum HedgeError {
         /// The node holding the empty vehicle.
         node: NodeId,
     },
+    /// A condition branches on a field nothing populates, so the rule could never fire: its
+    /// operand would be the context default forever. See
+    /// [`FieldProvider`](crate::FieldProvider).
+    UnprovidedField {
+        /// The condition node holding the dead field.
+        node: NodeId,
+        /// The field with no production source.
+        field: HedgeField,
+        /// Why it has none — [`HedgeField::unprovided_reason`], surfaced verbatim.
+        reason: &'static str,
+    },
 }
 
 impl fmt::Display for HedgeError {
@@ -320,6 +331,15 @@ impl fmt::Display for HedgeError {
             HedgeError::EmptyHedgeVehicle { node } => {
                 write!(f, "node {node}: the hedge vehicle names no instrument")
             }
+            HedgeError::UnprovidedField {
+                node,
+                field,
+                reason,
+            } => write!(
+                f,
+                "node {node}: field {field:?} has no production source, so this rule could \
+                 never fire ({reason})"
+            ),
         }
     }
 }
@@ -416,6 +436,8 @@ impl HedgeGraph {
     /// Rejects: a missing `entry`; any condition edge to a non-existent node; any
     /// cycle reachable from `entry`; any condition whose operator is invalid for
     /// its field kind or whose value variant is inconsistent with the operator;
+    /// any condition branching on a field with **no production source** (a dead rule —
+    /// see [`FieldProvider`](crate::FieldProvider));
     /// any `CrossInternal` naming an unknown aggregation instrument; any `RfqOut`
     /// with an empty panel or an unknown/disabled LP; and any leaf naming a hedge
     /// **vehicle** absent from `known_vehicles` (an unregistered vehicle has no known
@@ -463,6 +485,17 @@ impl HedgeGraph {
                             node: id,
                             field: *field,
                             op: *op,
+                        });
+                    }
+                    // A well-typed condition on a field nothing populates is still dead: its
+                    // operand is the context default forever. Reject it here rather than let
+                    // it persist and silently never fire. Checked independently of the
+                    // operator/value defects above so an author sees every reason at once.
+                    if let Some(reason) = field.unprovided_reason() {
+                        errors.push(HedgeError::UnprovidedField {
+                            node: id,
+                            field: *field,
+                            reason,
                         });
                     }
                 }
@@ -612,6 +645,86 @@ mod tests {
                 .validate(&instruments(), &lps(), &vehicles())
                 .is_ok()
         );
+    }
+
+    /// A well-typed condition on a field NOTHING populates is refused: its operand would be
+    /// the context default forever, so the rule could never fire. Rejecting it at authoring
+    /// time is the whole point — such a rule previously validated, persisted, rendered in the
+    /// UI, and silently did nothing.
+    #[test]
+    fn a_condition_on_an_unprovided_field_is_rejected() {
+        for field in HedgeField::ALL {
+            let Some(reason) = field.unprovided_reason() else {
+                continue;
+            };
+            let mut nodes = BTreeMap::new();
+            // `counterparty_toxicity > 0.5`-shaped: a perfectly well-typed numeric condition.
+            // `Desk` is an Enum field, so give it an equality on text instead.
+            let (op, value) = if field.kind() == FieldKind::Enum {
+                (RouteOp::Eq, RouteValue::Text("RATES".into()))
+            } else {
+                (RouteOp::Gt, RouteValue::Num(0.5))
+            };
+            nodes.insert(0, cond(field, op, value, 1, 2));
+            nodes.insert(1, act(ExitAction::Warehouse));
+            nodes.insert(
+                2,
+                act(ExitAction::SubmitMarketOrder {
+                    size: HedgeSize::Overflow,
+                    style: ExecStyle::Immediate,
+                }),
+            );
+            let errors = HedgeGraph { entry: 0, nodes }
+                .validate(&instruments(), &lps(), &vehicles())
+                .expect_err("a rule on an unpopulated field must be refused");
+            assert!(
+                errors.contains(&HedgeError::UnprovidedField {
+                    node: 0,
+                    field,
+                    reason,
+                }),
+                "{field:?} produced {errors:?}"
+            );
+            // The message must carry the REASON, not merely the rejection — the author needs
+            // to know why the field is dead to pick a working alternative.
+            let rendered = errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ");
+            assert!(rendered.contains(reason), "reason missing from: {rendered}");
+        }
+    }
+
+    /// The converse: every field that IS populated remains usable in a rule, so the new check
+    /// refuses exactly the dead fields and nothing else.
+    #[test]
+    fn conditions_on_provided_fields_still_validate() {
+        for field in HedgeField::ALL {
+            if field.unprovided_reason().is_some() {
+                continue;
+            }
+            let (op, value) = match field.kind() {
+                FieldKind::Numeric => (RouteOp::Gt, RouteValue::Num(0.5)),
+                _ => (RouteOp::Eq, RouteValue::Text("x".into())),
+            };
+            let mut nodes = BTreeMap::new();
+            nodes.insert(0, cond(field, op, value, 1, 2));
+            nodes.insert(1, act(ExitAction::Warehouse));
+            nodes.insert(
+                2,
+                act(ExitAction::SubmitMarketOrder {
+                    size: HedgeSize::Overflow,
+                    style: ExecStyle::Immediate,
+                }),
+            );
+            assert!(
+                HedgeGraph { entry: 0, nodes }
+                    .validate(&instruments(), &lps(), &vehicles())
+                    .is_ok(),
+                "{field:?} should still be usable in a rule"
+            );
+        }
     }
 
     /// A hedge graph carrying a `counterparty == "X"` condition validates and survives the

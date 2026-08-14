@@ -79,6 +79,7 @@ import { DealsBlotterWorkspace } from "./DealsBlotterWorkspace";
 import { HedgeDealsView } from "./HedgeDealsView";
 import { HedgeMonitor } from "./hedging/HedgeMonitor";
 import { RiskSetupWizard } from "./risksetup/RiskSetupWizard";
+import { DecisionAuditWorkspace } from "./audit/DecisionAuditWorkspace";
 import styles from "./RiskDashboardWorkspace.module.css";
 
 /** The tab the consolidated Risk surface shows. `dashboard` is the default; the other
@@ -94,6 +95,7 @@ export type RiskDashboardTab =
   | "portfolios"
   | "routing"
   | "acceptance"
+  | "audit"
   | "positions"
   | "quotes"
   | "clientblotter"
@@ -115,6 +117,10 @@ const RISK_TABS: readonly { tab: RiskDashboardTab; label: string; cap: Capabilit
   { tab: "portfolios", label: "Portfolios", cap: "risk_manage" },
   { tab: "routing", label: "Routing", cap: "risk_manage" },
   { tab: "acceptance", label: "Acceptance", cap: "manage_acceptance" },
+  // The AUDIT of those three engines: why each one acted, or deliberately did not.
+  // Gated on `hedge` like the hedge-flow monitor — the journal exposes the hedge
+  // engine's internals alongside acceptance/routing.
+  { tab: "audit", label: "Audit", cap: "hedge" },
 ];
 
 /**
@@ -900,6 +906,10 @@ export function RiskDashboardWorkspace({
           <RiskRoutingWorkspace />
         ) : activeTab === "acceptance" ? (
           <AcceptanceWorkspace />
+        ) : activeTab === "audit" ? (
+          // The audit of the three rule engines: what each decided and, crucially, why
+          // it deliberately did nothing.
+          <DecisionAuditWorkspace />
         ) : activeTab === "positions" ? (
           // The FI position ledger + booking form (folded in from the old "Book"),
           // composed verbatim — the same table the Book rail row used to render.

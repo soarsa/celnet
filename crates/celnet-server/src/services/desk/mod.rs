@@ -43,8 +43,9 @@ use std::sync::Arc;
 
 use celnet_proto::rfq_desk_service_server::RfqDeskService;
 use celnet_proto::{
-    AcceptDeskQuoteRequest, AcceptDeskQuoteResponse, BondInstrument, CurveSet, Deal, DeskQuote,
-    DeskRequest, DeskRequestKind, DeskRequestState, ListDealsRequest, ListDealsResponse,
+    AcceptDeskQuoteRequest, AcceptDeskQuoteResponse, BondInstrument, CurveSet, Deal,
+    DecisionEngineEnum, DecisionOutcomeEnum, DecisionRecord, DeskQuote, DeskRequest,
+    DeskRequestKind, DeskRequestState, ListDealsRequest, ListDealsResponse,
     ListDeskRequestsRequest, ListDeskRequestsResponse, ManualInterventionReason, Notification,
     NotificationKind, RatesInstrument, RatesPosition, RespondDeskRequestRequest,
     RespondDeskRequestResponse, Side, SubmitDeskRequestRequest, SubmitDeskRequestResponse,
@@ -61,6 +62,7 @@ use celnet_acceptance::{AcceptanceContext, AcceptanceDecision, AcceptanceEngine}
 
 use crate::services::access::{DeskScope, RequiredAuthority, authorize_caller, resolve_caller};
 use crate::services::analytics::{ClientFlowSource, in_window};
+use crate::services::decision_journal::decision;
 use crate::services::internalise::{self, QuoteKind};
 use crate::services::rates_book::{RatesPositionStore, RatesRoutingAttribution};
 use crate::services::risk::store::PositionStore;
@@ -126,6 +128,15 @@ pub struct RfqDeskEdge {
     ///
     /// [`OnceLock`]: std::sync::OnceLock
     transfer_service: std::sync::OnceLock<Arc<crate::services::risk_transfer::RiskTransferService>>,
+    /// The shared **decision journal** every acceptance evaluation is recorded into —
+    /// accepts, rejects, holds and the two default-accept fallbacks alike. Bound once at
+    /// boot (via [`RfqDeskEdge::set_decision_journal`]) with the SAME `Arc` the auto-hedge
+    /// engine and the `ListDecisionJournal` handler hold, so one audit stream covers all
+    /// three rule engines. Unset in an isolated desk test ⇒ the gate behaves identically
+    /// and simply records nothing.
+    ///
+    /// [`OnceLock`]: std::sync::OnceLock
+    decision_journal: std::sync::OnceLock<Arc<crate::services::decision_journal::DecisionJournal>>,
     /// The edge clock (receipt / execution timestamps), manual in tests.
     clock: Clock,
 }
@@ -235,6 +246,7 @@ impl RfqDeskEdge {
             rates,
             notify,
             transfer_service: std::sync::OnceLock::new(),
+            decision_journal: std::sync::OnceLock::new(),
             clock,
         }
     }
@@ -247,6 +259,17 @@ impl RfqDeskEdge {
         service: Arc<crate::services::risk_transfer::RiskTransferService>,
     ) {
         let _ = self.transfer_service.set(service);
+    }
+
+    /// Wire the shared decision journal so every acceptance evaluation — including the
+    /// ones that accept by default because nothing was configured — lands in the firm-wide
+    /// audit stream. Set once at boot with the same `Arc` the auto-hedge engine holds; a
+    /// second call is a no-op.
+    pub fn set_decision_journal(
+        &self,
+        journal: Arc<crate::services::decision_journal::DecisionJournal>,
+    ) {
+        let _ = self.decision_journal.set(journal);
     }
 
     /// The shared notification broker (so the WS connection layer registers
@@ -798,14 +821,115 @@ impl RfqDeskEdge {
         request_id: &str,
         quote_age_ms: f64,
     ) -> AcceptanceDecision {
+        let now = self.clock.now_nanos();
         let Some(graph) = self.rates.acceptance_graph() else {
+            // A default-accept because NOTHING was configured is a decision the desk should
+            // be able to see; it used to be indistinguishable from a policy that ran and
+            // said yes.
+            self.record_acceptance(
+                DecisionOutcomeEnum::DecisionOutcomeFired,
+                "accept",
+                "no acceptance policy configured — accepted by default",
+                &[],
+                self.requests.get(request_id).as_ref(),
+                request_id,
+                quote_age_ms,
+                now,
+            );
             return AcceptanceDecision::Accept;
         };
         let Some(current) = self.requests.get(request_id) else {
+            self.record_acceptance(
+                DecisionOutcomeEnum::DecisionOutcomeFired,
+                "accept",
+                "the lift named no known desk request — the acceptance graph had no lift \
+                 to evaluate and the lift was accepted by default",
+                &[],
+                None,
+                request_id,
+                quote_age_ms,
+                now,
+            );
             return AcceptanceDecision::Accept;
         };
         let ctx = build_fix_acceptance_context(&current, quote_age_ms);
-        AcceptanceEngine.evaluate(&graph, &ctx).decision
+        let outcome = AcceptanceEngine.evaluate(&graph, &ctx);
+        let (label, reason, fired) = match &outcome.decision {
+            AcceptanceDecision::Accept => (
+                "accept",
+                "the acceptance policy resolved ACCEPT".to_owned(),
+                true,
+            ),
+            AcceptanceDecision::Reject(r) => (
+                "reject",
+                format!("the acceptance policy REJECTED: {r}"),
+                false,
+            ),
+            AcceptanceDecision::Hold(r) => (
+                "hold",
+                format!("the acceptance policy HELD the lift for manual review: {r}"),
+                false,
+            ),
+        };
+        self.record_acceptance(
+            if fired {
+                DecisionOutcomeEnum::DecisionOutcomeFired
+            } else {
+                DecisionOutcomeEnum::DecisionOutcomeNoAction
+            },
+            label,
+            reason,
+            &outcome.path,
+            Some(&current),
+            request_id,
+            quote_age_ms,
+            now,
+        );
+        outcome.decision
+    }
+
+    /// Record one acceptance evaluation into the shared decision journal. A no-op when no
+    /// journal is bound (an isolated desk test); the gate's verdict never depends on it.
+    #[allow(clippy::too_many_arguments)]
+    fn record_acceptance(
+        &self,
+        outcome: DecisionOutcomeEnum,
+        label: &str,
+        reason: impl Into<String>,
+        path: &[u32],
+        current: Option<&DeskRequest>,
+        request_id: &str,
+        quote_age_ms: f64,
+        now: i64,
+    ) {
+        let Some(journal) = self.decision_journal.get() else {
+            return;
+        };
+        let mut reason = reason.into();
+        // The quote age is the single most-asked "why" on a refused lift, so it rides on
+        // every acceptance row rather than only the ones a QuoteAgeMs rule turned away.
+        reason = format!("{reason} (quote age {quote_age_ms:.0} ms)");
+        let rec = DecisionRecord {
+            policy_path: path.to_vec(),
+            scope: "firm".to_owned(),
+            instrument: current
+                .map(|c| rates_instrument_label(c.instrument.as_ref()))
+                .unwrap_or_default(),
+            counterparty: current
+                .map(|c| c.counterparty.clone())
+                .filter(|c| !c.is_empty()),
+            desk: current.map(|c| c.desk.clone()).unwrap_or_default(),
+            request_id: Some(request_id.to_owned()),
+            notional: current.map_or(0.0, |c| c.notional.abs()),
+            ..decision(
+                DecisionEngineEnum::DecisionEngineAcceptance,
+                outcome,
+                label,
+                reason,
+                now,
+            )
+        };
+        journal.record(rec);
     }
 
     /// Book a FIX-venue auto-quote **lift**: the taker sent a `NewOrderSingle(D)` against

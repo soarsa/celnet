@@ -1,5 +1,5 @@
-//! Integration test for the **LP-SIM Treasury feed** end to end: load the REAL
-//! bundled US-Treasury universe, stand up the `LP-SIM` member panel over it, and
+//! Integration test for the **OTC Treasury feed** end to end: load the REAL
+//! bundled US-Treasury universe, stand up the NAMED counterparty panel over it, and
 //! run it through the REAL [`celnet_aggregation::ConsolidatedBook`] engine — the
 //! same engine an operator-defined FI Aggregated Book uses server-side.
 //!
@@ -7,7 +7,7 @@
 //!
 //! - the consolidated `best_bid` is the **max** of the fresh members' bids and
 //!   `best_offer` the **min** of their offers (exact bit-equality);
-//! - every per-LP contribution is attributed to a named `LP-SIM…` venue and the
+//! - every per-LP contribution is attributed to a named counterparty and the
 //!   book is keyed on the bond's canonical engine instrument (identity carried
 //!   through);
 //! - the composite mid lies inside the surviving members' mid envelope (the convex
@@ -24,7 +24,7 @@ const S: i64 = 1_000_000_000;
 /// Valuation instant: 100 s (epoch nanos) — inside every fresh member's cutoff.
 const NOW: i64 = 100 * S;
 
-/// A small config that seeds a 4-member `LP-SIM` panel off the reference universe.
+/// A small config that seeds the named counterparty panel off the reference universe.
 fn cfg() -> LpSimConfig {
     LpSimConfig {
         members: 4,
@@ -61,7 +61,11 @@ fn lp_sim_consolidates_real_treasuries_to_the_analytic_bbo() {
     );
 
     let feeds = into_feeds(build_fleet(&cfg, &bonds));
-    assert_eq!(feeds.len(), cfg.members, "one feed per LP-SIM member");
+    assert_eq!(
+        feeds.len(),
+        cfg.panel_size(),
+        "one feed per named simulated counterparty"
+    );
 
     let ccfg = cfg.consolidation();
     let mut checked = 0;
@@ -92,20 +96,21 @@ fn lp_sim_consolidates_real_treasuries_to_the_analytic_bbo() {
         let book = ConsolidatedBook::consolidate(&feeds, &instr, NOW, &ccfg).unwrap();
 
         // Identity carried through: the book is keyed on the bond's engine key, and
-        // every contribution is attributed to a named LP-SIM connection.
+        // every contribution is attributed to a NAMED simulated counterparty.
         assert_eq!(
             book.instrument, instr,
             "book keyed on the bond's engine instrument"
         );
         assert_eq!(
             book.contributing(),
-            cfg.members,
+            cfg.panel_size(),
             "all fresh members contribute"
         );
         for c in &book.contributions {
             assert!(
-                c.venue.as_str().starts_with("LP-SIM"),
-                "contribution from an unnamed venue: {}",
+                celnet_lp_sim::roster::profile_by_id(celnet_lp_sim::OTC_ROSTER, c.venue.as_str())
+                    .is_some(),
+                "contribution from a venue that is not a NAMED simulated counterparty: {}",
                 c.venue.as_str()
             );
             assert!(c.contributed(), "a fresh member was unexpectedly excluded");

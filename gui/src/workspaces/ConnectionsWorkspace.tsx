@@ -20,7 +20,7 @@ import { FixSessionMonitor } from "../components/FixSessionMonitor";
 import { FixSpecModal } from "../components/FixSpecModal";
 import { Button } from "../components/Button";
 import { Panel } from "../components/Panel";
-import type { DeskDesc, FixConnection } from "../data/contract";
+import type { DeskDesc, FixConnection, FixConnectionSpec } from "../data/contract";
 import { useFixConnections } from "../hooks/useFixConnections";
 import {
   buildFixClientConfig,
@@ -33,6 +33,26 @@ import styles from "./ConnectionsWorkspace.module.css";
 /** Resolve a routing-desk id to its display name, falling back to the bare id. */
 function deskName(desks: readonly DeskDesc[], deskId: string): string {
   return desks.find((d) => d.id === deskId)?.name ?? deskId;
+}
+
+/**
+ * The editable spec for an existing connection — every field as it stands, so an
+ * update carries the whole record and changes only what the caller overrides.
+ * `update` replaces the definition, so omitting a field would silently blank it.
+ */
+function specOf(c: FixConnection, over: Partial<FixConnectionSpec> = {}): FixConnectionSpec {
+  return {
+    id: c.id,
+    name: c.name,
+    kind: c.kind,
+    bindAddr: c.bindAddr,
+    senderCompId: c.senderCompId,
+    targetCompId: c.targetCompId,
+    enabled: c.enabled,
+    desk: c.desk,
+    orderEndpoint: c.orderEndpoint,
+    ...over,
+  };
 }
 
 /** The display label for a connection's dialect. */
@@ -57,6 +77,11 @@ export function ConnectionsWorkspace(): React.ReactElement {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [monitorId, setMonitorId] = useState<string | null>(null);
+  // The connection whose OUTBOUND order route is being edited, and the draft value.
+  // Editing is inline rather than in a modal because it is a one-field change an
+  // operator makes while reading the row's live status.
+  const [routeEditId, setRouteEditId] = useState<string | null>(null);
+  const [routeDraft, setRouteDraft] = useState("");
   // The desks a new connection may be routed to (routing is OPTIONAL — a blank
   // desk is a valid unrouted connection). Loaded for the wizard's routing-desk
   // picker AND to resolve each row's routing-desk id to its display name. Desk
@@ -163,6 +188,11 @@ export function ConnectionsWorkspace(): React.ReactElement {
                 <th>Desk</th>
                 <th>SenderCompID</th>
                 <th>TargetCompID</th>
+                <th
+                  title="Where WE dial to send this counterparty a hedge order (NewOrderSingle). Without it the counterparty can quote us but we cannot trade with it."
+                >
+                  Order route
+                </th>
                 <th className={styles.actionsCol}>Actions</th>
               </tr>
             </thead>
@@ -197,7 +227,56 @@ export function ConnectionsWorkspace(): React.ReactElement {
                     )}
                   </td>
                   <td className={styles.mono}>{c.senderCompId}</td>
-                  <td className={styles.mono}>{c.targetCompId}</td>
+                  <td className={styles.mono}>
+                    {routeEditId === c.id ? (
+                      <form
+                        className={styles.routeEdit}
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const next = routeDraft.trim();
+                          void runAction(c.id, async () => {
+                            await fix.update(c.id, specOf(c, { orderEndpoint: next }));
+                            setRouteEditId(null);
+                          });
+                        }}
+                      >
+                        <input
+                          className={styles.routeInput}
+                          value={routeDraft}
+                          autoFocus
+                          placeholder="host:port"
+                          aria-label={`Order route for ${c.name}`}
+                          onChange={(e) => setRouteDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") setRouteEditId(null);
+                          }}
+                        />
+                        <Button variant="primary" type="submit" disabled={busyId === c.id}>
+                          Save
+                        </Button>
+                        <Button variant="ghost" onClick={() => setRouteEditId(null)}>
+                          Cancel
+                        </Button>
+                      </form>
+                    ) : (
+                      <button
+                        type="button"
+                        className={styles.routeCell}
+                        aria-label={`Edit order route for ${c.name}`}
+                        title={
+                          c.orderEndpoint
+                            ? `Hedge orders are sent to ${c.orderEndpoint}`
+                            : "No order route — this counterparty can quote us, but a hedge order to it is answered no_order_endpoint and is never filled from its quote."
+                        }
+                        onClick={() => {
+                          setRouteEditId(c.id);
+                          setRouteDraft(c.orderEndpoint);
+                        }}
+                      >
+                        {c.orderEndpoint || <span className={styles.unrouted}>⚠ no order route</span>}
+                      </button>
+                    )}
+                  </td>
                   <td className={styles.actionsCol}>
                     <div className={styles.rowActions}>
                       <Button

@@ -3132,6 +3132,7 @@ fn fix_connection_desc_to_json(d: &FixConnectionDesc) -> Value {
         "running": d.running,
         "bound_addr": d.bound_addr,
         "desk": d.desk,
+        "order_endpoint": d.order_endpoint,
     })
 }
 
@@ -3147,6 +3148,8 @@ fn fix_connection_spec_from_json(v: &Value) -> Result<FixConnectionSpec> {
         target_comp_id: string_field(o, "target_comp_id")?,
         enabled: bool_or_false(o, "enabled"),
         desk: string_or_empty(o, "desk"),
+        // Optional: a member the operator has given no order route.
+        order_endpoint: string_or_empty(o, "order_endpoint"),
     })
 }
 
@@ -9606,6 +9609,7 @@ mod tests {
                 running: false,
                 bound_addr: String::new(),
                 desk: spec.desk.clone(),
+                order_endpoint: String::new(),
             };
             let v = fix_connection_desc_to_json(&desc);
             assert_eq!(v["kind"], json!(tag), "the descriptor re-emits the tag");

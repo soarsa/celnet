@@ -1302,6 +1302,7 @@ fn fix_conn_desc() -> FixConnectionDesc {
         running: true,
         bound_addr: "127.0.0.1:9099".to_owned(),
         desk: "fx-desk".to_owned(),
+        order_endpoint: "127.0.0.1:5701".to_owned(),
     }
 }
 

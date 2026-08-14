@@ -55,6 +55,8 @@ celnet-commodity-vanilla = { path = "crates/celnet-commodity-vanilla" }
 celnet-crypto-vanilla = { path = "crates/celnet-crypto-vanilla" }
 celnet-rfq = { path = "crates/celnet-rfq" }
 celnet-aggregation = { path = "crates/celnet-aggregation" }
+celnet-lp-sim = { path = "crates/celnet-lp-sim" }
+celnet-cme-sim = { path = "crates/celnet-cme-sim" }
 celnet-tiering = { path = "crates/celnet-tiering" }
 celnet-rates = { path = "crates/celnet-rates" }
 celnet-bond = { path = "crates/celnet-bond" }

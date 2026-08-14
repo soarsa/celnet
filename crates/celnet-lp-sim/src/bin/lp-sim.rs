@@ -26,8 +26,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use celnet_lp_sim::{
     BookFeedOptions, FaultSchedule, LoginCredentials, LpSimConfig, QuotedLine, bond_lines,
-    build_fleet, composite_for, futures_lines, into_feeds, load_futures_universe,
-    load_government_universe, load_stir_universe, run_book_aware_feed, stir_lines,
+    build_fleet, composite_for, into_feeds, load_government_universe, load_stir_universe,
+    run_book_aware_feed, stir_lines,
 };
 use celnet_types::BrokenDate;
 use clap::Parser;
@@ -36,21 +36,26 @@ use clap::Parser;
 #[derive(Debug, Parser)]
 #[command(
     name = "lp-sim",
-    about = "LP-SIM — 5-LP, book-aware synthetic Treasury liquidity-provider feed",
-    long_about = "LP-SIM — a fleet of 5 synthetic bond liquidity providers \
-(LP-SIM-01…LP-SIM-05), each with a distinct seeded pricing character, that push \
-oracle-anchored two-way Treasury quotes into a running celnet server's LpFeed ingest.\n\n\
+    about = "lp-sim — book-aware synthetic OTC liquidity panel (4 named counterparties)",
+    long_about = "lp-sim — a panel of NAMED simulated liquidity providers \
+(marketaccess-sim, traderweb-sim, citigroup-sim, jpm-sim), each with its own \
+persistent pricing personality, that push oracle-anchored two-way cash-Treasury, \
+swap/OIS and SOFR-STIR quotes into a running celnet server's LpFeed ingest — and \
+ACCEPT ORDERS against those quotes over FIX (--order-port), answering each with a \
+real ExecutionReport(8). Listed Treasury futures are quoted by the separate cme-sim \
+venue.\n\n\
 DEPLOYED (book-aware) MODE — the default when --addr is set:\n  \
   LPSIM_PASSWORD_FILE=/home/celnet/.lpsim_pw \\\n  \
-  lp-sim --addr http://127.0.0.1:50051 --members 5 --book-poll 5\n  \
+  lp-sim --addr http://127.0.0.1:50051 --members 4 --book-poll 5 --order-port 5701\n  \
   The credential comes from LPSIM_PASSWORD_FILE (a 0600 file, preferred) or \
 LPSIM_PASSWORD — NEVER a command-line flag, because argv is world-readable.\n  \
   The feed authenticates (AuthService.Login), polls the enabled aggregated books \
 (ListAggregatedBooks) every --book-poll seconds, and for each book resolves which \
-LP-SIM-0N members it should impersonate and which instruments to quote \
+counterparties it should impersonate and which instruments to quote \
 (all-members-quote ⇒ the full Treasury universe; explicit ⇒ the listed instrument ids). \
 It streams exactly those (member × instrument) two-ways, and starts/stops pricing bonds \
-automatically as a user creates or edits a book. Books with no LP-SIM member are ignored.\n\n\
+automatically as a user creates or edits a book. Books listing none of the roster ids are \
+ignored.\n\n\
 BROADCAST FALLBACK — --no-book-poll (or an explicit --instruments list):\n  \
   Streams the whole (or listed) universe as the N LPs without polling books — for when \
 no books exist yet.\n\n\
@@ -58,8 +63,10 @@ LOCAL DEMO — no --addr (or --local):\n  \
   Consolidates the fleet in-process and prints the composite each interval."
 )]
 struct Args {
-    /// The LP connection name advertised as the price contributor (venue id).
-    #[arg(long, default_value = "LP-SIM")]
+    /// The feed's label in banners and logs. **Not** a venue id: every contribution
+    /// is attributed to the named simulated counterparty that made it (see
+    /// `--members`).
+    #[arg(long, default_value = "OTC-SIM")]
     lp_name: String,
 
     /// The aggregated-book id this feed streams into (shown in the header; the
@@ -67,12 +74,15 @@ struct Args {
     #[arg(long, default_value = "ust-composite")]
     book: String,
 
-    /// Number of decorrelated LP member connections (≥ 1). The default 5 stands up
-    /// `LP-SIM-01`…`LP-SIM-05`, each with a distinct seeded pricing character
-    /// (half-spread, size, refresh cadence, quality) so the server's
-    /// best-bid=max / best-offer=min consolidation across them is meaningful. ≥ 3
-    /// makes the consolidator's divergence gating decidable.
-    #[arg(long, default_value_t = 5)]
+    /// How many of the named simulated counterparties participate, in roster order:
+    /// `marketaccess-sim`, `traderweb-sim`, `citigroup-sim`, `jpm-sim`. Each has its
+    /// own persistent pricing personality (spread, directional axe, size appetite,
+    /// quoted depth, response latency, refresh cadence), so the server's
+    /// best-bid=max / best-offer=min consolidation across them is meaningful and a
+    /// booked fill names a counterparty a trader recognises. ≥ 3 makes the
+    /// consolidator's divergence gating decidable. CLAMPED to the roster: a wrapped
+    /// panel would repeat a connection id and silently consolidate to one feed.
+    #[arg(long, default_value_t = celnet_lp_sim::OTC_ROSTER.len())]
     members: usize,
 
     /// Seconds between composite emissions / per-member quote pushes.
@@ -107,15 +117,6 @@ struct Args {
     /// solver can bracket them); by default only coupon Notes/Bonds are streamed.
     #[arg(long, default_value_t = false)]
     include_bills: bool,
-
-    /// Do NOT quote the listed Treasury futures complex (2Y/5Y/10Y/Ultra-10Y/Bond/
-    /// Ultra-Bond). Futures are quoted by DEFAULT: the server seeds the same
-    /// contracts into its tradeable reference registry, and an instrument that is
-    /// tradeable but not quotable never reaches an aggregated book — so every
-    /// DV01-ratio hedge routed to it would backstop to the synthetic COMPOSITE
-    /// venue. Only pass this to isolate the cash feed.
-    #[arg(long, default_value_t = false)]
-    exclude_futures: bool,
 
     /// Do NOT quote the listed SOFR STIR strip (`SR3` / `SR1`). Quoted by DEFAULT,
     /// for the same reason as the deliverable complex: the strip is advertised as
@@ -164,6 +165,18 @@ struct Args {
     #[arg(long)]
     user: Option<String>,
 
+    /// The base TCP port for the FIX order acceptors: counterparty `i` of the panel
+    /// binds `--order-port + i`, so the default 4 counterparties occupy four
+    /// consecutive ports. Without it the panel publishes prices it cannot be hit on,
+    /// which is a price display rather than a set of venues — the deployed launcher
+    /// always sets it.
+    #[arg(long)]
+    order_port: Option<u16>,
+
+    /// The interface the order acceptors bind (with `--order-port`).
+    #[arg(long, default_value = "0.0.0.0")]
+    order_bind: String,
+
     /// Disable the occasional injected staleness/outlier faults (network modes emit,
     /// by default, an occasional divergent or stale print on at most one member per
     /// round to exercise the server's MAD gate and staleness decay).
@@ -207,11 +220,11 @@ fn main() -> std::process::ExitCode {
     };
 
     // Load the full government reference universe (US Treasuries + curated non-US
-    // govvies), keep only the bonds the analytics leaf can model at this settlement,
-    // and — unless opted out — extend it with the listed Treasury futures complex
-    // anchored to that same cash curve. This is the sim's full QUOTABLE set, and it
-    // is deliberately the same universe the server seeds its TRADEABLE registry
-    // from: anything tradeable but unquotable never reaches an aggregated book.
+    // govvies) and keep only the bonds the analytics leaf can model at this
+    // settlement. This is the OTC sim's QUOTABLE set, and it is deliberately drawn
+    // from the same reference sources the server seeds its TRADEABLE registry from:
+    // anything tradeable but unquotable never reaches an aggregated book. Listed
+    // Treasury futures are the cme-sim venue's universe, not this one's.
     let universe = load_government_universe(args.include_bills);
     let mut priceable = bond_lines(
         &universe,
@@ -221,21 +234,6 @@ fn main() -> std::process::ExitCode {
         cfg.reversion_per_sec,
         cfg.perturbation,
     );
-    let futures_count = if args.exclude_futures {
-        0
-    } else {
-        let contracts = load_futures_universe(&universe, cfg.settlement);
-        let lines = futures_lines(
-            &contracts,
-            cfg.half_spread,
-            cfg.skew_step,
-            cfg.reversion_per_sec,
-            cfg.perturbation,
-        );
-        let n = lines.len();
-        priceable.extend(lines);
-        n
-    };
     // The swap/OIS curve points, and the STIR strip they anchor, from ONE curve load —
     // the front end and the swap strip cannot drift apart. The curve points are quoted
     // here as well as in the book-aware path so `--once` reports the SAME quotable set
@@ -275,9 +273,10 @@ fn main() -> std::process::ExitCode {
         n
     };
     eprintln!(
-        "[lp-sim] quotable set: {} cash bond(s) + {futures_count} Treasury future(s) \
-         + {ois_count} OIS curve point(s) + {stir_count} SOFR STIR contract(s)",
-        priceable.len() - futures_count - stir_count - ois_count,
+        "[lp-sim] quotable set: {} cash bond(s) + {ois_count} OIS curve point(s) \
+         + {stir_count} SOFR STIR contract(s). Listed Treasury futures are quoted by \
+         the dedicated cme-sim venue, not here.",
+        priceable.len() - stir_count - ois_count,
     );
     if priceable.is_empty() {
         eprintln!(
@@ -297,7 +296,7 @@ fn main() -> std::process::ExitCode {
     eprintln!(
         "[lp-sim] feed '{}' : {} members ({}), interval {}s, seed {:#x}",
         cfg.lp_name,
-        cfg.members,
+        cfg.panel_size(),
         member_names(&cfg).join(", "),
         args.interval,
         cfg.seed,
@@ -329,11 +328,22 @@ fn main() -> std::process::ExitCode {
             seed: args.seed ^ 0x00FA_0175_0000_0000,
             ..FaultSchedule::default()
         };
+        // The tradeable side of every participating counterparty. Bound BEFORE the
+        // first publish, so there is never a window in which the panel shows prices
+        // it cannot be hit on.
+        let order_venues = match bind_order_acceptors(&cfg, args.order_port, &args.order_bind) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[lp-sim] ERROR: {e}");
+                return std::process::ExitCode::from(1);
+            }
+        };
         let opts = BookFeedOptions {
             book_poll: Duration::from_secs(args.book_poll.max(1)),
             quote_interval: args.quote_interval(),
             credentials,
             faults,
+            order_venues,
             once: args.once,
         };
         eprintln!(
@@ -445,11 +455,62 @@ fn filter_instruments(universe: Vec<QuotedLine>, selector: &str) -> Vec<QuotedLi
         .collect()
 }
 
-/// The member venue names for the configured panel (for the startup banner).
+/// Bind one FIX order acceptor per participating counterparty, at consecutive ports
+/// from `base`, and return their tradeable sides for the feed to publish into.
+///
+/// `None` for `base` means orders are disabled: the panel still publishes prices, but
+/// nothing can be traded on them. That is warned about loudly rather than being a
+/// silent capability gap — a venue that will not trade is only half a venue.
+///
+/// # Errors
+/// Returns a message if any port cannot be bound. Partial binding is NOT tolerated:
+/// a panel where only some counterparties can be hit would make the LP panel's fill
+/// attribution systematically wrong.
+fn bind_order_acceptors(
+    cfg: &LpSimConfig,
+    base: Option<u16>,
+    bind_host: &str,
+) -> Result<Vec<celnet_lp_sim::OrderVenue>, String> {
+    let Some(base) = base else {
+        eprintln!(
+            "[lp-sim] WARNING: no --order-port; publishing prices only. Orders sent to \
+             these counterparties will not be answered."
+        );
+        return Ok(Vec::new());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("build tokio runtime for the order acceptors: {e}"))?;
+    // The acceptors are spawned onto a runtime that must outlive this function; the
+    // feed builds its own runtime, so this one is deliberately leaked for the
+    // lifetime of the process rather than dropped (which would abort the listeners).
+    let runtime: &'static tokio::runtime::Runtime = Box::leak(Box::new(runtime));
+
+    let mut venues = Vec::new();
+    for i in 0..cfg.panel_size() {
+        let markets = celnet_lp_sim::orders::LiveMarkets::default();
+        let venue = celnet_lp_sim::OrderVenue::new(cfg, i, markets)
+            .ok_or_else(|| format!("panel position {i} is outside the roster"))?;
+        let port = base
+            .checked_add(u16::try_from(i).map_err(|_| "panel too large".to_string())?)
+            .ok_or_else(|| format!("--order-port {base} + {i} overflows a TCP port"))?;
+        let addr = format!("{bind_host}:{port}");
+        let bound = runtime
+            .block_on(celnet_lp_sim::orders::run_order_acceptor(
+                venue.clone(),
+                &addr,
+            ))
+            .map_err(|e| format!("bind order acceptor for {} on {addr}: {e}", venue.id()))?;
+        eprintln!("[lp-sim] {} accepting orders on {}", venue.id(), bound.0);
+        venues.push(venue);
+    }
+    Ok(venues)
+}
+
+/// The participating counterparties' connection ids (for the startup banner).
 fn member_names(cfg: &LpSimConfig) -> Vec<String> {
-    (0..cfg.members.max(1))
-        .map(|i| cfg.member_venue(i))
-        .collect()
+    cfg.member_venues()
 }
 
 /// Epoch nanoseconds of `now`, from a monotonic-ish `start` reference plus elapsed

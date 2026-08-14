@@ -552,6 +552,9 @@ fn status_to_wire(s: &ConnectionStatus) -> FixConnectionDesc {
         running: s.running,
         bound_addr: s.bound_addr.map(|a| a.to_string()).unwrap_or_default(),
         desk: s.def.desk.clone(),
+        // Absent on the wire is the empty string; a member with no order route is a
+        // real, common state (it quotes but we send it nothing), not an error.
+        order_endpoint: s.def.order_endpoint().unwrap_or_default().to_owned(),
     }
 }
 
@@ -591,6 +594,9 @@ fn def_from_spec(
         target_comp_id: spec.target_comp_id.clone(),
         enabled: spec.enabled,
         desk,
+        // A blank endpoint means "no order route", stored as absent rather than as an
+        // empty string so the persisted config never carries a field that looks set.
+        order_endpoint: Some(spec.order_endpoint.trim().to_string()).filter(|s| !s.is_empty()),
     })
 }
 
@@ -715,6 +721,7 @@ mod tests {
             target_comp_id: "CELNET-CPTY".to_string(),
             enabled: true,
             desk: "g10".to_string(),
+            order_endpoint: String::new(),
         }
     }
 
@@ -905,6 +912,7 @@ mod tests {
                 target_comp_id: "CELNET-CPTY".into(),
                 enabled: false,
                 desk: "g10".into(),
+                order_endpoint: String::new(),
             }),
             principal: None,
             correlation_id: Some(1),

@@ -257,12 +257,29 @@ function HedgeConditionRow({
             data-testid={`hedge-cond-field-${index}`}
             onChange={(e) => onRebind(index, e.target.value as HedgeField)}
           >
-            {HEDGE_FIELD_REGISTRY.map((s) => (
-              <option key={s.field} value={s.field}>
-                {s.label}
-              </option>
-            ))}
+            {HEDGE_FIELD_REGISTRY.map((s) => {
+              // Unpopulated fields stay LISTED but unselectable — an existing policy may
+              // already reference one, and the option has to render for the select to show
+              // it at all. The suffix + title say why it cannot be picked.
+              const dead = s.provider.state === "unprovided" ? s.provider.reason : null;
+              return (
+                <option
+                  key={s.field}
+                  value={s.field}
+                  disabled={dead !== null && s.field !== cond.field}
+                  title={dead ?? undefined}
+                >
+                  {dead === null ? s.label : `${s.label} — unavailable`}
+                </option>
+              );
+            })}
           </select>
+          {spec.provider.state === "unprovided" && (
+            <span className={rr.fieldWarning} role="note">
+              Nothing populates this field, so the policy will be refused on save:{" "}
+              {spec.provider.reason}.
+            </span>
+          )}
         </label>
 
         <label className={rr.editorField}>

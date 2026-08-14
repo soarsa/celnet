@@ -1,0 +1,499 @@
+/*
+ * Decision Audit — a dense, ledger-first surface.
+ *
+ * The visual idea: the table is the ledger (monospaced keys, tight rhythm, hairline
+ * rules), and the inspector is a raised card that "reads out" the selected row. The
+ * verdict column is the only place saturated colour is spent, because the single most
+ * important glance on this screen is *did the rule act or not*. Bands reuse the RAG
+ * palette the risk surfaces already use, so amber/red mean the same thing everywhere.
+ */
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.25rem 0.25rem 1rem;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.sub {
+  margin: 0.2rem 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted, #7b8494);
+  max-width: 62ch;
+}
+.headActions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.counter {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.74rem;
+  color: var(--text-muted, #7b8494);
+  white-space: nowrap;
+}
+
+.caveat,
+.error {
+  margin: 0;
+  padding: 0.45rem 0.65rem;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+.caveat {
+  border-left: 3px solid var(--warn, #d08700);
+  background: color-mix(in srgb, var(--warn, #d08700) 10%, transparent);
+}
+.error {
+  border-left: 3px solid var(--danger, #d23f3f);
+  background: color-mix(in srgb, var(--danger, #d23f3f) 12%, transparent);
+}
+
+/* --- filters ------------------------------------------------------------- */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem 1rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.02));
+}
+.chipRow {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.chipLabel {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted, #7b8494);
+  margin-right: 0.2rem;
+}
+.chip,
+.chipOn {
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 999px;
+  padding: 0.16rem 0.6rem;
+  font-size: 0.75rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+.chip:hover {
+  border-color: var(--accent, #4c8dff);
+}
+.chipOn {
+  background: var(--accent, #4c8dff);
+  border-color: var(--accent, #4c8dff);
+  color: #fff;
+}
+.chip:focus-visible,
+.chipOn:focus-visible {
+  outline: 2px solid var(--accent, #4c8dff);
+  outline-offset: 2px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted, #7b8494);
+}
+.field input {
+  min-width: 12rem;
+  padding: 0.24rem 0.45rem;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 5px;
+  background: var(--surface-1, rgba(0, 0, 0, 0.18));
+  color: inherit;
+  font-size: 0.82rem;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.clearEvidence {
+  border: 1px dashed var(--accent, #4c8dff);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.74rem;
+  background: transparent;
+  color: var(--accent, #4c8dff);
+  cursor: pointer;
+}
+
+/* --- body: ledger + inspector -------------------------------------------- */
+
+.body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(20rem, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.tableWrap {
+  min-width: 0;
+  max-height: 26rem;
+  overflow: auto;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+.table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-2, #171b23);
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted, #7b8494);
+  border-bottom: 1px solid var(--border, #2a2f3a);
+  padding: 0;
+}
+.table thead th button {
+  width: 100%;
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+  padding: 0.4rem 0.5rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.table tbody td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border, #2a2f3a) 55%, transparent);
+  vertical-align: top;
+}
+.table tbody tr {
+  cursor: pointer;
+}
+.table tbody tr:hover {
+  background: color-mix(in srgb, var(--accent, #4c8dff) 8%, transparent);
+}
+.rowOn {
+  background: color-mix(in srgb, var(--accent, #4c8dff) 16%, transparent);
+}
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.reason {
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted, #7b8494);
+}
+
+.verdictFired,
+.verdictIdle {
+  display: inline-block;
+  padding: 0.02rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.verdictFired {
+  background: color-mix(in srgb, var(--ok, #34a853) 20%, transparent);
+  color: var(--ok, #34a853);
+}
+.verdictIdle {
+  background: color-mix(in srgb, var(--text-muted, #7b8494) 20%, transparent);
+  color: var(--text-muted, #7b8494);
+}
+.advisory {
+  margin-left: 0.3rem;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--warn, #d08700);
+}
+
+.band_green,
+.band_amber,
+.band_red,
+.band_breach,
+.bandNone {
+  font-weight: 600;
+}
+.band_green {
+  color: var(--ok, #34a853);
+}
+.band_amber {
+  color: var(--warn, #d08700);
+}
+.band_red,
+.band_breach {
+  color: var(--danger, #d23f3f);
+}
+.bandNone {
+  color: var(--text-muted, #7b8494);
+}
+
+.empty,
+.noPath {
+  margin: 0.6rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text-muted, #7b8494);
+  max-width: 58ch;
+}
+
+/* --- inspector ----------------------------------------------------------- */
+
+.inspector {
+  min-width: 0;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.025));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--accent, #4c8dff) 22%, transparent) inset;
+}
+.inspTitle {
+  margin: 0 0 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.inspReason {
+  margin: 0 0 0.6rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.inspHead {
+  margin: 0.9rem 0 0.35rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted, #7b8494);
+}
+.facts {
+  display: grid;
+  gap: 0.28rem;
+  margin: 0;
+  font-size: 0.78rem;
+}
+.facts div {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+.facts dt {
+  color: var(--text-muted, #7b8494);
+}
+.facts dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.path {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.step,
+.stepLeaf,
+.stepStale {
+  position: relative;
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.28rem 0 0.28rem 1.1rem;
+  font-size: 0.78rem;
+  border-left: 2px solid var(--border, #2a2f3a);
+  margin-left: 0.35rem;
+}
+.step::before,
+.stepLeaf::before,
+.stepStale::before {
+  content: "";
+  position: absolute;
+  left: -0.31rem;
+  top: 0.62rem;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--border, #2a2f3a);
+}
+.stepLeaf {
+  border-left-color: var(--accent, #4c8dff);
+  font-weight: 600;
+}
+.stepLeaf::before {
+  background: var(--accent, #4c8dff);
+}
+.stepStale {
+  border-left-style: dashed;
+  border-left-color: var(--warn, #d08700);
+  color: var(--warn, #d08700);
+}
+.stepStale::before {
+  background: var(--warn, #d08700);
+}
+.stepId {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.7rem;
+  color: var(--text-muted, #7b8494);
+  min-width: 4.2rem;
+}
+.stepLabel {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chart {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.spark {
+  fill: none;
+  stroke: var(--accent, #4c8dff);
+  stroke-width: 1.4;
+}
+.guideAmber {
+  stroke: var(--warn, #d08700);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.65;
+}
+.guideRed {
+  stroke: var(--danger, #d23f3f);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.65;
+}
+.dotIdle {
+  fill: var(--text-muted, #7b8494);
+}
+.dotActed {
+  fill: var(--ok, #34a853);
+}
+.dotOn {
+  fill: var(--accent, #4c8dff);
+  stroke: #fff;
+  stroke-width: 1.2;
+}
+
+/* --- advice rail --------------------------------------------------------- */
+
+.advice {
+  border-top: 1px solid var(--border, #2a2f3a);
+  padding-top: 0.4rem;
+}
+.denominator {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.adviceList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr));
+  gap: 0.65rem;
+}
+.adviceCard {
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border, #2a2f3a);
+  border-left: 3px solid var(--accent, #4c8dff);
+  border-radius: 8px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.025));
+}
+.adviceCard header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.adviceCard h4 {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+.occurrences {
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted, #7b8494);
+  white-space: nowrap;
+}
+.rationale {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.action {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--accent, #4c8dff);
+}
+.adviceFoot {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+.evidenceBtn {
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 5px;
+  padding: 0.16rem 0.5rem;
+  font-size: 0.74rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.evidenceBtn:hover {
+  border-color: var(--accent, #4c8dff);
+}
+.editorLink {
+  font-size: 0.74rem;
+  color: var(--accent, #4c8dff);
+}

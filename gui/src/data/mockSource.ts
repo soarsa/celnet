@@ -11,6 +11,11 @@
  */
 
 import type {
+  StreetOrderFilter,
+  StreetOrdersView,
+  DecisionJournalFilter,
+  DecisionJournalPage,
+  RuleAdvicePage,
   AcceptDeskQuoteRequest,
   AcceptDeskQuoteResponse,
   AdditiveRisk,
@@ -1805,6 +1810,9 @@ export class MockTransport implements CelnetTransport {
       running: true,
       boundAddr: "127.0.0.1:9099",
       desk: "g10",
+      // The offline seed is a QUOTE-ONLY counterparty: no order route, which is the
+      // honest default and the state the Connections table is meant to surface.
+      orderEndpoint: "",
     },
   ];
 
@@ -3674,6 +3682,7 @@ export class MockTransport implements CelnetTransport {
       running: spec.enabled,
       boundAddr: spec.enabled ? spec.bindAddr : "",
       desk,
+      orderEndpoint: (spec.orderEndpoint ?? "").trim(),
     };
   }
 
@@ -4361,6 +4370,38 @@ export class MockTransport implements CelnetTransport {
       .slice()
       .sort((a, b) => b.firedAt - a.firedAt)
       .map((p) => cloneJson(p));
+  }
+
+  /**
+   * The OFFLINE decision journal is deliberately EMPTY.
+   *
+   * Every row on the audit surface is a real server-side decision record; a mock cannot
+   * produce one without inventing an audit trail, which is exactly the thing this
+   * feature must never do. The offline surface therefore renders its honest empty state
+   * ("no decisions recorded — connect to a server") rather than a plausible fiction.
+   */
+  async listDecisionJournal(_filter?: DecisionJournalFilter): Promise<DecisionJournalPage> {
+    return { records: [], totalRecorded: 0, evicted: 0 };
+  }
+
+  /** Advice is derived from journal rows; with no rows there is nothing to derive. */
+  async listRuleAdvice(_book?: string): Promise<RuleAdvicePage> {
+    return { advice: [], rowsConsidered: 0 };
+  }
+
+  /**
+   * The OFFLINE street-side execution blotter is deliberately EMPTY.
+   *
+   * Every row is a real outbound order the server actually worked. A mock cannot
+   * produce one without inventing street activity — the precise fabrication this
+   * feature exists to eliminate — so the offline surface renders its honest empty
+   * state rather than a plausible fiction.
+   */
+  async listStreetOrders(
+    _window?: FlowWindow,
+    _filter?: StreetOrderFilter,
+  ): Promise<StreetOrdersView> {
+    return { orders: [], breakdown: [], totalMatching: 0 };
   }
 
   async listHedgeSuggestions(book?: string): Promise<HedgeSuggestion[]> {

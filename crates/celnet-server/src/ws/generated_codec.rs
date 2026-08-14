@@ -38,18 +38,20 @@ use celnet_proto::{
     Accumulator, AmericanOption, ArbReport, AsianOption, AttributionRecord, BasketLeg,
     BasketOption, BondInstrument, BookId, BrokenDate, CcyPair, Cliquet, CombinedTailRiskRequest,
     CombinedTailRiskResponse, CommodityRef, Conventions, CreateFixConnectionRequest,
-    CreateFixConnectionResponse, CryptoPair, CurveSet, DealerQuote, DeleteFixConnectionRequest,
-    DeleteFixConnectionResponse, Digital, DoubleBarrier, EntitlementPrincipal, EntitlementRule,
-    EquityRef, Execution, FixConnectionDesc, FixConnectionSpec, FixMessage, FixingSchedule,
-    ForwardStart, FraInstrument, FxForward, FxSwap, Greeks, Instrument, JointTailScenario, Leg,
-    LiquidityProviderDesc, LiquidityProviderQuote, ListFixConnectionsRequest,
+    CreateFixConnectionResponse, CryptoPair, CurveSet, DealerQuote, DecisionRecord,
+    DeleteFixConnectionRequest, DeleteFixConnectionResponse, Digital, DoubleBarrier,
+    EntitlementPrincipal, EntitlementRule, EquityRef, Execution, FixConnectionDesc,
+    FixConnectionSpec, FixMessage, FixingSchedule, ForwardStart, FraInstrument, FxForward, FxSwap,
+    Greeks, Instrument, JointTailScenario, Leg, LiquidityProviderDesc, LiquidityProviderQuote,
+    ListDecisionJournalRequest, ListDecisionJournalResponse, ListFixConnectionsRequest,
     ListFixConnectionsResponse, ListFixMessagesRequest, ListFixMessagesResponse,
-    ListLiquidityProvidersRequest, ListLiquidityProvidersResponse, ListedFutureOption, Lookback,
-    MarketContext, MetalPair, MultiDealerQuote, Ndf, OisFixedPeriod, OisInstrument, OisPillar,
-    OisSwapLeg, Owner, PerpetualOption, PillarTenor, Pivot, PriceRequest, PriceResponse,
-    PriceXvaRequest, PriceXvaResponse, Quantity, Quanto, Quote, QuoteAccept, QuoteReject,
-    QuoteRequest, RateSensitivities, RatesInstrument, RatesPriceRequest, RatesPriceResponse,
-    RatesPricingResult, RatesQuote, RatesQuoteRequest, RejectAck, RiskScope,
+    ListLiquidityProvidersRequest, ListLiquidityProvidersResponse, ListRuleAdviceRequest,
+    ListRuleAdviceResponse, ListedFutureOption, Lookback, MarketContext, MetalPair,
+    MultiDealerQuote, Ndf, OisFixedPeriod, OisInstrument, OisPillar, OisSwapLeg, Owner,
+    PerpetualOption, PillarTenor, Pivot, PriceRequest, PriceResponse, PriceXvaRequest,
+    PriceXvaResponse, Quantity, Quanto, Quote, QuoteAccept, QuoteReject, QuoteRequest,
+    RateSensitivities, RatesInstrument, RatesPriceRequest, RatesPriceResponse, RatesPricingResult,
+    RatesQuote, RatesQuoteRequest, RejectAck, RiskScope, RuleAdvice,
     SetFixConnectionEnabledRequest, SetFixConnectionEnabledResponse, SingleBarrier, Solve,
     Strategy, StrikeOrDelta, Symbol, TailRiskCurvePillar, TailRiskFiPosition, TailRiskKeyRate,
     TailRiskOptionLeg, Tarf, Tenor, Touch, TwoWayPrice, Underlying, UpdateFixConnectionRequest,
@@ -162,8 +164,9 @@ use celnet_proto::{
     ClientFlowMetricsDesc, GetTraceRequest, GetTraceResponse, LatencyStageDesc,
     LatencyTelemetryHealth, ListClientFlowMetricsRequest, ListClientFlowMetricsResponse,
     ListLatencyMetricsRequest, ListLatencyMetricsResponse, ListLpFlowMetricsRequest,
-    ListLpFlowMetricsResponse, ListTracesRequest, ListTracesResponse, LpFlowMetricsDesc,
-    TraceEvent, TraceSummary,
+    ListLpFlowMetricsResponse, ListStreetOrdersRequest, ListStreetOrdersResponse,
+    ListTracesRequest, ListTracesResponse, LpFlowMetricsDesc, StreetBreakdownRowDesc,
+    StreetCompetitorDesc, StreetOrderDesc, TraceEvent, TraceSummary,
 };
 // Auto-hedging / risk-internalisation verb family (AuthService hedge RPCs): the
 // request decode + reply/push encode side, proven byte-identical to the hand codec
@@ -2841,6 +2844,7 @@ impl WireBuilder for FixConnectionSpec {
             "target_comp_id" => self.target_comp_id = req_string(value, "target_comp_id")?,
             "enabled" => self.enabled = bool_or_false(value),
             "desk" => self.desk = string_or_empty(value),
+            "order_endpoint" => self.order_endpoint = string_or_empty(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
         Ok(())
@@ -3026,6 +3030,7 @@ impl WireAdapter for FixConnectionDesc {
             "running" => Some(WireVal::Bool(self.running)),
             "bound_addr" => Some(WireVal::Str(&self.bound_addr)),
             "desk" => Some(WireVal::Str(&self.desk)),
+            "order_endpoint" => Some(WireVal::Str(&self.order_endpoint)),
             _ => None,
         }
     }
@@ -7045,6 +7050,38 @@ impl WireBuilder for ListHedgeProvenanceRequest {
     }
 }
 
+impl WireBuilder for ListDecisionJournalRequest {
+    const MESSAGE: &'static str = "ListDecisionJournalRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "engine" => self.engine = value.and_then(Value::as_i64).map(|v| v as i32),
+            "outcome" => self.outcome = value.and_then(Value::as_i64).map(|v| v as i32),
+            "book" => self.book = opt_string(value, "book")?,
+            "instrument" => self.instrument = opt_string(value, "instrument")?,
+            "counterparty" => self.counterparty = opt_string(value, "counterparty")?,
+            "since_nanos" => self.since_nanos = value.and_then(Value::as_i64),
+            "limit" => self.limit = value.and_then(Value::as_u64).map(|v| v as u32),
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListRuleAdviceRequest {
+    const MESSAGE: &'static str = "ListRuleAdviceRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "book" => self.book = opt_string(value, "book")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for GetHedgeConfigRequest {
     const MESSAGE: &'static str = "GetHedgeConfigRequest";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -7225,6 +7262,29 @@ impl WireBuilder for ListLpFlowMetricsRequest {
             "from_nanos" => self.from_nanos = opt_i64(value),
             "to_nanos" => self.to_nanos = opt_i64(value),
             "lp_id" => self.lp_id = opt_string(value, "lp_id")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+impl WireBuilder for ListStreetOrdersRequest {
+    const MESSAGE: &'static str = "ListStreetOrdersRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "session_token" => self.session_token = req_string(value, "session_token")?,
+            "from_nanos" => self.from_nanos = opt_i64(value),
+            "to_nanos" => self.to_nanos = opt_i64(value),
+            "lp_id" => self.lp_id = opt_string(value, "lp_id")?,
+            "family" => self.family = opt_string(value, "family")?,
+            "instrument" => self.instrument = opt_string(value, "instrument")?,
+            "outcome" => self.outcome = opt_string(value, "outcome")?,
+            "parent_hedge_id" => {
+                self.parent_hedge_id = opt_string(value, "parent_hedge_id")?;
+            }
+            "dimension" => self.dimension = opt_string(value, "dimension")?,
+            "limit" => self.limit = opt_u32(value),
             "correlation_id" => self.correlation_id = opt_u64(value),
             other => return Err(unhandled(Self::MESSAGE, other)),
         }
@@ -7763,6 +7823,26 @@ pub fn decode_list_hedge_provenance_request(
     decode(ListHedgeProvenanceRequest::MESSAGE, o)
 }
 
+/// Decode a [`ListDecisionJournalRequest`] envelope — every filter is optional and
+/// decodes to `None` when absent (meaning "no restriction").
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_decision_journal_request(
+    o: &Map<String, Value>,
+) -> DResult<ListDecisionJournalRequest> {
+    decode(ListDecisionJournalRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListRuleAdviceRequest`] envelope — the optional `book` narrows the
+/// derivation to one risk book.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_rule_advice_request(o: &Map<String, Value>) -> DResult<ListRuleAdviceRequest> {
+    decode(ListRuleAdviceRequest::MESSAGE, o)
+}
+
 /// Decode a [`GetHedgeConfigRequest`] envelope — fully generic.
 ///
 /// # Errors
@@ -7864,6 +7944,16 @@ pub fn decode_list_lp_flow_metrics_request(
     o: &Map<String, Value>,
 ) -> DResult<ListLpFlowMetricsRequest> {
     decode(ListLpFlowMetricsRequest::MESSAGE, o)
+}
+
+/// Decode a [`ListStreetOrdersRequest`] envelope — fully generic.
+///
+/// # Errors
+/// A missing `session_token`, as a [`CodecError`].
+pub fn decode_list_street_orders_request(
+    o: &Map<String, Value>,
+) -> DResult<ListStreetOrdersRequest> {
+    decode(ListStreetOrdersRequest::MESSAGE, o)
 }
 
 /// Decode a [`ListLatencyMetricsRequest`] envelope — fully generic.
@@ -8193,6 +8283,13 @@ impl WireAdapter for InstrumentDefDesc {
                 Some(InstrumentDefinition::Bond(b)) => Some(WireVal::Msg(b)),
                 _ => None,
             },
+            // The sub-asset-type / region taxonomy (`94ba3fad`). The generated DECODER
+            // (`WireBuilder for InstrumentDefDesc`) already reads these; the encoder side
+            // was missed, so the descriptor-driven encode silently dropped both keys while
+            // the hand codec emitted them — the differential harness caught exactly that.
+            // Plain `string` fields: always emitted, empty-when-unset, like `description`.
+            "sub_asset_type" => Some(WireVal::Str(&self.sub_asset_type)),
+            "region" => Some(WireVal::Str(&self.region)),
             _ => None,
         }
     }
@@ -9099,6 +9196,103 @@ impl WireAdapter for LpFlowMetricsDesc {
     }
 }
 
+impl WireAdapter for StreetCompetitorDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "lp_id" => Some(WireVal::Str(&self.lp_id)),
+            "price" => Some(WireVal::F64(self.price)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for StreetOrderDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "order_id" => Some(WireVal::Str(&self.order_id)),
+            "ts_nanos" => Some(WireVal::I64(self.ts_nanos)),
+            // proto3 `optional`: every one of these is absent when the datum was NOT
+            // observed (a composite backstop has no LP; a miss has no fill price or
+            // slippage; an in-process panel lift issues no typed order and has no round
+            // trip to time) ⇒ JSON null, never a fabricated zero (guardrail 2).
+            "lp_id" => self.lp_id.as_deref().map(WireVal::Str),
+            "venue" => Some(WireVal::Str(&self.venue)),
+            "instrument" => Some(WireVal::Str(&self.instrument)),
+            "family" => Some(WireVal::Str(&self.family)),
+            "tenor_years" => self.tenor_years.map(WireVal::F64),
+            "side" => Some(WireVal::Str(&self.side)),
+            "requested_qty" => Some(WireVal::F64(self.requested_qty)),
+            "filled_qty" => Some(WireVal::F64(self.filled_qty)),
+            "requested_price" => Some(WireVal::F64(self.requested_price)),
+            "filled_price" => self.filled_price.map(WireVal::F64),
+            "slippage_bp" => self.slippage_bp.map(WireVal::F64),
+            "outcome" => Some(WireVal::Str(&self.outcome)),
+            "reason" => self.reason.as_deref().map(WireVal::Str),
+            "competitors" => Some(WireVal::RepeatedMsg(
+                self.competitors
+                    .iter()
+                    .map(|c| c as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "parent_hedge_id" => self.parent_hedge_id.as_deref().map(WireVal::Str),
+            "parent_position_id" => self.parent_position_id.map(WireVal::U64),
+            "order_type" => self.order_type.as_deref().map(WireVal::Str),
+            "time_in_force" => self.time_in_force.as_deref().map(WireVal::Str),
+            "response_latency_nanos" => self.response_latency_nanos.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for StreetBreakdownRowDesc {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "dimension" => Some(WireVal::Str(&self.dimension)),
+            "key" => Some(WireVal::Str(&self.key)),
+            "orders" => Some(WireVal::U64(self.orders)),
+            "filled" => Some(WireVal::U64(self.filled)),
+            "partially_filled" => Some(WireVal::U64(self.partially_filled)),
+            "rejected" => Some(WireVal::U64(self.rejected)),
+            "cancelled" => Some(WireVal::U64(self.cancelled)),
+            "expired" => Some(WireVal::U64(self.expired)),
+            "last_look_pulled" => Some(WireVal::U64(self.last_look_pulled)),
+            "no_liquidity" => Some(WireVal::U64(self.no_liquidity)),
+            "composite_backstop" => Some(WireVal::U64(self.composite_backstop)),
+            "requested_qty" => Some(WireVal::F64(self.requested_qty)),
+            "filled_qty" => Some(WireVal::F64(self.filled_qty)),
+            // Every derived ratio is absent when its denominator is zero — the
+            // divide-by-zero guard, emitted as JSON null.
+            "fill_ratio" => self.fill_ratio.map(WireVal::F64),
+            "win_rate" => self.win_rate.map(WireVal::F64),
+            "mean_slippage_bp" => self.mean_slippage_bp.map(WireVal::F64),
+            "mean_response_latency_nanos" => self.mean_response_latency_nanos.map(WireVal::U64),
+            "last_look_rate" => self.last_look_rate.map(WireVal::F64),
+            "mean_cover" => self.mean_cover.map(WireVal::F64),
+            "mean_competitors" => self.mean_competitors.map(WireVal::F64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListStreetOrdersResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "orders" => Some(WireVal::RepeatedMsg(
+                self.orders.iter().map(|o| o as &dyn WireAdapter).collect(),
+            )),
+            "breakdown" => Some(WireVal::RepeatedMsg(
+                self.breakdown
+                    .iter()
+                    .map(|b| b as &dyn WireAdapter)
+                    .collect(),
+            )),
+            "total_matching" => Some(WireVal::U64(self.total_matching)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for ListLpFlowMetricsResponse {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -9595,6 +9789,89 @@ impl WireAdapter for ListHedgeProvenanceResponse {
             "records" => Some(WireVal::RepeatedMsg(
                 self.records.iter().map(|r| r as &dyn WireAdapter).collect(),
             )),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for DecisionRecord {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "seq" => Some(WireVal::U64(self.seq)),
+            "decided_at" => Some(WireVal::I64(self.decided_at)),
+            "engine" => Some(WireVal::Enum(self.engine)),
+            "outcome" => Some(WireVal::Enum(self.outcome)),
+            "outcome_label" => Some(WireVal::Str(&self.outcome_label)),
+            "reason" => Some(WireVal::Str(&self.reason)),
+            "policy_path" => Some(WireVal::RepeatedU32(&self.policy_path)),
+            "scope" => Some(WireVal::Str(&self.scope)),
+            "book" => Some(WireVal::Str(&self.book)),
+            "instrument" => Some(WireVal::Str(&self.instrument)),
+            // proto3 `optional`: absent ⇒ omitted (a nested audit record, not an envelope).
+            "counterparty" => self.counterparty.as_deref().map(WireVal::Str),
+            "symbol" => self.symbol.as_deref().map(WireVal::Str),
+            "desk" => Some(WireVal::Str(&self.desk)),
+            "request_id" => self.request_id.as_deref().map(WireVal::Str),
+            "position_id" => self.position_id.map(WireVal::U64),
+            "trace_id" => self.trace_id.map(WireVal::U64),
+            "hedge_id" => self.hedge_id.as_deref().map(WireVal::Str),
+            "metric" => Some(WireVal::Enum(self.metric)),
+            "net_risk" => Some(WireVal::F64(self.net_risk)),
+            "threshold" => Some(WireVal::F64(self.threshold)),
+            "utilization" => Some(WireVal::F64(self.utilization)),
+            "band" => Some(WireVal::Str(&self.band)),
+            "notional" => Some(WireVal::F64(self.notional)),
+            "advisory" => Some(WireVal::Bool(self.advisory)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListDecisionJournalResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "records" => Some(WireVal::RepeatedMsg(
+                self.records.iter().map(|r| r as &dyn WireAdapter).collect(),
+            )),
+            "total_recorded" => Some(WireVal::U64(self.total_recorded)),
+            "evicted" => Some(WireVal::U64(self.evicted)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for RuleAdvice {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "advice_id" => Some(WireVal::Str(&self.advice_id)),
+            "kind" => Some(WireVal::Str(&self.kind)),
+            "engine" => Some(WireVal::Enum(self.engine)),
+            "title" => Some(WireVal::Str(&self.title)),
+            "rationale" => Some(WireVal::Str(&self.rationale)),
+            "recommended_action" => Some(WireVal::Str(&self.recommended_action)),
+            "scope_book" => Some(WireVal::Str(&self.scope_book)),
+            "scope_instrument" => Some(WireVal::Str(&self.scope_instrument)),
+            // proto3 `optional`: absent ⇒ omitted.
+            "scope_counterparty" => self.scope_counterparty.as_deref().map(WireVal::Str),
+            "occurrences" => Some(WireVal::U64(u64::from(self.occurrences))),
+            "first_seen" => Some(WireVal::I64(self.first_seen)),
+            "last_seen" => Some(WireVal::I64(self.last_seen)),
+            "evidence_seqs" => Some(WireVal::RepeatedU64(&self.evidence_seqs)),
+            "editor" => Some(WireVal::Str(&self.editor)),
+            _ => None,
+        }
+    }
+}
+
+impl WireAdapter for ListRuleAdviceResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "advice" => Some(WireVal::RepeatedMsg(
+                self.advice.iter().map(|a| a as &dyn WireAdapter).collect(),
+            )),
+            "rows_considered" => Some(WireVal::U64(u64::from(self.rows_considered))),
             "correlation_id" => self.correlation_id.map(WireVal::U64),
             _ => None,
         }
@@ -10137,6 +10414,20 @@ pub fn encode_list_hedge_provenance_response(r: &ListHedgeProvenanceResponse) ->
     encode("ListHedgeProvenanceResponse", r)
 }
 
+/// Encode a [`ListDecisionJournalResponse`] to its WS JSON — descriptor-driven. Each
+/// nested `DecisionRecord` OMITs its absent presence-tracked keys (`counterparty`,
+/// `symbol`, `request_id`, `position_id`, `trace_id`, `hedge_id`).
+#[must_use]
+pub fn encode_list_decision_journal_response(r: &ListDecisionJournalResponse) -> Value {
+    encode("ListDecisionJournalResponse", r)
+}
+
+/// Encode a [`ListRuleAdviceResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_rule_advice_response(r: &ListRuleAdviceResponse) -> Value {
+    encode("ListRuleAdviceResponse", r)
+}
+
 /// Encode a [`GetHedgeConfigResponse`] to its WS JSON — descriptor-driven.
 #[must_use]
 pub fn encode_get_hedge_config_response(r: &GetHedgeConfigResponse) -> Value {
@@ -10208,6 +10499,12 @@ pub fn encode_list_client_flow_metrics_response(r: &ListClientFlowMetricsRespons
 #[must_use]
 pub fn encode_list_lp_flow_metrics_response(r: &ListLpFlowMetricsResponse) -> Value {
     encode("ListLpFlowMetricsResponse", r)
+}
+
+/// Encode a [`ListStreetOrdersResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_list_street_orders_response(r: &ListStreetOrdersResponse) -> Value {
+    encode("ListStreetOrdersResponse", r)
 }
 
 /// Encode a [`ListLatencyMetricsResponse`] to its WS JSON — descriptor-driven.

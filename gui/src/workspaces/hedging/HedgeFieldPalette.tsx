@@ -8,6 +8,7 @@
  */
 import { useMemo, useState } from "react";
 
+import { HelpButton } from "../../components/HelpButton";
 import {
   HEDGE_FIELD_GROUPS,
   HEDGE_FIELD_REGISTRY,
@@ -63,7 +64,13 @@ export function HedgeFieldPalette({ readOnly }: HedgeFieldPaletteProps): React.R
   return (
     <aside className={rr.palette} aria-label="Risk-state field palette">
       <div className={rr.paletteHead}>
-        <h2 className={rr.paletteTitle}>Risk-state fields</h2>
+        <h2 className={rr.paletteTitle}>
+          Risk-state fields{" "}
+          <HelpButton
+            helpId="concept.hedge-field-availability"
+            subject="why some fields are unavailable"
+          />
+        </h2>
         <input
           className={rr.paletteSearch}
           type="search"
@@ -80,22 +87,38 @@ export function HedgeFieldPalette({ readOnly }: HedgeFieldPaletteProps): React.R
         return (
           <section key={group} className={rr.paletteGroup}>
             <h3 className={rr.paletteGroupLabel}>{group}</h3>
-            {items.map((s) => (
-              <div
-                key={s.field}
-                className={`${rr.chip} ${rr.chipField}`}
-                draggable={!readOnly}
-                onDragStart={onDragStart(s.field)}
-                aria-label={`Drag ${s.label} into the conditions`}
-                data-testid={`hedge-palette-${s.field}`}
-              >
-                <span className={`${rr.chipKind} ${rr[`kind_${s.kind}`]}`}>{KIND_TAG[s.kind]}</span>
-                <span className={rr.chipMain}>
-                  <span className={rr.chipLabel}>{s.label}</span>
-                  <span className={rr.chipHint}>{s.hint}</span>
-                </span>
-              </div>
-            ))}
+            {items.map((s) => {
+              // A field nothing populates is shown, NOT hidden: hiding it leaves a trader
+              // hunting for a chip that a colleague's older policy still references, with
+              // no explanation. It is undraggable and states its own reason instead.
+              const unavailable = s.provider.state === "unprovided" ? s.provider.reason : null;
+              const draggable = !readOnly && unavailable === null;
+              return (
+                <div
+                  key={s.field}
+                  className={`${rr.chip} ${rr.chipField}`}
+                  draggable={draggable}
+                  onDragStart={draggable ? onDragStart(s.field) : undefined}
+                  aria-disabled={unavailable !== null}
+                  data-unavailable={unavailable !== null ? "true" : undefined}
+                  title={unavailable ?? undefined}
+                  aria-label={
+                    unavailable === null
+                      ? `Drag ${s.label} into the conditions`
+                      : `${s.label} is unavailable — ${unavailable}`
+                  }
+                  data-testid={`hedge-palette-${s.field}`}
+                >
+                  <span className={`${rr.chipKind} ${rr[`kind_${s.kind}`]}`}>
+                    {unavailable === null ? KIND_TAG[s.kind] : "n/a"}
+                  </span>
+                  <span className={rr.chipMain}>
+                    <span className={rr.chipLabel}>{s.label}</span>
+                    <span className={rr.chipHint}>{unavailable ?? s.hint}</span>
+                  </span>
+                </div>
+              );
+            })}
           </section>
         );
       })}

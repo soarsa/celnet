@@ -34,6 +34,13 @@ export interface CondDraft {
 export interface FieldOpt {
   value: string;
   label: string;
+  /**
+   * Why this field cannot be selected, when nothing populates it server-side. Present only
+   * for hedge fields declared `Unprovided` (`HedgeField::provider`); routing and acceptance
+   * fields are all computed and leave it undefined. The option still RENDERS — disabled and
+   * annotated — so the trader reads the cause instead of finding the entry silently absent.
+   */
+  unavailable?: string;
 }
 
 /**
@@ -67,6 +74,7 @@ export function ConditionEditor({
   onRemove: () => void;
 }): React.ReactElement {
   const opts = useMemo(() => enumOptions(cond.field), [enumOptions, cond.field]);
+  const selectedUnavailable = fieldOpts.find((f) => f.value === cond.field)?.unavailable;
   return (
     <div className={styles.condRow} data-testid={`wiz-cond-${index}`}>
       {index > 0 && <span className={styles.condAnd}>AND</span>}
@@ -84,11 +92,24 @@ export function ConditionEditor({
           }}
         >
           {fieldOpts.map((f) => (
-            <option key={f.value} value={f.value}>
-              {f.label}
+            <option
+              key={f.value}
+              value={f.value}
+              // Disabled unless it is what the condition ALREADY holds — an option the
+              // select is showing must never be un-renderable, or the control goes blank.
+              disabled={f.unavailable !== undefined && f.value !== cond.field}
+              title={f.unavailable}
+            >
+              {f.unavailable === undefined ? f.label : `${f.label} — unavailable`}
             </option>
           ))}
         </select>
+        {selectedUnavailable !== undefined && (
+          <span className={styles.condWarning} role="note">
+            Nothing populates this field, so the policy will be refused on save:{" "}
+            {selectedUnavailable}.
+          </span>
+        )}
       </label>
       <label className={styles.condField}>
         <span className={styles.miniLabel}>Op</span>

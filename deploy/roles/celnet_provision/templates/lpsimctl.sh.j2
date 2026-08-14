@@ -20,9 +20,13 @@ LAUNCHER="{{ celnet_bin_dir }}/start-lp-sim.sh"
 export LPSIM_RELEASE_BIN="{{ celnet_current_link }}/bin/lp-sim"
 export LPSIM_RUN_DIR="{{ celnet_run_dir }}/lpsim"
 export LPSIM_LOG="{{ celnet_log_dir }}/lp-sim.out.log"
-export LPSIM_LP_NAME="{{ celnet_lpsim_lp_name | default('LP-SIM') }}"
+export LPSIM_LP_NAME="{{ celnet_lpsim_lp_name | default('OTC-SIM') }}"
 export LPSIM_BOOK="{{ celnet_lpsim_book | default('ust-composite') }}"
-export LPSIM_MEMBERS="{{ celnet_lpsim_members | default('5') }}"
+export LPSIM_MEMBERS="{{ celnet_lpsim_members | default('4') }}"
+# The FIX ORDER acceptors: counterparty i binds LPSIM_ORDER_PORT + i (5701..5704 by
+# default). A panel that quotes but will not trade is a price display, not a venue.
+export LPSIM_ORDER_PORT="{{ celnet_lpsim_order_port | default('5701') }}"
+export LPSIM_ORDER_BIND="{{ celnet_lpsim_order_bind | default('0.0.0.0') }}"
 export LPSIM_INTERVAL="{{ celnet_lpsim_interval | default('2') }}"
 # Sub-second override (ms): non-empty ⇒ the feed refreshes the composite faster than 1s.
 export LPSIM_INTERVAL_MS="{{ celnet_lpsim_interval_ms | default('') }}"
@@ -87,7 +91,9 @@ case "${1:-}" in
       if [ "$LPSIM_NO_BOOK_POLL" = "1" ]; then
         echo "  mode: broadcast ($LPSIM_MEMBERS LPs, ${LPSIM_INTERVAL}s, whole universe → $LPSIM_ADDR)"
       else
-        echo "  mode: book-aware ($LPSIM_MEMBERS LPs → $LPSIM_ADDR, book-poll ${LPSIM_BOOK_POLL}s, login $LPSIM_USER)"
+        echo "  mode: book-aware ($LPSIM_MEMBERS named counterparties → $LPSIM_ADDR, book-poll ${LPSIM_BOOK_POLL}s, login $LPSIM_USER)"
+        echo "  orders: ${LPSIM_ORDER_PORT:-DISABLED (price display only)}"
+        echo "  members: marketaccess-sim traderweb-sim citigroup-sim jpm-sim"
       fi
     else echo "lp-sim: STOPPED"; exit 3; fi
     ;;

@@ -445,6 +445,15 @@
   flex-direction: column;
   gap: 4px;
 }
+/*
+ * The "this will be refused on save" note under a condition's field select — shown when the
+ * selected field has no server-side producer (`FieldOpt.unavailable`).
+ */
+.condWarning {
+  font-size: var(--type-micro);
+  color: var(--warn, var(--text-secondary));
+  max-width: 34ch;
+}
 .condValue {
   flex: 1;
   min-width: 140px;

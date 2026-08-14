@@ -29,8 +29,8 @@
 //! fabricated value. The rollup's divide-by-zero guards then report the derived
 //! ratio as absent rather than inventing one.
 
-pub mod hedge_flow;
 pub mod lp;
+pub mod street_orders;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

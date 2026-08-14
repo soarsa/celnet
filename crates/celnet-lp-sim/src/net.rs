@@ -26,6 +26,7 @@ use tonic::transport::{Channel, Endpoint};
 use crate::books::{StreamPlan, resolve_from_descs};
 use crate::lp::Fault;
 use crate::lpsim::LpQuoteSnapshot;
+use crate::orders::{OrderVenue, QuotedMarket};
 use crate::quoted::QuotedLine;
 use crate::rng::{child_seed, unit01};
 use crate::{LpSimConfig, SimLp, build_fleet};
@@ -366,8 +367,48 @@ pub struct BookFeedOptions {
     pub credentials: LoginCredentials,
     /// The occasional-fault schedule applied at stream time.
     pub faults: FaultSchedule,
+    /// The tradeable side of each participating counterparty, keyed by connection
+    /// id. Every published round is mirrored into these so a taker trades against
+    /// exactly the level the composite was built from. Empty ⇒ the feed publishes
+    /// prices only (no order acceptor bound), which is a price display rather than a
+    /// venue and is warned about at startup.
+    pub order_venues: Vec<OrderVenue>,
     /// Emit a single round against the first resolved plan, then exit.
     pub once: bool,
+}
+
+/// Mirror one round of published quotes into the counterparties' tradeable books, so
+/// an order that lands between rounds executes against exactly the market that was
+/// last streamed. Returns how many markets were published.
+///
+/// A quote whose counterparty has no bound order venue is skipped: it is still
+/// published as a price, but nothing can be traded on it, which is precisely what an
+/// unbound acceptor means.
+fn mirror_to_order_books(venues: &[OrderVenue], quotes: &[LpQuote]) -> usize {
+    if venues.is_empty() {
+        return 0;
+    }
+    let mut mirrored = 0;
+    for q in quotes {
+        let Some(v) = venues.iter().find(|v| v.id() == q.lp_name) else {
+            continue;
+        };
+        v.publish(
+            &q.instrument_id,
+            QuotedMarket {
+                bid: q.bid,
+                offer: q.offer,
+                bid_size: q.bid_size,
+                offer_size: q.offer_size,
+                ts_nanos: q.ts_nanos,
+                // The OTC universe (cash bonds, OIS points, STIR) trades in any
+                // quantity; the whole-lot rule belongs to the listed venue.
+                lot_size: None,
+            },
+        );
+        mirrored += 1;
+    }
+    mirrored
 }
 
 /// Authenticate against `AuthService.Login` on `channel`, returning the bearer
@@ -641,6 +682,7 @@ async fn run_plan_stream(
         lines: universe.to_vec(),
         shared,
         faults: opts.faults.clone(),
+        order_venues: opts.order_venues.clone(),
         interval: opts.quote_interval.max(Duration::from_secs(1)),
         once: opts.once,
         round: 0,
@@ -671,6 +713,7 @@ struct PlanFeedState {
     lines: Vec<QuotedLine>,
     shared: SharedPlan,
     faults: FaultSchedule,
+    order_venues: Vec<OrderVenue>,
     interval: Duration,
     once: bool,
     round: u64,
@@ -709,6 +752,10 @@ impl PlanFeedState {
                 self.round,
                 &self.faults,
             );
+            // Mirror what was just published into the tradeable books BEFORE the
+            // quotes go on the wire, so there is never an instant in which the
+            // composite shows a level the venue would not trade on.
+            mirror_to_order_books(&self.order_venues, &self.pending);
             self.cursor = 0;
             self.round += 1;
             self.started = true;
@@ -789,8 +836,15 @@ mod clock_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::roster::{OTC_ROSTER, SimLpProfile, profile_by_id};
     use crate::universe::TreasuryBond;
     use celnet_types::BrokenDate;
+
+    /// The roster profile behind a streamed connection id.
+    fn celnet_lp_sim_profile(lp_name: &str) -> &'static SimLpProfile {
+        profile_by_id(OTC_ROSTER, lp_name)
+            .unwrap_or_else(|| panic!("{lp_name} is not a named simulated counterparty"))
+    }
 
     #[test]
     fn one_round_produces_a_quote_per_member_per_bond() {
@@ -832,11 +886,34 @@ mod tests {
             );
             assert!(q.bid.is_finite() && q.offer.is_finite());
             assert!(q.offer >= q.bid, "two-way is not crossed");
-            assert_eq!(q.ts_nanos, now);
+            // Each named counterparty back-dates its observation by its OWN response
+            // latency, so a slow dealer is staleness-decayed exactly as a slow real
+            // feed is. The stamp is therefore at or before `now` — never after it,
+            // which would make the consolidator's age gate silently inert.
+            assert!(
+                q.ts_nanos <= now,
+                "{}: a future-dated observation disables staleness gating",
+                q.lp_name
+            );
+            let latency = now - q.ts_nanos;
+            let profile = celnet_lp_sim_profile(&q.lp_name);
+            assert_eq!(
+                latency,
+                profile.latency_nanos(),
+                "{}: back-dated by {latency}ns, not its own response latency",
+                q.lp_name
+            );
         }
-        // Every member of the panel contributed.
-        let venues: std::collections::HashSet<&str> =
+        // Every member of the panel contributed, under its NAMED connection id —
+        // never an anonymous `LP-SIM-0N`, which tells a trader nothing about who
+        // filled.
+        let venues: std::collections::BTreeSet<&str> =
             quotes.iter().map(|q| q.lp_name.as_str()).collect();
         assert_eq!(venues.len(), 3);
+        assert_eq!(
+            venues.into_iter().collect::<Vec<_>>(),
+            vec!["citigroup-sim", "marketaccess-sim", "traderweb-sim"],
+            "the panel is not drawn from the named roster in order"
+        );
     }
 }

@@ -44,6 +44,18 @@
 //! **missed deals** (on the panel but lost), **last-look rejects**, **win-rate**,
 //! and mean **cover distance**. [`merge_tick_counts`] folds the server's bounded
 //! off-core ingest tick tally into the fold. Same purity / oracle discipline.
+//!
+//! # Street-side execution records (the third pillar)
+//!
+//! [`LpFlowMetrics`] grades an LP's *behaviour*; it carries no order economics, so it
+//! cannot say **what went out, to whom, on what product, and what came back**. That is
+//! [`StreetOrder`] — one record per outbound street execution attempt (every attempt,
+//! not only the fills) with side, requested-vs-filled quantity, price and slippage, the
+//! terminal [`StreetOutcome`] and its reason, the competing panel it was ranked against,
+//! and the parent hedge / position linkage. [`fold_breakdown`] aggregates them on any
+//! [`BreakdownDimension`] (LP, family, instrument, tenor bucket, hour), and
+//! [`lp_flow_records`] projects them back onto the LP league table — crediting only real
+//! named-LP fills, never a composite backstop.
 
 mod fishing;
 mod grouping;
@@ -52,6 +64,7 @@ mod lp_metrics;
 mod lp_record;
 mod metrics;
 mod record;
+mod street_order;
 
 pub use fishing::{DPM_VALUE_SCALE, fishing_score};
 pub use grouping::{group_by_asset, group_by_client, group_by_counterparty, group_by_instrument};
@@ -60,3 +73,8 @@ pub use lp_metrics::{LpFlowMetrics, lp_metrics_from, merge_tick_counts};
 pub use lp_record::LpFlowRecord;
 pub use metrics::{ClientFlowMetrics, NOTIONAL_PER_MILLION, metrics_from};
 pub use record::{FlowRecord, Side};
+pub use street_order::{
+    BreakdownDimension, COMPOSITE_KEY, StreetBreakdownRow, StreetCompetitor, StreetOrder,
+    StreetOutcome, StreetSide, StreetVenue, UNATTRIBUTED_KEY, fold_breakdown, group_key,
+    hour_bucket, lp_flow_records, tenor_bucket,
+};

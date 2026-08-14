@@ -251,3 +251,110 @@
   color: var(--danger);
   font-weight: var(--weight-emphasis);
 }
+
+/* --- street-side EXECUTION sections (the order-level companion below the
+   league table): a section rule, the dimension/filter control row, outcome
+   chips and the absent marker. Same tokens, same density. */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--hairline);
+}
+
+.sectionTitle {
+  font-size: var(--type-h3);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+
+.control select,
+.control input {
+  font: inherit;
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  padding: var(--space-1) var(--space-2);
+  min-width: 9rem;
+}
+
+.control select:focus-visible,
+.control input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.count {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  margin: 0;
+}
+
+/* An explicit absent marker — visually distinct from a real zero so a reader
+   can never mistake "not observed" for "observed as none". */
+.absent {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.chip {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border-radius: var(--r-pill, 999px);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-emphasis);
+  border: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+
+.chip-filled {
+  color: var(--success, #2e7d32);
+  border-color: currentColor;
+}
+
+.chip-partially_filled {
+  color: var(--warning, #b26a00);
+  border-color: currentColor;
+}
+
+.chip-cancelled {
+  color: var(--warning, #b26a00);
+}
+
+.chip-rejected,
+.chip-last_look_pulled {
+  color: var(--danger);
+  border-color: currentColor;
+}
+
+.chip-expired,
+.chip-no_liquidity {
+  color: var(--text-tertiary);
+}
+
+/* The composite-backstop bucket is a real, meaningful group — flagged, not
+   hidden, because "the street showed us nothing" is the finding. */
+.backstop {
+  color: var(--warning, #b26a00);
+  font-weight: var(--weight-emphasis);
+}

@@ -7,7 +7,11 @@
 # Starts, in dependency order:
 #
 #   1. celnet-server        gRPC 127.0.0.1:50551 · ws://127.0.0.1:8081
-#   2. lp-sim               N liquidity providers -> the LpFeed gRPC ingest.
+#   2. lp-sim               the NAMED OTC counterparty panel (marketaccess-sim,
+#                           traderweb-sim, citigroup-sim, jpm-sim) -> the LpFeed
+#                           gRPC ingest, and accepting FIX orders on 5701..5704.
+#   2b. cme-sim             the listed Treasury-futures venue (`cme-sim`) -> the same
+#                           LpFeed ingest, accepting FIX orders on 5710.
 #                           Each streams the WHOLE quotable universe: cash bonds,
 #                           the listed Treasury FUTURES complex, the swap/OIS curve
 #                           points and the SOFR STIR strip (`lpsim::quotable_lines`),
@@ -43,7 +47,9 @@
 #   - The FIX acceptor's PORT is operator-created and therefore environment
 #     specific. This script asks the running server for it rather than hardcoding
 #     a guess, and skips the FIX legs with a message when no acceptor exists.
-#   - An lp-sim provider only streams into a book that lists it as a MEMBER. With
+#   - A simulated counterparty only streams into a book that lists it as a MEMBER.
+#     The ids are marketaccess-sim / traderweb-sim / citigroup-sim / jpm-sim and
+#     cme-sim — NOT the old LP-SIM-0N numbering. With
 #     no such book the feed connects, logs "0 streams", and quotes nothing. This
 #     script ensures one exists.
 #
@@ -111,6 +117,11 @@ GUI_PORT="${CELNET_GUI_PORT:-5173}"
 SIM_USER="${CELNET_DEV_SIM_USER:-admin@celnet.com}"
 SIM_PASSWORD="${CELNET_DEV_SIM_PASSWORD:-password}"
 LPSIM_MEMBERS="${CELNET_DEV_LPSIM_MEMBERS:-4}"
+# Base FIX order-acceptor port for the OTC panel (counterparty i binds base + i) and
+# the listed venue's own acceptor. The sims do not only publish prices — they take
+# orders and answer with a real ExecutionReport(8).
+LPSIM_ORDER_PORT="${CELNET_DEV_LPSIM_ORDER_PORT:-5701}"
+CMESIM_ORDER_PORT="${CELNET_DEV_CMESIM_ORDER_PORT:-5710}"
 LPSIM_INTERVAL="${CELNET_DEV_LPSIM_INTERVAL:-2}"
 DEV_BOOK="${CELNET_DEV_BOOK:-lp-sim-book}"
 # The two fixed-income FIX venues the fleet drives. They MUST be separate
@@ -165,7 +176,7 @@ cleanup() {
     for pid in "${PIDS[@]:-}"; do signal "$pid" TERM; done
     sleep 1
     for pid in "${PIDS[@]:-}"; do signal "$pid" KILL; done
-    pkill -9 -u "$(id -u)" -f 'target/debug/lp-sim|examples/fix_rfq_client' 2>/dev/null || true
+    pkill -9 -u "$(id -u)" -f 'target/debug/lp-sim|target/debug/cme-sim|examples/fix_rfq_client' 2>/dev/null || true
     exit "$code"
 }
 trap cleanup EXIT INT TERM
@@ -191,7 +202,7 @@ preflight_sweep() {
     # so they can only be matched by image).
     victims="$(port_owners "$grpc_port" "$ws_port" "$GUI_PORT")"
     victims="$victims
-$(pgrep -u "$(id -u)" -f 'target/debug/lp-sim|examples/fix_rfq_client' 2>/dev/null || true)"
+$(pgrep -u "$(id -u)" -f 'target/debug/lp-sim|target/debug/cme-sim|examples/fix_rfq_client' 2>/dev/null || true)"
     victims="$(echo "$victims" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u || true)"
     [[ -z "$victims" ]] && return 0
 
@@ -234,6 +245,7 @@ if [[ $SKIP_BUILD -eq 0 ]]; then
         cargo build -p celnet-server --bin celnet-server
         if [[ $RUN_SIMS -eq 1 ]]; then
             cargo build -p celnet-lp-sim --bin lp-sim
+            cargo build -p celnet-cme-sim --bin cme-sim
             cargo build -p celnet-fix --example fix_rfq_client
         fi
     fi
@@ -278,7 +290,9 @@ if [[ $RUN_SIMS -eq 1 ]]; then
     cat > "$PROVISION_JS" <<'PROVISION'
 import WebSocket from '../../gui/node_modules/ws/wrapper.mjs';
 const [wsUrl, email, password, bookId, members] = process.argv.slice(2);
-// argv[7]/argv[8] are the RFQ / RFS bind ports (read inside ensureVenue).
+// argv[7..9] are the RFQ / RFS / ESP bind ports (read inside ensureVenue);
+// argv[10]/argv[11] are the OTC base + listed ORDER-acceptor ports the simulated
+// counterparties bind, which become each connection's outbound `order_endpoint`.
 const ws = new WebSocket(wsUrl);
 let id = 1; const pend = new Map();
 const send = (type, body) => new Promise((res, rej) => {
@@ -351,6 +365,39 @@ ws.on('open', async () => {
       return String(port);
     };
 
+    // The COUNTERPARTY side of the panel. A book member is a connection id, and the
+    // connection is where its OUTBOUND order route lives — the address the server dials
+    // to send it a hedge order. Without one, every auto-hedge is answered
+    // `no_order_endpoint` and backstops to the composite, so the simulated street is
+    // never actually traded with. The inbound half binds on :0 (an ephemeral port we
+    // never connect to): these counterparties send us prices over the LpFeed and take
+    // our orders — they do not dial an acceptor of ours.
+    const ensureCounterparty = async (id, name, orderPort) => {
+      const conns = (await send('list_fix_connections', { session_token: token })).connections || [];
+      const existing = conns.find((c) => c.id === id);
+      const wanted = '127.0.0.1:' + orderPort;
+      if (existing) {
+        if (existing.order_endpoint === wanted) return;
+        // Repair a member whose order route is missing or stale, in place: the panel
+        // membership and desk are already right, only the route is wrong.
+        const spec = { id, name: existing.name, kind: existing.kind,
+                       bind_addr: existing.bind_addr, sender_comp_id: existing.sender_comp_id,
+                       target_comp_id: existing.target_comp_id, enabled: true,
+                       desk: existing.desk || deskId, order_endpoint: wanted };
+        const up = await send('update_fix_connection', { session_token: token, id, spec });
+        if (up.error) console.error('[dev] could not set the order route on ' + id + ': ' + up.error);
+        else console.error('[dev] order route for `' + id + '` set to ' + wanted);
+        return;
+      }
+      if (!deskId) { console.error('[dev] no desk — cannot define counterparty ' + id); return; }
+      const spec = { id, name, kind: 2, bind_addr: '127.0.0.1:0',
+                     sender_comp_id: 'CELNET', target_comp_id: id,
+                     enabled: true, desk: deskId, order_endpoint: wanted };
+      const made = await send('create_fix_connection', { session_token: token, spec });
+      if (made.error) console.error('[dev] could not create counterparty ' + id + ': ' + made.error);
+      else console.error('[dev] counterparty `' + id + '` — orders to ' + wanted);
+    };
+
     const rfqPort = await ensureVenue(1, 'dev-fi-rfq', 'FI RFQ', process.argv[7]);
     const rfsPort = await ensureVenue(2, 'dev-fi-rfs', 'FI RFS (client clip)', process.argv[8]);
     const espPort = await ensureVenue(3, 'dev-fi-esp', 'FI ESP (venue clip)', process.argv[9]);
@@ -358,11 +405,27 @@ ws.on('open', async () => {
     console.log('FIX_RFS_PORT=' + rfsPort);
     console.log('FIX_ESP_PORT=' + espPort);
 
+    // Define (or repair) every simulated counterparty and its order route BEFORE the
+    // book, so the panel members the book lists always resolve to a routable connection.
+    // Counterparty i binds order port `otcOrderPort + i` (lp-sim's own convention).
+    const otcRoster = ['marketaccess-sim', 'traderweb-sim', 'citigroup-sim', 'jpm-sim'];
+    const otcOrderPort = Number(process.argv[10]);
+    const listedOrderPort = Number(process.argv[11]);
+    for (let i = 0; i < Math.min(Number(members), otcRoster.length); i += 1) {
+      await ensureCounterparty(otcRoster[i], otcRoster[i], otcOrderPort + i);
+    }
+    await ensureCounterparty('cme-sim', 'cme-sim (listed futures)', listedOrderPort);
+
     // A provider only streams into a book that lists it as a member; with no such
     // book the feed connects and quotes nothing.
     const books = (await send('list_aggregated_books', { session_token: token })).books || [];
     if (!books.some((b) => b.id === bookId)) {
-      const ids = Array.from({ length: Number(members) }, (_, i) => `LP-SIM-${String(i + 1).padStart(2, '0')}`);
+      // The NAMED simulated counterparty roster (celnet_lp_sim::roster::OTC_ROSTER),
+      // in panel order, plus the listed futures venue. These ARE the connection ids a
+      // contribution, an LP-panel row and a booked hedge's `lp_won` carry — the old
+      // anonymous LP-SIM-0N numbering is gone.
+      const OTC = ['marketaccess-sim', 'traderweb-sim', 'citigroup-sim', 'jpm-sim'];
+      const ids = OTC.slice(0, Number(members)).concat(['cme-sim']);
       await send('create_aggregated_book', { session_token: token, spec: {
         name: bookId, member_connection_ids: ids,
         instrument_scope: { kind: 'all_members_quote' },
@@ -378,7 +441,7 @@ ws.on('open', async () => {
 });
 PROVISION
     if [[ -d "$REPO_ROOT/gui/node_modules/ws" ]]; then
-        PROV_OUT="$(cd "$LOG_DIR" && node provision.mjs "ws://$WS_ADDR" "$SIM_USER" "$SIM_PASSWORD" "$DEV_BOOK" "$LPSIM_MEMBERS" "$DEV_RFQ_PORT" "$DEV_RFS_PORT" "$DEV_ESP_PORT" 2>&1 || true)"
+        PROV_OUT="$(cd "$LOG_DIR" && node provision.mjs "ws://$WS_ADDR" "$SIM_USER" "$SIM_PASSWORD" "$DEV_BOOK" "$LPSIM_MEMBERS" "$DEV_RFQ_PORT" "$DEV_RFS_PORT" "$DEV_ESP_PORT" "$LPSIM_ORDER_PORT" "$CMESIM_ORDER_PORT" 2>&1 || true)"
         echo "$PROV_OUT" | grep -v '^FIX_[A-Z]*_PORT=' || true
         [[ -z "$FIX_RFQ_PORT" ]] && FIX_RFQ_PORT="$(echo "$PROV_OUT" | sed -n 's/^FIX_RFQ_PORT=//p' | tail -1)"
         [[ -z "$FIX_RFS_PORT" ]] && FIX_RFS_PORT="$(echo "$PROV_OUT" | sed -n 's/^FIX_RFS_PORT=//p' | tail -1)"
@@ -392,12 +455,24 @@ fi
 # 4. Simulator fleet
 # ---------------------------------------------------------------------------
 if [[ $RUN_SIMS -eq 1 ]]; then
-    echo "[dev] starting lp-sim ($LPSIM_MEMBERS providers → $GRPC_ADDR, book '$DEV_BOOK')"
+    echo "[dev] starting lp-sim ($LPSIM_MEMBERS named counterparties → $GRPC_ADDR, book '$DEV_BOOK', orders :$LPSIM_ORDER_PORT+)"
     LPSIM_PASSWORD="$SIM_PASSWORD" \
         "$REPO_ROOT/target/debug/lp-sim" \
         --addr "http://$GRPC_ADDR" --members "$LPSIM_MEMBERS" \
         --interval "$LPSIM_INTERVAL" --user "$SIM_USER" \
+        --order-port "$LPSIM_ORDER_PORT" --order-bind 127.0.0.1 \
         > >(tee "$LOG_DIR/lp-sim.log" | sed -u 's/^/[lp  ] /') 2>&1 &
+    PIDS+=($!)
+
+    # The listed Treasury-futures venue. A separate simulator because a listed
+    # contract has ONE central market, trades in whole contracts and rolls across
+    # delivery months — none of which the OTC panel models. It needs no service
+    # credential (it does not poll ListAggregatedBooks).
+    echo "[dev] starting cme-sim (listed futures venue → $GRPC_ADDR, orders :$CMESIM_ORDER_PORT)"
+    "$REPO_ROOT/target/debug/cme-sim" \
+        --addr "http://$GRPC_ADDR" --interval "$LPSIM_INTERVAL" \
+        --order-port "127.0.0.1:$CMESIM_ORDER_PORT" \
+        > >(tee "$LOG_DIR/cme-sim.log" | sed -u 's/^/[cme ] /') 2>&1 &
     PIDS+=($!)
 
     FIX_CLIENT="$REPO_ROOT/target/debug/examples/fix_rfq_client"
@@ -471,12 +546,13 @@ echo "[dev] ── stack up ─────────────────�
 [[ $RUN_GUI -eq 1 ]] && echo "[dev]   GUI      http://localhost:$GUI_PORT   ($SIM_USER / $SIM_PASSWORD)"
 echo "[dev]   WS       ws://$WS_ADDR        gRPC  $GRPC_ADDR"
 if [[ $RUN_SIMS -eq 1 ]]; then
-    echo "[dev]   sims     lp-sim x$LPSIM_MEMBERS → book '$DEV_BOOK'"
+    echo "[dev]   sims     lp-sim x$LPSIM_MEMBERS (marketaccess/traderweb/citigroup/jpm-sim) + cme-sim → book '$DEV_BOOK'"
+    echo "[dev]   orders   OTC :$LPSIM_ORDER_PORT..$((LPSIM_ORDER_PORT + LPSIM_MEMBERS - 1))   listed :$CMESIM_ORDER_PORT"
     [[ -n "$FIX_RFQ_PORT" ]] && echo "[dev]            FIX RFQ leg          → 127.0.0.1:$FIX_RFQ_PORT"
     [[ -n "$FIX_RFS_PORT" ]] && echo "[dev]            FIX RFS leg (client clip) → 127.0.0.1:$FIX_RFS_PORT"
     [[ -n "$FIX_ESP_PORT" ]] && echo "[dev]            FIX ESP leg (venue clip)  → 127.0.0.1:$FIX_ESP_PORT"
     echo "[dev]   LP Panel Administration → LP Panel"
 fi
-echo "[dev]   logs     $LOG_DIR/{edge,lp-sim,fix-rfq,fix-rfs,fix-esp,gui}.log"
+echo "[dev]   logs     $LOG_DIR/{edge,lp-sim,cme-sim,fix-rfq,fix-rfs,fix-esp,gui}.log"
 echo "[dev] ─────────────────────────────────────────────── Ctrl-C to stop ──"
 wait

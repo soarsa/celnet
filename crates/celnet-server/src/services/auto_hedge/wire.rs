@@ -734,27 +734,11 @@ mod tests {
 
     #[test]
     fn hedge_field_round_trips_every_variant() {
-        for f in [
-            HedgeField::InstrumentId,
-            HedgeField::Ccy,
-            HedgeField::Product,
-            HedgeField::Book,
-            HedgeField::Desk,
-            HedgeField::NetDv01,
-            HedgeField::NetNotional,
-            HedgeField::NetVega,
-            HedgeField::NetGamma,
-            HedgeField::InventorySign,
-            HedgeField::Threshold,
-            HedgeField::Utilization,
-            HedgeField::Overflow,
-            HedgeField::Breached,
-            HedgeField::CounterpartyToxicity,
-            HedgeField::InventoryAgeSecs,
-            HedgeField::InternalOffsetAvailable,
-            HedgeField::HedgeCostBp,
-            HedgeField::Counterparty,
-        ] {
+        // Driven off `HedgeField::ALL`, never a hand-maintained list: the codec must round-trip
+        // EVERY variant regardless of whether anything populates it (an `Unprovided` field is
+        // still a real part of the wire contract), and a hand-list silently stops covering a
+        // newly added variant.
+        for f in HedgeField::ALL {
             assert_eq!(hedge_field_from_wire(hedge_field_to_wire(f)).unwrap(), f);
         }
     }

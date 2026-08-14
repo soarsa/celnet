@@ -29,6 +29,7 @@ pub mod analytics;
 pub mod auto_hedge;
 pub mod consensus;
 pub mod corpactions;
+pub mod decision_journal;
 pub mod desk;
 /// End-to-end trade-lifecycle test suite (drives a real incoming order through the whole
 /// pipeline: last-look → acceptance → book → route → internalise/hedge → aggregation).
@@ -44,7 +45,9 @@ pub mod rates_book;
 pub mod rates_risk;
 pub mod risk;
 pub mod risk_transfer;
+pub mod rule_advisor;
 pub mod stream;
+pub mod street_router;
 pub mod surface;
 pub mod telemetry;
 pub mod trace;

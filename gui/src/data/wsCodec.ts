@@ -17,6 +17,13 @@
  */
 
 import type {
+  DecisionEngine,
+  DecisionJournalFilter,
+  DecisionJournalPage,
+  DecisionOutcome,
+  DecisionRecord,
+  RuleAdvice,
+  RuleAdvicePage,
   AdditiveRisk,
   AggregateRatesRiskRequest,
   AggregateRatesRiskResponse,
@@ -159,6 +166,11 @@ import type {
   ClientFlowMetrics,
   FlowGroupBy,
   LpFlowMetrics,
+  StreetBreakdownRow,
+  StreetCompetitor,
+  StreetOrder,
+  StreetOrderFilter,
+  StreetOrdersView,
   FlowWindow,
   LatencyStage,
   LatencyHealth,
@@ -3326,6 +3338,7 @@ export function fixConnectionFromWire(o: WireObject): FixConnection {
     running: o["running"] === true,
     boundAddr: str(o, "bound_addr"),
     desk: str(o, "desk"),
+    orderEndpoint: str(o, "order_endpoint"),
   };
 }
 
@@ -3340,6 +3353,7 @@ function fixSpecToWire(spec: FixConnectionSpec): WireObject {
     target_comp_id: spec.targetCompId,
     enabled: spec.enabled,
     desk: spec.desk ?? "",
+    order_endpoint: spec.orderEndpoint ?? "",
   };
 }
 
@@ -5164,6 +5178,136 @@ export function hedgeProvenanceFromWire(o: WireObject): HedgeProvenance {
   return prov;
 }
 
+// --- decision journal + rule advice -----------------------------------------
+
+/** Wire enum ordinals for `DecisionEngineEnum` (proto3 zero is UNSPECIFIED). */
+const DECISION_ENGINE_TO_WIRE: Record<DecisionEngine, number> = {
+  acceptance: 1,
+  risk_routing: 2,
+  hedge: 3,
+};
+const DECISION_ENGINE_FROM_WIRE: Record<number, DecisionEngine> = {
+  1: "acceptance",
+  2: "risk_routing",
+  3: "hedge",
+};
+/** Wire enum ordinals for `DecisionOutcomeEnum`. */
+const DECISION_OUTCOME_TO_WIRE: Record<DecisionOutcome, number> = {
+  fired: 1,
+  no_action: 2,
+};
+
+/**
+ * Decode one recorded decision. An UNSPECIFIED / unknown engine ordinal THROWS rather
+ * than silently decoding to a plausible arm — a mis-decoded audit row would be worse
+ * than a visible failure (the `bond_future` → `bond` fallthrough taught us that).
+ */
+export function decisionRecordFromWire(o: WireObject): DecisionRecord {
+  const engine = DECISION_ENGINE_FROM_WIRE[enumNum(o, "engine")];
+  if (engine === undefined) {
+    throw new Error(`unknown decision engine ordinal ${enumNum(o, "engine")}`);
+  }
+  const outcomeOrdinal = enumNum(o, "outcome");
+  if (outcomeOrdinal !== 1 && outcomeOrdinal !== 2) {
+    throw new Error(`unknown decision outcome ordinal ${outcomeOrdinal}`);
+  }
+  const rec: DecisionRecord = {
+    seq: num(o, "seq"),
+    decidedAtNanos: num(o, "decided_at"),
+    engine,
+    outcome: outcomeOrdinal === 1 ? "fired" : "no_action",
+    outcomeLabel: str(o, "outcome_label"),
+    reason: str(o, "reason"),
+    policyPath: numArrayOf(o, "policy_path"),
+    scope: str(o, "scope"),
+    book: str(o, "book"),
+    instrument: str(o, "instrument"),
+    desk: str(o, "desk"),
+    metric: hedgeMetricFromWire(enumNum(o, "metric")),
+    netRisk: num(o, "net_risk"),
+    threshold: num(o, "threshold"),
+    utilization: num(o, "utilization"),
+    band: str(o, "band"),
+    notional: num(o, "notional"),
+    advisory: boolOf(o, "advisory"),
+  };
+  // Presence-tracked keys: absent ⇒ the field stays undefined, never a fabricated "".
+  const cp = optStr(o, "counterparty");
+  if (cp !== undefined) rec.counterparty = cp;
+  const sym = optStr(o, "symbol");
+  if (sym !== undefined) rec.symbol = sym;
+  const rid = optStr(o, "request_id");
+  if (rid !== undefined) rec.requestId = rid;
+  const pid = optNum(o, "position_id");
+  if (pid !== undefined) rec.positionId = pid;
+  const tid = optNum(o, "trace_id");
+  if (tid !== undefined) rec.traceId = tid;
+  const hid = optStr(o, "hedge_id");
+  if (hid !== undefined) rec.hedgeId = hid;
+  return rec;
+}
+
+/** Encode a `list_decision_journal` request — absent filters are simply omitted. */
+export function listDecisionJournalRequestToWire(filter?: DecisionJournalFilter): WireObject {
+  const body: WireObject = {};
+  if (filter?.engine) body["engine"] = DECISION_ENGINE_TO_WIRE[filter.engine];
+  if (filter?.outcome) body["outcome"] = DECISION_OUTCOME_TO_WIRE[filter.outcome];
+  if (filter?.book) body["book"] = filter.book;
+  if (filter?.instrument) body["instrument"] = filter.instrument;
+  if (filter?.counterparty) body["counterparty"] = filter.counterparty;
+  if (filter?.sinceNanos !== undefined) body["since_nanos"] = filter.sinceNanos;
+  if (filter?.limit !== undefined) body["limit"] = filter.limit;
+  return body;
+}
+
+/** Decode `{ records, total_recorded, evicted }`. */
+export function decisionJournalResponseFromWire(o: WireObject): DecisionJournalPage {
+  return {
+    records: array(o, "records").map(decisionRecordFromWire),
+    totalRecorded: num(o, "total_recorded"),
+    evicted: num(o, "evicted"),
+  };
+}
+
+/** Decode one derived rule suggestion. */
+export function ruleAdviceFromWire(o: WireObject): RuleAdvice {
+  const engine = DECISION_ENGINE_FROM_WIRE[enumNum(o, "engine")];
+  if (engine === undefined) {
+    throw new Error(`unknown rule-advice engine ordinal ${enumNum(o, "engine")}`);
+  }
+  const advice: RuleAdvice = {
+    adviceId: str(o, "advice_id"),
+    kind: str(o, "kind"),
+    engine,
+    title: str(o, "title"),
+    rationale: str(o, "rationale"),
+    recommendedAction: str(o, "recommended_action"),
+    scopeBook: str(o, "scope_book"),
+    scopeInstrument: str(o, "scope_instrument"),
+    occurrences: num(o, "occurrences"),
+    firstSeen: num(o, "first_seen"),
+    lastSeen: num(o, "last_seen"),
+    evidenceSeqs: numArrayOf(o, "evidence_seqs"),
+    editor: str(o, "editor"),
+  };
+  const cp = optStr(o, "scope_counterparty");
+  if (cp !== undefined) advice.scopeCounterparty = cp;
+  return advice;
+}
+
+/** Encode a `list_rule_advice` request. */
+export function listRuleAdviceRequestToWire(book?: string): WireObject {
+  return book ? { book } : {};
+}
+
+/** Decode `{ advice, rows_considered }`. */
+export function ruleAdviceResponseFromWire(o: WireObject): RuleAdvicePage {
+  return {
+    advice: array(o, "advice").map(ruleAdviceFromWire),
+    rowsConsidered: num(o, "rows_considered"),
+  };
+}
+
 /** Encode a hedge intent (advisory shadow-run projection; absent `action` ⇒ null). */
 export function hedgeIntentToWire(i: HedgeIntent): WireObject {
   return {
@@ -6536,6 +6680,140 @@ export function listLpFlowMetricsRequestToWire(
 /** Decode the `{ metrics: [...] }` street-liquidity reply (one row per LP, lp_id-ordered). */
 export function listLpFlowMetricsResponseFromWire(o: WireObject): LpFlowMetrics[] {
   return array(o, "metrics").map(lpFlowMetricsFromWire);
+}
+
+// --- street-side EXECUTION analytics (ListStreetOrders) ---------------------
+
+/** The venue tokens the server emits; anything else is a contract break. */
+const STREET_VENUES = ["named_lp", "composite_backstop", "none"] as const;
+/** The outcome tokens the server emits. */
+const STREET_OUTCOMES = [
+  "filled",
+  "partially_filled",
+  "rejected",
+  "cancelled",
+  "expired",
+  "last_look_pulled",
+  "no_liquidity",
+] as const;
+/** The breakdown-dimension tokens the server emits. */
+const STREET_DIMENSIONS = ["lp", "family", "instrument", "tenor_bucket", "hour"] as const;
+
+/**
+ * Narrow a server-supplied token to its union, THROWING on anything unknown.
+ *
+ * A silent fallback here is exactly the failure mode that lets a contract drift go
+ * unnoticed and render as plausible-but-wrong data (a `bond_future` silently read as
+ * a `bond` did precisely that). One contract, one vocabulary — fail loudly instead.
+ */
+function streetToken<T extends string>(
+  o: WireObject,
+  key: string,
+  allowed: readonly T[],
+): T {
+  const raw = str(o, key);
+  const hit = allowed.find((a) => a === raw);
+  if (hit === undefined) {
+    throw new Error(
+      `unknown ${key} token ${JSON.stringify(raw)} on a street order — expected one of ${allowed.join(" | ")}`,
+    );
+  }
+  return hit;
+}
+
+/** Decode one `StreetCompetitorDesc` (an LP that showed a firm price). */
+export function streetCompetitorFromWire(o: WireObject): StreetCompetitor {
+  return { lpId: str(o, "lp_id"), price: num(o, "price") };
+}
+
+/**
+ * Decode one `StreetOrderDesc`. Every `optional` proto field arrives as JSON `null`
+ * when the datum was genuinely NOT observed and is decoded to `undefined` — the UI
+ * renders "—". Nothing here substitutes a zero for an absence.
+ */
+export function streetOrderFromWire(o: WireObject): StreetOrder {
+  return {
+    orderId: str(o, "order_id"),
+    tsNanos: numToBigInt(o, "ts_nanos"),
+    lpId: optStr(o, "lp_id"),
+    venue: streetToken(o, "venue", STREET_VENUES),
+    instrument: str(o, "instrument"),
+    family: str(o, "family"),
+    tenorYears: optNum(o, "tenor_years"),
+    side: str(o, "side") === "buy" ? "buy" : "sell",
+    requestedQty: num(o, "requested_qty"),
+    filledQty: num(o, "filled_qty"),
+    requestedPrice: num(o, "requested_price"),
+    filledPrice: optNum(o, "filled_price"),
+    slippageBp: optNum(o, "slippage_bp"),
+    outcome: streetToken(o, "outcome", STREET_OUTCOMES),
+    reason: optStr(o, "reason"),
+    competitors: array(o, "competitors").map(streetCompetitorFromWire),
+    parentHedgeId: optStr(o, "parent_hedge_id"),
+    parentPositionId: optBigInt(o, "parent_position_id"),
+    orderType: optStr(o, "order_type"),
+    timeInForce: optStr(o, "time_in_force"),
+    responseLatencyNanos: optNum(o, "response_latency_nanos"),
+  };
+}
+
+/** Decode one `StreetBreakdownRowDesc` (every zero-denominator ratio ⇒ undefined). */
+export function streetBreakdownRowFromWire(o: WireObject): StreetBreakdownRow {
+  return {
+    dimension: streetToken(o, "dimension", STREET_DIMENSIONS),
+    key: str(o, "key"),
+    orders: num(o, "orders"),
+    filled: num(o, "filled"),
+    partiallyFilled: num(o, "partially_filled"),
+    rejected: num(o, "rejected"),
+    cancelled: num(o, "cancelled"),
+    expired: num(o, "expired"),
+    lastLookPulled: num(o, "last_look_pulled"),
+    noLiquidity: num(o, "no_liquidity"),
+    compositeBackstop: num(o, "composite_backstop"),
+    requestedQty: num(o, "requested_qty"),
+    filledQty: num(o, "filled_qty"),
+    fillRatio: optNum(o, "fill_ratio"),
+    winRate: optNum(o, "win_rate"),
+    meanSlippageBp: optNum(o, "mean_slippage_bp"),
+    meanResponseLatencyNanos: optNum(o, "mean_response_latency_nanos"),
+    lastLookRate: optNum(o, "last_look_rate"),
+    meanCover: optNum(o, "mean_cover"),
+    meanCompetitors: optNum(o, "mean_competitors"),
+  };
+}
+
+/**
+ * Frame `list_street_orders` — an optional epoch-nanos window plus the optional
+ * filters. Empty-string filters are OMITTED (a blank control does not constrain).
+ */
+export function listStreetOrdersRequestToWire(
+  window?: FlowWindow,
+  filter?: StreetOrderFilter,
+): WireObject {
+  const m: WireObject = {};
+  if (window?.fromNanos !== undefined) m["from_nanos"] = Number(window.fromNanos);
+  if (window?.toNanos !== undefined) m["to_nanos"] = Number(window.toNanos);
+  const put = (key: string, value?: string): void => {
+    if (value !== undefined && value.length > 0) m[key] = value;
+  };
+  put("lp_id", filter?.lpId);
+  put("family", filter?.family);
+  put("instrument", filter?.instrument);
+  put("outcome", filter?.outcome);
+  put("parent_hedge_id", filter?.parentHedgeId);
+  put("dimension", filter?.dimension);
+  if (filter?.limit !== undefined) m["limit"] = filter.limit;
+  return m;
+}
+
+/** Decode the `{ orders, breakdown, total_matching }` street-side execution reply. */
+export function listStreetOrdersResponseFromWire(o: WireObject): StreetOrdersView {
+  return {
+    orders: array(o, "orders").map(streetOrderFromWire),
+    breakdown: array(o, "breakdown").map(streetBreakdownRowFromWire),
+    totalMatching: num(o, "total_matching"),
+  };
 }
 
 // --- latency / ops analytics (ListLatencyMetrics) ---------------------------

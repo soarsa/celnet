@@ -21,24 +21,33 @@ use celnet_types::BrokenDate;
 
 use crate::lp::{InstrumentModel, LpParams, SimLp};
 use crate::quoted::QuotedLine;
-use crate::rng::{child_seed, seeded_unit, unit01};
+use crate::rng::{child_seed, seeded_unit};
+use crate::roster::{OTC_ROSTER, SimLpProfile};
 use crate::universe::TreasuryBond;
 
-/// The default LP connection name the feed advertises — the venue id a subscriber
-/// sees as the price contributor.
-pub const DEFAULT_LP_NAME: &str = "LP-SIM";
+/// The feed's own label in banners and logs. It is **not** a venue id: every
+/// contribution is attributed to a named simulated counterparty from
+/// [`crate::roster::OTC_ROSTER`], never to a numbered `LP-SIM-0N` connection.
+pub const DEFAULT_LP_NAME: &str = "OTC-SIM";
 
 /// How the `LP-SIM` feed is assembled: the LP identity, the number of decorrelated
 /// member connections, the stochastic-yield knobs, the quoting shape, and the
 /// consolidation tuning.
 #[derive(Debug, Clone)]
 pub struct LpSimConfig {
-    /// The base LP connection name (venue id). With one member the venue is exactly
-    /// this; with N > 1 the members are `"{lp_name}-01"`, `"{lp_name}-02"`, ….
+    /// The feed's label for banners and logs. **Not** a venue id — see
+    /// [`DEFAULT_LP_NAME`].
     pub lp_name: String,
-    /// Number of decorrelated LP member connections feeding the book (`≥ 1`). More
-    /// members ⇒ a richer composite (median-consensus gating needs ≥ 3 to be
-    /// decidable).
+    /// The roster of named simulated counterparties this panel is drawn from, in
+    /// panel order. Defaults to [`OTC_ROSTER`].
+    pub roster: &'static [SimLpProfile],
+    /// How many of `roster`'s counterparties participate (`≥ 1`, clamped to the
+    /// roster length by [`LpSimConfig::panel_size`]). More members ⇒ a richer
+    /// composite (median-consensus gating needs ≥ 3 to be decidable).
+    ///
+    /// It is deliberately **not** possible to exceed the roster: two members sharing
+    /// a `VenueId` collapse into one contribution inside the consolidator, so a
+    /// wrapped panel would look like N feeds and consolidate like one.
     pub members: usize,
     /// The root seed; the same `(seed, config, universe)` yields a byte-identical
     /// feed.
@@ -73,7 +82,8 @@ impl Default for LpSimConfig {
     fn default() -> Self {
         Self {
             lp_name: DEFAULT_LP_NAME.to_string(),
-            members: 4,
+            roster: OTC_ROSTER,
+            members: OTC_ROSTER.len(),
             seed: 0x1234_5678,
             settlement: BrokenDate::new(2026, 4, 16),
             reversion_per_sec: 0.02,
@@ -106,28 +116,57 @@ impl LpSimConfig {
         }
     }
 
-    /// The venue id of member `i` (`0`-based). With a single member this is exactly
-    /// [`lp_name`](Self::lp_name); otherwise it is suffixed `-01`, `-02`, … so every
-    /// contribution is attributable to a named connection.
+    /// The number of counterparties that actually participate: the requested
+    /// [`members`](Self::members) clamped to the roster (never wrapped).
+    #[must_use]
+    pub fn panel_size(&self) -> usize {
+        self.members.clamp(1, self.roster.len().max(1))
+    }
+
+    /// The roster profile of panel position `i` (`0`-based), or `None` past the end.
+    #[must_use]
+    pub fn member_profile(&self, i: usize) -> Option<&'static SimLpProfile> {
+        if i >= self.panel_size() {
+            return None;
+        }
+        crate::roster::profile_at(self.roster, i)
+    }
+
+    /// The venue id of panel position `i` — the named simulated counterparty's own
+    /// stable id (e.g. `citigroup-sim`), which is what a composite leg, an LP panel
+    /// row and a booked hedge's `lp_won` are all attributed to.
+    ///
+    /// Falls back to the feed label only for a position past the roster, which
+    /// [`panel_size`](Self::panel_size) already makes unreachable.
     #[must_use]
     pub fn member_venue(&self, i: usize) -> String {
-        if self.members <= 1 {
-            self.lp_name.clone()
-        } else {
-            format!("{}-{:02}", self.lp_name, i + 1)
-        }
+        self.member_profile(i)
+            .map_or_else(|| self.lp_name.clone(), |p| p.id.to_string())
+    }
+
+    /// Every participating counterparty's venue id, in panel order.
+    #[must_use]
+    pub fn member_venues(&self) -> Vec<String> {
+        (0..self.panel_size())
+            .map(|i| self.member_venue(i))
+            .collect()
     }
 }
 
-/// The full set of [`QuotedLine`]s the sim can price for `cfg`: every cash bond in
-/// `bonds` that models at the config's settlement, every listed Treasury futures
-/// contract anchored to that same cash curve, the swap/OIS curve points, and the
-/// listed SOFR STIR strip anchored to those same curve points.
+/// The full set of [`QuotedLine`]s the OTC sim can price for `cfg`: every cash bond
+/// in `bonds` that models at the config's settlement, the swap/OIS curve points, and
+/// the listed SOFR STIR strip anchored to those same curve points.
 ///
 /// This is the sim's **quotable** universe, and it is deliberately built from the
 /// same `celnet-refdata` sources the server seeds its **tradeable** registry from —
 /// an instrument that is tradeable but not quotable never reaches an aggregated book
 /// (see the [`crate::quoted`] module docs).
+///
+/// **Listed Treasury futures are not here.** They are quoted by the dedicated
+/// futures venue simulator (`celnet-cme-sim`) under its own `cme-sim` connection —
+/// see the crate docs. The tradeable-vs-quotable invariant above still holds across
+/// the estate, but it now holds across *two* simulators, so an aggregated book that
+/// carries futures must list `cme-sim` as a member.
 #[must_use]
 pub fn quotable_lines(cfg: &LpSimConfig, bonds: &[TreasuryBond]) -> Vec<QuotedLine> {
     let mut lines = crate::universe::bond_lines(
@@ -138,14 +177,6 @@ pub fn quotable_lines(cfg: &LpSimConfig, bonds: &[TreasuryBond]) -> Vec<QuotedLi
         cfg.reversion_per_sec,
         cfg.perturbation,
     );
-    let contracts = crate::futures::load_futures_universe(bonds, cfg.settlement);
-    lines.extend(crate::futures::futures_lines(
-        &contracts,
-        cfg.half_spread,
-        cfg.skew_step,
-        cfg.reversion_per_sec,
-        cfg.perturbation,
-    ));
     // The swap/OIS curve points. Without these no aggregated book ever carries a swap
     // line, and the venue's OIS arm has no composite to price an RFS against (see the
     // `crate::ois` module docs).
@@ -192,13 +223,12 @@ fn as_of(settlement: BrokenDate) -> celnet_refdata::CivilYmd {
 /// increments wide, on the exchange's grid.
 #[must_use]
 pub fn build_fleet(cfg: &LpSimConfig, lines: &[QuotedLine]) -> Vec<SimLp> {
-    let n = cfg.members.max(1);
-    let centre = (n as f64 - 1.0) / 2.0;
+    let n = cfg.panel_size();
     (0..n)
-        .map(|i| {
-            let venue = VenueId::new(cfg.member_venue(i));
+        .filter_map(|i| {
+            let profile = cfg.member_profile(i)?;
+            let venue = VenueId::new(profile.id);
             let lp_seed = child_seed(cfg.seed, i);
-            let skew = (i as f64 - centre) * cfg.skew_step;
 
             let books = lines
                 .iter()
@@ -221,48 +251,71 @@ pub fn build_fleet(cfg: &LpSimConfig, lines: &[QuotedLine]) -> Vec<SimLp> {
                 })
                 .collect();
 
-            let params = member_params(cfg, lp_seed, skew);
-            SimLp::new(venue, lp_seed, params, books)
+            Some(SimLp::new(
+                venue,
+                lp_seed,
+                member_params(cfg, profile),
+                books,
+            ))
         })
         .collect()
 }
 
-/// Derive one member's distinct, seeded quoting *character* from its child seed and
-/// centred panel `skew`. Each member disperses its half-spread, firm size, refresh
-/// cadence, and self-reported quality reproducibly off `lp_seed`, so the five LPs are
-/// visibly different market-makers (and the consolidated best-bid/best-offer across
-/// them is a meaningful winner rather than five identical two-ways). Feed latency is
-/// left at zero here — occasional per-round staleness/outlier faults are injected at
-/// *stream* time (see [`crate::net`]) so the built panel is always fresh and its
-/// analytic BBO is exact for the ground-truth tests.
-fn member_params(cfg: &LpSimConfig, lp_seed: u64, skew: f64) -> LpParams {
-    // Salts key four independent draws off the same member seed (any distinct set
-    // works; these are arbitrary odd constants).
-    const SALT_SPREAD: u64 = 0x0000_0000_0000_00A1;
-    const SALT_SIZE: u64 = 0x0000_0000_0000_00B3;
-    const SALT_TICK: u64 = 0x0000_0000_0000_00C7;
-    const SALT_QUALITY: u64 = 0x0000_0000_0000_00D9;
-
-    // Half-spread in [0.6, 1.4)× the base — some LPs quote tighter than others.
-    let half_spread = cfg.half_spread * (0.6 + 0.8 * unit01(lp_seed, SALT_SPREAD));
-    // Firm size in [0.5, 1.5)× the base, snapped to the nearest 100k (min 100k) so
-    // sizes read like real quantities.
-    let raw_size = cfg.size * (0.5 + unit01(lp_seed, SALT_SIZE));
-    let size = ((raw_size / 100_000.0).round() * 100_000.0).max(100_000.0);
-    // Refresh cadence in [100 ms, 600 ms) — a faster LP re-quotes its stochastic mid
-    // more often within an emission interval.
-    let tick_nanos = 100_000_000 + (unit01(lp_seed, SALT_TICK) * 500_000_000.0) as i64;
-    // Self-reported quality in [0.85, 1.0).
-    let quality = 0.85 + 0.15 * unit01(lp_seed, SALT_QUALITY);
-
+/// Project one named counterparty's [`SimLpProfile`] onto the quoting knobs the
+/// price model consumes.
+///
+/// The character is a property of the **roster**, not of a draw: who is tight, who
+/// is axed, who shows size and who is slow is fixed and reproducible across every
+/// run, which is what makes an LP panel readable to a trader. Only a narrow seeded
+/// jitter (±10% on the spread, ±15% on the size — see
+/// [`SimLpProfile::half_spread`] / [`SimLpProfile::firm_size`]) varies with the run
+/// seed, and it is far too small to reorder the roster's characters.
+///
+/// Unlike the previous numbered fleet, feed latency is **real** here: each
+/// counterparty back-dates its observation by its own archetype's response latency,
+/// so a slow principal dealer is staleness-decayed by the consolidator exactly as a
+/// slow real feed is. The latencies are sub-10 ms — far inside any book's staleness
+/// cutoff — so this changes the panel's freshness ordering without ever excluding a
+/// healthy member. Injected staleness/outlier *faults* remain a stream-time concern
+/// (see [`crate::net`]).
+fn member_params(cfg: &LpSimConfig, profile: &SimLpProfile) -> LpParams {
     LpParams {
-        half_spread,
-        skew,
-        size,
-        tick_nanos,
-        latency_nanos: 0,
-        quality,
+        half_spread: profile.half_spread(cfg.half_spread, cfg.seed),
+        skew: profile.axe(cfg.skew_step),
+        size: profile.firm_size(cfg.size, cfg.seed),
+        tick_nanos: profile.refresh_nanos(),
+        latency_nanos: profile.latency_nanos(),
+        quality: profile.quality,
     }
+}
+
+/// The [`crate::execution::DepthLadder`] a taker walks when it sends an order to
+/// panel member `i` for `line`, given that member's current top-of-book.
+///
+/// This is the bridge between what a counterparty **quotes** and what it will
+/// **trade**: the ladder's touch is exactly the streamed level the composite was
+/// built from, and everything behind it is that counterparty's own roster depth
+/// shape. A simulator therefore never fills against liquidity it never showed.
+///
+/// Returns `None` for a panel position outside the roster.
+#[must_use]
+pub fn depth_for(
+    cfg: &LpSimConfig,
+    member: usize,
+    side: crate::execution::Side,
+    touch_price: f64,
+    touch_size: f64,
+    lot_size: Option<f64>,
+) -> Option<crate::execution::DepthLadder> {
+    let profile = cfg.member_profile(member)?;
+    Some(crate::execution::DepthLadder::from_quote(
+        side,
+        touch_price,
+        touch_size,
+        profile.half_spread(cfg.half_spread, cfg.seed),
+        profile,
+        lot_size,
+    ))
 }
 
 /// One instrument's consolidated composite plus the identity a subscriber renders.

@@ -585,11 +585,60 @@ originating `Deal`, which carries the same id.
 `advisory` is `true` exactly when nothing filled. **A real venue fill is never marked
 advisory, and a miss is never marked as a fill** (guardrail 2).
 
-**Street-side attribution.** A hedge that fills on a *named* LP records a won deal and won
-notional for that LP into the shared flow log the LP league table folds, keyed on the security
-actually dealt. A composite fill is deliberately **not** attributed to a named LP — `COMPOSITE`
-is a pseudo-venue, not a street counterparty. No last-look or cover is honestly known for a
-hedge fill, so those stay absent rather than being invented.
+**Street-side execution record.** Every outbound street order this seam works — fills,
+partials, rejections, composite backstops and honest misses alike — is recorded once into the
+shared **street-order log** (`services::analytics::street_orders::StreetOrderLog`), keyed on the
+security actually dealt. Each record carries the side, the requested-vs-filled quantity, the
+reference and fill price, the signed slippage, the terminal outcome and its reason, the **ranked
+panel** of LPs that showed a firm executable price, and the `parent_hedge_id` /
+`parent_position_id` linkage — so a trader can walk from a breach, to the hedge decision, to the
+street orders it produced. `ListStreetOrders` serves that blotter plus aggregated breakdowns by
+LP, product family, instrument, tenor bucket and hour.
+
+Two things follow, and both were previously impossible:
+
+- Recording **only fills** made "we hedged and the street showed us nothing" indistinguishable
+  from "we never hedged". A composite backstop is now recorded as such (venue
+  `CompositeBackstop`, reason `no_firm_lp_price`, **no** `lp_id`) — it is a finding, not
+  missing data.
+- The execution seam now returns the **whole ranked panel** (`LpHedgeSource::rank`), not just
+  the winner, so the LPs we were ranked against but dealt away from are retained. That is what
+  makes `Missed` and `Mean cover` real numbers on the league table rather than structural zeros.
+
+The league table folds the same log: a fill on a *named* LP credits that LP a won deal + won
+notional, the rest of its panel a real miss, and the runner-up the real cover distance. A
+composite fill is deliberately **not** attributed to any named LP — `COMPOSITE` is a
+pseudo-venue, not a street counterparty. A rejection is never counted as a last-look pull.
+**What a named-LP fill means.** A hedge is **routed**, not inferred. `LpHedgeSource::rank`
+reports who is *showing* a firm price and in what order — an observation, and nothing more.
+The seam then sends each ranked member a real FIX `NewOrderSingle(D)` through
+`FixStreetRouter` (`crates/celnet-server/src/services/street_router.rs`) and resolves on that
+member's own `ExecutionReport(8)`. A blotter row reading "Filled on <LP>" therefore means that
+LP was sent an order and traded with us.
+
+- The order is a **limit at the member's own ranked level**, `TimeInForce=IOC`. Pricing it at
+  the level we ranked is what makes a decline informative; IOC is what lets a shed take the
+  depth that is there and carry the rest as an honest `residual`.
+- The panel is **walked**, best-first. A refusal on the best-priced member does not end the
+  hedge and must never quietly become a composite backstop — the order goes to the cover, and
+  **both** orders appear on the blotter because both really went out.
+- Every terminal state is real and distinct: `Filled`, `PartiallyFilled` (IOC depth or limit
+  exhausted), `Rejected` (`OrdStatus=8` — the venue would not accept it), `Cancelled`
+  (`OrdStatus=4` — it accepted and could not satisfy it), `LastLookPulled` (it declined at the
+  price it was itself showing), `Expired` (no answer inside the router's deadline).
+  `order_type`, `time_in_force` and the measured `response_latency_nanos` are the values
+  actually sent and the round trip actually timed.
+- A member the operator has given **no order endpoint** is answered `no_order_endpoint` — a
+  stated configuration fact, never a silent skip and never a fill lifted from its quote.
+
+**Where an LP's order endpoint is configured.** On the same operator-managed FIX connection the
+member is already defined by (`fix-connections.json`, Administration → FIX Connections): the
+new `order_endpoint` field is the `host:port` *we dial* to send that counterparty orders, the
+outbound counterpart of the inbound `bind_addr`. The registry re-derives the routable set after
+every edit, so adding an endpoint arms the route without a restart. Against the bundled
+simulators the mapping is `marketaccess-sim` → `:5701`, `traderweb-sim` → `:5702`,
+`citigroup-sim` → `:5703`, `jpm-sim` → `:5704` (lp-sim's `--order-port` base + panel index) and
+`cme-sim` → `:5710`.
 
 **Trace.** `HEDGE_DECIDED` is emitted for every fill (the internalise-vs-shed verdict and RAG
 band); `HEDGE_FIRED` is emitted additionally when risk actually sheds externally — the terminal

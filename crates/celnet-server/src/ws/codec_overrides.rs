@@ -158,6 +158,13 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     "ListHedgeThresholdsResponse",
     "UpdateHedgeThresholdResponse",
     "ListHedgeProvenanceResponse",
+    // The decision-journal / rule-advice reply envelopes: `correlation_id` renders as
+    // JSON `null` when absent, matching every other AuthService envelope. The nested
+    // `DecisionRecord` / `RuleAdvice` records are NOT listed — their presence-tracked
+    // scalars (`counterparty`, `symbol`, `request_id`, `position_id`, `trace_id`,
+    // `hedge_id`, `scope_counterparty`) OMIT-when-absent, like `HedgeProvenance.lp_won`.
+    "ListDecisionJournalResponse",
+    "ListRuleAdviceResponse",
     "GetHedgeConfigResponse",
     "SetHedgeConfigResponse",
     // The AuthService incoming-quote-acceptance reply envelopes (the third
@@ -204,6 +211,16 @@ const NULL_ABSENT_OPTIONAL_MESSAGES: &[&str] = &[
     // ratios as JSON `null` when their denominator is zero — the divide-by-zero guard.
     "ListLpFlowMetricsResponse",
     "LpFlowMetricsDesc",
+    // The street-side EXECUTION blotter + breakdown (§2.4): the
+    // `ListStreetOrdersResponse` envelope emits its `Option<u64>` `correlation_id` as
+    // JSON null when absent; each `StreetOrderDesc` emits every unobserved datum
+    // (`lp_id` on a composite backstop, `filled_price` / `slippage_bp` on a miss,
+    // `order_type` / `time_in_force` / `response_latency_nanos` on an in-process panel
+    // lift) as JSON null; and each `StreetBreakdownRowDesc` emits every zero-denominator
+    // ratio as JSON null. Absence must reach the screen AS absence — never a zero.
+    "ListStreetOrdersResponse",
+    "StreetOrderDesc",
+    "StreetBreakdownRowDesc",
     // The Latency/Ops analytics snapshot (Analytics pillar B): the
     // `ListLatencyMetricsResponse` envelope emits its `Option<u64>` `correlation_id`
     // as JSON `null` when absent (and its absent singular `health` message renders

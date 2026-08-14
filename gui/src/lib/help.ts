@@ -699,6 +699,49 @@ const ENTRY_LIST: readonly HelpEntry[] = [
     keywords: ["scope", "firm", "book", "bucket", "portfolio", "aggregate", "subtree", "clear risk", "flatten", "override", "policy"],
   },
   {
+    id: "concept.hedge-field-availability",
+    category: "concept",
+    title: "Why some risk-state fields are unavailable",
+    purpose: "Understand the greyed-out condition fields, and why a rule on one is refused.",
+    howItWorks:
+      "A hedge condition is only meaningful if something actually MEASURES the field it tests. Most of the vocabulary is computed on every fill — net DV01, net notional, utilisation, overflow, breached, inventory sign, internal offset available, hedge cost, and the identity fields (instrument, currency, product, book, counterparty). A few are not, because the data they would need does not exist anywhere in the platform: DESK (a booked fill carries no desk — the desk belongs to the FIX/RFQ session that priced the quote, not to the resulting position), NET VEGA and NET GAMMA (only linear-rates cells are evaluated, and they carry no volatility or convexity risk), COUNTERPARTY TOXICITY (no post-fill mark trajectory is retained, so markout cannot be derived) and INVENTORY AGE (a stored position carries no acquisition timestamp). A condition on one of those would compare against a permanent zero, so it could never fire — it would sit in your policy looking live and silently do nothing. Rather than let that happen, the field is shown greyed-out with its reason, the builder refuses to select it, and the server refuses to save a policy containing it. The fields are shown rather than hidden on purpose: an older policy may still reference one, and you need to see why it stopped being selectable.",
+    example: {
+      scenario: "A trader tries to write “counterparty toxicity > 0.6 → submit market order”.",
+      rows: [
+        { label: "In the palette", value: "the chip is dashed and greyed, and states the reason in place of its hint" },
+        { label: "In the rule editor", value: "the dropdown entry reads “Counterparty toxicity — unavailable” and cannot be picked" },
+        { label: "If a policy still holds one", value: "the field stays selected and shown, with a warning that Save will be refused" },
+        { label: "The workable form", value: "name the client directly: Counterparty contains “TOXIC” → submit market order" },
+      ],
+      takeaway: "An unavailable field is a missing measurement, not a missing feature — express the intent with a field that is measured.",
+    },
+    howToConfigure: [
+      "Read the greyed chip's reason in the risk-state field palette before reaching for it.",
+      "Replace an intent that needs toxicity or inventory age with one the platform measures — counterparty identity, utilisation, overflow, or hedge cost.",
+      "Scope by BOOK rather than DESK: the book is carried on every fill, the desk is not.",
+      "If an existing policy shows the Save-will-be-refused warning, rebind that condition to an available field and Save again.",
+    ],
+    whenToUse:
+      "Whenever a field you expected to use is greyed out, or a policy that looks correct is refused on save. The reason shown is the same one the server gives.",
+    risks:
+      "These fields are unavailable because nothing measures them — not because they are switched off. Do not read a greyed field as “enable it somewhere”; the intent has to be re-expressed against a measured field.",
+    keywords: [
+      "unavailable",
+      "greyed",
+      "disabled",
+      "field",
+      "toxicity",
+      "counterparty toxicity",
+      "inventory age",
+      "desk",
+      "net vega",
+      "net gamma",
+      "refused",
+      "validation",
+      "condition",
+    ],
+  },
+  {
     id: "concept.hedge-rule-from-pricing-group",
     category: "concept",
     title: "Create a hedging rule from a pricing group",
@@ -904,6 +947,85 @@ const ENTRY_LIST: readonly HelpEntry[] = [
     keywords: [
       "suggestion", "standing", "headline", "residual", "rounded", "over-hedged", "under-hedged",
       "approximate", "proxy", "duration", "hedge now", "dismiss", "hedge flows", "read",
+    ],
+  },
+  {
+    id: "concept.decision-audit",
+    category: "concept",
+    title: "The decision audit — why a rule fired, or did not",
+    purpose:
+      "Read the recorded evidence behind every acceptance, routing and hedge decision, including the ones that deliberately did nothing.",
+    howItWorks:
+      "Three trader-configurable graphs gate your flow: acceptance decides whether an inbound lift is taken, risk routing decides which book it lands in, and the hedge exit policy decides whether the resulting risk is warehoused or shed. Each of them used to leave a trace only when it ACTED — a booked deal, a fired hedge — which meant the most common question on the desk (\u201cwhy did nothing happen?\u201d) had no answer. The server now writes a journal row for EVERY evaluation. A row carries the exact node path walked through your own graph, the stated reason, the policy that was in force, and the risk state at that instant (net risk against the cap, the utilisation, the RAG band). Select a row and the inspector replays the walk step by step and charts the utilisation history of that book \u00b7 instrument cell against the amber and red guides, so you see the portfolio state that produced the decision. A node your graph no longer contains is flagged as such rather than re-labelled \u2014 the audit never guesses.",
+    example: {
+      scenario:
+        "A rates book sits at 97% of its DV01 cap and no hedge fires. The audit table is filtered to Engine = Hedge policy, Verdict = Did nothing.",
+      rows: [
+        { label: "Verdict", value: "WAREHOUSE (the graph resolved a warehouse hold)" },
+        { label: "Reason", value: "red \u00b7 WAREHOUSE \u2014 the policy graph resolved a warehouse hold at node 1" },
+        { label: "Path walked", value: "node 0 (breached = false?) \u2192 node 1 (Action: WAREHOUSE)" },
+        { label: "Risk at decision", value: "-97,000 of 100,000 (97%, red)" },
+        { label: "Policy in force", value: "book:rates-usd" },
+      ],
+      takeaway:
+        "The rule ran and chose to hold: node 0's condition sent the walk down the warehouse branch. The fix is that branch's condition, not the threshold.",
+    },
+    howToConfigure: [
+      "Open Risk \u2192 Audit. The table lists recorded decisions newest first; every column header sorts.",
+      "Narrow with the Engine and Verdict chips \u2014 \u201cHedge policy\u201d + \u201cDid nothing\u201d is the view for \u201cwhy did my hedge not fire\u201d.",
+      "Type in Search to match a reason, scope, counterparty or hedge id; type a book to restrict the whole query server-side.",
+      "Click a row to see the walked path and the utilisation-against-band history in the inspector.",
+      "Read the Suggested rules rail beneath: each card states what the evidence shows, cites the rows it came from, and links to the rule editor that fixes it.",
+      "Press \u201cShow the N cited rows\u201d on a card to filter the table to exactly that evidence.",
+    ],
+    whenToUse:
+      "Whenever the platform did something you did not expect \u2014 or, more often, did NOT do something you did expect. It is also the fastest way to confirm a rule change actually took effect: make the change, wait for the next fill, and read the new rows.",
+    risks:
+      "The journal is a BOUNDED, in-memory window, not a durable compliance archive. When the ring has rolled, the surface prints a prominent warning naming how many decisions have been lost \u2014 do not read a filtered-empty table as \u201cthe rule never ran\u201d without checking that banner. The walked path is resolved against the graph as it stands NOW, so a rule edited since the decision shows its nodes as stale rather than as the rule that actually ran. Suggestions are counted patterns, not predictions: they tell you what the recorded history contains, and they never fire a rule for you.",
+    keywords: [
+      "audit", "decision", "journal", "why", "did not fire", "no action", "warehouse",
+      "reason", "path", "walked", "provenance", "evidence", "suggestion", "advice",
+      "acceptance", "routing", "hedge", "band", "utilisation", "utilization", "trace",
+    ],
+  },
+  {
+    id: "concept.street-execution",
+    category: "concept",
+    title: "Street-side execution — what we sent, and what came back",
+    purpose:
+      "Read every outbound order the desk sent to the street: which LP, which product, requested against filled, the price and slippage, and the outcome with its reason.",
+    howItWorks:
+      "The LP league table grades each provider’s BEHAVIOUR — how fast it ticks, how often it wins. It carries no order economics, so it could not answer what the desk actually asks: what left the building. The server now records one row per OUTBOUND street order — every attempt, not only the fills — with the side, the requested and filled quantity, the reference and fill price, the signed slippage, the terminal outcome and its reason, the ranked panel of LPs that showed a firm price, and the hedge decision that produced it. Two consequences matter. First, an order that reached NO named LP is recorded as a COMPOSITE BACKSTOP: the street showed no firm price and the shed was filled against the internal composite mid instead. Before this, such an order was recorded nowhere, so a desk whose every hedge missed the street looked identical to a desk that never hedged. Second, the LPs we were ranked against but dealt away from are now retained, which is what makes MISSED and MEAN COVER real numbers on the league table rather than structural zeros. Group the breakdown by LP, product family, instrument, tenor bucket or hour; the aggregation is folded server-side over the whole matching window, never just the page you can see.",
+    example: {
+      scenario:
+        "A rates book breaches its DV01 cap. The hedge fires for 4,000 DV01 of USSW10 and three LPs show a firm bid.",
+      rows: [
+        { label: "Order", value: "SELL 4,000 USSW10 (ois, 10.0y) · ref px 0.030000" },
+        { label: "Panel", value: "3 LPs firm — best 0.030050, cover 0.030070" },
+        { label: "Outcome", value: "Filled @ 0.030050 · slippage +0.50 bp" },
+        { label: "League table effect", value: "winner +1 deal won; the other two +1 missed each; the cover carries the real distance" },
+        { label: "Parent hedge", value: "HDG-1 — walk back to the breach that caused it" },
+      ],
+      takeaway:
+        "If the same order had shown COMPOSITE BACKSTOP with a 0-LP panel, the reading is the opposite: the hedge fired and the street offered nothing, so no LP is credited or debited.",
+    },
+    howToConfigure: [
+      "Open Analytics → Street Liquidity. The league table is the top half; the execution panels sit beneath it.",
+      "Pick a Group by axis — Liquidity provider, Product family, Instrument, Tenor bucket or Hour (UTC).",
+      "Narrow with the LP, Product family and Outcome controls. A blank control does not constrain.",
+      "Sort any breakdown column; an absent metric always sorts last, in either direction.",
+      "Read the blotter beneath for the individual orders, newest first. Hover the Panel count to see each competing LP and its price.",
+      "Use the Parent hedge column to walk from a street order back to the hedge decision that produced it (and, from there, to the Risk → Audit row for WHY it fired).",
+    ],
+    whenToUse:
+      "Whenever the league table shows an LP at zero and you need to know whether that is a real absence of business or an absence of capture; whenever you want to know which LPs are actually filling your hedges and at what cost; and whenever a hedge fired but the risk did not fall as expected.",
+    risks:
+      "A ROW IS ONE ORDER THAT REALLY WENT OUT. A hedge is routed: a FIX NewOrderSingle is sent to the named provider and the row records that provider\u2019s own execution report, so \u201cFilled on <LP>\u201d means that LP was sent an order and traded with you. One hedge can therefore produce SEVERAL rows \u2014 a refusal on the best-priced provider is followed by an order to the cover, and both are shown, because both really happened. READ THE REASON: a venue code (FOK_UNFILLABLE, IOC_DEPTH_EXHAUSTED, NOT_MARKETABLE, NOT_A_WHOLE_LOT\u2026) is the counterparty\u2019s answer, whereas \u201cno_order_endpoint\u201d is YOUR configuration \u2014 that provider is quoting but has no order route set on its FIX connection, so nothing could be sent to it and nobody refused you. A composite backstop credits NO provider: it is the absence of a street price you could deal on, and when it follows a full set of refusals its reason reads \u201cstreet_declined\u201d rather than \u201cno_firm_lp_price\u201d. The log is a BOUNDED, in-memory rolling window of recent activity, not a durable execution archive \u2014 an empty blotter after a quiet period may mean the orders have aged out. A metric shown as \u201c\u2014\u201d is GENUINELY ABSENT and never a zero: a group that never traded has no mean slippage, and order type, time-in-force and response latency are absent exactly on the rows where no order was sent (a composite backstop, a provider with no order route). Finally, the panel records the LPs that showed a firm executable price at the moment the order was worked; an LP that was connected but not quoting that instrument on that side is correctly absent from it, not a miss.",
+    keywords: [
+      "street", "execution", "order", "blotter", "outbound", "lp", "liquidity provider",
+      "fill", "partial", "reject", "last look", "expired", "slippage", "cover", "panel",
+      "composite", "backstop", "breakdown", "tenor", "family", "win rate", "fill ratio",
+      "hedge", "parent", "missed", "competition", "venue", "latency", "time in force",
     ],
   },
 ];

@@ -22,6 +22,29 @@ import { type FieldKind, ENUM_LIKE_OPS, NUMERIC_OPS, STRING_OPS } from "./routeO
 /** The palette section a hedge field is grouped under. */
 export type HedgeFieldGroup = "Identity" | "Risk state" | "Budget" | "Flow & market";
 
+/**
+ * Whether anything in the server's production `HedgeContext` builder actually POPULATES this
+ * field — the client mirror of `celnet_hedge_routing::FieldProvider`
+ * (`crates/celnet-hedge-routing/src/field.rs`).
+ *
+ * A rule branching on an `unprovided` field can never fire, so `HedgeGraph::validate` REJECTS
+ * it server-side (`HedgeError::UnprovidedField`). Mirroring the declaration here is what lets
+ * the trader see the refusal — and its cause — while building the rule, instead of only on
+ * save. `test/hedgeFieldProviderParity.test.ts` parses the Rust match arms and fails if this
+ * mirror drifts from them, so the two cannot silently disagree.
+ */
+export type HedgeFieldProvider =
+  | {
+      readonly state: "computed";
+      /** Where the value comes from, in the server builder's own terms. */
+      readonly basis: string;
+    }
+  | {
+      readonly state: "unprovided";
+      /** Why nothing populates it — shown verbatim to the rule author, as the server does. */
+      readonly reason: string;
+    };
+
 /** One hedge risk-state field's full descriptor (the palette + editor read this). */
 export interface HedgeFieldSpec {
   /** The wire field selector. */
@@ -36,6 +59,8 @@ export interface HedgeFieldSpec {
   validOps: RouteOp[];
   /** A one-line description shown on the palette chip + editor. */
   hint: string;
+  /** Whether the server populates this field — mirrors `HedgeField::provider`. */
+  provider: HedgeFieldProvider;
 }
 
 /**
@@ -54,6 +79,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "string",
     validOps: STRING_OPS,
     hint: "Symbol of the warehoused instrument (e.g. EURUSD, US10Y).",
+    provider: { state: "computed", basis: "the fill's product-family label" },
   },
   {
     field: "ccy",
@@ -62,6 +88,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "enum",
     validOps: ENUM_LIKE_OPS,
     hint: "Currency / pair of the risk.",
+    provider: { state: "computed", basis: "the settlement currency on the fill's risk-routing attribution" },
   },
   {
     field: "product",
@@ -70,6 +97,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "enum",
     validOps: ENUM_LIKE_OPS,
     hint: "Product family — vanilla, swap, bond, forward…",
+    provider: { state: "computed", basis: "the fill's product-family label" },
   },
   {
     field: "book",
@@ -78,6 +106,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "enum",
     validOps: ENUM_LIKE_OPS,
     hint: "The risk book / portfolio holding the inventory.",
+    provider: { state: "computed", basis: "the risk book the fill routed into" },
   },
   {
     field: "desk",
@@ -86,6 +115,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "enum",
     validOps: ENUM_LIKE_OPS,
     hint: "The owning desk.",
+    provider: { state: "unprovided", reason: "a booked rates fill carries no desk — the desk belongs to the FIX/RFQ session that priced it, not to the resulting position; scope the rule by `book` instead" },
   },
   // --- Risk state ---------------------------------------------------------
   {
@@ -95,6 +125,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "numeric",
     validOps: NUMERIC_OPS,
     hint: "Signed net DV01 — the FI first-order rate RISK, in $/bp (PV per +1bp). NOT a face amount.",
+    provider: { state: "computed", basis: "the signed DV01 of the fill's book, or of the bucket subtree under a bucket-scoped policy" },
   },
   {
     field: "net_notional",
@@ -103,6 +134,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "numeric",
     validOps: NUMERIC_OPS,
     hint: "Signed net base-currency FACE notional, in $ (the delta for FX). NOT a $/bp risk.",
+    provider: { state: "computed", basis: "the signed face notional of the same scope" },
   },
   {
     field: "net_vega",
@@ -111,6 +143,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "numeric",
     validOps: NUMERIC_OPS,
     hint: "Signed net vega.",
+    provider: { state: "unprovided", reason: "only linear-rates cells are ever evaluated and they carry no volatility risk, so this field is a constant zero and any rule reading it can never fire" },
   },
   {
     field: "net_gamma",
@@ -119,6 +152,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "numeric",
     validOps: NUMERIC_OPS,
     hint: "Signed net gamma.",
+    provider: { state: "unprovided", reason: "only linear-rates cells are ever evaluated and they carry no convexity risk, so this field is a constant zero and any rule reading it can never fire" },
   },
   {
     field: "inventory_sign",
@@ -127,6 +161,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "numeric",
     validOps: NUMERIC_OPS,
     hint: "+1 long / −1 short.",
+    provider: { state: "computed", basis: "the three-way sign of the book's net risk, in the threshold's own budget metric" },
   },
   // --- Budget -------------------------------------------------------------
   {
@@ -136,6 +171,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "numeric",
     validOps: NUMERIC_OPS,
     hint: "The resolved warehouse threshold (the “100”) for this scope.",
+    provider: { state: "computed", basis: "the warehouse cap resolved for the fill's most-specific scope" },
   },
   {
     field: "utilization",
@@ -144,6 +180,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "numeric",
     validOps: NUMERIC_OPS,
     hint: "|risk| / threshold — the RAG driver (≥1 is a breach).",
+    provider: { state: "computed", basis: "|net risk| / cap, in the threshold's metric" },
   },
   {
     field: "overflow",
@@ -152,6 +189,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "numeric",
     validOps: NUMERIC_OPS,
     hint: "max(0, |risk| − band edge) — the amount to hedge.",
+    provider: { state: "computed", basis: "max(0, |net risk| − target), in the threshold's metric" },
   },
   {
     field: "breached",
@@ -160,6 +198,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "enum",
     validOps: ENUM_LIKE_OPS,
     hint: "Whether the red band fired — compare with true / false.",
+    provider: { state: "computed", basis: "the warehouse band classification, in the threshold's metric" },
   },
   // --- Flow & market ------------------------------------------------------
   {
@@ -169,6 +208,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "numeric",
     validOps: NUMERIC_OPS,
     hint: "Markout / residual toxicity of the flow that built this risk.",
+    provider: { state: "unprovided", reason: "no post-fill mark trajectory is retained, so markout cannot be derived and nothing computes a per-counterparty toxicity score" },
   },
   {
     field: "inventory_age_secs",
@@ -177,6 +217,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "numeric",
     validOps: NUMERIC_OPS,
     hint: "How long the risk has sat (aging → forced hedge).",
+    provider: { state: "unprovided", reason: "a stored rates position carries no acquisition timestamp, so how long the risk has sat cannot be derived" },
   },
   {
     field: "internal_offset_available",
@@ -185,6 +226,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "numeric",
     validOps: NUMERIC_OPS,
     hint: "Opposing internal flow the aggregator could cross now.",
+    provider: { state: "computed", basis: "the netted opposing risk held by sibling books under the same parent, within the same product family" },
   },
   {
     field: "hedge_cost_bp",
@@ -193,6 +235,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "numeric",
     validOps: NUMERIC_OPS,
     hint: "Current external hedge-cost estimate (spread + impact).",
+    provider: { state: "computed", basis: "the live LP top-of-book crossing half-spread, falling back to the desk's configured composite spread" },
   },
   // --- Identity (wire tag 18, appended after the numeric fields) -----------
   {
@@ -202,6 +245,7 @@ export const HEDGE_FIELD_REGISTRY: readonly HedgeFieldSpec[] = [
     kind: "string",
     validOps: STRING_OPS,
     hint: "Originating party-id/name of the flow that built this risk (e.g. CITADEL).",
+    provider: { state: "computed", basis: "the originating party id on the fill's risk-routing attribution" },
   },
 ];
 
@@ -227,6 +271,17 @@ export function hedgeFieldSpec(field: HedgeField): HedgeFieldSpec {
 /** The value kind of a hedge field — the single mirror of `HedgeField::kind`. */
 export function hedgeFieldKind(field: HedgeField): FieldKind {
   return hedgeFieldSpec(field).kind;
+}
+
+/**
+ * Why this field has no production source, or `null` when the server computes it — the
+ * mirror of `HedgeField::unprovided_reason`. A non-null result means a rule branching on
+ * this field will be REFUSED by `HedgeGraph::validate` on save, so the editors disable the
+ * field and the client validator raises `unprovided_field` before the trader ever gets there.
+ */
+export function hedgeFieldUnprovidedReason(field: HedgeField): string | null {
+  const p = hedgeFieldSpec(field).provider;
+  return p.state === "unprovided" ? p.reason : null;
 }
 
 /** Whether `op` is legal for `field`'s kind (mirrors `RouteOp::valid_for`). */

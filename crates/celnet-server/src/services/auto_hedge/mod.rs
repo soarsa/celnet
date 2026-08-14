@@ -23,10 +23,14 @@ pub mod executor;
 pub mod suggestion;
 pub mod wire;
 
-pub use engine::{AutoHedgeEngine, HedgeOutcome, PROVENANCE_RING_CAPACITY};
+pub use engine::{
+    AutoHedgeEngine, DecisionMeta, HedgeOutcome, PROVENANCE_RING_CAPACITY, SCOPE_NONE,
+};
 pub use executor::{
-    AdvisoryExecutor, ExecOutcome, ExternalHedgeFill, ExternalHedgeRequest, HedgeExecutor,
-    HedgeLeg, HedgeVenue, LedgerExecutor, LpFill, LpHedgeSource, NoLpSource, composite_hedge_price,
-    execute_external,
+    AdvisoryExecutor, ExecOutcome, ExternalHedgeFill, ExternalHedgeRequest, HEDGE_ORD_TYPE,
+    HEDGE_TIME_IN_FORCE, HedgeExecutor, HedgeLeg, HedgeVenue, LedgerExecutor, LpFill,
+    LpHedgeSource, NO_ROUTER_REASON, NoLpSource, NoStreetRouter, RouteAnswer, RouteOutcome,
+    RouteRecord, RoutedFill, StreetOrderIntent, StreetOrderRouter, VENUE_NO_RESPONSE_REASON,
+    composite_hedge_price, execute_external,
 };
 pub use suggestion::{StandingSuggestion, SuggestionExec, SuggestionStore};

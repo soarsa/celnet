@@ -50,7 +50,13 @@ celnet-proto.workspace = true
 tonic.workspace = true
 # The async runtime + stream combinators for the client-streaming push (the local
 # in-process mode stays synchronous; the runtime is only built in `--addr` mode).
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
+# The ORDER side of a simulated counterparty. The sims do not only publish prices:
+# they accept `NewOrderSingle(D)` and answer `ExecutionReport(8)` over the estate's
+# EXISTING FIX contract (session FSM, framing, dialect), so a fill they report is
+# the same message shape the FIX gateway already emits and the initiator already
+# parses. Points strictly downward — celnet-fix knows nothing of the simulators.
+celnet-fix.workspace = true
 futures-util.workspace = true
 # Structured logging for the network feed's connect / reconnect lifecycle.
 tracing.workspace = true

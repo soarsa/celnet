@@ -504,6 +504,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-cme-sim"
+version = "0.0.0"
+dependencies = [
+ "celnet-aggregation",
+ "celnet-bond",
+ "celnet-fix",
+ "celnet-lp-sim",
+ "celnet-proto",
+ "celnet-refdata",
+ "celnet-types",
+ "clap",
+ "futures-util",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "celnet-commodity-vanilla"
 version = "0.0.0"
 dependencies = [
@@ -721,6 +738,7 @@ version = "0.0.0"
 dependencies = [
  "celnet-aggregation",
  "celnet-bond",
+ "celnet-fix",
  "celnet-proto",
  "celnet-refdata",
  "celnet-types",
@@ -979,6 +997,7 @@ dependencies = [
  "celnet-bond",
  "celnet-calendar",
  "celnet-client",
+ "celnet-cme-sim",
  "celnet-commodity-vanilla",
  "celnet-conventions",
  "celnet-core",
@@ -995,6 +1014,7 @@ dependencies = [
  "celnet-integration",
  "celnet-limits",
  "celnet-linear",
+ "celnet-lp-sim",
  "celnet-observability",
  "celnet-plugin-api",
  "celnet-plugin-host",
