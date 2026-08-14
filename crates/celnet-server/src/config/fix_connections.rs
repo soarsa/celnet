@@ -96,6 +96,22 @@ pub struct FixConnectionDef {
     /// desk rather than failing to parse.
     #[serde(default)]
     pub desk: String,
+    /// The counterparty's **order acceptor** address (`host:port`) — where WE dial to
+    /// send this counterparty a `NewOrderSingle(D)`.
+    ///
+    /// The outbound half of the same managed relationship. `bind_addr` above is where
+    /// the counterparty reaches *us*; this is where we reach *it*, and the two are
+    /// genuinely independent addresses. It lives on this record rather than in a
+    /// parallel roster because a member's identity, its desk, its enabled flag and its
+    /// CompIDs are already here: splitting the address off would let the two drift and
+    /// would give the operator two places to look.
+    ///
+    /// `None` (or blank) means the operator has not given this member an order route.
+    /// Such a member can still quote — and still ranks on the hedge panel — but an
+    /// order to it is answered `Unroutable{no_order_endpoint}` rather than being
+    /// silently skipped or, worse, filled from its standing quote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_endpoint: Option<String>,
 }
 
 impl FixConnectionDef {
@@ -118,9 +134,28 @@ impl FixConnectionDef {
         if self.target_comp_id.trim().is_empty() {
             return Err("target_comp_id must not be empty".to_string());
         }
+        // An order endpoint the operator DID supply must be a usable address. Accepting
+        // a malformed one would defer the failure to the first hedge, where it would
+        // read as a counterparty problem instead of a typo.
+        if let Some(ep) = self.order_endpoint.as_deref().map(str::trim)
+            && !ep.is_empty()
+            && !is_dialable(ep)
+        {
+            return Err(format!("order_endpoint `{ep}` is not a valid host:port"));
+        }
         self.socket_addr()
             .map(|_| ())
             .ok_or_else(|| format!("bind_addr `{}` is not a valid host:port", self.bind_addr))
+    }
+
+    /// The counterparty's order-acceptor address, if the operator configured a usable
+    /// one. A blank entry reads as absent — a whitespace string is not an address.
+    #[must_use]
+    pub fn order_endpoint(&self) -> Option<&str> {
+        self.order_endpoint
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
     }
 
     /// The parsed bind address, or `None` if `bind_addr` is malformed.
@@ -205,6 +240,25 @@ impl FixConnectionStore {
     }
 }
 
+/// Whether `s` is a usable dial target: a non-empty host and a non-zero port.
+///
+/// Deliberately more permissive than [`FixConnectionDef::socket_addr`]: a *bind*
+/// address must resolve to a local interface, but an outbound endpoint is routinely a
+/// DNS name (`lp-panel.internal:5701`) that only resolves at connect time. Rejecting
+/// those here would force operators to hardcode IPs.
+#[must_use]
+fn is_dialable(s: &str) -> bool {
+    let Some((host, port)) = s.rsplit_once(':') else {
+        return false;
+    };
+    // An IPv6 literal must be bracketed, else `rsplit_once` would split inside it.
+    let host = host.trim();
+    if host.is_empty() || (host.contains(':') && !(host.starts_with('[') && host.ends_with(']'))) {
+        return false;
+    }
+    port.parse::<u16>().is_ok_and(|p| p > 0)
+}
+
 /// `path` with `.tmp` appended to its file name (a sibling temp for atomic save).
 fn tmp_sibling(path: &Path) -> PathBuf {
     let mut name: OsString = path.as_os_str().to_owned();
@@ -226,6 +280,59 @@ mod tests {
             target_comp_id: "CELNET-CPTY".to_string(),
             enabled: true,
             desk: "g10".to_string(),
+            order_endpoint: None,
+        }
+    }
+
+    /// The outbound order endpoint round-trips, is optional, and a blank one reads as
+    /// absent rather than as an address.
+    #[test]
+    fn the_order_endpoint_round_trips_and_a_blank_one_is_absent() {
+        let mut with = sample();
+        with.order_endpoint = Some("127.0.0.1:5704".to_string());
+        assert!(with.validate().is_ok());
+        assert_eq!(with.order_endpoint(), Some("127.0.0.1:5704"));
+
+        let json = serde_json::to_string(&with).unwrap();
+        let back: FixConnectionDef = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.order_endpoint(), Some("127.0.0.1:5704"));
+
+        let mut blank = sample();
+        blank.order_endpoint = Some("   ".to_string());
+        assert!(
+            blank.validate().is_ok(),
+            "blank means unconfigured, not bad"
+        );
+        assert_eq!(blank.order_endpoint(), None);
+
+        // A connection written before order routing existed has no key at all.
+        let legacy = r#"{"id":"c","name":"C","kind":"options","bind_addr":"127.0.0.1:9099",
+            "sender_comp_id":"CELNET","target_comp_id":"X","enabled":true,"desk":"g10"}"#;
+        let def: FixConnectionDef = serde_json::from_str(legacy).unwrap();
+        assert_eq!(def.order_endpoint(), None);
+        // …and one that never had an endpoint does not gain an explicit `null` on save.
+        assert!(
+            !serde_json::to_string(&def)
+                .unwrap()
+                .contains("order_endpoint")
+        );
+    }
+
+    /// A malformed order endpoint fails validation at the point the operator sets it,
+    /// not at the first hedge — where it would read as a counterparty problem.
+    #[test]
+    fn a_malformed_order_endpoint_is_rejected_where_it_is_typed() {
+        for bad in ["not-an-addr", "host:", "host:0", ":5701", "host:99999"] {
+            let mut d = sample();
+            d.order_endpoint = Some(bad.to_string());
+            assert!(d.validate().is_err(), "`{bad}` should not validate");
+        }
+        // A DNS name is a perfectly good OUTBOUND target even though it is not a
+        // bindable local address.
+        for good in ["lp-panel.internal:5701", "127.0.0.1:5704", "[::1]:5710"] {
+            let mut d = sample();
+            d.order_endpoint = Some(good.to_string());
+            assert!(d.validate().is_ok(), "`{good}` should validate");
         }
     }
 

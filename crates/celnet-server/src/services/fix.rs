@@ -2883,7 +2883,7 @@ fn tenor_for_years(years: f64) -> Tenor {
 /// Format a nanosecond UTC instant as a FIX `SendingTime` / `ValidUntilTime` timestamp
 /// (`YYYYMMDD-HH:MM:SS.sss`). Deterministic, allocation-light, and never on the
 /// pricing path (a message timestamp, not a priced number).
-fn utc_timestamp(nanos: i64) -> Vec<u8> {
+pub(crate) fn utc_timestamp(nanos: i64) -> Vec<u8> {
     // Convert epoch-nanos to civil date-time via `time` (a workspace dep of the
     // calendar). Fall back to the epoch on an out-of-range instant (never panics).
     let secs = nanos.div_euclid(1_000_000_000);
@@ -3645,6 +3645,11 @@ mod tests {
             side: dialect_fx::SIDE_BUY,
             qty: 1_000_000.0,
             price,
+            // Preserved verbatim: a lift of a streamed level IS a
+            // previously-quoted order, and it stated no TimeInForce(59)
+            // before this field existed. Byte-identical frame.
+            ord_type: messages::ord_type::PREVIOUSLY_QUOTED,
+            tif: None,
             transact_time: b"20260625-12:00:02.000",
         };
         let mut enc = FrameEncoder::new();
@@ -3673,6 +3678,11 @@ mod tests {
             side: dialect_fx::SIDE_BUY,
             qty: 1_000_000.0,
             price,
+            // Preserved verbatim: a lift of a streamed level IS a
+            // previously-quoted order, and it stated no TimeInForce(59)
+            // before this field existed. Byte-identical frame.
+            ord_type: messages::ord_type::PREVIOUSLY_QUOTED,
+            tif: None,
             transact_time: b"20260625-12:00:02.000",
         };
         let mut enc = FrameEncoder::new();
@@ -3848,6 +3858,11 @@ mod tests {
             side: dialect_fx::SIDE_SELL,
             qty: 1_000_000.0,
             price,
+            // Preserved verbatim: a lift of a streamed level IS a
+            // previously-quoted order, and it stated no TimeInForce(59)
+            // before this field existed. Byte-identical frame.
+            ord_type: messages::ord_type::PREVIOUSLY_QUOTED,
+            tif: None,
             transact_time: b"20260625-12:00:02.000",
         };
         let mut enc = FrameEncoder::new();

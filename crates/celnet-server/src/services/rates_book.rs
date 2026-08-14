@@ -217,6 +217,39 @@ impl RatesHedgePolicy {
         // 3. the firm default.
         self.graph.as_ref().map(|g| (g, None))
     }
+
+    /// The human-readable label of the policy scope [`Self::select_scoped_graph`] would
+    /// resolve for `book` — the exact same precedence, reported rather than applied.
+    ///
+    /// This is what a decision-journal row records under `scope`, so a trader reading the
+    /// audit table sees WHICH of their policies governed a decision (and, crucially, when
+    /// none of them did: [`SCOPE_NONE`](crate::services::auto_hedge::SCOPE_NONE)).
+    fn scope_label(&self, book: &str) -> String {
+        if self
+            .scoped_graphs
+            .iter()
+            .any(|s| s.scope == HedgePolicyScope::Book(book.to_owned()))
+        {
+            return format!("book:{book}");
+        }
+        let mut chain = vec![book.to_owned()];
+        if let Some(anc) = self.book_ancestors.get(book) {
+            chain.extend(anc.iter().cloned());
+        }
+        for id in chain {
+            if self
+                .scoped_graphs
+                .iter()
+                .any(|s| s.scope == HedgePolicyScope::Bucket(id.clone()))
+            {
+                return format!("bucket:{id}");
+            }
+        }
+        if self.graph.is_some() {
+            return "firm".to_owned();
+        }
+        crate::services::auto_hedge::SCOPE_NONE.to_owned()
+    }
 }
 
 /// The shared in-memory linear-rates position book. Cheap to share behind an
@@ -306,12 +339,24 @@ pub struct RatesPositionStore {
     /// `LpPanelThenComposite` shed reaches the composite backstop and a pure `LpPanel` shed
     /// records an honest miss — never a fabricated LP fill (guardrail 2). Off the pinned core.
     lp_hedge_source: OnceLock<Arc<dyn crate::services::auto_hedge::LpHedgeSource>>,
-    /// The shared **hedge-execution → street-side LP flow log** (Analytics §2.4). A hedge that
-    /// FILLED on a named LP records a WON deal + won notional there, off-core, so the Street-side
-    /// LP league table attributes the fill to the executing LP (never to the COMPOSITE
-    /// pseudo-venue). The SAME `Arc` the analytics rollup folds as an `LpFlowSource`; `None` (the
-    /// unit-test default) means the attribution call is a no-op.
-    hedge_flow: OnceLock<Arc<crate::services::analytics::hedge_flow::HedgeFillFlowLog>>,
+    /// The live **street-order router** — the seam that sends a real `NewOrderSingle(D)`
+    /// to a ranked panel member and waits for its `ExecutionReport(8)`. Deliberately
+    /// separate from `lp_hedge_source`: that one reports who is *showing* a price, this
+    /// one is the only thing that can obtain a counterparty's *agreement*. A store never
+    /// given one falls back to
+    /// [`NoStreetRouter`](crate::services::auto_hedge::NoStreetRouter), which routes
+    /// nothing and says so — so a firm quote can never become a fill by default.
+    /// Off the pinned core.
+    street_router: OnceLock<Arc<dyn crate::services::auto_hedge::StreetOrderRouter>>,
+    /// The shared **street-side execution log** (Analytics §2.4). EVERY outbound street
+    /// order this seam works is recorded there off-core — fills, partials, rejections,
+    /// composite backstops and honest misses alike — carrying the side, the requested-vs-filled
+    /// quantity, the price and slippage, the outcome and its reason, the ranked panel it
+    /// competed against, and the parent hedge / position linkage. The Street-side LP league
+    /// table folds the SAME `Arc` as an `LpFlowSource` (crediting only real named-LP fills),
+    /// and `ListStreetOrders` serves the blotter + breakdowns off it. `None` (the unit-test
+    /// default) means the recording call is a no-op.
+    street_orders: OnceLock<Arc<crate::services::analytics::street_orders::StreetOrderLog>>,
     /// The **standing hedge suggestions** raised under a `Suggest`-mode scope (§6.5) — the
     /// manual half of suggest-then-exit. A breach in such a scope computes the whole hedge
     /// (band, action, vehicle, DV01 ratio, whole-lot rounding) and publishes it here
@@ -378,7 +423,7 @@ impl std::fmt::Debug for RatesPositionStore {
                     .unwrap_or(false),
             )
             .field("has_lp_hedge_source", &self.lp_hedge_source.get().is_some())
-            .field("has_hedge_flow_log", &self.hedge_flow.get().is_some())
+            .field("has_street_order_log", &self.street_orders.get().is_some())
             .finish_non_exhaustive()
     }
 }
@@ -408,7 +453,8 @@ impl RatesPositionStore {
             telemetry: OnceLock::new(),
             trace: OnceLock::new(),
             lp_hedge_source: OnceLock::new(),
-            hedge_flow: OnceLock::new(),
+            street_router: OnceLock::new(),
+            street_orders: OnceLock::new(),
             suggestions: Arc::new(crate::services::auto_hedge::SuggestionStore::new()),
         }
     }
@@ -440,15 +486,43 @@ impl RatesPositionStore {
         let _ = self.lp_hedge_source.set(src);
     }
 
-    /// Attach the shared **hedge-execution → street-side LP flow log** (Analytics §2.4) so a
-    /// hedge that fills on a named LP is attributed to that LP in the LP league table. The SAME
-    /// `Arc` the analytics rollup folds as an `LpFlowSource`; wired once at boot, idempotent-once.
-    /// A store never given one simply records no hedge-LP attribution (byte-identical otherwise).
-    pub fn set_hedge_flow_log(
+    /// Attach the live **street-order router** — the outbound FIX seam that actually
+    /// sends a hedge to a named counterparty and waits for its answer. Wired once at
+    /// boot; idempotent-once. A store never given one uses
+    /// [`NoStreetRouter`](crate::services::auto_hedge::NoStreetRouter): the panel is
+    /// still ranked (a real observation) but nothing can fill on it, so
+    /// `LpPanelThenComposite` backstops and pure `LpPanel` records an honest miss.
+    pub fn set_street_router(
         &self,
-        log: Arc<crate::services::analytics::hedge_flow::HedgeFillFlowLog>,
+        router: Arc<dyn crate::services::auto_hedge::StreetOrderRouter>,
     ) {
-        let _ = self.hedge_flow.set(log);
+        let _ = self.street_router.set(router);
+    }
+
+    /// The installed street-order router, or the honest no-op.
+    fn street_router(&self) -> &dyn crate::services::auto_hedge::StreetOrderRouter {
+        self.street_router
+            .get()
+            .map_or(&crate::services::auto_hedge::NoStreetRouter, |r| r.as_ref())
+    }
+
+    /// Attach the shared **street-side execution log** (Analytics §2.4) so every outbound
+    /// street order this store works is captured — and a fill on a named LP is attributed to
+    /// that LP in the league table. The SAME `Arc` the analytics rollup folds as an
+    /// `LpFlowSource` and the `ListStreetOrders` RPC reads; wired once at boot,
+    /// idempotent-once. A store never given one records nothing (byte-identical otherwise).
+    pub fn set_street_order_log(
+        &self,
+        log: Arc<crate::services::analytics::street_orders::StreetOrderLog>,
+    ) {
+        let _ = self.street_orders.set(log);
+    }
+
+    /// The attached street-side execution log, if any (used by the recording seams).
+    fn street_order_log(
+        &self,
+    ) -> Option<&Arc<crate::services::analytics::street_orders::StreetOrderLog>> {
+        self.street_orders.get()
     }
 
     /// Record an async-edge stage latency (`nanos`) under `kind` into the shared telemetry hub,
@@ -1398,9 +1472,14 @@ impl RatesPositionStore {
             .config
             .resolve_hedging_model("", scope_book, &instrument);
         let derived_graph;
+        // Whether a bound hedging MODEL supplied the graph rather than the trader's own
+        // authored rules — recorded on the journal row so the walked node ids are read
+        // against the right source.
+        let mut derived_model_graph = false;
         let graph = match model_binding.and_then(|b| b.model.derived_graph()) {
             Some(g) => {
                 derived_graph = g;
+                derived_model_graph = true;
                 &derived_graph
             }
             // `Custom`, or nothing bound at any scope ⇒ the authored graph governs, i.e.
@@ -1509,7 +1588,7 @@ impl RatesPositionStore {
             // product-scoped vehicle row) unable to match anything.
             product: instrument.clone(),
             instrument_id: instrument,
-            execution_instrument_id: execution_instrument,
+            execution_instrument_id: execution_instrument.clone(),
             ccy: attribution.ccy.clone(),
             book: book.to_owned(),
             // The originating counterparty of THIS fill — the same party id the Deal /
@@ -1546,13 +1625,33 @@ impl RatesPositionStore {
         // stays telemetry-free; recorded off the async booking tier via the store's hub
         // (guardrail 11), a no-op when no hub is installed.
         let hedge_t0 = std::time::Instant::now();
-        let outcome = policy.engine.evaluate(
+        // The audit identity of this evaluation: WHICH policy governed (or that none was
+        // authored), and the keys that join the journal row back to this fill, its lift
+        // trace and its counterparty. A model-derived graph says so, so a trader is never
+        // shown a walked path they cannot find in their own authored rules.
+        let mut scope = policy.scope_label(scope_book);
+        if derived_model_graph {
+            scope = format!("{scope} (model-derived)");
+        }
+        let meta = crate::services::auto_hedge::DecisionMeta {
+            scope,
+            trace_id,
+            position_id: Some(fill.position_id),
+            // A linear-rates position carries no counterparty field (it is an
+            // entity/book/instrument cell), so a hedge decision row honestly names none —
+            // the counterparty lives on the ACCEPTANCE row of the same lift, which the
+            // shared `trace_id` joins this row to.
+            counterparty: None,
+            symbol: execution_instrument.clone(),
+        };
+        let outcome = policy.engine.evaluate_with_meta(
             graph,
             &thr_def,
             &policy.config,
             &ctx,
             &policy.known_lps,
             now,
+            &meta,
         );
         self.record_latency(
             celnet_observability::OpKind::HedgeFire,
@@ -1891,11 +1990,15 @@ impl RatesPositionStore {
             // price. When no panel is wired the honest [`NoLpSource`] never fills, so
             // `LpPanelThenComposite` reaches the composite backstop and pure `LpPanel` records an
             // honest miss (never a fabricated fill, guardrail 2).
+            let router = self.street_router();
             let exec = match self.lp_hedge_source.get() {
-                Some(src) => crate::services::auto_hedge::execute_external(&req, src.as_ref()),
+                Some(src) => {
+                    crate::services::auto_hedge::execute_external(&req, src.as_ref(), router)
+                }
                 None => crate::services::auto_hedge::execute_external(
                     &req,
                     &crate::services::auto_hedge::NoLpSource,
+                    router,
                 ),
             };
             // Book the offsetting leg into the same book so the warehoused net reduces by the
@@ -1923,19 +2026,29 @@ impl RatesPositionStore {
                      the book did not reduce; risk and blotter now diverge",
                 );
             }
-            // Street-side LP attribution (Analytics §2.4): a hedge that FILLED on a NAMED LP
-            // records a WON deal + won notional for that LP into the shared flow log the LP
-            // league table folds, off-core. A composite-venue fill is deliberately NOT attributed
-            // to a named LP (COMPOSITE is a pseudo-venue, not a street LP); no last-look / cover
-            // is honestly known for a hedge fill, so those stay absent (guardrail 2).
-            if exec.venue == Some(crate::services::auto_hedge::HedgeVenue::LpPanel)
-                && let Some(lp) = exec.lp_won.as_deref()
-                && let Some(log) = self.hedge_flow.get()
-            {
-                // Keyed on the SECURITY actually dealt when the cell resolved one (that is
-                // what the LP quoted), falling back to the family label otherwise.
-                log.record_fill(lp, execution_instrument.clone(), exec.filled, now);
-            }
+            // Street-side execution capture (Analytics §2.4): EVERY attempt is recorded —
+            // the named-LP fill, the composite backstop, and the honest miss — carrying the
+            // ranked panel it competed against so the league table's "missed" and "cover"
+            // are real rather than structurally zero. Keyed on the SECURITY actually dealt
+            // when the cell resolved one (that is what the LP quoted), falling back to the
+            // family label otherwise. Off-core.
+            record_street_order(
+                self.street_order_log(),
+                &exec,
+                policy.config.execution,
+                &execution_instrument,
+                &ctx.product,
+                hedge_maturity_years(fill),
+                book_risk,
+                effective_external,
+                outcome
+                    .provenance
+                    .as_ref()
+                    .map(|p| p.hedge_id.clone())
+                    .filter(|id| !id.is_empty()),
+                fill.position_id,
+                now,
+            );
             log_hedge_execution(
                 book,
                 &ctx.instrument_id,
@@ -2189,11 +2302,13 @@ impl RatesPositionStore {
             mode: policy.config.execution,
             composite_spread_bp: policy.config.composite_spread_bp,
         };
+        let router = self.street_router();
         let exec = match self.lp_hedge_source.get() {
-            Some(src) => crate::services::auto_hedge::execute_external(&req, src.as_ref()),
+            Some(src) => crate::services::auto_hedge::execute_external(&req, src.as_ref(), router),
             None => crate::services::auto_hedge::execute_external(
                 &req,
                 &crate::services::auto_hedge::NoLpSource,
+                router,
             ),
         };
         let now = std::time::SystemTime::now()
@@ -2218,12 +2333,6 @@ impl RatesPositionStore {
                 "fired hedge suggestion FILLED externally but its offsetting leg was REJECTED — \
                  the book did not reduce; risk and blotter now diverge",
             );
-        }
-        if exec.venue == Some(crate::services::auto_hedge::HedgeVenue::LpPanel)
-            && let Some(lp) = exec.lp_won.as_deref()
-            && let Some(log) = self.hedge_flow.get()
-        {
-            log.record_fill(lp, e.execution_instrument.clone(), exec.filled, now);
         }
         log_hedge_execution(
             &e.book,
@@ -2261,6 +2370,24 @@ impl RatesPositionStore {
                 .as_ref()
                 .map(crate::services::auto_hedge::wire::vehicle_plan_to_wire),
         });
+        // Street-side execution capture (Analytics §2.4) — the fired-suggestion path records
+        // exactly what the automatic path does, so a manually-fired hedge is as visible on the
+        // street-side blotter as an automatic one. Recorded AFTER the provenance is minted so
+        // the order carries the real `hedge_id`: that linkage is what lets a trader walk from a
+        // breach, to the hedge decision, to the street orders it produced.
+        record_street_order(
+            self.street_order_log(),
+            &exec,
+            policy.config.execution,
+            &e.execution_instrument,
+            &e.instrument,
+            hedge_maturity_years(&e.fill),
+            e.net_risk,
+            e.size,
+            Some(prov.hedge_id.clone()).filter(|id| !id.is_empty()),
+            e.fill.position_id,
+            now,
+        );
         Ok(Some(prov))
     }
 
@@ -2656,6 +2783,200 @@ fn hedge_maturity_years(fill: &RatesPosition) -> Option<f64> {
             (days > 0).then(|| days as f64 / 365.0)
         }
     }
+}
+
+/// Record the outbound **street order(s)** one hedge attempt produced, into the shared
+/// street-side execution log.
+///
+/// Called at every place a hedge really reaches a venue — the automatic shed and the
+/// fired suggestion — so the log holds EVERY attempt, not only the ones that filled.
+///
+/// # One row per order that actually left the building
+///
+/// A hedge that routed emits **one row per routed order**, in the order they were sent:
+/// a refusal on the best-priced member followed by a fill on the cover is two rows,
+/// because two `NewOrderSingle`s really went out and two counterparties really answered.
+/// Collapsing them into one would erase the refusal, which is the single most useful
+/// fact about that counterparty. If the panel then declined unanimously and the shed
+/// backstopped, the backstop is an ADDITIONAL row (venue `CompositeBackstop`, **no**
+/// `lp_id`) — the street orders happened and so did the backstop.
+///
+/// A hedge that routed nothing (a composite-only desk, or an empty panel) emits the
+/// single row it always did: recording only fills is what made the street-side league
+/// table indistinguishable between "we never hedged" and "we hedged and the street
+/// never showed us a price".
+///
+/// # Every field is an observation, never an inference (guardrail 2)
+///
+/// `filled_price` / `slippage_bp` are absent unless something filled. `order_type` /
+/// `time_in_force` are the FIX values **actually sent**, so they are present exactly on
+/// the rows that carry a routed order and absent on a composite backstop, which sends
+/// none. `response_latency_nanos` is the measured send→`ExecutionReport` round trip and
+/// is absent only where there was no round trip to measure (an unroutable member, a
+/// backstop).
+#[allow(clippy::too_many_arguments)]
+fn record_street_order(
+    log: Option<&Arc<crate::services::analytics::street_orders::StreetOrderLog>>,
+    exec: &crate::services::auto_hedge::ExternalHedgeFill,
+    mode: crate::config::hedge_policy::HedgeExecutionMode,
+    instrument: &str,
+    family: &str,
+    tenor_years: Option<f64>,
+    net_risk: f64,
+    requested: f64,
+    parent_hedge_id: Option<String>,
+    parent_position_id: u64,
+    ts_nanos: i64,
+) {
+    use crate::services::auto_hedge::HedgeVenue;
+    use celnet_analytics::{StreetCompetitor, StreetOrder, StreetOutcome, StreetSide, StreetVenue};
+
+    let Some(log) = log else { return };
+    if requested <= 0.0 || mode.is_advisory() {
+        // Nothing went out: either nothing was asked for, or the desk is in the
+        // shadow-run posture and this seam trades nothing at all. Recording a street
+        // order for either would manufacture activity that never happened, and would
+        // make an advisory desk indistinguishable from one whose orders all missed.
+        return;
+    }
+
+    let family = family.to_ascii_lowercase();
+    let side = StreetSide::shedding(net_risk);
+    // The competition each routed order was ranked against. `exec.panel` holds it
+    // whenever the fill itself competed on the street; a composite backstop deliberately
+    // carries none (it preferred nothing over the street — there was nothing it could
+    // deal on), so for those rows the panel is reconstructed from the members we
+    // actually addressed, which under a unanimous decline IS the whole ranking.
+    let competitors: Vec<StreetCompetitor> = if exec.panel.is_empty() {
+        exec.attempts
+            .iter()
+            .map(|a| StreetCompetitor {
+                lp_id: a.lp_id.clone(),
+                price: a.quoted_price,
+            })
+            .collect()
+    } else {
+        exec.panel
+            .iter()
+            .map(|f| StreetCompetitor {
+                lp_id: f.lp_id.clone(),
+                price: f.price,
+            })
+            .collect()
+    };
+
+    // ---- the routed orders -------------------------------------------------------
+    for attempt in &exec.attempts {
+        let filled = attempt.outcome.is_fill();
+        log.record(StreetOrder {
+            lp_id: Some(attempt.lp_id.clone()),
+            // A named venue is claimed only where something traded. An order that was
+            // refused reached a counterparty but executed nowhere, and the league-table
+            // fold reads that as "showed a price, did not trade" rather than a win.
+            venue: if filled {
+                StreetVenue::NamedLp
+            } else {
+                StreetVenue::None
+            },
+            family: family.clone(),
+            tenor_years,
+            filled_qty: attempt.filled,
+            filled_price: filled.then_some(attempt.price).flatten(),
+            // Only the attempt that actually traded has a realised slippage, and it is
+            // the one the fill's economics were computed from.
+            slippage_bp: filled.then_some(exec.slippage_bp),
+            outcome: attempt.outcome.street_outcome(),
+            reason: attempt.reason.clone(),
+            competitors: competitors.clone(),
+            parent_hedge_id: parent_hedge_id.clone(),
+            parent_position_id: Some(parent_position_id),
+            order_type: Some((attempt.order_type as char).to_string()),
+            time_in_force: Some((attempt.time_in_force as char).to_string()),
+            response_latency_nanos: attempt.response_latency_nanos,
+            ..StreetOrder::new(
+                log.next_order_id(),
+                ts_nanos,
+                instrument,
+                side,
+                requested,
+                exec.mid_at_fire,
+            )
+        });
+    }
+
+    // ---- the venue of record for this shed --------------------------------------
+    // An LP-panel fill is fully described by its routed order above; anything else
+    // needs its own row.
+    if exec.venue == Some(HedgeVenue::LpPanel) {
+        return;
+    }
+    // A non-zero residual means the venue filled less than we asked for.
+    let fill_outcome = if exec.residual > 0.0 {
+        StreetOutcome::PartiallyFilled
+    } else {
+        StreetOutcome::Filled
+    };
+    let (venue, outcome, reason) = match exec.venue {
+        Some(HedgeVenue::Composite) => (
+            StreetVenue::CompositeBackstop,
+            fill_outcome,
+            // WHY it landed on the composite differs by mode, and conflating the two
+            // would misreport a configuration as a liquidity failure: under a
+            // composite-only mode the desk chose that venue, whereas under an
+            // LP-first mode reaching it means the street would not deal.
+            Some(
+                if !mode.tries_lp_panel() {
+                    "composite_venue_configured"
+                } else if exec.attempts.is_empty() {
+                    "no_firm_lp_price"
+                } else {
+                    // Every member we asked declined. That is a materially different
+                    // fact from an empty street, and the rows above name who declined.
+                    "street_declined"
+                }
+                .to_owned(),
+            ),
+        ),
+        // Nothing filled anywhere. When orders went out this is already fully recorded
+        // by the rows above, so the summary row would double-count the miss.
+        Some(HedgeVenue::LpPanel) | None if !exec.attempts.is_empty() => return,
+        _ => (
+            StreetVenue::None,
+            StreetOutcome::NoLiquidity,
+            Some("no_firm_lp_price".to_owned()),
+        ),
+    };
+
+    log.record(StreetOrder {
+        // A composite fill is a synthetic mid, NOT a counterparty: it never carries an
+        // LP id, so nothing downstream can attribute it to one.
+        lp_id: None,
+        venue,
+        family,
+        tenor_years,
+        filled_qty: exec.filled,
+        filled_price: outcome.is_fill().then_some(exec.hedge_price),
+        slippage_bp: outcome.is_fill().then_some(exec.slippage_bp),
+        outcome,
+        reason,
+        // A backstop competed against nothing it could deal on, and a no-liquidity miss
+        // saw nobody at all. Either way this row credits no counterparty.
+        competitors: Vec::new(),
+        parent_hedge_id,
+        parent_position_id: Some(parent_position_id),
+        // No order was sent for this row, so it carries no typed order and no round trip.
+        order_type: None,
+        time_in_force: None,
+        response_latency_nanos: None,
+        ..StreetOrder::new(
+            log.next_order_id(),
+            ts_nanos,
+            instrument,
+            side,
+            requested,
+            exec.mid_at_fire,
+        )
+    });
 }
 
 /// Resolve the leaf's [`HedgeVehicle`] onto a concrete registry row (which names the hedge
@@ -4911,30 +5232,52 @@ pub(crate) mod tests {
         offer: f64,
     }
     impl crate::services::auto_hedge::LpHedgeSource for StubLp {
-        fn best_fill(
+        fn rank(
             &self,
             _instrument: &str,
             net_risk: f64,
             _size: f64,
-        ) -> Option<crate::services::auto_hedge::LpFill> {
+        ) -> Vec<crate::services::auto_hedge::LpFill> {
             let price = if net_risk > 0.0 { self.bid } else { self.offer };
-            Some(crate::services::auto_hedge::LpFill {
+            vec![crate::services::auto_hedge::LpFill {
                 lp_id: self.lp.to_owned(),
                 price,
-            })
+            }]
         }
     }
 
     /// A stub LP source that never has a firm price (an honest miss) — for the composite-fallback path.
     struct NoFillLp;
     impl crate::services::auto_hedge::LpHedgeSource for NoFillLp {
-        fn best_fill(
+        fn rank(
             &self,
             _instrument: &str,
             _net_risk: f64,
             _size: f64,
-        ) -> Option<crate::services::auto_hedge::LpFill> {
-            None
+        ) -> Vec<crate::services::auto_hedge::LpFill> {
+            Vec::new()
+        }
+    }
+
+    /// A router standing in for a counterparty that honours the price it is showing —
+    /// so these booking-layer tests can assert what the BOOK does with a fill without
+    /// re-testing the FIX transport. That the transport genuinely produces such answers
+    /// (and the refusals, partials and timeouts it also produces) is proven against the
+    /// real simulators over real sockets in `tests/street_routing_e2e.rs`.
+    struct TradesAtQuote;
+    impl crate::services::auto_hedge::StreetOrderRouter for TradesAtQuote {
+        fn route(
+            &self,
+            intent: &crate::services::auto_hedge::StreetOrderIntent<'_>,
+        ) -> crate::services::auto_hedge::RouteAnswer {
+            crate::services::auto_hedge::RouteAnswer::Traded(
+                crate::services::auto_hedge::RoutedFill {
+                    filled: intent.quantity,
+                    price: intent.limit_price,
+                    reason: None,
+                    latency_nanos: 640_000,
+                },
+            )
         }
     }
 
@@ -5495,6 +5838,9 @@ pub(crate) mod tests {
             bid: 0.0404,
             offer: 0.0406,
         }));
+        // …and a router that reaches it. A firm quote alone can no longer fill: the
+        // counterparty has to agree, which is the whole point of the routing seam.
+        store.set_street_router(Arc::new(TradesAtQuote));
         // +5bp edge (within tolerance) so the overflow-only shed path (not the below-edge path) is
         // exercised — the case where `evaluate` DID ring a decision record.
         let booked = store
@@ -5542,6 +5888,9 @@ pub(crate) mod tests {
             bid: 0.0404,
             offer: 0.0406,
         }));
+        // …and a router that reaches it. A firm quote alone can no longer fill: the
+        // counterparty has to agree, which is the whole point of the routing seam.
+        store.set_street_router(Arc::new(TradesAtQuote));
         // Deal at mid ⇒ zero edge ⇒ below the floor ⇒ the whole fill backs to back externally.
         let booked = store
             .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
@@ -5612,6 +5961,9 @@ pub(crate) mod tests {
             bid: 0.0404,
             offer: 0.0406,
         }));
+        // …and a router that reaches it. A firm quote alone can no longer fill: the
+        // counterparty has to agree, which is the whole point of the routing seam.
+        store.set_street_router(Arc::new(TradesAtQuote));
         let booked = store
             .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
             .expect("books");
@@ -5668,8 +6020,8 @@ pub(crate) mod tests {
     /// flow rollup (a WON deal + won notional), so the LP league table shows the win.
     #[tokio::test]
     async fn hedge_fill_on_named_lp_is_attributed_in_the_lp_flow_rollup() {
-        use crate::services::analytics::hedge_flow::HedgeFillFlowLog;
         use crate::services::analytics::lp::{LpFlowSource, fold};
+        use crate::services::analytics::street_orders::{StreetOrderFilter, StreetOrderLog};
         let store = RatesPositionStore::new();
         store.set_routing(Some(single_book_graph("wh")));
         store.set_hedge_policy(Some(external_hedge_policy("wh", 100_000.0, 0.5)));
@@ -5678,11 +6030,52 @@ pub(crate) mod tests {
             bid: 0.0404,
             offer: 0.0406,
         }));
-        let log = Arc::new(HedgeFillFlowLog::new());
-        store.set_hedge_flow_log(Arc::clone(&log));
+        // …and a router that reaches it. A firm quote alone can no longer fill: the
+        // counterparty has to agree, which is the whole point of the routing seam.
+        store.set_street_router(Arc::new(TradesAtQuote));
+        let log = Arc::new(StreetOrderLog::new());
+        store.set_street_order_log(Arc::clone(&log));
         store
             .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
             .expect("books");
+
+        // The ORDER itself is captured — side, requested-vs-filled, price, outcome — not
+        // merely the fact that some LP filled something.
+        let orders = log.orders(None, None, &StreetOrderFilter::default(), 10);
+        assert_eq!(orders.len(), 1, "exactly one outbound street order");
+        let o = &orders[0];
+        assert_eq!(o.lp_id.as_deref(), Some("LP-SIM-01"));
+        assert_eq!(
+            o.reason, None,
+            "a clean complete fill on a routed order needs no qualifier — and must NOT \
+             carry a quote-derived-lift tag, which would understate what happened"
+        );
+        assert_eq!(o.venue, celnet_analytics::StreetVenue::NamedLp);
+        assert_eq!(o.outcome, celnet_analytics::StreetOutcome::Filled);
+        assert!(o.requested_qty > 0.0 && o.filled_qty > 0.0);
+        assert!(o.filled_price.is_some(), "a fill carries a realised price");
+        assert!(o.slippage_bp.is_some());
+        assert!(
+            o.parent_position_id.is_some(),
+            "the street order links back to the client fill that produced it"
+        );
+        // The typed order and its measured round trip are REAL now: a `NewOrderSingle`
+        // carrying these exact tags was sent, and the answer was timed.
+        assert_eq!(
+            o.order_type.as_deref(),
+            Some("2"),
+            "the FIX OrdType(40) actually sent — limit, at the LP's own level"
+        );
+        assert_eq!(
+            o.time_in_force.as_deref(),
+            Some("3"),
+            "the FIX TimeInForce(59) actually sent — immediate-or-cancel"
+        );
+        assert_eq!(
+            o.response_latency_nanos,
+            Some(640_000),
+            "the venue round trip the router measured"
+        );
 
         let recs = log.lp_flow_records(None, None).await;
         let won = recs
@@ -5705,20 +6098,35 @@ pub(crate) mod tests {
     /// a pseudo-venue) — the flow log stays empty, so no fabricated LP win.
     #[tokio::test]
     async fn composite_hedge_fill_is_not_attributed_to_a_named_lp() {
-        use crate::services::analytics::hedge_flow::HedgeFillFlowLog;
         use crate::services::analytics::lp::LpFlowSource;
+        use crate::services::analytics::street_orders::{StreetOrderFilter, StreetOrderLog};
         let store = RatesPositionStore::new();
         store.set_routing(Some(single_book_graph("wh")));
         store.set_hedge_policy(Some(external_hedge_policy("wh", 100_000.0, 0.5)));
         // No LP source ⇒ the default LP-then-composite shed fills on the composite venue.
-        let log = Arc::new(HedgeFillFlowLog::new());
-        store.set_hedge_flow_log(Arc::clone(&log));
+        let log = Arc::new(StreetOrderLog::new());
+        store.set_street_order_log(Arc::clone(&log));
         store
             .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
             .expect("books");
         assert!(
             log.lp_flow_records(None, None).await.is_empty(),
             "a COMPOSITE fill is not a street-LP win"
+        );
+        // …but the ORDER is still recorded, explicitly labelled as a backstop with the
+        // reason it reached one. That is the whole point: "we hedged and the street
+        // showed us nothing" must be distinguishable from "we never hedged".
+        let orders = log.orders(None, None, &StreetOrderFilter::default(), 10);
+        assert_eq!(orders.len(), 1);
+        assert_eq!(
+            orders[0].venue,
+            celnet_analytics::StreetVenue::CompositeBackstop
+        );
+        assert_eq!(orders[0].lp_id, None, "a backstop names no LP");
+        assert_eq!(orders[0].reason.as_deref(), Some("no_firm_lp_price"));
+        assert!(
+            orders[0].competitors.is_empty(),
+            "a backstop is the ABSENCE of street prices"
         );
     }
 

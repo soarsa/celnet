@@ -1,7 +1,7 @@
 /**
  * AggregationPanel — the FI Aggregated Book admin surface (ADR-0022 tab B). The
  * admin defines composite books that consolidate N inbound liquidity members
- * (FIX acceptors + LP-feed members such as `LP-SIM-01`) into ONE best bid/offer
+ * (FIX acceptors + LP-feed members such as `citigroup-sim`) into ONE best bid/offer
  * per instrument. A two-column workspace: the roster of existing books (left) and
  * the definition editor (right — create, or edit a selected book). Mutations go
  * through the parent's `run` wrapper (which surfaces failures) and refetch on
@@ -31,12 +31,23 @@ import styles from "./AggregationPanel.module.css";
 
 import { NumberField } from "../components/NumberField";
 
-/** The LP-SIM fleet members the bundled sim streams (ADR-0022 D3 / celnet-lp-sim). */
+/**
+ * The connection ids the bundled simulators stream under (ADR-0022 D3).
+ *
+ * The first four are the NAMED over-the-counter counterparty roster
+ * (`celnet_lp_sim::roster::OTC_ROSTER`), each with its own persistent pricing
+ * personality, so a booked fill's `lp_won` names a counterparty a trader
+ * recognises rather than an anonymous `LP-SIM-0N`. The last is the separate listed
+ * Treasury-futures venue (`celnet_cme_sim`) — a book that carries futures MUST
+ * list it, or those lines have no contributor and every futures hedge routed at
+ * them backstops to the synthetic COMPOSITE venue.
+ */
 const LP_SIM_MEMBERS: readonly string[] = [
-  "LP-SIM-01",
-  "LP-SIM-02",
-  "LP-SIM-03",
-  "LP-SIM-04",
+  "marketaccess-sim",
+  "traderweb-sim",
+  "citigroup-sim",
+  "jpm-sim",
+  "cme-sim",
 ];
 
 /** Sane default consolidation tuning for a fresh book (the admin can override). */

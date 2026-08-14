@@ -29,7 +29,7 @@
 //! its own rate counters under one short-held lock. No float work on any hot path.
 
 use std::collections::{BTreeSet, VecDeque};
-use std::sync::RwLock;
+use std::sync::{Arc, OnceLock, RwLock};
 
 use tokio::sync::broadcast;
 
@@ -37,10 +37,14 @@ use celnet_hedge_routing::{
     ExitAction, HedgeContext, HedgeGraph, HedgeRouter, HedgeSize, LimitMetric, RagStatus,
     netting_split,
 };
-use celnet_proto::{ExitActionDesc, HedgeExitModeEnum, HedgeIntent, HedgeProvenance};
+use celnet_proto::{
+    DecisionEngineEnum, DecisionOutcomeEnum, DecisionRecord, ExitActionDesc, HedgeExitModeEnum,
+    HedgeIntent, HedgeProvenance,
+};
 
 use super::wire::{band_label, exit_action_to_wire, exit_action_with_vehicle_to_wire};
 use crate::config::hedge_policy::{HedgeConfigDef, HedgeMetric, HedgeThresholdDef};
+use crate::services::decision_journal::{DecisionJournal, decision};
 
 /// The default bounded depth of the fired-hedge provenance ring (the audit trail the
 /// `ListHedgeProvenance` RPC reads). Old records fall off the back — a control-plane
@@ -63,7 +67,43 @@ pub struct HedgeOutcome {
     /// fired (a hold changes nothing, so it is not stamped). When present it has also
     /// been appended to the engine's provenance ring.
     pub provenance: Option<HedgeProvenance>,
+    /// The **decision-journal** row for this evaluation — present on EVERY outcome,
+    /// including the ones that fired nothing, carrying the walked path and the stated
+    /// reason. When a journal is attached ([`AutoHedgeEngine::set_journal`]) this row has
+    /// already been appended to it and its `seq` is assigned; otherwise `seq` is 0 and
+    /// the row is informational only.
+    pub decision: DecisionRecord,
 }
+
+/// The call-site context a journal row needs that the pure decision inputs do not carry:
+/// which scoped policy was resolved, and the keys that join this decision back to the
+/// fill and the lift trace it came from.
+///
+/// Defaulted (all-absent) by [`AutoHedgeEngine::evaluate`]; the live booking path supplies
+/// a real one through [`AutoHedgeEngine::evaluate_with_meta`].
+#[derive(Debug, Clone, Default)]
+pub struct DecisionMeta {
+    /// Which policy actually governed — `"book:rates-usd"`, `"bucket:emea"`, `"firm"`, or
+    /// [`SCOPE_NONE`] when no policy was authored at any scope and the built-in default
+    /// graph stood in.
+    pub scope: String,
+    /// The end-to-end lift trace this decision belongs to.
+    pub trace_id: Option<u64>,
+    /// The booked fill that provoked the evaluation.
+    pub position_id: Option<u64>,
+    /// The counterparty whose fill provoked it.
+    pub counterparty: Option<String>,
+    /// The traded security behind the family label.
+    pub symbol: Option<String>,
+}
+
+/// The [`DecisionMeta::scope`] value meaning "the firm authored no hedge policy at any
+/// scope governing this book; the built-in default graph stood in".
+///
+/// This is the string the [rule advisor](crate::services::rule_advisor) matches to derive
+/// the "this book has no hedge policy" suggestion, so it is a constant rather than a
+/// literal typed twice.
+pub const SCOPE_NONE: &str = "none: no hedge policy configured for scope";
 
 /// The mutable engine state behind one lock: the provenance ring + the rate-guard counters.
 #[derive(Debug)]
@@ -92,6 +132,12 @@ pub struct AutoHedgeEngine {
     /// This channel is the missing publication. Sending is non-blocking and ignores the
     /// no-subscriber case, so an unwatched server pays nothing.
     intent_tx: broadcast::Sender<HedgeIntent>,
+    /// The shared **decision journal** every evaluation lands in — fired and no-action
+    /// alike. Attached once at boot ([`Self::set_journal`]) because the same ring is
+    /// shared with the acceptance and routing producers; an engine with none attached
+    /// still BUILDS its journal row (returned on [`HedgeOutcome::decision`]) and simply
+    /// does not persist it, which is what the unit tests exercise.
+    journal: OnceLock<Arc<DecisionJournal>>,
 }
 
 impl Default for AutoHedgeEngine {
@@ -113,6 +159,30 @@ impl AutoHedgeEngine {
             }),
             capacity: capacity.max(1),
             intent_tx: broadcast::channel(INTENT_CHANNEL_DEPTH).0,
+            journal: OnceLock::new(),
+        }
+    }
+
+    /// Attach the process-wide decision journal. Called once at boot, after the engine is
+    /// already behind its `Arc` (the journal is shared with the acceptance / routing
+    /// producers, so it is constructed alongside rather than owned here). A second call is
+    /// ignored — the journal is a single boot-time binding, never re-pointed at runtime.
+    pub fn set_journal(&self, journal: Arc<DecisionJournal>) {
+        let _ = self.journal.set(journal);
+    }
+
+    /// The attached decision journal, if any.
+    #[must_use]
+    pub fn journal(&self) -> Option<&Arc<DecisionJournal>> {
+        self.journal.get()
+    }
+
+    /// Persist one journal row (assigning its `seq`) when a journal is attached; return it
+    /// either way so the outcome always carries the row that describes it.
+    fn journal_row(&self, rec: DecisionRecord) -> DecisionRecord {
+        match self.journal.get() {
+            Some(j) => j.record(rec),
+            None => rec,
         }
     }
 
@@ -225,6 +295,32 @@ impl AutoHedgeEngine {
         known_lps: &BTreeSet<String>,
         now_nanos: i64,
     ) -> HedgeOutcome {
+        self.evaluate_with_meta(
+            graph,
+            threshold,
+            config,
+            ctx,
+            known_lps,
+            now_nanos,
+            &DecisionMeta::default(),
+        )
+    }
+
+    /// [`Self::evaluate`], plus the call-site [`DecisionMeta`] the journal row needs
+    /// (which scoped policy governed, and the trace / position / counterparty keys that
+    /// join this decision to the fill it came from). The live booking path calls this;
+    /// `evaluate` is the same decision with an empty meta.
+    #[allow(clippy::too_many_arguments)]
+    pub fn evaluate_with_meta(
+        &self,
+        graph: &HedgeGraph,
+        threshold: &HedgeThresholdDef,
+        config: &HedgeConfigDef,
+        ctx: &HedgeContext,
+        known_lps: &BTreeSet<String>,
+        now_nanos: i64,
+        meta: &DecisionMeta,
+    ) -> HedgeOutcome {
         let wh = threshold.to_threshold();
         let net_risk = net_risk_for(threshold.metric, ctx);
         let band = wh.classify(net_risk);
@@ -244,9 +340,28 @@ impl AutoHedgeEngine {
                 "halted: kill-switch / desk disabled",
             );
             self.publish(&intent);
+            // The graph never ran, so there is no path to record — but the desk still gets
+            // a row that says exactly WHY nothing happened, rather than silence.
+            let decision = self.journal_row(hedge_row(
+                DecisionOutcomeEnum::DecisionOutcomeNoAction,
+                "HALTED",
+                "halted: kill-switch / desk disabled — the hedge policy graph was not \
+                 evaluated",
+                &[],
+                ctx,
+                threshold.metric,
+                &wh,
+                net_risk,
+                band,
+                utilization,
+                false,
+                now_nanos,
+                meta,
+            ));
             return HedgeOutcome {
                 intent,
                 provenance: None,
+                decision,
             };
         }
 
@@ -264,9 +379,26 @@ impl AutoHedgeEngine {
                 "policy graph did not resolve",
             );
             self.publish(&intent);
+            let decision = self.journal_row(hedge_row(
+                DecisionOutcomeEnum::DecisionOutcomeNoAction,
+                "UNRESOLVED",
+                "policy graph did not resolve — a structurally broken graph degraded to a \
+                 warehouse hold",
+                &[],
+                ctx,
+                threshold.metric,
+                &wh,
+                net_risk,
+                band,
+                utilization,
+                false,
+                now_nanos,
+                meta,
+            ));
             return HedgeOutcome {
                 intent,
                 provenance: None,
+                decision,
             };
         };
         let action = resolution.action.clone();
@@ -292,7 +424,7 @@ impl AutoHedgeEngine {
                 external_hedged: 0.0,
                 advisory: false,
                 fired_at: now_nanos,
-                policy_path: path,
+                policy_path: path.clone(),
                 reason: format!("{} · WAREHOUSE", band_label(band)),
                 lps: Vec::new(),
                 // A hold trades nothing, so it names no vehicle and no mode matters.
@@ -300,9 +432,33 @@ impl AutoHedgeEngine {
                 exit_mode: HedgeExitModeEnum::HedgeExitModeAuto as i32,
             };
             self.publish(&intent);
+            // THE case the audit log exists for: the trader's own graph ran, walked
+            // `path`, and chose to hold. No provenance is stamped (nothing traded), but the
+            // journal records the walk so "why did my hedge rule not fire" is answerable —
+            // and the recorded band says whether holding was the sane call.
+            let decision = self.journal_row(hedge_row(
+                DecisionOutcomeEnum::DecisionOutcomeNoAction,
+                "WAREHOUSE",
+                format!(
+                    "{} · WAREHOUSE — the policy graph resolved a warehouse hold at node {}",
+                    band_label(band),
+                    path.last().map_or_else(|| "?".to_owned(), u32::to_string),
+                ),
+                &path,
+                ctx,
+                threshold.metric,
+                &wh,
+                net_risk,
+                band,
+                utilization,
+                false,
+                now_nanos,
+                meta,
+            ));
             return HedgeOutcome {
                 intent,
                 provenance: None,
+                decision,
             };
         }
 
@@ -401,9 +557,30 @@ impl AutoHedgeEngine {
         );
 
         self.publish(&intent);
+        // A fired decision journals too, so the audit table is ONE stream a trader sorts
+        // and filters — the fired rows carry the minted `hedge_id`, which joins straight
+        // back to the `HedgeProvenance` record with the realised economics.
+        let mut row = hedge_row(
+            DecisionOutcomeEnum::DecisionOutcomeFired,
+            action.kind(),
+            intent.reason.clone(),
+            &path,
+            ctx,
+            threshold.metric,
+            &wh,
+            net_risk,
+            band,
+            utilization,
+            advisory,
+            now_nanos,
+            meta,
+        );
+        row.hedge_id = Some(provenance.hedge_id.clone());
+        let decision = self.journal_row(row);
         HedgeOutcome {
             intent,
             provenance: Some(provenance),
+            decision,
         }
     }
 
@@ -467,6 +644,61 @@ impl AutoHedgeEngine {
 
     fn lock(&self) -> std::sync::RwLockWriteGuard<'_, Inner> {
         self.inner.write().expect("auto-hedge engine lock poisoned")
+    }
+}
+
+/// Build one hedge-engine [`DecisionRecord`] from the state the evaluation actually saw.
+///
+/// Every field is read straight off the inputs — the band, the utilisation, the walked
+/// path, the resolved cap. `reason` is required by the caller (there is no default), which
+/// is how the "a no-action decision must state its reason" rule is enforced structurally
+/// rather than by convention.
+#[allow(clippy::too_many_arguments)]
+fn hedge_row(
+    outcome: DecisionOutcomeEnum,
+    outcome_label: impl Into<String>,
+    reason: impl Into<String>,
+    path: &[u32],
+    ctx: &HedgeContext,
+    metric: HedgeMetric,
+    wh: &celnet_hedge_routing::WarehouseThreshold,
+    net_risk: f64,
+    band: RagStatus,
+    utilization: f64,
+    advisory: bool,
+    now_nanos: i64,
+    meta: &DecisionMeta,
+) -> DecisionRecord {
+    let mut reason = reason.into();
+    // A book governed by NO authored policy is the single most actionable audit fact
+    // there is, so it rides on the reason string as well as the `scope` field — the rule
+    // advisor keys the "this book has no hedge policy" suggestion off it.
+    if meta.scope == SCOPE_NONE {
+        reason = format!("{reason} · {SCOPE_NONE}");
+    }
+    DecisionRecord {
+        policy_path: path.to_vec(),
+        scope: meta.scope.clone(),
+        book: ctx.book.clone(),
+        instrument: ctx.instrument_id.clone(),
+        counterparty: meta.counterparty.clone(),
+        symbol: meta.symbol.clone(),
+        desk: ctx.desk.clone(),
+        position_id: meta.position_id,
+        trace_id: meta.trace_id,
+        metric: metric.as_i32(),
+        net_risk,
+        threshold: wh.cap,
+        utilization,
+        band: band_label(band).to_owned(),
+        advisory,
+        ..decision(
+            DecisionEngineEnum::DecisionEngineHedge,
+            outcome,
+            outcome_label,
+            reason,
+            now_nanos,
+        )
     }
 }
 
@@ -993,6 +1225,219 @@ mod tests {
             );
         }
         assert_eq!(e.provenance(None, None).len(), 2, "ring caps at capacity");
+    }
+
+    // ---------------------------------------------------------------------
+    // decision-journal emission — the "why did nothing fire" audit trail
+    // ---------------------------------------------------------------------
+
+    /// Attach a journal and return it beside the engine.
+    fn journaled(capacity: usize) -> (AutoHedgeEngine, Arc<DecisionJournal>) {
+        let e = AutoHedgeEngine::new(capacity);
+        let j = Arc::new(DecisionJournal::new(64));
+        e.set_journal(Arc::clone(&j));
+        (e, j)
+    }
+
+    /// THE gap this feature closes: a green-band evaluation walks the trader's graph to a
+    /// WAREHOUSE leaf, stamps NO provenance (nothing traded) — and must still leave an
+    /// audit row carrying the walked path and a stated reason.
+    #[test]
+    fn a_warehouse_hold_stamps_no_provenance_but_records_the_walked_path_and_reason() {
+        let (e, j) = journaled(8);
+        let out = e.evaluate(
+            &g_market(),
+            &thr(),
+            &HedgeConfigDef::default(),
+            &ctx(10_000.0, false, 0.0, "RATES"),
+            &known(),
+            77,
+        );
+        assert!(out.provenance.is_none(), "a hold trades nothing");
+        assert!(e.provenance(None, None).is_empty());
+
+        let rows = j.query(&crate::services::decision_journal::JournalQuery::default());
+        assert_eq!(rows.records.len(), 1, "the hold IS recorded");
+        let r = &rows.records[0];
+        assert_eq!(r.engine, DecisionEngineEnum::DecisionEngineHedge as i32);
+        assert_eq!(
+            r.outcome,
+            DecisionOutcomeEnum::DecisionOutcomeNoAction as i32
+        );
+        assert_eq!(r.outcome_label, "WAREHOUSE");
+        assert!(
+            r.reason.contains("WAREHOUSE"),
+            "the reason states what happened: {}",
+            r.reason
+        );
+        assert_eq!(r.policy_path, vec![0, 1], "the exact walk is recorded");
+        assert_eq!(r.band, "green");
+        assert_eq!(r.book, "RATES-EUR");
+        assert_eq!(r.decided_at, 77);
+        assert!((r.threshold - 100_000.0).abs() < 1e-12);
+        assert!((r.net_risk - 10_000.0).abs() < 1e-12);
+        assert_eq!(out.decision.seq, r.seq, "the outcome carries the same row");
+    }
+
+    /// A kill-switched desk suppresses the decision BEFORE the graph runs. There is no
+    /// path to record — but there is a reason, and it must be recorded rather than
+    /// returning silence.
+    #[test]
+    fn a_kill_switched_desk_records_an_empty_path_with_a_stated_reason() {
+        let (e, j) = journaled(8);
+        let config = HedgeConfigDef {
+            kill_switch: true,
+            ..HedgeConfigDef::default()
+        };
+        let out = e.evaluate(
+            &g_market(),
+            &thr(),
+            &config,
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            5,
+        );
+        assert!(out.provenance.is_none());
+        let rows = j.query(&crate::services::decision_journal::JournalQuery::default());
+        assert_eq!(rows.records.len(), 1);
+        let r = &rows.records[0];
+        assert_eq!(r.outcome_label, "HALTED");
+        assert!(r.policy_path.is_empty(), "the graph never ran");
+        assert!(
+            r.reason.contains("kill-switch"),
+            "the reason names the suppressor: {}",
+            r.reason
+        );
+    }
+
+    /// A structurally broken graph degrades to a warehouse hold. That degradation used to
+    /// be invisible; it is now an audit row that says so.
+    #[test]
+    fn an_unresolvable_graph_records_why_it_could_not_decide() {
+        let (e, j) = journaled(8);
+        // An entry pointing at a node that does not exist.
+        let broken = HedgeGraph {
+            entry: 9,
+            nodes: BTreeMap::new(),
+        };
+        let out = e.evaluate(
+            &broken,
+            &thr(),
+            &HedgeConfigDef::default(),
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            11,
+        );
+        assert!(out.provenance.is_none());
+        let r = &j
+            .query(&crate::services::decision_journal::JournalQuery::default())
+            .records[0];
+        assert_eq!(r.outcome_label, "UNRESOLVED");
+        assert!(r.reason.contains("did not resolve"), "{}", r.reason);
+    }
+
+    /// A fired decision journals too, and its row carries the minted `hedge_id` so the
+    /// audit table joins straight back to the realised `HedgeProvenance`.
+    #[test]
+    fn a_fired_decision_records_a_row_that_joins_to_its_provenance() {
+        let (e, j) = journaled(8);
+        let out = e.evaluate(
+            &g_market(),
+            &thr(),
+            &HedgeConfigDef::default(),
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            21,
+        );
+        let prov = out.provenance.expect("an external action fires");
+        let r = &j
+            .query(&crate::services::decision_journal::JournalQuery::default())
+            .records[0];
+        assert_eq!(r.outcome, DecisionOutcomeEnum::DecisionOutcomeFired as i32);
+        assert_eq!(r.hedge_id.as_deref(), Some(prov.hedge_id.as_str()));
+        assert_eq!(r.policy_path, prov.policy_path);
+        assert_eq!(r.band, prov.band);
+    }
+
+    /// The rate guard downgrades a live external fire to advisory. The row records BOTH
+    /// the downgrade and the reason, which is what the rule advisor keys off.
+    #[test]
+    fn a_rate_guard_downgrade_is_recorded_with_its_reason() {
+        let (e, j) = journaled(8);
+        let config = HedgeConfigDef {
+            max_hedges_per_interval: 1,
+            ..HedgeConfigDef::default()
+        };
+        let c = ctx(95_000.0, true, 0.0, "RATES");
+        // First fire consumes the interval budget; the second is downgraded.
+        e.evaluate(&g_market(), &thr(), &config, &c, &known(), 1);
+        e.evaluate(&g_market(), &thr(), &config, &c, &known(), 2);
+        let rows = j.query(&crate::services::decision_journal::JournalQuery::default());
+        assert_eq!(rows.records.len(), 2);
+        let second = &rows.records[0];
+        assert!(second.advisory, "the second fire is a shadow run");
+        assert!(
+            second.reason.contains("rate cap") && second.reason.contains("advisory"),
+            "the downgrade states its cause: {}",
+            second.reason
+        );
+    }
+
+    /// The call-site metadata (which policy governed, and the join keys) rides onto the
+    /// row — including the "no policy was authored at any scope" marker the advisor keys
+    /// its strongest suggestion off.
+    #[test]
+    fn call_site_metadata_including_the_no_policy_marker_rides_onto_the_row() {
+        let (e, j) = journaled(8);
+        let meta = DecisionMeta {
+            scope: SCOPE_NONE.to_owned(),
+            trace_id: Some(4_242),
+            position_id: Some(7),
+            counterparty: Some("cp-a".to_owned()),
+            symbol: Some("US10Y".to_owned()),
+        };
+        e.evaluate_with_meta(
+            &g_market(),
+            &thr(),
+            &HedgeConfigDef::default(),
+            &ctx(10_000.0, false, 0.0, "RATES"),
+            &known(),
+            9,
+            &meta,
+        );
+        let r = &j
+            .query(&crate::services::decision_journal::JournalQuery::default())
+            .records[0];
+        assert_eq!(r.scope, SCOPE_NONE);
+        assert!(
+            r.reason.contains("no hedge policy configured for scope"),
+            "the no-policy fact is on the reason too: {}",
+            r.reason
+        );
+        assert_eq!(r.trace_id, Some(4_242));
+        assert_eq!(r.position_id, Some(7));
+        assert_eq!(r.counterparty.as_deref(), Some("cp-a"));
+        assert_eq!(r.symbol.as_deref(), Some("US10Y"));
+    }
+
+    /// An engine with no journal attached behaves identically and still hands the caller
+    /// the row describing the decision (unsequenced) — so the journal is observability,
+    /// never a dependency of the decision.
+    #[test]
+    fn an_engine_without_a_journal_still_decides_and_reports_its_row() {
+        let e = AutoHedgeEngine::new(8);
+        let out = e.evaluate(
+            &g_market(),
+            &thr(),
+            &HedgeConfigDef::default(),
+            &ctx(10_000.0, false, 0.0, "RATES"),
+            &known(),
+            3,
+        );
+        assert!(out.provenance.is_none());
+        assert_eq!(out.decision.seq, 0, "no journal ⇒ no sequence assigned");
+        assert_eq!(out.decision.outcome_label, "WAREHOUSE");
+        assert_eq!(out.decision.policy_path, vec![0, 1]);
     }
 
     #[test]

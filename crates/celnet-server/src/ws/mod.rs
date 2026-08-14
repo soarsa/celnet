@@ -1632,6 +1632,22 @@ async fn handle_unary(
                 generated_codec::encode_list_hedge_provenance_response
             )
         }
+        "list_decision_journal" => {
+            let req = decode!(generated_codec::decode_list_decision_journal_request(o));
+            call!(
+                services.auth.list_decision_journal(Request::new(req)),
+                "decision_journal",
+                generated_codec::encode_list_decision_journal_response
+            )
+        }
+        "list_rule_advice" => {
+            let req = decode!(generated_codec::decode_list_rule_advice_request(o));
+            call!(
+                services.auth.list_rule_advice(Request::new(req)),
+                "rule_advice",
+                generated_codec::encode_list_rule_advice_response
+            )
+        }
         "get_hedge_config" => {
             let req = decode!(generated_codec::decode_get_hedge_config_request(o));
             call!(
@@ -1705,6 +1721,14 @@ async fn handle_unary(
                 services.auth.list_client_flow_metrics(Request::new(req)),
                 "client_flow_metrics",
                 generated_codec::encode_list_client_flow_metrics_response
+            )
+        }
+        "list_street_orders" => {
+            let req = decode!(generated_codec::decode_list_street_orders_request(o));
+            call!(
+                services.auth.list_street_orders(Request::new(req)),
+                "street_orders",
+                generated_codec::encode_list_street_orders_response
             )
         }
         "list_lp_flow_metrics" => {

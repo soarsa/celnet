@@ -497,6 +497,11 @@ impl<S: MessageStore> Initiator<S> {
                         side,
                         qty: 1_000_000.0,
                         price: px,
+                        // Preserved verbatim: a lift of a streamed level IS a
+                        // previously-quoted order, and it stated no TimeInForce(59)
+                        // before this field existed. Byte-identical frame.
+                        ord_type: messages::ord_type::PREVIOUSLY_QUOTED,
+                        tif: None,
                         transact_time: b"20260530-12:00:01.000",
                     };
                     messages::build_new_order_by_symbol(h, &p, e)

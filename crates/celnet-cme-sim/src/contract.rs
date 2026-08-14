@@ -1,4 +1,4 @@
-//! The **Treasury futures** arm of the LP-SIM feed: the listed contracts from
+//! The **listed Treasury futures** contracts this venue quotes, taken from
 //! [`celnet_refdata::treasury_futures_universe`], each anchored to the real cash
 //! Treasury curve and streamed as an exchange-convention two-way.
 //!
@@ -63,9 +63,9 @@ use celnet_aggregation::Instrument;
 use celnet_refdata::{FutureSpecError, TreasuryFutureSpec};
 use celnet_types::{BrokenDate, Ccy, CommodityRef, Symbol, Tenor, Underlying};
 
-use crate::price::YieldModel;
-use crate::quoted::QuotedLine;
-use crate::universe::TreasuryBond;
+use celnet_lp_sim::price::{MidSource, YieldModel};
+use celnet_lp_sim::quoted::QuotedLine;
+use celnet_lp_sim::universe::TreasuryBond;
 
 /// One listed Treasury futures contract the simulator can price, with the cash-curve
 /// yield its notional deliverable is anchored at.
@@ -221,7 +221,7 @@ impl FuturesContract {
             display_name: self.spec.name.clone(),
             identity: self.spec.instrument_id.clone(),
             instrument: self.engine_instrument(),
-            mid: crate::price::MidSource::MeanRevertingYield(model),
+            mid: MidSource::MeanRevertingYield(model),
             spread_scale: ratio(HALF_SPREAD_TICKS * tick, base_half_spread),
             lean_scale: ratio(LEAN_TICKS * tick / PANEL_HALF_WIDTH_STEPS, base_skew_step),
             yield_dispersion: Some(yield_dispersion),
@@ -322,7 +322,7 @@ fn nearest_curve_yield(anchors: &[(BrokenDate, f64)], target: BrokenDate) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::universe::load_government_universe;
+    use celnet_lp_sim::load_government_universe;
     use std::collections::HashSet;
 
     fn settle() -> BrokenDate {

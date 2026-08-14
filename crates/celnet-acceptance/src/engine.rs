@@ -19,8 +19,9 @@ use crate::graph::{AcceptanceAction, AcceptanceDecision, AcceptanceGraph, Accept
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AcceptanceEngine;
 
-/// The outcome of an evaluation: the resolved decision and the id of the leaf it
-/// landed on (`None` when a structurally-broken graph forced the safe fallback).
+/// The outcome of an evaluation: the resolved decision, the id of the leaf it
+/// landed on (`None` when a structurally-broken graph forced the safe fallback),
+/// and the exact node path walked to reach it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AcceptanceOutcome {
     /// The acceptance decision the lift resolves to.
@@ -28,6 +29,11 @@ pub struct AcceptanceOutcome {
     /// The `Decision` leaf id the walk landed on, or `None` on the structural
     /// fallback.
     pub matched: Option<NodeId>,
+    /// The exact node ids visited, in order, ending at the leaf that decided —
+    /// the provenance trail, mirroring `celnet_hedge_routing::Resolution::path`.
+    /// On the structural fallback this is the partial walk taken BEFORE the graph
+    /// broke, so an audit reader still sees how far the evaluation got.
+    pub path: Vec<NodeId>,
 }
 
 impl AcceptanceEngine {
@@ -44,16 +50,19 @@ impl AcceptanceEngine {
     pub fn evaluate(&self, graph: &AcceptanceGraph, ctx: &AcceptanceContext) -> AcceptanceOutcome {
         let mut current = graph.entry;
         let cap = graph.nodes.len().saturating_add(1);
+        let mut path: Vec<NodeId> = Vec::with_capacity(cap.min(16));
 
         for _ in 0..cap {
+            path.push(current);
             let Some(node) = graph.nodes.get(&current) else {
-                return Self::fallback();
+                return Self::fallback(path);
             };
             match node {
                 AcceptanceNode::Decision { action } => {
                     return AcceptanceOutcome {
                         decision: decision_of(action),
                         matched: Some(current),
+                        path,
                     };
                 }
                 AcceptanceNode::Condition {
@@ -72,16 +81,18 @@ impl AcceptanceEngine {
                 }
             }
         }
-        Self::fallback()
+        Self::fallback(path)
     }
 
-    /// The safe outcome for a structurally-broken graph: hold for manual review.
-    fn fallback() -> AcceptanceOutcome {
+    /// The safe outcome for a structurally-broken graph: hold for manual review,
+    /// carrying the partial walk taken before the graph broke.
+    fn fallback(path: Vec<NodeId>) -> AcceptanceOutcome {
         AcceptanceOutcome {
             decision: AcceptanceDecision::Hold(
                 "acceptance policy is structurally invalid — routed for manual review".to_owned(),
             ),
             matched: None,
+            path,
         }
     }
 }
@@ -122,6 +133,102 @@ mod tests {
 
     fn decide(action: AcceptanceAction) -> AcceptanceNode {
         AcceptanceNode::Decision { action }
+    }
+
+    /// The walked PATH is the backbone of "why was this lift turned away" on the audit
+    /// surface — it must be the exact node walk, ending at the leaf that decided.
+    #[test]
+    fn the_exact_walked_path_is_recorded_and_ends_at_the_deciding_leaf() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            0,
+            cond(
+                AcceptanceField::Counterparty,
+                RouteOp::Eq,
+                RouteValue::Text("cp-bank".into()),
+                1,
+                3,
+            ),
+        );
+        nodes.insert(
+            1,
+            cond(
+                AcceptanceField::NotionalUsd,
+                RouteOp::Gt,
+                RouteValue::Num(20_000_000.0),
+                2,
+                3,
+            ),
+        );
+        nodes.insert(
+            2,
+            AcceptanceNode::Decision {
+                action: AcceptanceAction::Reject {
+                    reason: "over cap for this name".to_owned(),
+                },
+            },
+        );
+        nodes.insert(
+            3,
+            AcceptanceNode::Decision {
+                action: AcceptanceAction::Accept,
+            },
+        );
+        let graph = AcceptanceGraph { entry: 0, nodes };
+
+        let big = AcceptanceContext {
+            counterparty: "cp-bank".to_owned(),
+            notional_usd: 25_000_000.0,
+            ..AcceptanceContext::default()
+        };
+        let out = AcceptanceEngine.evaluate(&graph, &big);
+        assert_eq!(
+            out.decision,
+            AcceptanceDecision::Reject("over cap for this name".to_owned())
+        );
+        assert_eq!(out.path, vec![0, 1, 2], "both conditions then the leaf");
+        assert_eq!(out.matched, Some(2));
+        assert_eq!(
+            out.path.last().copied(),
+            out.matched,
+            "the path ends at the leaf that decided"
+        );
+
+        // A different name short-circuits at the FIRST condition — a shorter, different walk.
+        let other = AcceptanceContext {
+            counterparty: "other-bank".to_owned(),
+            notional_usd: 25_000_000.0,
+            ..AcceptanceContext::default()
+        };
+        let out = AcceptanceEngine.evaluate(&graph, &other);
+        assert_eq!(out.decision, AcceptanceDecision::Accept);
+        assert_eq!(out.path, vec![0, 3]);
+    }
+
+    /// A structurally broken graph holds for manual review AND reports how far it got —
+    /// the partial walk is evidence, not noise.
+    #[test]
+    fn a_broken_graph_reports_the_partial_walk_it_managed() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            0,
+            cond(
+                AcceptanceField::NotionalUsd,
+                RouteOp::Gt,
+                RouteValue::Num(1.0),
+                9,
+                9,
+            ),
+        );
+        let graph = AcceptanceGraph { entry: 0, nodes };
+        let out = AcceptanceEngine.evaluate(&graph, &AcceptanceContext::default());
+        assert!(matches!(out.decision, AcceptanceDecision::Hold(_)));
+        assert_eq!(out.matched, None);
+        assert_eq!(
+            out.path,
+            vec![0, 9],
+            "the walk reached the dangling target before it broke"
+        );
     }
 
     #[test]

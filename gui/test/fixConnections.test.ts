@@ -41,6 +41,37 @@ function spec(overrides: Partial<FixConnectionSpec> = {}): FixConnectionSpec {
 }
 
 describe("fix-admin wire codec", () => {
+  it("carries the OUTBOUND order route, distinct from the inbound bind address", () => {
+    // `bind_addr` is where the counterparty reaches us; `order_endpoint` is where
+    // we reach it. They are independent addresses and must not be conflated.
+    const c = fixConnectionFromWire({
+      id: "jpm",
+      name: "JPM",
+      kind: 2,
+      bind_addr: "127.0.0.1:9099",
+      sender_comp_id: "CELNET",
+      target_comp_id: "jpm-sim",
+      enabled: true,
+      running: true,
+      bound_addr: "127.0.0.1:9099",
+      desk: "rates",
+      order_endpoint: "127.0.0.1:5704",
+    });
+    expect(c.orderEndpoint).toBe("127.0.0.1:5704");
+    expect(c.bindAddr).toBe("127.0.0.1:9099");
+  });
+
+  it("sends the order route on a create spec, and an absent one as blank", () => {
+    const withRoute = createFixConnectionRequestToWire(
+      spec({ orderEndpoint: "lp-panel.internal:5701" }),
+    );
+    expect((withRoute["spec"] as Record<string, unknown>)["order_endpoint"]).toBe(
+      "lp-panel.internal:5701",
+    );
+    const without = createFixConnectionRequestToWire(spec());
+    expect((without["spec"] as Record<string, unknown>)["order_endpoint"]).toBe("");
+  });
+
   it("round-trips a descriptor and maps the kind enum", () => {
     const wire = {
       id: "opt-1",
@@ -57,6 +88,10 @@ describe("fix-admin wire codec", () => {
     expect(c.kind).toBe("OPTIONS");
     expect(c.bindAddr).toBe("127.0.0.1:9099");
     expect(c.running).toBe(true);
+    // A descriptor with no `order_endpoint` on the wire decodes as "no order
+    // route", which is a real and common state (the counterparty quotes but we
+    // send it nothing) — never a fabricated address.
+    expect(c.orderEndpoint).toBe("");
     expect(fixConnectionKindToWire("OPTIONS")).toBe(0);
     expect(fixConnectionKindFromWire(0)).toBe("OPTIONS");
   });

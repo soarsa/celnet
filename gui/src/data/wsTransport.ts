@@ -20,6 +20,9 @@
  */
 
 import type {
+  DecisionJournalFilter,
+  DecisionJournalPage,
+  RuleAdvicePage,
   AcceptDeskQuoteRequest,
   AcceptDeskQuoteResponse,
   AggregateRatesRiskRequest,
@@ -61,6 +64,8 @@ import type {
   ClientFlowMetrics,
   FlowGroupBy,
   FlowWindow,
+  StreetOrderFilter,
+  StreetOrdersView,
   LpFlowMetrics,
   LatencyMetrics,
   InstrumentDef,
@@ -132,6 +137,10 @@ import type {
   XvaResult,
 } from "./contract";
 import {
+  decisionJournalResponseFromWire,
+  listDecisionJournalRequestToWire,
+  listRuleAdviceRequestToWire,
+  ruleAdviceResponseFromWire,
   acceptDeskQuoteToWire,
   acceptDeskQuoteResponseFromWire,
   aggregateRatesRiskRequestToWire,
@@ -322,6 +331,8 @@ import {
   listClientFlowMetricsResponseFromWire,
   listLpFlowMetricsRequestToWire,
   listLpFlowMetricsResponseFromWire,
+  listStreetOrdersRequestToWire,
+  listStreetOrdersResponseFromWire,
   listLatencyMetricsRequestToWire,
   listLatencyMetricsResponseFromWire,
   getTraceRequestToWire,
@@ -2485,6 +2496,24 @@ export class WsTransport implements CelnetTransport {
     return hedgeProvenanceResponseFromWire(reply);
   }
 
+  async listDecisionJournal(filter?: DecisionJournalFilter): Promise<DecisionJournalPage> {
+    const reply = await this.conn.request(
+      "list_decision_journal",
+      listDecisionJournalRequestToWire(filter),
+      "decision_journal",
+    );
+    return decisionJournalResponseFromWire(reply);
+  }
+
+  async listRuleAdvice(book?: string): Promise<RuleAdvicePage> {
+    const reply = await this.conn.request(
+      "list_rule_advice",
+      listRuleAdviceRequestToWire(book),
+      "rule_advice",
+    );
+    return ruleAdviceResponseFromWire(reply);
+  }
+
   async getHedgeConfig(): Promise<HedgeConfig> {
     const reply = await this.conn.request(
       "get_hedge_config",
@@ -2589,6 +2618,18 @@ export class WsTransport implements CelnetTransport {
       "client_flow_metrics",
     );
     return listClientFlowMetricsResponseFromWire(reply);
+  }
+
+  async listStreetOrders(
+    window?: FlowWindow,
+    filter?: StreetOrderFilter,
+  ): Promise<StreetOrdersView> {
+    const reply = await this.conn.request(
+      "list_street_orders",
+      listStreetOrdersRequestToWire(window, filter),
+      "street_orders",
+    );
+    return listStreetOrdersResponseFromWire(reply);
   }
 
   async listLpFlowMetrics(

@@ -74,15 +74,29 @@ pub struct LpFill {
 
 /// A source of external LP hedge quotes — the injection seam onto the **existing**
 /// outbound RFQ/FIX panel (`celnet-rfq` / the LP-sim), so this module invents no new
-/// venue. Returns the best fill for a hedge of `size` reducing `net_risk` on
-/// `instrument`, or `None` when no LP filled within the bounded attempt (a miss). When
-/// no live panel is wired the [`NoLpSource`] is used and every attempt honestly misses,
-/// so `LpPanelThenComposite` falls back to the composite venue and pure `LpPanel`
-/// records an honest miss (never a fabricated fill — guardrail 2).
+/// venue.
+///
+/// The seam returns the **whole ranked panel**, not just the winner. Returning only the
+/// winner discards two facts the desk genuinely observed and cannot reconstruct later:
+/// which other LPs showed a firm executable price (they were shown the order and we
+/// dealt away from them — a real *miss*), and how far the runner-up sat from the price
+/// we took (a real *cover distance*). Both were previously thrown away at this seam,
+/// which is precisely why the street-side league table could only ever report zeros for
+/// missed deals and cover. An empty panel is an honest miss: no LP had a firm price on
+/// the required side, or no live panel is wired at all ([`NoLpSource`]), and
+/// `LpPanelThenComposite` then reaches the composite backstop while pure `LpPanel`
+/// records the miss — never a fabricated fill (guardrail 2).
 pub trait LpHedgeSource: Send + Sync {
-    /// The best LP fill for hedging `size` of `instrument` (reducing `net_risk`), or
-    /// `None` on a miss (no LP filled in time / no panel wired).
-    fn best_fill(&self, instrument: &str, net_risk: f64, size: f64) -> Option<LpFill>;
+    /// Every LP showing a firm executable price for hedging `size` of `instrument`
+    /// (reducing `net_risk`), ordered **best-first** on the side we need. Empty on a
+    /// miss.
+    fn rank(&self, instrument: &str, net_risk: f64, size: f64) -> Vec<LpFill>;
+
+    /// The best LP fill — the head of [`Self::rank`]. Provided, so an implementation
+    /// only ever defines the ranking and the two can never disagree.
+    fn best_fill(&self, instrument: &str, net_risk: f64, size: f64) -> Option<LpFill> {
+        self.rank(instrument, net_risk, size).into_iter().next()
+    }
 }
 
 /// The honest default LP source: never fills. Used until a live outbound RFQ/FIX panel
@@ -92,10 +106,302 @@ pub trait LpHedgeSource: Send + Sync {
 pub struct NoLpSource;
 
 impl LpHedgeSource for NoLpSource {
-    fn best_fill(&self, _instrument: &str, _net_risk: f64, _size: f64) -> Option<LpFill> {
-        None
+    fn rank(&self, _instrument: &str, _net_risk: f64, _size: f64) -> Vec<LpFill> {
+        Vec::new()
     }
 }
+
+// ============================================================================
+// The ROUTING seam — sending a real order to a named counterparty.
+//
+// [`LpHedgeSource`] answers "who is showing a firm price, and at what level". That
+// is an OBSERVATION of a standing quote: it says nothing about whether the LP would
+// actually trade. Turning an observation into a fill without asking anyone is the
+// fabrication this seam exists to remove, so the two are deliberately separate
+// traits — a quote source that cannot route (the aggregation hub) is unable to
+// invent a fill even by accident, because filling now requires a counterparty's
+// answer that only a router can obtain.
+// ============================================================================
+
+/// One outbound order, addressed to a single named panel member.
+///
+/// The vocabulary is FIX's, because the estate's only order→fill contract is
+/// `NewOrderSingle(D)` → `ExecutionReport(8)` and the street-side record keys off
+/// those tags verbatim. The side comes from [`celnet_analytics::StreetSide::shedding`]
+/// — the SAME function the record uses — so the order that goes out and the row that
+/// records it can never disagree about which way we dealt.
+#[derive(Debug, Clone, Copy)]
+pub struct StreetOrderIntent<'a> {
+    /// The panel member to address (its connection id / `SenderCompID`).
+    pub lp_id: &'a str,
+    /// The tradeable security (FIX `Symbol(55)`).
+    pub instrument: &'a str,
+    /// The desk's own side.
+    pub side: celnet_analytics::StreetSide,
+    /// The quantity to work (FIX `OrderQty(38)`), in the instrument's native units.
+    pub quantity: f64,
+    /// The price limit (FIX `Price(44)`) — the member's OWN firm price from the
+    /// ranking. Sending its own level back is what makes a decline meaningful: an LP
+    /// that will not trade where it is showing has pulled at last look.
+    pub limit_price: f64,
+    /// FIX `OrdType(40)` — see [`celnet_fix::messages::ord_type`].
+    pub ord_type: u8,
+    /// FIX `TimeInForce(59)` — see [`celnet_fix::messages::time_in_force`].
+    pub time_in_force: u8,
+}
+
+/// What a counterparty did with one routed order.
+///
+/// Every variant is an **observed** terminal state carrying its reason. There is no
+/// "unknown": an attempt whose answer never arrived is [`Self::Expired`], which is a
+/// fact about the venue (it did not answer in time), not an absence of data.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RouteAnswer {
+    /// The venue traded — in full, or in part with the remainder cancelled.
+    Traded(RoutedFill),
+    /// The venue **accepted** the order and could not satisfy it (FIX `OrdStatus=4`).
+    Cancelled {
+        /// The venue's machine-readable reason (its `Text(58)` code).
+        reason: String,
+        /// Measured round trip from send to answer.
+        latency_nanos: u64,
+    },
+    /// The venue **refused** the order (FIX `OrdStatus=8`).
+    Rejected {
+        /// The venue's machine-readable reason.
+        reason: String,
+        /// Measured round trip from send to answer.
+        latency_nanos: u64,
+    },
+    /// The venue declined at the price it was itself showing — its market moved
+    /// between the quote we ranked and the order we sent. That is a last look, and
+    /// it is a materially different fact about a counterparty than a refusal.
+    LastLookPulled {
+        /// The venue's machine-readable reason.
+        reason: String,
+        /// Measured round trip from send to answer.
+        latency_nanos: u64,
+    },
+    /// No answer arrived inside the router's deadline. Recorded, never retried
+    /// silently and never allowed to look like "the street showed nothing".
+    Expired {
+        /// How long we actually waited before giving up.
+        waited_nanos: u64,
+    },
+    /// The order could not be sent at all — the member has no configured order
+    /// endpoint, or the session could not be established. Carries the stated reason;
+    /// this is the one variant with **no** measured latency, because there was no
+    /// round trip to measure.
+    Unroutable {
+        /// Why nothing could be sent.
+        reason: String,
+    },
+}
+
+/// A real fill returned by a counterparty.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RoutedFill {
+    /// The quantity that actually traded (`< requested` on an IOC partial).
+    pub filled: f64,
+    /// The realised (average) fill price the venue reported.
+    pub price: f64,
+    /// The venue's qualifier on a partial fill (why it did not complete); absent on
+    /// a clean complete fill, which needs no explanation.
+    pub reason: Option<String>,
+    /// Measured round trip from send to `ExecutionReport`.
+    pub latency_nanos: u64,
+}
+
+/// Sends a real order to a named panel member and waits for that member's answer.
+///
+/// Implementations open a genuine session to the counterparty. There is deliberately
+/// no implementation that answers from local state: an object that could "route"
+/// without a counterparty would reintroduce the synthesised fill.
+pub trait StreetOrderRouter: Send + Sync {
+    /// Work `intent` against its named member and return what came back. Blocks the
+    /// calling thread for at most the router's own deadline; a venue that never
+    /// answers yields [`RouteAnswer::Expired`], never a hang.
+    fn route(&self, intent: &StreetOrderIntent<'_>) -> RouteAnswer;
+}
+
+/// The honest default router: routes nothing, and says so.
+///
+/// Installed until a live order-routing seam is wired. A desk running on this can
+/// still *rank* the panel (that is a real observation) but can never fill on it, so
+/// `LpPanelThenComposite` reaches the composite backstop and pure `LpPanel` records
+/// the miss — the same honesty posture [`NoLpSource`] holds for quotes.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoStreetRouter;
+
+/// The stated reason [`NoStreetRouter`] gives — a configuration fact, not a market one.
+pub const NO_ROUTER_REASON: &str = "no_order_router_configured";
+
+impl StreetOrderRouter for NoStreetRouter {
+    fn route(&self, _intent: &StreetOrderIntent<'_>) -> RouteAnswer {
+        RouteAnswer::Unroutable {
+            reason: NO_ROUTER_REASON.to_owned(),
+        }
+    }
+}
+
+/// The terminal state of one routed attempt, as the street-side record classifies it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteOutcome {
+    /// The full requested quantity traded.
+    Filled,
+    /// Part traded; the remainder was cancelled.
+    PartiallyFilled,
+    /// The venue refused the order.
+    Rejected,
+    /// The venue accepted it and could not satisfy it.
+    Cancelled,
+    /// No answer inside the deadline.
+    Expired,
+    /// The venue would not trade at the price it was showing.
+    LastLookPulled,
+    /// Nothing could be sent (no endpoint / no session).
+    Unroutable,
+}
+
+impl RouteOutcome {
+    /// Whether any quantity changed hands.
+    #[must_use]
+    pub const fn is_fill(self) -> bool {
+        matches!(self, Self::Filled | Self::PartiallyFilled)
+    }
+
+    /// The street-side record's outcome for this terminal state.
+    ///
+    /// An [`Unroutable`](Self::Unroutable) attempt maps to
+    /// [`StreetOutcome::NoLiquidity`](celnet_analytics::StreetOutcome::NoLiquidity):
+    /// nobody refused us, because nobody was asked. Collapsing it into `Rejected`
+    /// would blame a counterparty for our own missing configuration.
+    #[must_use]
+    pub const fn street_outcome(self) -> celnet_analytics::StreetOutcome {
+        use celnet_analytics::StreetOutcome as S;
+        match self {
+            Self::Filled => S::Filled,
+            Self::PartiallyFilled => S::PartiallyFilled,
+            Self::Rejected => S::Rejected,
+            Self::Cancelled => S::Cancelled,
+            Self::Expired => S::Expired,
+            Self::LastLookPulled => S::LastLookPulled,
+            Self::Unroutable => S::NoLiquidity,
+        }
+    }
+}
+
+/// One outbound order we actually sent (or could not send), and what came back —
+/// the routing half of the street-side execution record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RouteRecord {
+    /// The member the order was addressed to.
+    pub lp_id: String,
+    /// The member's own firm price the order was priced at — the level from the ranking
+    /// that this order asked it to honour. Retained so the record can name the panel an
+    /// order competed against even where the fill itself carries none.
+    pub quoted_price: f64,
+    /// The terminal state.
+    pub outcome: RouteOutcome,
+    /// The venue's (or the router's) machine-readable reason. Absent only on a clean
+    /// complete fill.
+    pub reason: Option<String>,
+    /// The quantity that traded on this attempt (`0.0` when nothing did).
+    pub filled: f64,
+    /// The realised price, when something traded.
+    pub price: Option<f64>,
+    /// FIX `OrdType(40)` as sent.
+    pub order_type: u8,
+    /// FIX `TimeInForce(59)` as sent.
+    pub time_in_force: u8,
+    /// Measured venue round trip. Absent **only** for an
+    /// [`Unroutable`](RouteOutcome::Unroutable) attempt, which had no round trip.
+    pub response_latency_nanos: Option<u64>,
+}
+
+impl RouteRecord {
+    /// Classify `answer` to `intent` into a record. The single place a venue's answer
+    /// becomes an outcome, so the booked economics and the recorded row are derived
+    /// from one decision rather than two.
+    #[must_use]
+    pub fn from_answer(intent: &StreetOrderIntent<'_>, answer: RouteAnswer) -> Self {
+        let base = |outcome, reason, filled, price, latency| Self {
+            lp_id: intent.lp_id.to_owned(),
+            quoted_price: intent.limit_price,
+            outcome,
+            reason,
+            filled,
+            price,
+            order_type: intent.ord_type,
+            time_in_force: intent.time_in_force,
+            response_latency_nanos: latency,
+        };
+        match answer {
+            RouteAnswer::Traded(f) => {
+                // "Partial" is decided against what we ASKED for, not against what the
+                // venue chose to call it: a fill short of the clip leaves a residual
+                // the book must still carry, whatever the report was labelled.
+                let outcome = if f.filled + f64::EPSILON * intent.quantity.abs() < intent.quantity {
+                    RouteOutcome::PartiallyFilled
+                } else {
+                    RouteOutcome::Filled
+                };
+                base(
+                    outcome,
+                    f.reason,
+                    f.filled,
+                    Some(f.price),
+                    Some(f.latency_nanos),
+                )
+            }
+            RouteAnswer::Cancelled {
+                reason,
+                latency_nanos,
+            } => base(
+                RouteOutcome::Cancelled,
+                Some(reason),
+                0.0,
+                None,
+                Some(latency_nanos),
+            ),
+            RouteAnswer::Rejected {
+                reason,
+                latency_nanos,
+            } => base(
+                RouteOutcome::Rejected,
+                Some(reason),
+                0.0,
+                None,
+                Some(latency_nanos),
+            ),
+            RouteAnswer::LastLookPulled {
+                reason,
+                latency_nanos,
+            } => base(
+                RouteOutcome::LastLookPulled,
+                Some(reason),
+                0.0,
+                None,
+                Some(latency_nanos),
+            ),
+            RouteAnswer::Expired { waited_nanos } => base(
+                RouteOutcome::Expired,
+                Some(VENUE_NO_RESPONSE_REASON.to_owned()),
+                0.0,
+                None,
+                // The wait IS a measured round trip — an upper bound on the venue's
+                // latency, and the only latency datum a silent venue ever yields.
+                Some(waited_nanos),
+            ),
+            RouteAnswer::Unroutable { reason } => {
+                base(RouteOutcome::Unroutable, Some(reason), 0.0, None, None)
+            }
+        }
+    }
+}
+
+/// The reason stamped on an attempt the venue never answered.
+pub const VENUE_NO_RESPONSE_REASON: &str = "venue_no_response";
 
 /// The realised economics of one external hedge attempt (a fill, or an honest miss).
 #[derive(Debug, Clone, PartialEq)]
@@ -118,6 +424,29 @@ pub struct ExternalHedgeFill {
     pub lp_won: Option<String>,
     /// The venue the fill landed on; `None` on a miss / advisory.
     pub venue: Option<HedgeVenue>,
+    /// **Every** LP that showed a firm executable price on the required side when this
+    /// attempt was worked, best-first — the competition the order was ranked against.
+    /// The head is the LP we dealt on for an `LpPanel` fill.
+    ///
+    /// Empty means the street genuinely showed nothing, which is exactly what a
+    /// `COMPOSITE` backstop records: the desk did not choose the synthetic mid over a
+    /// real price, there was no real price. Carrying the panel through is what lets the
+    /// street-side execution record report honest misses and a real cover distance
+    /// instead of the zeros a winner-only seam can produce.
+    pub panel: Vec<LpFill>,
+    /// **Every order actually sent**, in the order it was sent — the routing history
+    /// behind this fill.
+    ///
+    /// Empty means nothing was routed: an advisory run, a zero-size shed, a
+    /// composite-only mode, or an empty panel (nobody to address). A non-empty list
+    /// means real `NewOrderSingle`s went out and real `ExecutionReport`s came back;
+    /// a rejection on the best-priced member followed by a fill on the cover appears
+    /// here as two entries, because two orders genuinely left the building.
+    ///
+    /// This is what separates a fill we *earned* from one we *inferred*: a fill whose
+    /// `attempts` is empty was never routed, and the record refuses to claim
+    /// otherwise.
+    pub attempts: Vec<RouteRecord>,
 }
 
 impl ExternalHedgeFill {
@@ -132,6 +461,18 @@ impl ExternalHedgeFill {
             slippage_bp: 0.0,
             lp_won: None,
             venue: None,
+            panel: Vec::new(),
+            attempts: Vec::new(),
+        }
+    }
+
+    /// An honest miss that nonetheless *saw* a panel — used when an attempt reached
+    /// named LPs and did not trade (so the panel is real even though nothing filled).
+    #[must_use]
+    pub fn miss_with_panel(requested: f64, mid: f64, panel: Vec<LpFill>) -> Self {
+        Self {
+            panel,
+            ..Self::miss(requested, mid)
         }
     }
 
@@ -201,44 +542,111 @@ pub struct ExternalHedgeRequest<'a> {
     pub composite_spread_bp: f64,
 }
 
-/// Execute one external hedge per the policy's [`HedgeExecutionMode`] against an injected
-/// LP source (§6.2). PURE venue-selection + pricing — books nothing (the caller books the
-/// offsetting leg off the returned [`ExternalHedgeFill`]):
+/// The `TimeInForce(59)` an auto-hedge shed is worked with.
 ///
-/// - `Advisory` (or a non-positive size) → an honest miss (nothing executes).
-/// - `LpPanel` → the LP source's best fill, else an honest miss (no composite fallback).
-/// - `Composite` → always fills at [`composite_hedge_price`].
-/// - `LpPanelThenComposite` → the LP source first; on a miss, fall back to the composite.
+/// **Immediate-or-cancel**, deliberately. A shed exists to reduce risk now: taking
+/// whatever depth the member has and carrying the rest as an honest `residual` (which
+/// the book already models, and which the composite backstop already covers) strictly
+/// dominates killing the whole clip because the last few contracts were missing. A
+/// resting time-in-force is not an option at all — these are quote-driven venues with
+/// no working-order book, and they reject a resting TIF rather than silently downgrade
+/// it. `FillOrKill` remains a first-class value of [`StreetOrderIntent`] that every
+/// router honours; it is simply not what shedding risk wants.
+pub const HEDGE_TIME_IN_FORCE: u8 = celnet_fix::messages::time_in_force::IMMEDIATE_OR_CANCEL;
+
+/// The `OrdType(40)` an auto-hedge shed is worked with.
+///
+/// **Limit**, priced at the member's OWN firm level from the ranking. A market order
+/// would fill at whatever the member happened to be showing on arrival, which makes
+/// the recorded slippage a measurement of nothing; pricing the order at the level we
+/// ranked means a decline is information — the member has moved away from its own
+/// quote, which is exactly a last look.
+pub const HEDGE_ORD_TYPE: u8 = celnet_fix::messages::ord_type::LIMIT;
+
+/// Execute one external hedge per the policy's [`HedgeExecutionMode`] (§6.2). Books
+/// nothing — the caller books the offsetting leg off the returned [`ExternalHedgeFill`]:
+///
+/// - `Advisory` (or a non-positive size) → an honest miss (nothing executes, nothing
+///   is routed).
+/// - `LpPanel` → **route** down the ranked panel; the first member that trades wins.
+///   No fill ⇒ an honest miss (no composite fallback).
+/// - `Composite` → always fills at [`composite_hedge_price`]; nothing is routed.
+/// - `LpPanelThenComposite` → the panel first; only when no member traded does the
+///   composite backstop fill, still crediting no LP.
+///
+/// # Why the panel is walked rather than lifted
+///
+/// [`LpHedgeSource::rank`] reports who is *showing* a firm price. It cannot report who
+/// would *trade*, because nobody has been asked. This function therefore treats the
+/// ranking as a routing order and sends a real order to each member in turn until one
+/// trades, recording every answer in [`ExternalHedgeFill::attempts`]. A refusal on the
+/// best-priced member is a fact about that member — it must not silently become a
+/// composite backstop, which would misreport a counterparty problem as an absence of
+/// street liquidity.
 #[must_use]
 pub fn execute_external(
     req: &ExternalHedgeRequest<'_>,
     lp: &dyn LpHedgeSource,
+    router: &dyn StreetOrderRouter,
 ) -> ExternalHedgeFill {
     if req.size <= 0.0 || req.mode.is_advisory() {
         return ExternalHedgeFill::miss(req.size, req.mid);
     }
 
-    // Try the LP panel first when the mode allows it.
-    if req.mode.tries_lp_panel()
-        && let Some(fill) = lp.best_fill(req.instrument, req.net_risk, req.size)
-    {
-        let slippage_bp = if req.bp_scale != 0.0 {
-            (fill.price - req.mid) / req.bp_scale
-        } else {
-            0.0
+    // Read the WHOLE ranked panel (not just the winner) so the street-side execution
+    // record can report who else showed a firm price and how far the cover sat — see
+    // `ExternalHedgeFill::panel`.
+    let panel = if req.mode.tries_lp_panel() {
+        lp.rank(req.instrument, req.net_risk, req.size)
+    } else {
+        Vec::new()
+    };
+
+    let mut attempts: Vec<RouteRecord> = Vec::with_capacity(panel.len());
+    for member in &panel {
+        let intent = StreetOrderIntent {
+            lp_id: &member.lp_id,
+            instrument: req.instrument,
+            side: celnet_analytics::StreetSide::shedding(req.net_risk),
+            quantity: req.size,
+            limit_price: member.price,
+            ord_type: HEDGE_ORD_TYPE,
+            time_in_force: HEDGE_TIME_IN_FORCE,
         };
-        return ExternalHedgeFill {
-            filled: req.size,
-            residual: 0.0,
-            hedge_price: fill.price,
-            mid_at_fire: req.mid,
-            slippage_bp,
-            lp_won: Some(fill.lp_id),
-            venue: Some(HedgeVenue::LpPanel),
-        };
+        let record = RouteRecord::from_answer(&intent, router.route(&intent));
+        let traded = record.outcome.is_fill();
+        let filled = record.filled;
+        let price = record.price.unwrap_or(member.price);
+        attempts.push(record);
+        if traded && filled > 0.0 {
+            let slippage_bp = if req.bp_scale != 0.0 {
+                (price - req.mid) / req.bp_scale
+            } else {
+                0.0
+            };
+            return ExternalHedgeFill {
+                filled,
+                // An IOC that took only part of the clip leaves a REAL residual: the
+                // book did not reduce by what we asked for, and saying it did would
+                // make the blotter and the risk diverge.
+                residual: (req.size - filled).max(0.0),
+                hedge_price: price,
+                mid_at_fire: req.mid,
+                slippage_bp,
+                lp_won: Some(member.lp_id.clone()),
+                venue: Some(HedgeVenue::LpPanel),
+                panel,
+                attempts,
+            };
+        }
     }
 
-    // Composite (as the primary venue, or the LP-panel fallback).
+    // Composite (as the primary venue, or the panel fallback). Reached when the panel
+    // was empty OR every member we asked declined, so the recorded fill carries no
+    // competitors — a backstop is not a price we preferred over the street, it is the
+    // absence of a street price we could deal on. The attempts survive so the record
+    // can still say WHO declined; without them a full panel of refusals would be
+    // indistinguishable from an empty panel.
     if req.mode.allows_composite() {
         let (hedge_price, slippage_bp) =
             composite_hedge_price(req.mid, req.net_risk, req.composite_spread_bp, req.bp_scale);
@@ -250,11 +658,17 @@ pub fn execute_external(
             slippage_bp,
             lp_won: Some(HedgeVenue::COMPOSITE_LABEL.to_owned()),
             venue: Some(HedgeVenue::Composite),
+            panel: Vec::new(),
+            attempts,
         };
     }
 
-    // Pure `LpPanel` with no LP fill — an honest miss (the shed is warehoused / advisory).
-    ExternalHedgeFill::miss(req.size, req.mid)
+    // Pure `LpPanel` with no fill — an honest miss (the shed is warehoused / advisory).
+    ExternalHedgeFill {
+        panel,
+        attempts,
+        ..ExternalHedgeFill::miss(req.size, req.mid)
+    }
 }
 
 /// One offsetting booking leg an internal cross applies: a signed size booked into a book
@@ -459,11 +873,61 @@ mod tests {
         price: f64,
     }
     impl LpHedgeSource for FixedLp {
-        fn best_fill(&self, _instrument: &str, _net_risk: f64, _size: f64) -> Option<LpFill> {
-            Some(LpFill {
+        fn rank(&self, _instrument: &str, _net_risk: f64, _size: f64) -> Vec<LpFill> {
+            vec![LpFill {
                 lp_id: self.lp.to_owned(),
                 price: self.price,
+            }]
+        }
+    }
+
+    /// A three-deep panel, best-first (for the competition / cover path).
+    struct PanelLp;
+    impl LpHedgeSource for PanelLp {
+        fn rank(&self, _instrument: &str, _net_risk: f64, _size: f64) -> Vec<LpFill> {
+            vec![
+                LpFill {
+                    lp_id: "LP-1".to_owned(),
+                    price: 99.99,
+                },
+                LpFill {
+                    lp_id: "LP-2".to_owned(),
+                    price: 99.97,
+                },
+                LpFill {
+                    lp_id: "LP-3".to_owned(),
+                    price: 99.95,
+                },
+            ]
+        }
+    }
+
+    /// A router that trades the full clip at the level it was shown — the "every
+    /// member honours its own quote" world, so a test can isolate venue SELECTION
+    /// from venue BEHAVIOUR. Real venue behaviour (partials, declines, silence) is
+    /// exercised against the actual simulators over a real socket in
+    /// `tests/street_routing_e2e.rs`.
+    struct AlwaysTrades;
+    impl StreetOrderRouter for AlwaysTrades {
+        fn route(&self, intent: &StreetOrderIntent<'_>) -> RouteAnswer {
+            RouteAnswer::Traded(RoutedFill {
+                filled: intent.quantity,
+                price: intent.limit_price,
+                reason: None,
+                latency_nanos: 250_000,
             })
+        }
+    }
+
+    /// A router where every member refuses — the case that must NOT look like an
+    /// empty street.
+    struct AlwaysRefuses;
+    impl StreetOrderRouter for AlwaysRefuses {
+        fn route(&self, _intent: &StreetOrderIntent<'_>) -> RouteAnswer {
+            RouteAnswer::Rejected {
+                reason: "NOT_MY_AXE".to_owned(),
+                latency_nanos: 400_000,
+            }
         }
     }
 
@@ -522,6 +986,7 @@ mod tests {
                 0.5,
             ),
             &NoLpSource,
+            &NoStreetRouter,
         );
         assert!(!f.is_filled());
         assert_eq!(f.filled, 0.0);
@@ -544,6 +1009,7 @@ mod tests {
                 0.5,
             ),
             &NoLpSource,
+            &NoStreetRouter,
         );
         assert!(f.is_filled());
         assert_eq!(f.venue, Some(HedgeVenue::Composite));
@@ -568,6 +1034,7 @@ mod tests {
                 0.5,
             ),
             &lp,
+            &AlwaysTrades,
         );
         assert!(f.is_filled());
         assert_eq!(f.venue, Some(HedgeVenue::LpPanel));
@@ -593,6 +1060,7 @@ mod tests {
                 0.5,
             ),
             &NoLpSource,
+            &NoStreetRouter,
         );
         assert!(
             !f.is_filled(),
@@ -613,6 +1081,7 @@ mod tests {
                 0.5,
             ),
             &NoLpSource,
+            &NoStreetRouter,
         );
         assert!(
             f.is_filled(),
@@ -638,6 +1107,7 @@ mod tests {
                 0.5,
             ),
             &lp,
+            &AlwaysTrades,
         );
         assert_eq!(
             f.venue,
@@ -645,5 +1115,376 @@ mod tests {
             "LP fill wins over the fallback"
         );
         assert_eq!(f.lp_won.as_deref(), Some("LP-1"));
+    }
+
+    /// The WHOLE panel survives the fill — the winner AND the LPs we dealt away from.
+    /// This is the datum the street-side league table's "missed" and "cover" columns
+    /// are computed from; a winner-only seam can only ever report zeros for both.
+    #[test]
+    fn a_panel_fill_carries_every_competing_firm_price() {
+        let f = execute_external(
+            &req(
+                50_000.0,
+                10_000.0,
+                100.0,
+                1e-2,
+                HedgeExecutionMode::LpPanelThenComposite,
+                0.5,
+            ),
+            &PanelLp,
+            &AlwaysTrades,
+        );
+        assert_eq!(f.lp_won.as_deref(), Some("LP-1"), "the head of the ranking");
+        assert_eq!(f.panel.len(), 3, "every firm price is retained");
+        assert_eq!(f.panel[0].lp_id, "LP-1");
+        assert_eq!(f.panel[1].lp_id, "LP-2", "the cover");
+        assert_eq!(f.panel[2].lp_id, "LP-3");
+    }
+
+    /// A composite backstop is the ABSENCE of street liquidity, so it carries no
+    /// competitors — nothing can later be attributed to an LP off it.
+    #[test]
+    fn a_composite_backstop_carries_no_panel() {
+        let f = execute_external(
+            &req(
+                50_000.0,
+                10_000.0,
+                100.0,
+                1e-2,
+                HedgeExecutionMode::LpPanelThenComposite,
+                0.5,
+            ),
+            &NoLpSource,
+            &NoStreetRouter,
+        );
+        assert_eq!(f.venue, Some(HedgeVenue::Composite));
+        assert!(f.panel.is_empty());
+    }
+
+    /// `best_fill` is the head of `rank` by construction — the two can never disagree.
+    #[test]
+    fn best_fill_is_the_head_of_the_ranking() {
+        let best = PanelLp
+            .best_fill("USSW10", 50_000.0, 10_000.0)
+            .expect("a panel of three has a best");
+        assert_eq!(
+            best.lp_id,
+            PanelLp.rank("USSW10", 50_000.0, 10_000.0)[0].lp_id
+        );
+        assert!(NoLpSource.best_fill("USSW10", 1.0, 1.0).is_none());
+    }
+
+    // --- routing: a firm price is not a fill -------------------------------------
+
+    /// The regression that motivates this whole seam. A three-deep panel of firm
+    /// prices with NO order router must **not** produce an LP fill: nobody was asked,
+    /// so nobody agreed. It backstops to the composite and credits no LP, and the
+    /// attempt log says exactly why.
+    #[test]
+    fn a_firm_price_with_no_router_is_never_an_lp_fill() {
+        let f = execute_external(
+            &req(
+                50_000.0,
+                10_000.0,
+                100.0,
+                1e-2,
+                HedgeExecutionMode::LpPanelThenComposite,
+                0.5,
+            ),
+            &PanelLp,
+            &NoStreetRouter,
+        );
+        assert_eq!(
+            f.venue,
+            Some(HedgeVenue::Composite),
+            "a quote nobody was asked to honour must not become an LP fill"
+        );
+        assert_eq!(f.lp_won.as_deref(), Some(HedgeVenue::COMPOSITE_LABEL));
+        assert_eq!(f.attempts.len(), 3, "every member was tried in turn");
+        assert!(
+            f.attempts
+                .iter()
+                .all(|a| a.outcome == RouteOutcome::Unroutable
+                    && a.reason.as_deref() == Some(NO_ROUTER_REASON)),
+            "an unroutable attempt states the configuration reason, never a market one"
+        );
+        assert!(
+            f.attempts
+                .iter()
+                .all(|a| a.response_latency_nanos.is_none()),
+            "no round trip happened, so no latency may be reported"
+        );
+    }
+
+    /// A routed fill carries the venue's own economics — the filled quantity and price
+    /// the counterparty reported, plus the typed order fields actually sent.
+    #[test]
+    fn a_routed_fill_carries_the_typed_order_and_measured_latency() {
+        let f = execute_external(
+            &req(
+                50_000.0,
+                10_000.0,
+                100.0,
+                1e-2,
+                HedgeExecutionMode::LpPanel,
+                0.5,
+            ),
+            &PanelLp,
+            &AlwaysTrades,
+        );
+        assert_eq!(f.venue, Some(HedgeVenue::LpPanel));
+        assert_eq!(f.lp_won.as_deref(), Some("LP-1"));
+        assert_eq!(f.attempts.len(), 1, "the best member traded, so we stopped");
+        let a = &f.attempts[0];
+        assert_eq!(a.outcome, RouteOutcome::Filled);
+        assert_eq!(a.order_type, HEDGE_ORD_TYPE);
+        assert_eq!(a.time_in_force, HEDGE_TIME_IN_FORCE);
+        assert_eq!(a.response_latency_nanos, Some(250_000));
+    }
+
+    /// A refusal on the best-priced member is not the end of the street: the order
+    /// walks to the cover, and BOTH orders are recorded because both really went out.
+    #[test]
+    fn a_refusal_on_the_best_member_walks_to_the_cover() {
+        /// Refuses `LP-1`, trades on anyone else.
+        struct RefusesTheBest;
+        impl StreetOrderRouter for RefusesTheBest {
+            fn route(&self, intent: &StreetOrderIntent<'_>) -> RouteAnswer {
+                if intent.lp_id == "LP-1" {
+                    return RouteAnswer::LastLookPulled {
+                        reason: "NOT_MARKETABLE".to_owned(),
+                        latency_nanos: 900,
+                    };
+                }
+                RouteAnswer::Traded(RoutedFill {
+                    filled: intent.quantity,
+                    price: intent.limit_price,
+                    reason: None,
+                    latency_nanos: 1_100,
+                })
+            }
+        }
+
+        let f = execute_external(
+            &req(
+                50_000.0,
+                10_000.0,
+                100.0,
+                1e-2,
+                HedgeExecutionMode::LpPanel,
+                0.5,
+            ),
+            &PanelLp,
+            &RefusesTheBest,
+        );
+        assert_eq!(f.lp_won.as_deref(), Some("LP-2"), "the cover traded");
+        assert_eq!(
+            f.attempts.len(),
+            2,
+            "two orders genuinely left the building"
+        );
+        assert_eq!(f.attempts[0].outcome, RouteOutcome::LastLookPulled);
+        assert_eq!(f.attempts[0].lp_id, "LP-1");
+        assert_eq!(f.attempts[1].outcome, RouteOutcome::Filled);
+        // Priced on LP-2's own level (99.97), not LP-1's — the price we actually got.
+        assert!((f.hedge_price - 99.97).abs() < 1e-12, "{}", f.hedge_price);
+    }
+
+    /// A partial fill leaves a REAL residual. Reporting the whole clip as hedged when
+    /// only part traded would make the risk book and the blotter disagree.
+    #[test]
+    fn a_partial_fill_leaves_an_honest_residual() {
+        struct HalfFills;
+        impl StreetOrderRouter for HalfFills {
+            fn route(&self, intent: &StreetOrderIntent<'_>) -> RouteAnswer {
+                RouteAnswer::Traded(RoutedFill {
+                    filled: intent.quantity / 2.0,
+                    price: intent.limit_price,
+                    reason: Some("IOC_DEPTH_EXHAUSTED".to_owned()),
+                    latency_nanos: 700,
+                })
+            }
+        }
+        let f = execute_external(
+            &req(
+                50_000.0,
+                10_000.0,
+                100.0,
+                1e-2,
+                HedgeExecutionMode::LpPanel,
+                0.5,
+            ),
+            &PanelLp,
+            &HalfFills,
+        );
+        assert_eq!(f.filled, 5_000.0);
+        assert_eq!(f.residual, 5_000.0, "the unfilled half is not hedged");
+        assert_eq!(f.attempts[0].outcome, RouteOutcome::PartiallyFilled);
+        assert_eq!(f.attempts[0].reason.as_deref(), Some("IOC_DEPTH_EXHAUSTED"));
+    }
+
+    /// A panel that unanimously refuses backstops to the composite — but the refusals
+    /// SURVIVE on the record. Without them a street that said no would be
+    /// indistinguishable from a street that said nothing.
+    #[test]
+    fn a_unanimous_refusal_backstops_but_keeps_every_refusal_on_the_record() {
+        let f = execute_external(
+            &req(
+                50_000.0,
+                10_000.0,
+                100.0,
+                1e-2,
+                HedgeExecutionMode::LpPanelThenComposite,
+                0.5,
+            ),
+            &PanelLp,
+            &AlwaysRefuses,
+        );
+        assert_eq!(f.venue, Some(HedgeVenue::Composite));
+        assert_eq!(
+            f.lp_won.as_deref(),
+            Some(HedgeVenue::COMPOSITE_LABEL),
+            "a backstop credits no counterparty"
+        );
+        assert!(
+            f.panel.is_empty(),
+            "a backstop fill competed against nothing it could deal on"
+        );
+        assert_eq!(f.attempts.len(), 3);
+        assert!(
+            f.attempts
+                .iter()
+                .all(|a| a.outcome == RouteOutcome::Rejected)
+        );
+    }
+
+    /// Pure `LpPanel` with a unanimously refusing street is an honest miss that still
+    /// names who refused.
+    #[test]
+    fn pure_lp_panel_refusals_are_a_miss_that_names_the_refusers() {
+        let f = execute_external(
+            &req(
+                50_000.0,
+                10_000.0,
+                100.0,
+                1e-2,
+                HedgeExecutionMode::LpPanel,
+                0.5,
+            ),
+            &PanelLp,
+            &AlwaysRefuses,
+        );
+        assert!(!f.is_filled());
+        assert_eq!(f.residual, 10_000.0);
+        assert_eq!(f.attempts.len(), 3);
+        assert_eq!(f.panel.len(), 3, "the panel we asked is still the panel");
+    }
+
+    /// A silent venue is a recorded outcome, not a hang and not a market fact.
+    #[test]
+    fn a_silent_venue_expires_with_its_measured_wait() {
+        struct NeverAnswers;
+        impl StreetOrderRouter for NeverAnswers {
+            fn route(&self, _intent: &StreetOrderIntent<'_>) -> RouteAnswer {
+                RouteAnswer::Expired {
+                    waited_nanos: 250_000_000,
+                }
+            }
+        }
+        let f = execute_external(
+            &req(
+                50_000.0,
+                10_000.0,
+                100.0,
+                1e-2,
+                HedgeExecutionMode::LpPanel,
+                0.5,
+            ),
+            &FixedLp {
+                lp: "LP-9",
+                price: 99.99,
+            },
+            &NeverAnswers,
+        );
+        assert!(!f.is_filled());
+        let a = &f.attempts[0];
+        assert_eq!(a.outcome, RouteOutcome::Expired);
+        assert_eq!(a.reason.as_deref(), Some(VENUE_NO_RESPONSE_REASON));
+        assert_eq!(
+            a.response_latency_nanos,
+            Some(250_000_000),
+            "the wait is the only latency datum a silent venue yields"
+        );
+        assert_eq!(
+            a.outcome.street_outcome(),
+            celnet_analytics::StreetOutcome::Expired
+        );
+    }
+
+    /// A composite-only desk routes NOTHING — it never asks the street, so it must
+    /// never claim to have.
+    #[test]
+    fn a_composite_only_desk_routes_nothing() {
+        let f = execute_external(
+            &req(
+                50_000.0,
+                10_000.0,
+                100.0,
+                1e-2,
+                HedgeExecutionMode::Composite,
+                0.5,
+            ),
+            &PanelLp,
+            &AlwaysTrades,
+        );
+        assert_eq!(f.venue, Some(HedgeVenue::Composite));
+        assert!(
+            f.attempts.is_empty(),
+            "no order was sent, so none is logged"
+        );
+    }
+
+    /// An advisory desk routes nothing either — the shadow-run posture must not put
+    /// live orders on the wire.
+    #[test]
+    fn an_advisory_desk_never_puts_an_order_on_the_wire() {
+        let f = execute_external(
+            &req(
+                50_000.0,
+                10_000.0,
+                100.0,
+                1e-2,
+                HedgeExecutionMode::Advisory,
+                0.5,
+            ),
+            &PanelLp,
+            &AlwaysTrades,
+        );
+        assert!(!f.is_filled());
+        assert!(f.attempts.is_empty());
+    }
+
+    /// Every routing outcome maps onto a distinct street-side outcome; in particular
+    /// an unroutable attempt is NOT a rejection (nobody refused us).
+    #[test]
+    fn routing_outcomes_map_onto_distinct_street_outcomes() {
+        use celnet_analytics::StreetOutcome as S;
+        assert_eq!(RouteOutcome::Filled.street_outcome(), S::Filled);
+        assert_eq!(
+            RouteOutcome::PartiallyFilled.street_outcome(),
+            S::PartiallyFilled
+        );
+        assert_eq!(RouteOutcome::Rejected.street_outcome(), S::Rejected);
+        assert_eq!(RouteOutcome::Cancelled.street_outcome(), S::Cancelled);
+        assert_eq!(RouteOutcome::Expired.street_outcome(), S::Expired);
+        assert_eq!(
+            RouteOutcome::LastLookPulled.street_outcome(),
+            S::LastLookPulled
+        );
+        assert_eq!(
+            RouteOutcome::Unroutable.street_outcome(),
+            S::NoLiquidity,
+            "our missing configuration is never a counterparty's refusal"
+        );
     }
 }

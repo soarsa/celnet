@@ -4,10 +4,19 @@
 # the contributing LP-SIM connections) to a file, so an operator can watch the feed
 # with `tail -f`.
 #
-# LP-SIM is a synthetic liquidity provider: it loads the bundled US-Treasury
-# reference universe, stands up a named `LP-SIM` member panel over it, and streams a
-# stochastic two-way for every selected bond through the REAL celnet-aggregation
-# consolidation engine — the same engine an operator-defined FI Aggregated Book uses.
+# The OTC panel is four NAMED simulated counterparties — marketaccess-sim,
+# traderweb-sim, citigroup-sim, jpm-sim — each with its own persistent pricing
+# personality (spread, directional axe, size appetite, quoted depth, response
+# latency, refresh cadence). It loads the bundled reference universe, streams a
+# stochastic two-way for every selected cash bond / swap point / STIR contract
+# through the REAL celnet-aggregation consolidation engine (the same engine an
+# operator-defined FI Aggregated Book uses), and ACCEPTS ORDERS against those quotes
+# over FIX, answering each with a real ExecutionReport(8).
+#
+# !! OPERATOR NOTE — BREAKING CHANGE TO AN AGGREGATED BOOK !!
+#    The member connection ids are no longer LP-SIM-01..LP-SIM-0N. Update every
+#    aggregated book's member_connection_ids to the four names above. Listed Treasury
+#    futures moved to the separate `cme-sim` venue (deploy/start-cme-sim.sh).
 # The lp-sim binary is self-contained (the universe is embedded) and loops on its own
 # --interval, so this launcher just resolves the binary, daemonizes it with a PID
 # file + log, and supervises a restart if it ever exits.
@@ -19,9 +28,11 @@
 #   tail -f deploy/lp-sim-run/log/lp-sim.log # watch the feed
 #
 # Env overrides (defaults match group_vars celnet_lpsim_* settings):
-#   LPSIM_LP_NAME (LP-SIM)         # the LP connection name shown as the contributor
+#   LPSIM_LP_NAME (OTC-SIM)        # the feed LABEL (contributions carry counterparty ids)
 #   LPSIM_BOOK (ust-composite)     # the aggregated-book id label
-#   LPSIM_MEMBERS (4)              # decorrelated LP member connections (>=3 for gating)
+#   LPSIM_MEMBERS (4)              # how many of the 4 NAMED counterparties participate
+#   LPSIM_ORDER_PORT (5701)        # base FIX order-acceptor port (5701..5704); "" = off
+#   LPSIM_ORDER_BIND (0.0.0.0)     # interface the order acceptors bind
 #   LPSIM_INTERVAL (2)             # seconds between composite emissions
 #   LPSIM_INSTRUMENTS (all)        # all, or a CSV of ISINs/CUSIPs
 #   LPSIM_MAX_INSTRUMENTS (12)     # cap on instruments streamed (log readability)
@@ -34,9 +45,9 @@
 #   LPSIM_ONESHOT (0)  LPSIM_DAEMON (0)
 set -euo pipefail
 
-LPSIM_LP_NAME="${LPSIM_LP_NAME:-LP-SIM}"
+LPSIM_LP_NAME="${LPSIM_LP_NAME:-OTC-SIM}"
 LPSIM_BOOK="${LPSIM_BOOK:-ust-composite}"
-LPSIM_MEMBERS="${LPSIM_MEMBERS:-5}"
+LPSIM_MEMBERS="${LPSIM_MEMBERS:-4}"
 LPSIM_INTERVAL="${LPSIM_INTERVAL:-2}"
 # Sub-second override (ms): non-empty ⇒ the feed uses the binary's --interval-ms so the
 # composite refreshes faster than 1s for a livelier book. Empty ⇒ the whole-second interval.
@@ -49,6 +60,13 @@ LPSIM_SEED="${LPSIM_SEED:-305419896}"
 LPSIM_SETTLEMENT="${LPSIM_SETTLEMENT:-2026-04-16}"
 LPSIM_INCLUDE_BILLS="${LPSIM_INCLUDE_BILLS:-0}"
 LPSIM_NO_FAULTS="${LPSIM_NO_FAULTS:-0}"
+# The FIX ORDER acceptors: counterparty i binds LPSIM_ORDER_PORT + i, so the four
+# named counterparties occupy four consecutive ports. A panel that quotes but will
+# not trade is a price display, so this is set by default; blank it to publish prices
+# only. Binding is all-or-nothing — a panel where only some counterparties can be hit
+# would make the LP panel's fill attribution systematically wrong.
+LPSIM_ORDER_PORT="${LPSIM_ORDER_PORT:-5701}"
+LPSIM_ORDER_BIND="${LPSIM_ORDER_BIND:-0.0.0.0}"
 # Service login for the book poll (AuthService.Login). The identity defaults to the
 # DEDICATED least-privilege service account — NOT the admin. That account is provisioned
 # as a service account with an EMPTY effective capability set, which is all this daemon
@@ -132,7 +150,7 @@ if [ "${LPSIM__CHILD:-0}" != "1" ]; then
 fi
 
 log "run dir $RUN_DIR ; log $LOG"
-log "feed $LPSIM_LP_NAME -> book $LPSIM_BOOK ; members $LPSIM_MEMBERS ; interval ${LPSIM_INTERVAL}s ; instruments $LPSIM_INSTRUMENTS"
+log "feed $LPSIM_LP_NAME -> book $LPSIM_BOOK ; members $LPSIM_MEMBERS ; interval ${LPSIM_INTERVAL}s ; instruments $LPSIM_INSTRUMENTS ; orders ${LPSIM_ORDER_PORT:-DISABLED}"
 
 # --- Resolve the runner up front so a build failure is LOUD, not hidden ---------
 RUNNER=()
@@ -174,6 +192,11 @@ build_args() {
   # The service login is passed via the EXPORTED environment (LPSIM_USER +
   # LPSIM_PASSWORD_FILE/LPSIM_PASSWORD), never as arguments: the password must never
   # reach `ps` output. The binary has no --password flag at all.
+  # The FIX order acceptors. Bound before the first publish, so the panel never
+  # shows prices it cannot be hit on.
+  if [ -n "$LPSIM_ORDER_PORT" ]; then
+    ARGS+=(--order-port "$LPSIM_ORDER_PORT" --order-bind "$LPSIM_ORDER_BIND")
+  fi
   if [ -n "$LPSIM_ADDR" ]; then
     ARGS+=(--addr "$LPSIM_ADDR")
     [ -n "${LPSIM_BOOK_POLL:-}" ] && ARGS+=(--book-poll "$LPSIM_BOOK_POLL")

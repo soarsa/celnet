@@ -24,6 +24,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../../app/AppContext";
 import type { LpFlowMetrics } from "../../data/contract";
+import { StreetExecution } from "./StreetExecution";
 import styles from "./StreetLiquidityWorkspace.module.css";
 
 // --- formatting (— for absent; never NaN/0-as-real) --------------------------
@@ -291,6 +292,12 @@ export function StreetLiquidityWorkspace(): React.ReactElement {
           </table>
         </div>
       )}
+
+      {/* The ORDER-level half of the same surface: what we actually sent to the
+          street, and what came back. Kept inside this workspace (rather than a
+          second, competing screen) so "who we trade with" and "what we sent them"
+          read as one story. */}
+      <StreetExecution />
     </section>
   );
 }

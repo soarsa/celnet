@@ -140,3 +140,52 @@
   font-size: var(--type-body);
   line-height: 1.6;
 }
+
+/* ---------------------------------------------------------------------------
+   Outbound order route (the `host:port` we DIAL to send this counterparty a
+   hedge order). Presented as a click-to-edit cell rather than a modal: it is a
+   single field an operator changes while reading the row's live status, and the
+   absent state is itself the thing worth seeing.
+   --------------------------------------------------------------------------- */
+
+.routeCell {
+  appearance: none;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 4px);
+  padding: var(--space-1, 2px) var(--space-2, 6px);
+  margin: calc(-1 * var(--space-1, 2px)) calc(-1 * var(--space-2, 6px));
+  font: inherit;
+  color: inherit;
+  cursor: text;
+  text-align: left;
+  white-space: nowrap;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.routeCell:hover {
+  border-color: var(--border-strong, oklch(60% 0 0 / 0.4));
+  background: var(--surface-raised, oklch(50% 0 0 / 0.06));
+}
+
+.routeCell:focus-visible {
+  outline: 2px solid var(--accent, oklch(68% 0.21 250));
+  outline-offset: 1px;
+}
+
+.routeEdit {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2, 6px);
+}
+
+.routeInput {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--type-caption);
+  padding: var(--space-1, 2px) var(--space-2, 6px);
+  border: 1px solid var(--border-strong, oklch(60% 0 0 / 0.4));
+  border-radius: var(--radius-sm, 4px);
+  background: var(--surface-input, transparent);
+  color: var(--text-primary, inherit);
+  inline-size: 14ch;
+}

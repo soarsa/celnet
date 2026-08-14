@@ -522,8 +522,18 @@ pub struct MarketOrderParams<'a> {
     pub side: u8,
     /// `OrderQty(38)`.
     pub qty: f64,
-    /// `Price(44)` — the streamed top-of-book level being hit.
+    /// `Price(44)` — the streamed top-of-book level being hit. Omitted from the
+    /// frame for a pure market order ([`ord_type::MARKET`]), which carries no price.
     pub price: f64,
+    /// `OrdType(40)` — [`ord_type::PREVIOUSLY_QUOTED`] for a lift of a streamed
+    /// level (the price the taker was shown is the price it is entitled to),
+    /// [`ord_type::LIMIT`] for a priced order, [`ord_type::MARKET`] for an unpriced
+    /// one.
+    pub ord_type: u8,
+    /// `TimeInForce(59)` — see [`time_in_force`]. `None` omits the tag entirely,
+    /// leaving the venue's own default in force, which is what a lift of a streamed
+    /// level has always meant.
+    pub tif: Option<u8>,
     /// `TransactTime(60)` bytes.
     pub transact_time: &'a [u8],
 }
@@ -550,16 +560,132 @@ pub fn build_new_order_by_symbol(
     }
     enc.push(54, &[p.side]);
     push_decimal(enc, 38, p.qty);
-    push_decimal(enc, 44, p.price);
-    enc.push(40, b"D"); // OrdType = previously quoted (the streamed snapshot)
+    // A market order carries no price by definition; every other type does.
+    if p.ord_type != ord_type::MARKET {
+        push_decimal(enc, 44, p.price);
+    }
+    enc.push(40, &[p.ord_type]);
+    if let Some(tif) = p.tif {
+        enc.push(59, &[tif]);
+    }
     enc.push(60, p.transact_time);
     enc.finish()
+}
+
+/// A borrowed view over a `NewOrderSingle(D)` frame — the maker side of the lift.
+///
+/// The venue must be able to tell a MALFORMED order from a well-formed one it
+/// declines, so every accessor is fallible and nothing is defaulted: an absent or
+/// unparseable field reads as `None` and the caller decides what that means, rather
+/// than silently becoming a market order, a buy, or a zero quantity.
+#[derive(Debug, Clone, Copy)]
+pub struct NewOrderView<'a> {
+    frame: FrameCursor<'a>,
+}
+
+impl<'a> NewOrderView<'a> {
+    /// Wrap a frame confirmed to be a `NewOrderSingle`.
+    #[must_use]
+    pub fn new(frame: FrameCursor<'a>) -> Self {
+        Self { frame }
+    }
+
+    /// `ClOrdID(11)`.
+    #[must_use]
+    pub fn cl_ord_id(&self) -> Option<&'a [u8]> {
+        self.frame.get(11)
+    }
+
+    /// `Symbol(55)`.
+    #[must_use]
+    pub fn symbol(&self) -> Option<&'a [u8]> {
+        self.frame.get(55)
+    }
+
+    /// `QuoteID(117)`, when the taker lifted a specific streamed handle.
+    #[must_use]
+    pub fn quote_id(&self) -> Option<&'a [u8]> {
+        self.frame.get(117)
+    }
+
+    /// `Side(54)` byte.
+    #[must_use]
+    pub fn side(&self) -> Option<u8> {
+        self.frame.get(54).and_then(|v| v.first().copied())
+    }
+
+    /// `OrderQty(38)` parsed.
+    #[must_use]
+    pub fn order_qty(&self) -> Option<f64> {
+        self.frame.get(38).and_then(crate::dialect_fx::parse_float)
+    }
+
+    /// `Price(44)` parsed (absent on a market order).
+    #[must_use]
+    pub fn price(&self) -> Option<f64> {
+        self.frame.get(44).and_then(crate::dialect_fx::parse_float)
+    }
+
+    /// `OrdType(40)` byte.
+    #[must_use]
+    pub fn ord_type(&self) -> Option<u8> {
+        self.frame.get(40).and_then(|v| v.first().copied())
+    }
+
+    /// `TimeInForce(59)` byte — `None` when the taker did not state one.
+    #[must_use]
+    pub fn time_in_force(&self) -> Option<u8> {
+        self.frame.get(59).and_then(|v| v.first().copied())
+    }
 }
 
 /// `ExecType(150)` / `OrdStatus(39)`: filled.
 pub const EXEC_FILLED: u8 = b'F';
 /// `ExecType(150)` / `OrdStatus(39)`: rejected.
 pub const EXEC_REJECTED: u8 = b'8';
+/// `OrdStatus(39)`: partially filled — some of the order traded and the rest is no
+/// longer working (an IOC's cancelled remainder). Paired with an
+/// [`EXEC_FILLED`] `ExecType(150)`, which reports the trade that just happened,
+/// while `OrdStatus` reports where the ORDER now stands.
+pub const ORD_STATUS_PARTIALLY_FILLED: u8 = b'1';
+/// `OrdStatus(39)`: cancelled. The order is done and nothing traded — the terminal
+/// state of an IOC that found no eligible liquidity, as distinct from a rejection
+/// (which means the venue would not accept the order at all).
+pub const ORD_STATUS_CANCELED: u8 = b'4';
+/// `ExecType(150)`: cancelled.
+pub const EXEC_CANCELED: u8 = b'4';
+
+/// `TimeInForce(59)` — the standard encoding. Declared here so a venue names the
+/// value it is honouring or declining instead of comparing raw bytes at the call
+/// site. The venue-side semantics live with the matching core that implements them.
+pub mod time_in_force {
+    /// `0` — Day.
+    pub const DAY: u8 = b'0';
+    /// `1` — Good Till Cancel.
+    pub const GOOD_TILL_CANCEL: u8 = b'1';
+    /// `2` — At the Opening.
+    pub const AT_THE_OPENING: u8 = b'2';
+    /// `3` — Immediate Or Cancel.
+    pub const IMMEDIATE_OR_CANCEL: u8 = b'3';
+    /// `4` — Fill Or Kill.
+    pub const FILL_OR_KILL: u8 = b'4';
+    /// `5` — Good Till Crossing.
+    pub const GOOD_TILL_CROSSING: u8 = b'5';
+    /// `6` — Good Till Date.
+    pub const GOOD_TILL_DATE: u8 = b'6';
+    /// `7` — At the Close.
+    pub const AT_THE_CLOSE: u8 = b'7';
+}
+
+/// `OrdType(40)` — the standard encoding for the order types this estate trades.
+pub mod ord_type {
+    /// `1` — Market.
+    pub const MARKET: u8 = b'1';
+    /// `2` — Limit.
+    pub const LIMIT: u8 = b'2';
+    /// `D` — Previously Quoted (a lift of a streamed level).
+    pub const PREVIOUSLY_QUOTED: u8 = b'D';
+}
 
 /// Build an `ExecutionReport(8)` for a single fill (or rejection).
 #[derive(Debug, Clone, Copy)]
@@ -658,6 +784,30 @@ impl<'a> ExecReportView<'a> {
         self.frame
             .get(TAG_LAST_PX_EXACT)
             .and_then(crate::dialect_fx::parse_float)
+    }
+
+    /// `LastQty(32)` parsed — the quantity that actually traded on this report.
+    ///
+    /// Distinct from the order's `OrderQty(38)`: a partially-filled report carries the
+    /// traded part here and reports the rest via `OrdStatus(39)` + `Text(58)`. A taker
+    /// that read only `OrdStatus` could not tell a 10% fill from a 90% one.
+    #[must_use]
+    pub fn last_qty(&self) -> Option<f64> {
+        self.frame.get(32).and_then(crate::dialect_fx::parse_float)
+    }
+
+    /// `OrderID(37)` — the venue's own identity for the order.
+    #[must_use]
+    pub fn order_id(&self) -> Option<&'a [u8]> {
+        self.frame.get(37)
+    }
+
+    /// `Text(58)` — the venue's reason. Absent on a clean complete fill, which needs
+    /// no explanation; present (leading with a machine-readable code) on every
+    /// rejection, cancel and partial.
+    #[must_use]
+    pub fn text(&self) -> Option<&'a [u8]> {
+        self.frame.get(58)
     }
 
     /// Echoed `ClOrdID(11)`.
@@ -1047,6 +1197,11 @@ mod tests {
             side: crate::dialect_fx::SIDE_BUY,
             qty: 1_000_000.0,
             price: 99.65,
+            // Preserved verbatim: a lift of a streamed level IS a
+            // previously-quoted order, and it stated no TimeInForce(59)
+            // before this field existed. Byte-identical frame.
+            ord_type: ord_type::PREVIOUSLY_QUOTED,
+            tif: None,
             transact_time: b"20260530-12:00:01.000",
         };
         let raw = build_new_order_by_symbol(&hdr(), &p, &mut enc);
@@ -1085,6 +1240,11 @@ mod tests {
             side: crate::dialect_fx::SIDE_SELL,
             qty: 5_000_000.0,
             price: 99.40,
+            // Preserved verbatim: a lift of a streamed level IS a
+            // previously-quoted order, and it stated no TimeInForce(59)
+            // before this field existed. Byte-identical frame.
+            ord_type: ord_type::PREVIOUSLY_QUOTED,
+            tif: None,
             transact_time: b"20260530-12:00:01.000",
         };
         let raw = build_new_order_by_symbol(&hdr(), &p, &mut enc);

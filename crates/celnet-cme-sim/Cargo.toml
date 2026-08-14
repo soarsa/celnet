@@ -1,0 +1,59 @@
+[package]
+name = "celnet-cme-sim"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet listed-futures venue simulator — a single simulated exchange (connection id `cme-sim`) that quotes the Treasury futures complex from the reference registry's real contract terms, rolls a product symbol to its front delivery month, publishes whole-contract tick-aligned two-ways into the server's LpFeed ingest, and ACCEPTS ORDERS against them over FIX, answering each with a real ExecutionReport(8)."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The shared simulator machinery this venue is a peer of: the QuotedLine vocabulary,
+# the seeded mean-reverting price model, the book resolver, the LpFeed streaming
+# client, the service-credential resolution, the named-counterparty roster, and the
+# order-execution core + FIX order acceptor. Points strictly downward — the OTC
+# simulator knows nothing of this crate.
+celnet-lp-sim.workspace = true
+# The consolidation seam: this venue's members implement `VenueFeed` exactly as the
+# OTC panel's do, so a listed contract flows through the SAME real consolidation
+# engine an operator-defined FI Aggregated Book uses.
+celnet-aggregation.workspace = true
+# The authoritative listed-contract specifications: contract face value, tick size,
+# tick value, notional coupon, delivery dates, the derived DV01 per contract, and
+# the `is_product_symbol` / `front_contract_id` delivery-month roll. Every number
+# this venue quotes comes from here — none is invented.
+celnet-refdata.workspace = true
+# The reference yield->clean-price relation the notional deliverable is priced with.
+celnet-bond.workspace = true
+# The frozen instrument vocabulary the aggregation engine keys on.
+celnet-types.workspace = true
+# The `cme-sim` runnable venue's CLI surface, mirroring lp-sim's flag style.
+clap.workspace = true
+# The wire contract + gRPC client for the LpFeed publish path.
+celnet-proto.workspace = true
+# The FIX order contract: `NewOrderSingle(D)` in, `ExecutionReport(8)` out.
+celnet-fix.workspace = true
+# The async runtime for the publish stream and the order acceptor.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
+# The client-streaming generator for the LpFeed publish (the same combinator the
+# OTC simulator's feed is built on).
+futures-util.workspace = true
+# Structured logging for the venue's connect / publish / execution lifecycle.
+tracing.workspace = true
+
+[dev-dependencies]
+# The integration test drives a REAL FIX session over a REAL loopback socket against
+# the venue's order acceptor, and consolidates its market through the real engine.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
+celnet-refdata.workspace = true
+
+# The runnable listed-futures venue: loads the committed Treasury-futures universe,
+# anchors each contract to the real cash curve, and streams whole-contract
+# tick-aligned two-ways while accepting orders against them.
+[[bin]]
+name = "cme-sim"
+path = "src/bin/cme-sim.rs"

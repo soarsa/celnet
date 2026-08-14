@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# cmesimctl — start/once/stop/status/tail for the celnet listed-futures venue.
+# MANAGED BY ANSIBLE. Installed at {{ celnet_bin_dir }}/cmesimctl.
+#
+#   cmesimctl start | once | restart | stop | status | tail [n]
+#
+# Thin wrapper over {{ celnet_bin_dir }}/start-cme-sim.sh: it points the launcher at
+# the release-shipped cme-sim binary (no cargo needed on the host), daemonizes, and
+# logs into the shared log dir. `cmesimctl start` runs the venue against the LOCAL
+# server ingest (CMESIM_ADDR): it publishes whole-contract tick-aligned two-ways for
+# the Treasury futures complex under the `cme-sim` connection id, and binds a FIX
+# order acceptor on CMESIM_ORDER_PORT so a taker can actually trade against them.
+#
+# !! OPERATOR NOTE — BREAKING CHANGE TO AN AGGREGATED BOOK !!
+#    Treasury futures are no longer contributed by the OTC panel (lp-sim). Any
+#    aggregated book carrying futures MUST list `cme-sim` in its
+#    member_connection_ids, or those lines lose their only contributor and every
+#    futures hedge routed at them backstops to the synthetic COMPOSITE venue.
+#
+# Unlike lpsimctl this daemon needs NO service credential: it does not poll
+# ListAggregatedBooks (a single-venue publisher has nothing to resolve), so the
+# LpFeed ingest — an unauthenticated backend feed — is all it touches.
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+LAUNCHER="{{ celnet_bin_dir }}/start-cme-sim.sh"
+export CMESIM_RELEASE_BIN="{{ celnet_current_link }}/bin/cme-sim"
+export CMESIM_RUN_DIR="{{ celnet_run_dir }}/cmesim"
+export CMESIM_LOG="{{ celnet_log_dir }}/cme-sim.out.log"
+export CMESIM_INTERVAL="{{ celnet_cmesim_interval | default('2') }}"
+# Sub-second override (ms): non-empty ⇒ the venue re-quotes faster than 1s.
+export CMESIM_INTERVAL_MS="{{ celnet_cmesim_interval_ms | default('') }}"
+export CMESIM_SEED="{{ celnet_cmesim_seed | default('305419896') }}"
+export CMESIM_SETTLEMENT="{{ celnet_cmesim_settlement | default('2026-04-16') }}"
+# Network publish endpoint: cme-sim streams LpQuotes into the server's LpFeed ingest
+# so the listed composite surfaces to GUI subscribers (default: the local gRPC edge).
+export CMESIM_ADDR="{{ celnet_cmesim_addr | default('http://127.0.0.1:' ~ (celnet_grpc_port | default('50051'))) }}"
+# Where the FIX order acceptor binds. A venue that quotes but will not trade is only
+# half a venue, so this is set by default; blank it to publish prices only.
+export CMESIM_ORDER_PORT="{{ celnet_cmesim_order_port | default('0.0.0.0:5710') }}"
+
+PIDFILE="$CMESIM_RUN_DIR/cme-sim.pid"
+
+is_running() {
+  [[ -f "$PIDFILE" ]] || return 1
+  local pid; pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+case "${1:-}" in
+  start)
+    if is_running; then echo "cme-sim already running (pid $(cat "$PIDFILE"))"; exit 0; fi
+    [[ -x "$CMESIM_RELEASE_BIN" ]] || { echo "ERROR: $CMESIM_RELEASE_BIN missing (deploy a release with celnet_cmesim_enabled)"; exit 1; }
+    CMESIM_DAEMON=1 "$LAUNCHER"
+    ;;
+  once)
+    CMESIM_ONESHOT=1 "$LAUNCHER"
+    ;;
+  restart)
+    # Managed-service restart: stop any running daemon, then start a fresh one. Used
+    # by the deploy so every release re-launches the venue.
+    "$0" stop || true
+    sleep 1
+    "$0" start
+    ;;
+  stop)
+    if is_running; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; echo "Stopped."; else echo "cme-sim not running"; rm -f "$PIDFILE"; fi
+    ;;
+  status)
+    if is_running; then
+      echo "cme-sim: RUNNING (pid $(cat "$PIDFILE"))"
+      echo "  log: $CMESIM_LOG"
+      echo "  mode: listed futures venue → $CMESIM_ADDR, every ${CMESIM_INTERVAL}s"
+      echo "  orders: ${CMESIM_ORDER_PORT:-DISABLED (price display only)}"
+      echo "  NOTE: an aggregated book carrying futures must list 'cme-sim' as a member"
+    else echo "cme-sim: STOPPED"; exit 3; fi
+    ;;
+  tail)
+    tail -n "${2:-50}" -f "$CMESIM_LOG"
+    ;;
+  *)
+    echo "usage: cmesimctl {start|once|restart|stop|status|tail [n]}"; exit 64
+    ;;
+esac

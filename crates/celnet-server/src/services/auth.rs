@@ -39,9 +39,9 @@ use celnet_proto::{
     InitiateRiskTransferResponse, LatencyStageDesc, LatencyTelemetryHealth,
     ListClientFlowMetricsRequest, ListClientFlowMetricsResponse, ListLatencyMetricsRequest,
     ListLatencyMetricsResponse, ListLpFlowMetricsRequest, ListLpFlowMetricsResponse,
-    ListRiskTransfersRequest, ListRiskTransfersResponse, ListTracesRequest, ListTracesResponse,
-    RejectRiskTransferRequest, RejectRiskTransferResponse, SetPricingControlRequest,
-    SetPricingControlResponse,
+    ListRiskTransfersRequest, ListRiskTransfersResponse, ListStreetOrdersRequest,
+    ListStreetOrdersResponse, ListTracesRequest, ListTracesResponse, RejectRiskTransferRequest,
+    RejectRiskTransferResponse, SetPricingControlRequest, SetPricingControlResponse,
 };
 use celnet_proto::{
     AggregatedBookDesc, AggregatedBookSpec, AggregationParamsDesc, AggregationScopeMode, AxeSide,
@@ -82,10 +82,12 @@ use celnet_proto::{
     UpdateRiskRoutingGraphResponse, route_value_desc, routing_node_desc,
 };
 use celnet_proto::{
-    ExecuteHedgeSuggestionRequest, ExecuteHedgeSuggestionResponse, GetHedgeConfigRequest,
-    GetHedgeConfigResponse, GetHedgePolicyGraphRequest, GetHedgePolicyGraphResponse,
-    ListHedgeProvenanceRequest, ListHedgeProvenanceResponse, ListHedgeSuggestionsRequest,
-    ListHedgeSuggestionsResponse, ListHedgeThresholdsRequest, ListHedgeThresholdsResponse,
+    DecisionEngineEnum, DecisionOutcomeEnum, ExecuteHedgeSuggestionRequest,
+    ExecuteHedgeSuggestionResponse, GetHedgeConfigRequest, GetHedgeConfigResponse,
+    GetHedgePolicyGraphRequest, GetHedgePolicyGraphResponse, ListDecisionJournalRequest,
+    ListDecisionJournalResponse, ListHedgeProvenanceRequest, ListHedgeProvenanceResponse,
+    ListHedgeSuggestionsRequest, ListHedgeSuggestionsResponse, ListHedgeThresholdsRequest,
+    ListHedgeThresholdsResponse, ListRuleAdviceRequest, ListRuleAdviceResponse,
     SetHedgeConfigRequest, SetHedgeConfigResponse, UpdateHedgePolicyGraphRequest,
     UpdateHedgePolicyGraphResponse, UpdateHedgeThresholdRequest, UpdateHedgeThresholdResponse,
 };
@@ -115,12 +117,14 @@ use crate::services::auto_hedge::wire::{
     config_from_wire, config_to_wire, hedge_graph_from_wire, hedge_graph_to_wire,
     threshold_from_wire, threshold_to_wire,
 };
+use crate::services::decision_journal::{DecisionJournal, JournalQuery};
 use crate::services::instrument_wire::{instrument_from_wire, instrument_to_wire};
 use crate::services::pricing_control::PricingControl;
 use crate::services::risk::book_risk::{
     LimitUtilization, RagBand as DomainRagBand, RiskBookRisk, aggregate_risk_book,
 };
 use crate::services::risk::store::PositionStore;
+use crate::services::rule_advisor;
 use crate::services::sessions::{AuthenticatedUser, SessionRegistry};
 use celnet_risk_routing::{NodeId, RiskRoutingGraph, RouteField, RouteOp, RouteValue, RoutingNode};
 
@@ -232,6 +236,11 @@ pub struct AuthEdge {
     /// history on-query, off the hot path (`docs/ANALYTICS-REQUIREMENTS.md` §2.4).
     /// Empty in an isolated auth test (the RPC then returns an empty roster).
     lp_analytics_sources: Vec<Arc<dyn crate::services::analytics::lp::LpFlowSource>>,
+    /// The shared **street-side execution log** backing the `ListStreetOrders` RPC —
+    /// the bounded ring of outbound street orders the rates booking seam records. The
+    /// SAME `Arc` registered above as an `LpFlowSource`; `None` in an isolated auth
+    /// test (the RPC then returns an empty blotter + breakdown, never fabricated rows).
+    street_order_log: Option<Arc<crate::services::analytics::street_orders::StreetOrderLog>>,
     /// The shared latency/ops telemetry hub (the `CoreLink`'s drain-side store)
     /// backing the `ListLatencyMetrics` RPC. `None` in an isolated auth test (the
     /// RPC then reports the hub is not wired), `Some` on the real boot path.
@@ -253,6 +262,12 @@ pub struct AuthEdge {
     /// Defaulted to a both-enabled control by [`AuthEdge::new`], so an isolated auth test
     /// applies the setting to its own standalone control.
     pricing_control: Arc<PricingControl>,
+    /// The firm-wide **decision journal** — every acceptance / risk-routing / hedge
+    /// evaluation, fired and no-action alike, that `ListDecisionJournal` reads and
+    /// `ListRuleAdvice` derives from. The SAME `Arc` the auto-hedge engine and the desk
+    /// acceptance gate record into (bound at boot). Constructed empty by
+    /// [`AuthEdge::new`], so an isolated auth test serves an honestly empty journal.
+    decision_journal: Arc<DecisionJournal>,
 }
 
 impl AuthEdge {
@@ -279,10 +294,12 @@ impl AuthEdge {
             transfer_service: None,
             analytics_sources: Vec::new(),
             lp_analytics_sources: Vec::new(),
+            street_order_log: None,
             telemetry: None,
             trace: None,
             auto_hedge: Arc::new(AutoHedgeEngine::default()),
             pricing_control: PricingControl::new(true, true),
+            decision_journal: Arc::new(DecisionJournal::default()),
         }
     }
 
@@ -324,6 +341,21 @@ impl AuthEdge {
         &self.auto_hedge
     }
 
+    /// Share the boot-path decision journal so `ListDecisionJournal` / `ListRuleAdvice`
+    /// read the SAME ring the hedge engine and the acceptance gate record into.
+    /// Chainable.
+    #[must_use]
+    pub fn with_decision_journal(mut self, journal: Arc<DecisionJournal>) -> Self {
+        self.decision_journal = journal;
+        self
+    }
+
+    /// The shared decision-journal handle (the audit-log reader + advice input).
+    #[must_use]
+    pub fn decision_journal(&self) -> &Arc<DecisionJournal> {
+        &self.decision_journal
+    }
+
     /// Inject the shared latency/ops telemetry hub so the `ListLatencyMetrics` RPC
     /// serves the per-stage HdrHistogram snapshot the pinned core + async edges
     /// fold into (the SAME `Arc<TelemetryHub>` the `CoreLink` owns).
@@ -342,6 +374,19 @@ impl AuthEdge {
     #[must_use]
     pub fn with_trace(mut self, trace: Arc<crate::services::trace::TraceHub>) -> Self {
         self.trace = Some(trace);
+        self
+    }
+
+    /// Inject the shared **street-side execution log** so the `ListStreetOrders` RPC
+    /// serves the outbound-order blotter + breakdowns the rates booking seam records
+    /// (the SAME `Arc` registered as an `LpFlowSource`). Chainable; an edge never given
+    /// one serves an empty blotter rather than inventing rows.
+    #[must_use]
+    pub fn with_street_order_log(
+        mut self,
+        log: Arc<crate::services::analytics::street_orders::StreetOrderLog>,
+    ) -> Self {
+        self.street_order_log = Some(log);
         self
     }
 
@@ -2303,6 +2348,81 @@ impl AuthService for AuthEdge {
         }))
     }
 
+    /// The **decision journal** — every acceptance / risk-routing / hedge evaluation,
+    /// including the ones that fired nothing, each with its walked path and its stated
+    /// reason (`docs/DECISION-AUDIT.md`).
+    ///
+    /// This is the query behind the audit surface: the fired-hedge provenance ring answers
+    /// *"what did we hedge"*, this answers *"why did (or didn't) the rule act"*. The reply
+    /// carries `total_recorded` / `evicted` so a client can state plainly whether the
+    /// window it is rendering is complete.
+    async fn list_decision_journal(
+        &self,
+        request: Request<ListDecisionJournalRequest>,
+    ) -> Result<Response<ListDecisionJournalResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::Hedge, AssetClass::FixedIncome),
+        )?;
+        let query = JournalQuery {
+            // An unrecognised / unspecified enum ordinal is treated as "no filter" rather
+            // than as a filter that matches nothing — a client sending the proto3 zero
+            // means "all", and silently returning an empty audit log would be the worst
+            // possible failure mode for this particular surface.
+            engine: req
+                .engine
+                .and_then(|e| DecisionEngineEnum::try_from(e).ok())
+                .filter(|e| *e != DecisionEngineEnum::DecisionEngineUnspecified),
+            outcome: req
+                .outcome
+                .and_then(|o| DecisionOutcomeEnum::try_from(o).ok())
+                .filter(|o| *o != DecisionOutcomeEnum::DecisionOutcomeUnspecified),
+            book: req.book,
+            instrument: req.instrument,
+            counterparty: req.counterparty,
+            since_nanos: req.since_nanos,
+            limit: req.limit,
+        };
+        let page = self.decision_journal.query(&query);
+        Ok(Response::new(ListDecisionJournalResponse {
+            records: page.records,
+            total_recorded: page.total_recorded,
+            evicted: page.evicted,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    /// Rule suggestions **derived from the recorded journal** — recurring breaches on a
+    /// book with no hedge policy, a vehicle that keeps failing to resolve, guards that keep
+    /// downgrading live fires to advisory, counterparties whose lifts keep landing in
+    /// manual review.
+    ///
+    /// Every suggestion cites the `seq` values of the rows it was derived from, and
+    /// `rows_considered` reports the honest denominator. An empty journal derives nothing —
+    /// the server never invents advice to fill the panel.
+    async fn list_rule_advice(
+        &self,
+        request: Request<ListRuleAdviceRequest>,
+    ) -> Result<Response<ListRuleAdviceResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_capability(
+            &req.session_token,
+            Capability::new(Action::Hedge, AssetClass::FixedIncome),
+        )?;
+        let rows = self.decision_journal.snapshot();
+        let (advice, rows_considered) = rule_advisor::derive(&rows, req.book.as_deref());
+        Ok(Response::new(ListRuleAdviceResponse {
+            advice,
+            rows_considered,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
     /// The STANDING hedge suggestions (`docs/HEDGING-AND-RISK-EXIT.md` §6.5) — what a
     /// `Suggest`-mode scope has computed but deliberately NOT traded, waiting for a trader.
     ///
@@ -2668,6 +2788,89 @@ impl AuthService for AuthEdge {
         let metrics = crate::services::analytics::lp::fold(&records, &ticks, req.lp_id.as_deref());
         Ok(Response::new(ListLpFlowMetricsResponse {
             metrics,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    // --- street-side EXECUTION analytics ---------------------------------------
+    //
+    // The order-level companion to the league table above: what left the building, to
+    // which LP, on what product, and what came back. Same cross-product `view_analytics`
+    // gate; a pure fold over the bounded street-order log, off the hot path.
+
+    async fn list_street_orders(
+        &self,
+        request: Request<ListStreetOrdersRequest>,
+    ) -> Result<Response<ListStreetOrdersResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let who = self.authenticate(&req.session_token)?;
+        let caps = who.capabilities();
+        let allowed = caps.allows(Capability::new(
+            Action::ViewAnalytics,
+            AssetClass::FxOptions,
+        )) || caps.allows(Capability::new(
+            Action::ViewAnalytics,
+            AssetClass::FixedIncome,
+        ));
+        if !allowed {
+            return Err(Status::permission_denied(
+                "capability view_analytics·{fx_options|fixed_income} required",
+            ));
+        }
+
+        // An UNKNOWN dimension is refused rather than silently grouped on the default
+        // axis: a client asking for a breakdown it did not get is a bug we want loud.
+        let dimension = match req.dimension.as_deref().filter(|d| !d.is_empty()) {
+            None => celnet_analytics::BreakdownDimension::Lp,
+            Some(d) => celnet_analytics::BreakdownDimension::from_label(d).ok_or_else(|| {
+                Status::invalid_argument(format!(
+                    "unknown street-order breakdown dimension {d:?} — expected one of \
+                     lp | family | instrument | tenor_bucket | hour"
+                ))
+            })?,
+        };
+
+        let Some(log) = self.street_order_log.as_ref() else {
+            // No log wired ⇒ an EMPTY blotter and an EMPTY breakdown. Absence of capture
+            // must never be rendered as activity (guardrail 2).
+            return Ok(Response::new(ListStreetOrdersResponse {
+                orders: Vec::new(),
+                breakdown: Vec::new(),
+                total_matching: 0,
+                correlation_id: req.correlation_id,
+            }));
+        };
+
+        let filter = crate::services::analytics::street_orders::StreetOrderFilter {
+            lp_id: req.lp_id.clone(),
+            family: req.family.clone(),
+            instrument: req.instrument.clone(),
+            outcome: req.outcome.clone(),
+            parent_hedge_id: req.parent_hedge_id.clone(),
+        };
+        let limit = req
+            .limit
+            .map_or(crate::services::analytics::street_orders::MAX_PAGE, |n| {
+                n as usize
+            });
+        let orders = log.orders(req.from_nanos, req.to_nanos, &filter, limit);
+        let breakdown = log.breakdown(req.from_nanos, req.to_nanos, &filter, dimension);
+        // The breakdown folds the WHOLE matching window, so its order count is exactly
+        // the pre-page total — no second pass, and the two can never disagree.
+        let total_matching = breakdown.iter().map(|r| r.orders).sum();
+
+        Ok(Response::new(ListStreetOrdersResponse {
+            orders: orders
+                .iter()
+                .map(crate::services::analytics::street_orders::order_to_wire)
+                .collect(),
+            breakdown: breakdown
+                .iter()
+                .map(crate::services::analytics::street_orders::breakdown_row_to_wire)
+                .collect(),
+            total_matching,
             correlation_id: req.correlation_id,
         }))
     }

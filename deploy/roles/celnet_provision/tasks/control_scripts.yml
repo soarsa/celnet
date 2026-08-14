@@ -1,5 +1,6 @@
 ---
-# The on-box CONTROL SCRIPTS (celnetctl / fixsimctl / lpsimctl), rendered from their
+# The on-box CONTROL SCRIPTS (celnetctl / simsctl / fixsimctl / lpsimctl / cmesimctl),
+# rendered from their
 # templates.
 #
 # Split out of `main.yml` so the BINARY DEPLOY can re-render them too, not just a full
@@ -29,7 +30,8 @@
     group: "{{ celnet_group }}"
     mode: "0755"
 
-# The one control surface over the whole fleet (LP-SIM + the RFQ/RFS/ESP FIX legs).
+# The one control surface over the whole fleet (the named OTC counterparty panel,
+# the listed CME-SIM futures venue, and the RFQ/RFS/ESP FIX legs).
 # `celnetctl` calls it on start/stop/restart, so the sims are killed and relaunched
 # with the server rather than orphaned across it. Installed whenever the fleet is
 # enabled at all — it is the script that knows which individual legs are configured.
@@ -71,3 +73,28 @@
   when:
     - celnet_simulators_enabled | default(true) | bool
     - celnet_lpsim_enabled | default(true) | bool
+
+# The listed Treasury-futures venue. A first-class peer of lp-sim: its own launcher,
+# its own control script, its own connection id (`cme-sim`). Needs NO service
+# credential — it does not poll ListAggregatedBooks, so the unauthenticated LpFeed
+# ingest is all it touches.
+- name: Install the cmesimctl listed-futures venue control script
+  ansible.builtin.template:
+    src: cmesimctl.sh.j2
+    dest: "{{ celnet_bin_dir }}/cmesimctl"
+    owner: "{{ celnet_user }}"
+    group: "{{ celnet_group }}"
+    mode: "0755"
+  when:
+    - celnet_simulators_enabled | default(true) | bool
+    - celnet_cmesim_enabled | default(true) | bool
+
+# Removed when the venue is switched off, so a decommissioned environment cannot be
+# restarted into simulated futures liquidity by a stale script left on the box.
+- name: Remove the cmesimctl control script when the futures venue is disabled
+  ansible.builtin.file:
+    path: "{{ celnet_bin_dir }}/cmesimctl"
+    state: absent
+  when: >-
+    not (celnet_simulators_enabled | default(true) | bool)
+    or not (celnet_cmesim_enabled | default(true) | bool)

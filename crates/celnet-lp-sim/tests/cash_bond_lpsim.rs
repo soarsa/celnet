@@ -58,19 +58,26 @@ use celnet_lp_sim::{
 const S: i64 = 1_000_000_000;
 
 /// The member-panel sizes the platform deploys: the two-member book that is below the
-/// consolidator's `MIN_SOURCES_FOR_GATING` quorum, and the five-member soak panel.
-const PANEL_SIZES: [usize; 4] = [2, 3, 4, 5];
+/// consolidator's `MIN_SOURCES_FOR_GATING` quorum, up to the full named roster.
+const PANEL_SIZES: [usize; 3] = [2, 3, 4];
 
 /// The instants each line is consolidated at — spread across the shared market-level
 /// cadence and each member's own re-quote cadence so the panel is sampled both
 /// mid-tick and on a boundary.
 const INSTANTS: [i64; 6] = [0, S / 4, S / 2, 7 * S, 100 * S, 613 * S];
 
-/// The tightest member's half-spread as a multiple of the fleet base: member spreads
-/// are dispersed over `[0.6, 1.4)×` (see `celnet_lp_sim::lpsim`), so `0.6` is the
-/// narrowest two-way any member can show, and the displacement budget must fit inside
-/// it.
-const TIGHTEST_MEMBER_HALF_SPREAD: f64 = 0.6;
+/// The tightest counterparty's half-spread as a multiple of the fleet base, read off
+/// the ROSTER rather than hard-coded: each profile's spread multiple is jittered by at
+/// most ±10% (see `SimLpProfile::half_spread`), so the narrowest two-way any member
+/// can show is `min(spread_multiple) × 0.9`, and every per-member displacement budget
+/// must fit inside it or the panel's best bid prints through its best offer.
+fn tightest_member_half_spread() -> f64 {
+    celnet_lp_sim::OTC_ROSTER
+        .iter()
+        .map(|p| p.spread_multiple)
+        .fold(f64::INFINITY, f64::min)
+        * 0.9
+}
 
 fn cfg(members: usize) -> LpSimConfig {
     LpSimConfig {
@@ -123,7 +130,7 @@ fn every_cash_line_budgets_its_dispersion_inside_the_tightest_half_spread() {
         let to_price = |y: f64| y * dv01 / 1.0e-4;
 
         // The three per-member displacements, at the outermost member of the panel.
-        let peak_lean = (cfg.members as f64 - 1.0) / 2.0 * cfg.skew_step * line.lean_scale;
+        let peak_lean = (cfg.panel_size() as f64 - 1.0) / 2.0 * cfg.skew_step * line.lean_scale;
         let peak_view = to_price(
             line.yield_dispersion
                 .unwrap_or_else(|| panic!("{}: no sized dispersion", line.instrument_id)),
@@ -143,11 +150,11 @@ fn every_cash_line_budgets_its_dispersion_inside_the_tightest_half_spread() {
         // makes crossing impossible for ANY pair, at any instant.
         let displacement = peak_lean + peak_view + peak_wander;
         assert!(
-            displacement < TIGHTEST_MEMBER_HALF_SPREAD * half_spread,
+            displacement < tightest_member_half_spread() * half_spread,
             "{}: peak member displacement {displacement} would cross a {} half-spread \
              (lean {peak_lean}, view {peak_view}, wander {peak_wander})",
             line.instrument_id,
-            TIGHTEST_MEMBER_HALF_SPREAD * half_spread,
+            tightest_member_half_spread() * half_spread,
         );
     }
 }
@@ -242,11 +249,11 @@ fn the_panel_is_still_a_competing_multi_dealer_panel() {
         .iter()
         .filter_map(|f| f.top_of_book(&probe.instrument, 7 * S))
         .collect();
-    assert_eq!(quotes.len(), cfg.members);
+    assert_eq!(quotes.len(), cfg.panel_size());
     let distinct_bids: BTreeSet<u64> = quotes.iter().map(|q| q.bid.to_bits()).collect();
     assert_eq!(
         distinct_bids.len(),
-        cfg.members,
+        cfg.panel_size(),
         "{}: members must not quote one identical bid",
         probe.instrument_id
     );
@@ -284,10 +291,35 @@ fn the_panel_is_still_a_competing_multi_dealer_panel() {
         }
         winners.extend(per_line);
     }
+    // Under the NAMED roster the touch is won on price and the clip is won on size,
+    // and those are deliberately different counterparties. A wide principal dealer
+    // does not win the touch — it charges for balance sheet and then provides it —
+    // so asserting "every member wins the best bid somewhere" would be asserting
+    // that the roster has no real personalities. What must hold is that the touch is
+    // genuinely CONTESTED (more than one winner across the book) and that the widest
+    // quoter is compensated by being the deepest.
+    assert!(
+        winners.len() > 1,
+        "the best bid is owned by a single counterparty across the whole book: {winners:?}"
+    );
+    let widest = celnet_lp_sim::OTC_ROSTER
+        .iter()
+        .max_by(|a, b| a.spread_multiple.total_cmp(&b.spread_multiple))
+        .expect("non-empty roster");
+    let deepest = celnet_lp_sim::OTC_ROSTER
+        .iter()
+        .max_by(|a, b| {
+            let depth = |p: &celnet_lp_sim::SimLpProfile| {
+                p.size_multiple * (1.0 - p.depth_decay.powi(i32::from(p.depth_levels) + 1))
+            };
+            depth(a).total_cmp(&depth(b))
+        })
+        .expect("non-empty roster");
     assert_eq!(
-        winners.len(),
-        cfg.members,
-        "every member must win the best bid somewhere on the book"
+        widest.id, deepest.id,
+        "the widest quoter ({}) is not the deepest ({}) — a counterparty that wins \
+         neither the touch nor the clip has no reason to be on the panel",
+        widest.id, deepest.id
     );
     assert!(
         rotating * 4 >= lines.len() * 3,

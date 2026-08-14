@@ -124,6 +124,13 @@ pub struct FixAcceptorRegistry {
     /// Absent (unit tests) ⇒ the acceptor keeps `FixContext`'s default both-enabled
     /// control, byte-identical to before.
     pricing_control: OnceLock<Arc<crate::services::pricing_control::PricingControl>>,
+    /// The outbound **street-order router** whose routable member set is derived from
+    /// THIS registry's `order_endpoint`s. Injected once at boot (set-once). Every
+    /// persisted mutation re-derives the set, so an operator adding an order endpoint in
+    /// the UI arms the route immediately rather than at the next restart. Absent (unit
+    /// tests, the standalone demo) ⇒ nothing is armed and every hedge order is answered
+    /// `no_order_endpoint`.
+    street_router: OnceLock<Arc<crate::services::street_router::FixStreetRouter>>,
     config_path: PathBuf,
 }
 
@@ -175,6 +182,7 @@ impl FixAcceptorRegistry {
             desk_directory: OnceLock::new(),
             aggregation_hub: OnceLock::new(),
             pricing_control: OnceLock::new(),
+            street_router: OnceLock::new(),
             config_path,
         })
     }
@@ -205,6 +213,35 @@ impl FixAcceptorRegistry {
         control: Arc<crate::services::pricing_control::PricingControl>,
     ) {
         let _ = self.pricing_control.set(control);
+    }
+
+    /// Inject the outbound **street-order router** and arm it from the currently
+    /// persisted connections. Called once at boot (set-once); after this, every
+    /// create/update/delete re-derives the routable member set, so an operator who adds
+    /// an order endpoint in the UI can hedge onto that counterparty immediately.
+    pub async fn set_street_router(
+        &self,
+        router: Arc<crate::services::street_router::FixStreetRouter>,
+    ) {
+        if self.street_router.set(router).is_ok() {
+            self.arm_street_routes().await;
+        }
+    }
+
+    /// Re-derive the router's member set from the persisted connections.
+    ///
+    /// Called after every mutation that could change an order endpoint. Deriving it
+    /// (rather than incrementally patching it) is what guarantees the routable set and
+    /// the operator's config cannot drift apart.
+    async fn arm_street_routes(&self) {
+        let Some(router) = self.street_router.get() else {
+            return;
+        };
+        let endpoints = {
+            let g = self.inner.lock().await;
+            crate::services::street_router::order_endpoints(&g.store.connections)
+        };
+        router.set_endpoints(endpoints);
     }
 
     /// Inject the desk directory used to validate connection routing desks and to
@@ -398,7 +435,7 @@ impl FixAcceptorRegistry {
             acc.abort();
         }
         g.store.remove(id);
-        self.persist(&g.store)?;
+        self.persist_and_rearm(&g.store)?;
         Ok(())
     }
 
@@ -424,7 +461,7 @@ impl FixAcceptorRegistry {
             g.running.insert(def.id.clone(), acc);
         }
         g.store.upsert(def.clone());
-        self.persist(&g.store)?;
+        self.persist_and_rearm(&g.store)?;
         Ok(status_of(g, &def))
     }
 
@@ -471,6 +508,21 @@ impl FixAcceptorRegistry {
         store
             .save(&self.config_path)
             .map_err(|e| format!("could not persist FIX connection config: {e}"))
+    }
+
+    /// Persist, then re-arm the outbound street routes from what was just persisted.
+    /// Every mutating path goes through here so an order endpoint can never be saved
+    /// without the router learning about it.
+    fn persist_and_rearm(&self, store: &FixConnectionStore) -> Result<(), String> {
+        self.persist(store)?;
+        // Derived from the store passed in, NOT by re-reading `inner`: every caller
+        // already holds that lock, and re-taking it here would deadlock the admin path.
+        if let Some(router) = self.street_router.get() {
+            router.set_endpoints(crate::services::street_router::order_endpoints(
+                &store.connections,
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -530,6 +582,7 @@ mod tests {
             target_comp_id: "CPTY".into(),
             enabled: true,
             desk: desk.into(),
+            order_endpoint: None,
         }
     }
 

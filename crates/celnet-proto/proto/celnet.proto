@@ -3583,6 +3583,13 @@ message FixConnectionDesc {
   // desk, while an admin sees all of them. (A legacy pre-ownership config could
   // load with an empty desk, but the admin API no longer creates one.)
   string desk = 10;
+  // The counterparty's ORDER ACCEPTOR address (`host:port`) — where WE dial to send
+  // this counterparty a `NewOrderSingle(D)`. The outbound half of the same managed
+  // relationship `bind_addr` describes inbound. Empty => the operator has configured
+  // no order route: the member may still quote and still ranks on the hedge panel,
+  // but an order to it is answered `no_order_endpoint` rather than being skipped or
+  // filled from its standing quote.
+  string order_endpoint = 11;
 }
 
 // The editable fields of a connection (create/update payload). Runtime status
@@ -3608,6 +3615,10 @@ message FixConnectionSpec {
   // (`invalid_argument`). Desk-scoped (non-admin) callers see only their own
   // desk's connections.
   string desk = 8;
+  // The counterparty's ORDER ACCEPTOR address (`host:port`) we dial to send it
+  // orders. Optional: empty means this member has no order route. May be a DNS name
+  // (an outbound target resolves at connect time, unlike the bindable `bind_addr`).
+  string order_endpoint = 9;
 }
 
 // List all managed connections with their live status.
@@ -6223,6 +6234,190 @@ message ListHedgeProvenanceResponse {
   optional uint64 correlation_id = 2;
 }
 
+// Which trader-configurable decision engine produced a journal record.
+enum DecisionEngineEnum {
+  // Zero value — never emitted; guards an unset field reading as a real engine.
+  DECISION_ENGINE_UNSPECIFIED = 0;
+  // The incoming-quote acceptance graph (`celnet-acceptance`) — accept / reject / hold.
+  DECISION_ENGINE_ACCEPTANCE = 1;
+  // The fill risk-routing graph (`celnet-risk-routing`) — which risk book a fill lands in.
+  DECISION_ENGINE_RISK_ROUTING = 2;
+  // The hedge exit-policy graph (`celnet-hedge-routing`) — the warehouse-vs-shed decision.
+  DECISION_ENGINE_HEDGE = 3;
+}
+
+// Whether an evaluation actually DID something. The whole point of the journal is that
+// `NO_ACTION` is recorded just as faithfully as `FIRED` — a rule that did not trigger
+// leaves a record with its reason, so "why did nothing happen" is answerable.
+enum DecisionOutcomeEnum {
+  // Zero value — never emitted.
+  DECISION_OUTCOME_UNSPECIFIED = 0;
+  // The engine took an effective action: a lift was accepted, a fill was routed to a
+  // book, a hedge action other than WAREHOUSE resolved.
+  DECISION_OUTCOME_FIRED = 1;
+  // The engine ran and deliberately did nothing: a reject/hold verdict, an unrouted
+  // fill, a WAREHOUSE leaf, a guard/kill-switch suppression, or a graph that never ran.
+  // `reason` states which.
+  DECISION_OUTCOME_NO_ACTION = 2;
+}
+
+// ONE evaluation of ONE decision engine — the audit-log row.
+//
+// Every field is what the server actually saw or decided at that instant; nothing here
+// is reconstructed after the fact. `policy_path` is the exact node walk (empty when the
+// graph was never walked — `reason` then says why), which is what lets a client render
+// the trader's own decision graph with the taken path highlighted.
+message DecisionRecord {
+  // Process-monotonic sequence number — the stable ordering + evidence-citation key.
+  uint64 seq = 1;
+  // When the evaluation happened (epoch nanos, UTC).
+  int64 decided_at = 2;
+  // Which engine ran.
+  DecisionEngineEnum engine = 3;
+  // Whether it did anything.
+  DecisionOutcomeEnum outcome = 4;
+  // The terminal verdict in the engine's own vocabulary ("accept", "reject", "hold",
+  // "WAREHOUSE", "SUBMIT_MARKET_ORDER", "routed", "unrouted").
+  string outcome_label = 5;
+  // The STATED reason — mandatory on a NO_ACTION record. A silent fallback is a bug.
+  string reason = 6;
+  // The exact graph node ids walked, in order, ending at the leaf that decided. Empty
+  // when no graph was walked (no policy configured / structurally broken / suppressed
+  // before the walk).
+  repeated uint32 policy_path = 7;
+  // Which scoped policy was resolved ("firm", "book:rates-usd", "bucket:emea", or
+  // empty when none was configured).
+  string scope = 8;
+  // The risk book in scope (empty when the decision is not book-scoped).
+  string book = 9;
+  // The instrument / family label in scope.
+  string instrument = 10;
+  // The counterparty whose flow triggered the evaluation.
+  optional string counterparty = 11;
+  // The traded symbol.
+  optional string symbol = 12;
+  // The owning desk.
+  string desk = 13;
+  // The desk request / RFQ id, for an acceptance decision.
+  optional string request_id = 14;
+  // The booked position this decision concerns.
+  optional uint64 position_id = 15;
+  // The end-to-end lift trace this decision belongs to (joins `TraceEvent`).
+  optional uint64 trace_id = 16;
+  // The `HedgeProvenance.hedge_id` minted by this decision, when one fired.
+  optional string hedge_id = 17;
+  // The budget metric measured (hedge records).
+  HedgeMetricEnum metric = 18;
+  // The signed net risk in the metric's units at decision time.
+  double net_risk = 19;
+  // The resolved warehouse cap.
+  double threshold = 20;
+  // `|net_risk| / threshold` — the band utilisation at decision time.
+  double utilization = 21;
+  // The RAG band label at decision time ("green"/"amber"/"red"/"breach"), empty when
+  // the engine has no band concept.
+  string band = 22;
+  // The notional in scope (acceptance records).
+  double notional = 23;
+  // Whether the resolved action was a shadow (advisory) run rather than a live fire.
+  bool advisory = 24;
+}
+
+// Query the decision journal (gated `hedge` × asset — the same gate the provenance
+// audit trail uses). Absent filters mean "no restriction"; every filter ANDs.
+message ListDecisionJournalRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // Restrict to one engine (absent ⇒ all three).
+  optional DecisionEngineEnum engine = 2;
+  // Restrict to fired-only / no-action-only (absent ⇒ both).
+  optional DecisionOutcomeEnum outcome = 3;
+  // Restrict to this risk book.
+  optional string book = 4;
+  // Restrict to this instrument / family.
+  optional string instrument = 5;
+  // Restrict to this counterparty.
+  optional string counterparty = 6;
+  // Only records decided at or after this epoch-nanos instant.
+  optional int64 since_nanos = 7;
+  // Row cap (server-clamped; absent/0 ⇒ the server default).
+  optional uint32 limit = 8;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 9;
+}
+// The matching journal records, newest first.
+message ListDecisionJournalResponse {
+  // The matching records (descending `seq`).
+  repeated DecisionRecord records = 1;
+  // Records the journal has accepted over the process lifetime — so a client can tell
+  // a genuinely empty journal from one whose window has rolled past the query.
+  uint64 total_recorded = 2;
+  // Records evicted at ring capacity over the process lifetime. Non-zero means the
+  // audit window is LOSSY and the client must say so rather than imply completeness.
+  uint64 evicted = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+
+// One derived rule suggestion. Every field is computed from journal rows the server
+// actually recorded; `evidence_seqs` names those rows so a trader can inspect the
+// evidence before acting. A suggestion that cannot be grounded in recorded rows is
+// not emitted at all.
+message RuleAdvice {
+  // Stable id within one response (`kind` + scope), so a client can key rows.
+  string advice_id = 1;
+  // The derivation that produced it ("hedge_policy_missing", "hedge_vehicle_unresolved",
+  // "hedge_guard_suppressing", "hedge_policy_broken", "desk_halted",
+  // "acceptance_hold_recurring", "acceptance_reject_recurring", "routing_unrouted").
+  string kind = 2;
+  // Which engine the suggested rule would live in.
+  DecisionEngineEnum engine = 3;
+  // One-line headline.
+  string title = 4;
+  // What the evidence shows, in the trader's terms, with the real counts.
+  string rationale = 5;
+  // The concrete change to make.
+  string recommended_action = 6;
+  // The book the advice is scoped to (empty ⇒ not book-scoped).
+  string scope_book = 7;
+  // The instrument the advice is scoped to (empty ⇒ not instrument-scoped).
+  string scope_instrument = 8;
+  // The counterparty the advice is scoped to.
+  optional string scope_counterparty = 9;
+  // How many journal rows support it.
+  uint32 occurrences = 10;
+  // The first supporting row's `decided_at`.
+  int64 first_seen = 11;
+  // The last supporting row's `decided_at`.
+  int64 last_seen = 12;
+  // The supporting rows' `seq` values — the citation. Capped at the evidence sample
+  // size; `occurrences` is the true count.
+  repeated uint64 evidence_seqs = 13;
+  // Which rule editor the trader should open ("hedging", "acceptance", "riskrouting",
+  // "hedge_vehicles", "hedge_config").
+  string editor = 14;
+}
+
+// Ask the server to derive rule suggestions from the recorded decision journal
+// (gated `hedge` × asset).
+message ListRuleAdviceRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // Restrict the derivation to one book (absent ⇒ every book in the journal).
+  optional string book = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The derived suggestions, strongest evidence first.
+message ListRuleAdviceResponse {
+  // The suggestions (descending `occurrences`).
+  repeated RuleAdvice advice = 1;
+  // How many journal rows the derivation actually read — the honest denominator.
+  uint32 rows_considered = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+
 // Read the auto-hedge engine config (gated `hedge` × asset).
 message GetHedgeConfigRequest {
   // The caller's bearer token.
@@ -6482,6 +6677,190 @@ message ListLpFlowMetricsResponse {
   repeated LpFlowMetricsDesc metrics = 1;
   // Echoed request correlation id.
   optional uint64 correlation_id = 2;
+}
+
+// ===========================================================================
+// Street-side EXECUTION analytics (Analytics §2.4, the order-level companion to
+// the LP league table above). `LpFlowMetricsDesc` grades an LP's BEHAVIOUR; these
+// messages record what we actually SENT to the street and what came back — one
+// row per outbound order, plus aggregated breakdowns on any grouping axis.
+//
+// Absence discipline (guardrail 2): every `optional` field below is absent when
+// the datum was genuinely not observed — never a plausible zero. In particular
+// `order_type` / `time_in_force` / `response_latency_nanos` are absent whenever
+// the routing seam lifted a standing firm price in-process (no typed order was
+// issued and there was no venue round trip to time).
+// ===========================================================================
+
+// One LP that showed a firm executable price on the side we needed when an order
+// was worked — the competition it was ranked against.
+message StreetCompetitorDesc {
+  // The competing LP's id.
+  string lp_id = 1;
+  // Its firm price on the side we needed, in the instrument's quote convention.
+  double price = 2;
+}
+
+// One outbound street order and its result.
+message StreetOrderDesc {
+  // Stable id for this order within the recording process.
+  string order_id = 1;
+  // When the order was worked (epoch nanos, UTC).
+  int64 ts_nanos = 2;
+  // The LP the order executed against. ABSENT for a composite backstop or an
+  // order that reached no venue — never a placeholder name.
+  optional string lp_id = 3;
+  // Where it executed: "named_lp" | "composite_backstop" | "none".
+  string venue = 4;
+  // The instrument actually dealt (a tradeable security id, or the product family
+  // label when the cell resolved no security-master id).
+  string instrument = 5;
+  // Product family token ("ois", "irs", "fra", "bond", "bond_future",
+  // "stir_future"). EMPTY when genuinely unclassified.
+  string family = 6;
+  // Risk tenor of the hedged exposure, in years. ABSENT when the cell carries no
+  // parseable tenor or maturity (never defaulted to zero).
+  optional double tenor_years = 7;
+  // The DESK's own side: "buy" | "sell".
+  string side = 8;
+  // Quantity requested, in the order's native metric units.
+  double requested_qty = 9;
+  // Quantity actually filled (0 when nothing did).
+  double filled_qty = 10;
+  // The reference price the order was worked against (the composite mid at fire).
+  double requested_price = 11;
+  // The realised fill price. ABSENT when nothing filled.
+  optional double filled_price = 12;
+  // Signed slippage of the fill vs the reference, in bp of the instrument's quote
+  // convention. ABSENT when nothing filled.
+  optional double slippage_bp = 13;
+  // Terminal outcome: "filled" | "partially_filled" | "rejected" | "cancelled" |
+  // "expired" | "last_look_pulled" | "no_liquidity".
+  //
+  // "rejected" is a venue REFUSAL (FIX OrdStatus=8); "cancelled" is a venue that
+  // accepted the order but could not satisfy it (OrdStatus=4). They are kept
+  // distinct: "would not" and "could not" are different facts about an LP.
+  string outcome = 14;
+  // Machine-stable QUALIFIER on the outcome — on a routed order this is the
+  // venue's OWN Text(58) reason code ("FOK_UNFILLABLE", "IOC_DEPTH_EXHAUSTED",
+  // "NOT_A_WHOLE_LOT", "NOT_MARKETABLE", …). On an order that never reached a
+  // venue it states why ("no_order_endpoint", "no_firm_lp_price",
+  // "street_declined", "venue_no_response"). ABSENT on a clean complete fill,
+  // which needs no qualification.
+  optional string reason = 15;
+  // Every LP that showed a firm price on the required side, best-first.
+  repeated StreetCompetitorDesc competitors = 16;
+  // The hedge decision this order belongs to — the `hedge_id` on the hedge
+  // provenance record, so a trader can walk breach → street orders. ABSENT when
+  // the order has no hedge parent.
+  optional string parent_hedge_id = 17;
+  // The client fill / position this order was shed from. ABSENT when unlinked.
+  optional uint64 parent_position_id = 18;
+  // The order type actually sent, as the FIX OrdType(40) value ("1" market, "2"
+  // limit, …) — the estate's only order contract is FIX NewOrderSingle(D) →
+  // ExecutionReport(8), so this carries that tag verbatim. ABSENT on a row that
+  // sent no order (a composite backstop, an advisory run).
+  optional string order_type = 19;
+  // The time-in-force actually sent, as the FIX TimeInForce(59) value ("3" IOC,
+  // "4" FOK, …). ABSENT on a row that sent no order.
+  optional string time_in_force = 20;
+  // Measured venue round-trip latency, nanoseconds — send to ExecutionReport(8).
+  // ABSENT only where there was no round trip to measure: a member with no order
+  // endpoint, or a composite backstop.
+  optional uint64 response_latency_nanos = 21;
+}
+
+// One aggregated street-side row. Every ratio is ABSENT when its denominator is
+// zero — the divide-by-zero guard the clients render as an explicit "—".
+message StreetBreakdownRowDesc {
+  // The axis this row was grouped on: "lp" | "family" | "instrument" |
+  // "tenor_bucket" | "hour".
+  string dimension = 1;
+  // The group key. "COMPOSITE" is the explicit composite-backstop bucket; an
+  // EMPTY key is the explicit "unattributed" bucket (the dimension was genuinely
+  // absent on those orders) and is never merged into a real group.
+  string key = 2;
+  // Orders in this group.
+  uint64 orders = 3;
+  // Orders that fully filled.
+  uint64 filled = 4;
+  // Orders that partially filled.
+  uint64 partially_filled = 5;
+  // Orders the venue REFUSED (FIX OrdStatus=8).
+  uint64 rejected = 6;
+  // Orders the venue accepted but COULD NOT satisfy (FIX OrdStatus=4).
+  uint64 cancelled = 20;
+  // Orders that expired unfilled.
+  uint64 expired = 7;
+  // Orders pulled at last look.
+  uint64 last_look_pulled = 8;
+  // Orders that found no firm street price at all.
+  uint64 no_liquidity = 9;
+  // Orders that backstopped to the composite instead of reaching a named LP.
+  uint64 composite_backstop = 10;
+  // Total quantity requested across the group.
+  double requested_qty = 11;
+  // Total quantity filled across the group.
+  double filled_qty = 12;
+  // filled ÷ requested quantity. ABSENT when nothing was requested.
+  optional double fill_ratio = 13;
+  // Orders that traded ÷ orders. ABSENT when the group is empty.
+  optional double win_rate = 14;
+  // Mean signed slippage (bp) over the orders that actually filled. ABSENT when
+  // none did — never a slippage of zero for a group that never traded.
+  optional double mean_slippage_bp = 15;
+  // Mean measured venue round-trip latency (ns) over the orders that carried one.
+  // ABSENT when no order in the group had a measured latency.
+  optional uint64 mean_response_latency_nanos = 16;
+  // Last-look pulls ÷ orders. ABSENT when the group is empty.
+  optional double last_look_rate = 17;
+  // Mean cover distance over the orders that had a cover. ABSENT when none did.
+  optional double mean_cover = 18;
+  // Mean number of LPs showing a firm price when these orders were worked.
+  // ABSENT when the group is empty.
+  optional double mean_competitors = 19;
+}
+
+// Query the street-side execution blotter + its aggregated breakdown. Gated on
+// `view_analytics` × the caller's assets, exactly as the LP league table is.
+message ListStreetOrdersRequest {
+  // The caller's bearer token.
+  string session_token = 1;
+  // Inclusive lower time bound (epoch nanos). ABSENT ⇒ open.
+  optional int64 from_nanos = 2;
+  // Exclusive upper time bound (epoch nanos). ABSENT ⇒ open.
+  optional int64 to_nanos = 3;
+  // Optional LP filter (empty ⇒ unconstrained).
+  optional string lp_id = 4;
+  // Optional product-family filter (empty ⇒ unconstrained).
+  optional string family = 5;
+  // Optional instrument filter (empty ⇒ unconstrained).
+  optional string instrument = 6;
+  // Optional outcome filter (empty ⇒ unconstrained).
+  optional string outcome = 7;
+  // Optional parent-hedge filter — the breach → street-orders walk.
+  optional string parent_hedge_id = 8;
+  // The breakdown axis to aggregate on. ABSENT ⇒ "lp". An UNKNOWN token is
+  // REJECTED rather than silently grouped on a default axis.
+  optional string dimension = 9;
+  // Max blotter rows to return (server-capped). ABSENT ⇒ the server default.
+  optional uint32 limit = 10;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 11;
+}
+
+// The street-side execution blotter (newest first) + the aggregated breakdown
+// over the WHOLE matching window (not just the returned page).
+message ListStreetOrdersResponse {
+  // The matching orders, newest first, capped at the server page limit.
+  repeated StreetOrderDesc orders = 1;
+  // The aggregated rows on the requested dimension, in group-key order.
+  repeated StreetBreakdownRowDesc breakdown = 2;
+  // Total orders matching the window + filters, before the page cap — so a client
+  // can say "showing 200 of 5,312" instead of implying it has them all.
+  uint64 total_matching = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
 }
 
 // ===========================================================================
@@ -7886,6 +8265,14 @@ service AuthService {
   rpc ListHedgeThresholds(ListHedgeThresholdsRequest) returns (ListHedgeThresholdsResponse);
   rpc UpdateHedgeThreshold(UpdateHedgeThresholdRequest) returns (UpdateHedgeThresholdResponse);
   rpc ListHedgeProvenance(ListHedgeProvenanceRequest) returns (ListHedgeProvenanceResponse);
+  // The DECISION JOURNAL — every evaluation of the acceptance / risk-routing / hedge
+  // graphs, including the ones that deliberately did NOTHING (a WAREHOUSE leaf, a
+  // kill-switched desk, a rate guard, a graph that never ran), each with its walked
+  // path and its stated reason. This is the audit log a trader reads to answer "why
+  // did acceptance turn that away" and "why did the hedge rule not fire". `ListRuleAdvice`
+  // derives rule suggestions from the SAME recorded rows and cites them.
+  rpc ListDecisionJournal(ListDecisionJournalRequest) returns (ListDecisionJournalResponse);
+  rpc ListRuleAdvice(ListRuleAdviceRequest) returns (ListRuleAdviceResponse);
   rpc GetHedgeConfig(GetHedgeConfigRequest) returns (GetHedgeConfigResponse);
   rpc SetHedgeConfig(SetHedgeConfigRequest) returns (SetHedgeConfigResponse);
   rpc ListHedgeSuggestions(ListHedgeSuggestionsRequest) returns (ListHedgeSuggestionsResponse);
@@ -7926,6 +8313,13 @@ service AuthService {
   // aggregation-hub ingest tally + the RFQ panel history. Gated on the same
   // `view_analytics` capability × the caller's assets (spans FI+FXO, NOT admin-only).
   rpc ListLpFlowMetrics(ListLpFlowMetricsRequest) returns (ListLpFlowMetricsResponse);
+  // Street-side EXECUTION analytics — the order-level companion to the LP league
+  // table: one row per OUTBOUND street order (what went out, to which LP, on what
+  // product, requested vs filled, price + slippage, outcome + reason, the panel it
+  // was ranked against, and its parent hedge) plus the aggregated breakdown on any
+  // grouping axis. Read-only; a pure fold over the bounded street-order log. Same
+  // `view_analytics` × asset gate as the league table.
+  rpc ListStreetOrders(ListStreetOrdersRequest) returns (ListStreetOrdersResponse);
   // Latency / Ops analytics — the per-stage tick-to-quote / tick-to-trade latency
   // snapshot (p50/p99/p99.9/max per pipeline stage) + telemetry ring health,
   // folded off the pinned hot core from the observability HdrHistograms

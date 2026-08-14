@@ -8,7 +8,12 @@ import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
-import type { LpFlowMetrics } from "../src/data/contract";
+import type {
+  LpFlowMetrics,
+  StreetBreakdownRow,
+  StreetOrder,
+  StreetOrdersView,
+} from "../src/data/contract";
 
 const state: { app: unknown } = { app: null };
 vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
@@ -63,14 +68,21 @@ const DORMANT = lp({
   meanCover: undefined,
 });
 
-function makeApp(rows: LpFlowMetrics[]) {
+/** The street-side EXECUTION half of the workspace queries this alongside the league
+ *  table; the default stub returns an honest empty view so the league-table cases
+ *  render unchanged. Pass `street` to exercise the execution panels. */
+const EMPTY_STREET: StreetOrdersView = { orders: [], breakdown: [], totalMatching: 0 };
+
+function makeApp(rows: LpFlowMetrics[], street: StreetOrdersView = EMPTY_STREET) {
   const listLpFlowMetrics = vi.fn(async () => rows);
+  const listStreetOrders = vi.fn(async () => street);
   return {
     app: {
-      transport: { listLpFlowMetrics },
+      transport: { listLpFlowMetrics, listStreetOrders },
       auth: { user: { id: "u", email: "admin@celnet.com" }, isAdmin: true, can: () => true },
     },
     listLpFlowMetrics,
+    listStreetOrders,
   };
 }
 
@@ -153,5 +165,138 @@ describe("StreetLiquidityWorkspace", () => {
     const rowHeaders = screen.getAllByRole("rowheader").map((h) => h.textContent);
     // Win-rate desc: the defined value first, the absent (Raiffeisen) last.
     expect(rowHeaders[rowHeaders.length - 1]).toBe("Raiffeisen");
+  });
+});
+
+// --- the street-side EXECUTION panels ---------------------------------------
+//
+// The property under test is the one the whole surface exists to protect: a metric
+// the server reported as ABSENT must render as an explicit marker, and must never be
+// substituted with a plausible zero. The complementary case matters just as much — a
+// genuinely OBSERVED zero must still render as 0.
+
+/** A breakdown row where some metrics are observed and others genuinely absent. */
+function breakdownRow(over: Partial<StreetBreakdownRow> = {}): StreetBreakdownRow {
+  return {
+    dimension: "lp",
+    key: "citigroup-sim",
+    orders: 4,
+    filled: 3,
+    partiallyFilled: 1,
+    rejected: 0,
+    cancelled: 0,
+    expired: 0,
+    lastLookPulled: 0,
+    noLiquidity: 0,
+    compositeBackstop: 0,
+    requestedQty: 40_000,
+    filledQty: 32_500,
+    fillRatio: 0.8125,
+    winRate: 1,
+    meanSlippageBp: 0.4,
+    meanResponseLatencyNanos: undefined,
+    lastLookRate: 0,
+    meanCover: undefined,
+    meanCompetitors: 2.5,
+    ...over,
+  };
+}
+
+/** A blotter order with the unobserved routing fields absent. */
+function streetOrder(over: Partial<StreetOrder> = {}): StreetOrder {
+  return {
+    orderId: "SO-1",
+    tsNanos: 1_700_000_000_000_000_000n,
+    lpId: "citigroup-sim",
+    venue: "named_lp",
+    instrument: "USSW10",
+    family: "ois",
+    tenorYears: 10,
+    side: "sell",
+    requestedQty: 4000,
+    filledQty: 4000,
+    requestedPrice: 0.03,
+    filledPrice: 0.03005,
+    slippageBp: 0.5,
+    outcome: "filled",
+    reason: undefined,
+    competitors: [
+      { lpId: "citigroup-sim", price: 0.03005 },
+      { lpId: "jpm-sim", price: 0.03007 },
+    ],
+    parentHedgeId: "HDG-1",
+    parentPositionId: 42n,
+    orderType: undefined,
+    timeInForce: undefined,
+    responseLatencyNanos: undefined,
+    ...over,
+  };
+}
+
+describe("StreetExecution (the order-level half of the workspace)", () => {
+  it("renders an absent metric as the marker and a real zero as 0", async () => {
+    const { app } = makeApp([], {
+      orders: [streetOrder()],
+      breakdown: [breakdownRow()],
+      totalMatching: 1,
+    });
+    await renderWorkspace(app);
+
+    // An OBSERVED zero stays a zero: 0 last-look pulls out of 4 orders is 0.0%.
+    expect(screen.getByText("0.0%")).toBeTruthy();
+    // An ABSENT metric (no order in the group had a cover, none carried a measured
+    // round trip) renders the marker — and there is more than one such cell.
+    const absent = screen
+      .getAllByTitle("Genuinely absent — not observed, not zero")
+      .map((n) => n.textContent);
+    expect(absent.length).toBeGreaterThanOrEqual(2);
+    expect(absent.every((t) => t === "—")).toBe(true);
+    // Nothing anywhere turned an absence into a zero latency.
+    expect(screen.queryByText("0 ns")).toBeNull();
+  });
+
+  it("labels a composite backstop explicitly and never as an LP", async () => {
+    const { app } = makeApp([], {
+      orders: [
+        streetOrder({
+          orderId: "SO-2",
+          lpId: undefined,
+          venue: "composite_backstop",
+          outcome: "no_liquidity",
+          reason: "no_firm_lp_price",
+          filledQty: 0,
+          filledPrice: undefined,
+          slippageBp: undefined,
+          competitors: [],
+        }),
+      ],
+      breakdown: [
+        breakdownRow({ key: "COMPOSITE", compositeBackstop: 1, orders: 1, filled: 0 }),
+      ],
+      totalMatching: 1,
+    });
+    await renderWorkspace(app);
+
+    // The explicit bucket, spelled out — not merged into an LP and not hidden.
+    expect(screen.getAllByText("Composite backstop").length).toBeGreaterThanOrEqual(1);
+    // The outcome chip (the <option> in the filter select carries the same text).
+    expect(screen.getAllByText("No liquidity").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("shows the pre-page total so the blotter never implies it has every row", async () => {
+    const { app } = makeApp([], {
+      orders: [streetOrder()],
+      breakdown: [breakdownRow()],
+      totalMatching: 5312,
+    });
+    await renderWorkspace(app);
+    expect(screen.getByText(/Showing 1 of 5,312 matching orders/)).toBeTruthy();
+  });
+
+  it("renders an honest empty state rather than a fabricated row", async () => {
+    const { app, listStreetOrders } = makeApp([]);
+    await renderWorkspace(app);
+    expect(listStreetOrders).toHaveBeenCalled();
+    expect(screen.getByText(/No street orders recorded in this window/)).toBeTruthy();
   });
 });

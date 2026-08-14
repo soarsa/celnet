@@ -541,13 +541,22 @@ impl crate::services::analytics::lp::LpFlowSource for AggregationHub {
 /// every auto-hedge silently backstop to the synthetic COMPOSITE venue whenever the panel
 /// happened to consolidate crossed (a divergent member, a fat-finger print, a two-member book
 /// below the divergence-gating quorum) — so street-side LP analytics never recorded a fill.
+///
+/// # Why the WHOLE panel comes back, not just the winner
+///
+/// Every member showing a firm price on the required side was, in substance, shown the
+/// order: we compared them and dealt on one. The ones we passed over genuinely *missed*
+/// a deal, and the runner-up's distance from the price we took is a genuine *cover*.
+/// Both were being computed here and then discarded, which is why the street-side
+/// league table could only ever show `Missed 0 · Mean cover —` no matter how much
+/// street flow ran. Returning the ranking preserves them without re-deriving anything.
 impl crate::services::auto_hedge::LpHedgeSource for AggregationHub {
-    fn best_fill(
+    fn rank(
         &self,
         instrument: &str,
         net_risk: f64,
         _size: f64,
-    ) -> Option<crate::services::auto_hedge::LpFill> {
+    ) -> Vec<crate::services::auto_hedge::LpFill> {
         // Reducing a long (net_risk > 0) sheds by SELLING → lift an LP's BID (best = highest);
         // reducing a short sheds by BUYING → lift an LP's OFFER (best = lowest). A zero/None
         // net has no side; treat it as a sell (a degenerate shed) for determinism.
@@ -575,37 +584,39 @@ impl crate::services::auto_hedge::LpHedgeSource for AggregationHub {
                     "hedge panel resolved through the identifier cross-walk"
                 );
             }
-            let mut best: Option<(&str, f64)> = None;
-            for m in &members {
-                if m.stale {
-                    continue; // a stale contribution is not executable.
-                }
-                let price = if sell { m.bid } else { m.offer };
-                if !price.is_finite() {
-                    continue;
-                }
-                let improves = match best {
-                    None => true,
-                    Some((_, incumbent)) => {
-                        if sell {
-                            price > incumbent // we receive more selling into a higher bid.
-                        } else {
-                            price < incumbent // we pay less buying at a lower offer.
-                        }
-                    }
+            let mut ranked: Vec<crate::services::auto_hedge::LpFill> = members
+                .iter()
+                // A stale contribution is not executable, and a non-finite price is not
+                // a price — neither may enter the ranking (nor be counted as a miss).
+                .filter(|m| !m.stale)
+                .filter_map(|m| {
+                    let price = if sell { m.bid } else { m.offer };
+                    price
+                        .is_finite()
+                        .then(|| crate::services::auto_hedge::LpFill {
+                            lp_id: m.lp_name.clone(),
+                            price,
+                        })
+                })
+                .collect();
+            if ranked.is_empty() {
+                continue;
+            }
+            // Best-first on the side we need: selling, we receive more into a HIGHER
+            // bid; buying, we pay less at a LOWER offer. Ties break on `lp_name` so the
+            // ranking (and therefore the recorded winner) is deterministic — two LPs at
+            // an identical price must not swap places between two identical runs.
+            ranked.sort_by(|a, b| {
+                let by_price = if sell {
+                    b.price.total_cmp(&a.price)
+                } else {
+                    a.price.total_cmp(&b.price)
                 };
-                if improves {
-                    best = Some((m.lp_name.as_str(), price));
-                }
-            }
-            if let Some((lp_id, price)) = best {
-                return Some(crate::services::auto_hedge::LpFill {
-                    lp_id: lp_id.to_owned(),
-                    price,
-                });
-            }
+                by_price.then_with(|| a.lp_id.cmp(&b.lp_id))
+            });
+            return ranked;
         }
-        None
+        Vec::new()
     }
 }
 

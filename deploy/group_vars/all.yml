@@ -55,10 +55,14 @@ celnet_rust_profile: minimal
 # THE simulator deploy configuration. False ⇒ a genuinely sim-free environment:
 # no simulator binary is built or shipped, no control script is installed, any
 # surviving simulator process is swept on deploy, and nothing is ever started.
-# True ⇒ the per-simulator flags below decide which of the four inbound
+# True ⇒ the per-simulator flags below decide which of the five inbound
 # connections run:
 #
-#   LP-SIM   (celnet_lpsim_enabled)           N liquidity providers → LpFeed ingest
+#   LP-SIM   (celnet_lpsim_enabled)           the NAMED OTC counterparty panel
+#                                             (marketaccess-sim, traderweb-sim,
+#                                             citigroup-sim, jpm-sim) → LpFeed ingest
+#   CME-SIM  (celnet_cmesim_enabled)          the listed Treasury-futures venue
+#                                             (`cme-sim`) → LpFeed ingest
 #   RFQ leg  (celnet_fixsim_enabled)          one-shot FIX quote requests
 #   RFS leg  (celnet_fixsim_stream_port)      FIX request-for-stream subscription
 #   ESP leg  (celnet_fixsim_esp_enabled)      FIX Market-Data streaming off refdata
@@ -131,17 +135,29 @@ celnet_fixsim_password_file: "/home/{{ celnet_user | default('celnet') }}/.fixsi
 # <release>/bin/lp-sim, and installs the launcher + `lpsimctl` control script. Run
 # it on the host with:  lpsimctl start | once | stop | status | tail
 #
-# lpsimctl start launches the 5-LP, BOOK-AWARE daemon against the LOCAL server ingest
+# lpsimctl start launches the BOOK-AWARE daemon against the LOCAL server ingest
 # (celnet_lpsim_addr, default the local gRPC edge): it authenticates as the service
 # user, polls the enabled aggregated books every celnet_lpsim_book_poll seconds, and
-# streams LP-SIM-01..05 two-ways for exactly the bonds each book scopes — starting and
-# stopping pricing automatically as a user creates or edits a book. Books with no
-# LP-SIM member are ignored. Pass celnet_lpsim_no_book_poll=1 for the broadcast
-# fallback (stream the whole universe as the N LPs, no book polling).
+# streams the NAMED counterparties' two-ways for exactly the bonds each book scopes —
+# starting and stopping pricing automatically as a user creates or edits a book. Books
+# naming none of the roster ids are ignored. Pass celnet_lpsim_no_book_poll=1 for the
+# broadcast fallback (stream the whole universe, no book polling).
+#
+# !! BREAKING CHANGE TO AN AGGREGATED BOOK's member_connection_ids !!
+#    The panel is no longer LP-SIM-01..LP-SIM-0N. The four connection ids are now:
+#        marketaccess-sim   traderweb-sim   citigroup-sim   jpm-sim
+#    and listed Treasury futures moved to the separate `cme-sim` venue (below). Every
+#    aggregated book must be updated to name the ids it wants, or it loses its members
+#    and every hedge routed at it backstops to the synthetic COMPOSITE venue.
+#
+# The panel also ACCEPTS ORDERS: counterparty i binds a FIX order acceptor at
+# celnet_lpsim_order_port + i, answering NewOrderSingle(D) with ExecutionReport(8).
 celnet_lpsim_enabled: true
-celnet_lpsim_lp_name: "LP-SIM"           # base LP connection name → LP-SIM-01..LP-SIM-0N
+celnet_lpsim_lp_name: "OTC-SIM"          # feed LABEL only; contributions carry the counterparty id
 celnet_lpsim_book: "ust-composite"       # cosmetic book label (book-aware mode discovers books)
-celnet_lpsim_members: 4                   # distinct-character LPs (trimmed 5→4 to reduce quote volume)
+celnet_lpsim_members: 4                   # how many of the 4 named counterparties participate
+celnet_lpsim_order_port: 5701             # base FIX order-acceptor port (5701..5704); "" ⇒ no orders
+celnet_lpsim_order_bind: "0.0.0.0"       # interface the order acceptors bind
 celnet_lpsim_interval: 5                  # seconds between quote-emission rounds (slowed 2→5)
 celnet_lpsim_interval_ms: ""             # sub-second override (ms); "" ⇒ use interval seconds
 celnet_lpsim_book_poll: 10                # seconds between aggregated-book polls (book-aware; slowed 5→10)
@@ -158,12 +174,38 @@ celnet_lpsim_no_faults: 0                # 1 = disable occasional injected stale
 # authenticated call this daemon makes (ListAggregatedBooks) is gated on authentication
 # alone, not on any capability. See docs/SIMULATOR-SERVICE-IDENTITIES.md.
 celnet_lpsim_user: "lp-sim@svc.celnet.local"
+
+
 # There is deliberately NO `celnet_lpsim_password` here. This file is committed, so it
 # must never carry a credential — not even a dev default, which is what previously let
 # a real box fall back to a wrong password and lock the admin account out. The secret is
 # GENERATED per environment by deploy/provision-sim-identities.mjs into the 0600 file
 # below, and reaches the daemon through its ENVIRONMENT, never through argv.
 celnet_lpsim_password_file: "/home/{{ celnet_user | default('celnet') }}/.lpsim_pw"
+
+# --- CME-SIM listed Treasury-futures venue ----------------------------------
+# When true, the release builds the celnet-cme-sim `cme-sim` binary, ships it as
+# <release>/bin/cme-sim, and installs the launcher + `cmesimctl` control script. Run
+# it on the host with:  cmesimctl start | once | restart | stop | status | tail
+#
+# cme-sim is a SINGLE simulated exchange (connection id `cme-sim`) quoting the
+# Treasury futures complex (ZT/ZF/ZN/TN/ZB/UB) from the reference registry's REAL
+# contract terms, in whole contracts on the published tick grid, and accepting orders
+# over FIX. Futures used to be one arm of the OTC panel; they are not any more,
+# because a listed contract has ONE central market (not four competing dealers),
+# trades in whole contracts, and rolls across delivery months.
+#
+# !! Any aggregated book carrying futures MUST list `cme-sim` as a member. !!
+#
+# It needs NO service credential: unlike lp-sim it does not poll ListAggregatedBooks,
+# so the unauthenticated LpFeed ingest is all it touches.
+celnet_cmesim_enabled: true
+celnet_cmesim_interval: 5                 # seconds between quote rounds (matches lp-sim)
+celnet_cmesim_interval_ms: ""            # sub-second override (ms); "" ⇒ use interval seconds
+celnet_cmesim_seed: 305419896             # reproducibility seed
+celnet_cmesim_settlement: "2026-04-16"   # valuation date; ALSO the front-month roll date
+celnet_cmesim_order_port: "0.0.0.0:5710" # FIX order acceptor; "" ⇒ publish prices only
+
 
 # --- Runtime environment (templated into shared/config/celnet.env) ----------
 # The celnet-server binary reads these. WS mirror gets a FIXED port so HAProxy

@@ -1843,6 +1843,18 @@ export interface FixConnection {
    * An unrouted (blank) connection accepts the session but delivers to no desk.
    */
   desk: string;
+  /**
+   * The counterparty's ORDER ACCEPTOR address (`host:port`) — where the server
+   * dials to send this counterparty a `NewOrderSingle(D)`. The outbound half of
+   * the same managed relationship `bindAddr` describes inbound, and the two are
+   * independent addresses.
+   *
+   * `""` means the operator has configured no order route. Such a member may still
+   * quote — and still ranks on the hedge panel — but a hedge order to it is
+   * answered `no_order_endpoint` rather than being skipped, and is never filled
+   * from its standing quote.
+   */
+  orderEndpoint: string;
 }
 
 /**
@@ -1867,6 +1879,13 @@ export interface FixConnectionSpec {
    * accepted as intentionally unrouted (delivers to no desk).
    */
   desk?: string;
+  /**
+   * The counterparty's order-acceptor address (`host:port`) the server dials to
+   * send it hedge orders. OPTIONAL — absent/blank means this member has no order
+   * route. May be a DNS name: an outbound target resolves at connect time, unlike
+   * the bindable `bindAddr`.
+   */
+  orderEndpoint?: string;
 }
 
 /**
@@ -2604,6 +2623,199 @@ export interface LpFlowMetrics {
   meanCover?: number | undefined;
 }
 
+/**
+ * One LP that showed a firm executable price on the side we needed when a street
+ * order was worked (`celnet.wire.StreetCompetitorDesc`) — the competition that
+ * order was ranked against.
+ */
+export interface StreetCompetitor {
+  /** The competing LP's id. */
+  lpId: string;
+  /** Its firm price on the side we needed, in the instrument's quote convention. */
+  price: number;
+}
+
+/** The DESK's own side on a street order. */
+export type StreetSide = "buy" | "sell";
+
+/** Where a street order executed. */
+export type StreetVenue = "named_lp" | "composite_backstop" | "none";
+
+/** The terminal outcome of a street order. */
+/**
+ * The terminal outcome of a street order.
+ *
+ * `rejected` is a venue REFUSAL (FIX `OrdStatus=8`); `cancelled` is a venue that
+ * accepted the order but could not satisfy it (`OrdStatus=4`). They are deliberately
+ * distinct — "would not" and "could not" are different facts about an LP, and
+ * flattening them would make a deep, willing counterparty look like a refusing one.
+ */
+export type StreetOutcome =
+  | "filled"
+  | "partially_filled"
+  | "rejected"
+  | "cancelled"
+  | "expired"
+  | "last_look_pulled"
+  | "no_liquidity";
+
+/** The axis a street-side breakdown groups on. */
+export type StreetDimension = "lp" | "family" | "instrument" | "tenor_bucket" | "hour";
+
+/**
+ * One outbound street order and its result (`celnet.wire.StreetOrderDesc`) — the
+ * order-level companion to {@link LpFlowMetrics}, which grades an LP's *behaviour*
+ * but carries no order economics.
+ *
+ * Every `| undefined` field is genuinely ABSENT, never a fabricated zero: a
+ * composite backstop has no `lpId`, an unfilled order has no `filledPrice` or
+ * `slippageBp`, and `orderType` / `timeInForce` / `responseLatencyNanos` are absent
+ * whenever the routing seam lifted a standing firm price in-process (no typed order
+ * was issued and there was no venue round trip to time).
+ */
+export interface StreetOrder {
+  /** Stable id for this order within the recording process. */
+  orderId: string;
+  /** When the order was worked (epoch nanos, UTC). */
+  tsNanos: bigint;
+  /** The LP it executed against. ABSENT for a composite backstop / no venue. */
+  lpId?: string | undefined;
+  /** Where it executed. */
+  venue: StreetVenue;
+  /** The instrument actually dealt. */
+  instrument: string;
+  /** Product family token ("ois", "bond_future", …). EMPTY when unclassified. */
+  family: string;
+  /** Risk tenor in years. ABSENT when the cell carries no parseable tenor. */
+  tenorYears?: number | undefined;
+  /** The desk's own side. */
+  side: StreetSide;
+  /** Quantity requested, in the order's native metric units. */
+  requestedQty: number;
+  /** Quantity actually filled (0 when nothing did). */
+  filledQty: number;
+  /** The reference price the order was worked against (the composite mid at fire). */
+  requestedPrice: number;
+  /** The realised fill price. ABSENT when nothing filled. */
+  filledPrice?: number | undefined;
+  /** Signed slippage of the fill vs the reference, in bp. ABSENT when nothing filled. */
+  slippageBp?: number | undefined;
+  /** The terminal outcome. */
+  outcome: StreetOutcome;
+  /**
+   * Machine-stable QUALIFIER on the outcome.
+   *
+   * On a routed order this is the VENUE's own reason code (`FOK_UNFILLABLE`,
+   * `IOC_DEPTH_EXHAUSTED`, `NOT_MARKETABLE`, `NOT_A_WHOLE_LOT`, …). On an order that
+   * never reached a venue it is OUR reason (`no_order_endpoint`, `no_firm_lp_price`,
+   * `street_declined`, `venue_no_response`). The two vocabularies are deliberately
+   * distinct: a counterparty's refusal and our own missing configuration are different
+   * problems with different owners. ABSENT on a clean complete fill.
+   */
+  reason?: string | undefined;
+  /** Every LP that showed a firm price on the required side, best-first. */
+  competitors: StreetCompetitor[];
+  /** The hedge decision this order belongs to — the breach → street-orders walk. */
+  parentHedgeId?: string | undefined;
+  /** The client fill / position this order was shed from. */
+  parentPositionId?: bigint | undefined;
+  /**
+   * The order type actually sent, as the FIX `OrdType(40)` value ("1" market, "2"
+   * limit, …). ABSENT until the routing seam issues a typed order.
+   */
+  orderType?: string | undefined;
+  /**
+   * The time-in-force actually sent, as the FIX `TimeInForce(59)` value ("3" IOC,
+   * "4" FOK, …). ABSENT until the routing seam issues one.
+   */
+  timeInForce?: string | undefined;
+  /** Measured venue round-trip latency (ns). ABSENT for an in-process panel lift. */
+  responseLatencyNanos?: number | undefined;
+}
+
+/**
+ * One aggregated street-side row (`celnet.wire.StreetBreakdownRowDesc`). Every
+ * ratio is ABSENT when its denominator is zero — the divide-by-zero guard, rendered
+ * "—" and never a fabricated 0.
+ */
+export interface StreetBreakdownRow {
+  /** The axis this row was grouped on. */
+  dimension: StreetDimension;
+  /**
+   * The group key. `"COMPOSITE"` is the explicit composite-backstop bucket; an
+   * EMPTY key is the explicit "unattributed" bucket and is never merged into a
+   * real group.
+   */
+  key: string;
+  /** Orders in this group. */
+  orders: number;
+  /** Orders that fully filled. */
+  filled: number;
+  /** Orders that partially filled. */
+  partiallyFilled: number;
+  /** Orders the venue REFUSED (FIX `OrdStatus=8`). */
+  rejected: number;
+  /** Orders the venue accepted but COULD NOT satisfy (FIX `OrdStatus=4`). */
+  cancelled: number;
+  /** Orders that expired unfilled. */
+  expired: number;
+  /** Orders pulled at last look. */
+  lastLookPulled: number;
+  /** Orders that found no firm street price at all. */
+  noLiquidity: number;
+  /** Orders that backstopped to the composite instead of reaching a named LP. */
+  compositeBackstop: number;
+  /** Total quantity requested across the group. */
+  requestedQty: number;
+  /** Total quantity filled across the group. */
+  filledQty: number;
+  /** filled ÷ requested quantity. ABSENT when nothing was requested. */
+  fillRatio?: number | undefined;
+  /** Orders that traded ÷ orders. ABSENT when the group is empty. */
+  winRate?: number | undefined;
+  /** Mean signed slippage (bp) over the orders that filled. ABSENT when none did. */
+  meanSlippageBp?: number | undefined;
+  /** Mean measured venue round-trip latency (ns). ABSENT when none was measured. */
+  meanResponseLatencyNanos?: number | undefined;
+  /** Last-look pulls ÷ orders. ABSENT when the group is empty. */
+  lastLookRate?: number | undefined;
+  /** Mean cover distance over the orders that had a cover. ABSENT when none did. */
+  meanCover?: number | undefined;
+  /** Mean number of LPs showing a firm price. ABSENT when the group is empty. */
+  meanCompetitors?: number | undefined;
+}
+
+/** Filters for the street-side execution blotter. Every field is optional. */
+export interface StreetOrderFilter {
+  /** Only orders executed against this LP id. */
+  lpId?: string | undefined;
+  /** Only orders in this product family token. */
+  family?: string | undefined;
+  /** Only orders on this instrument. */
+  instrument?: string | undefined;
+  /** Only orders with this terminal outcome. */
+  outcome?: StreetOutcome | undefined;
+  /** Only orders belonging to this parent hedge decision. */
+  parentHedgeId?: string | undefined;
+  /** The breakdown axis to aggregate on (default "lp"). */
+  dimension?: StreetDimension | undefined;
+  /** Max blotter rows to return (server-capped). */
+  limit?: number | undefined;
+}
+
+/** The street-side execution reply: the blotter page + the whole-window breakdown. */
+export interface StreetOrdersView {
+  /** The matching orders, newest first, capped at the server page limit. */
+  orders: StreetOrder[];
+  /** The aggregated rows on the requested dimension, in group-key order. */
+  breakdown: StreetBreakdownRow[];
+  /**
+   * Total orders matching the window + filters BEFORE the page cap — so the UI can
+   * say "showing 200 of 5,312" instead of implying it has them all.
+   */
+  totalMatching: number;
+}
+
 // ---------------------------------------------------------------------------
 // latency / ops analytics — the per-stage pipeline-latency rollup
 // (`AuthService.ListLatencyMetrics`; docs/ANALYTICS-REQUIREMENTS.md §11 latency).
@@ -3211,7 +3423,8 @@ export interface RatesStreamUpdate {
 //     bid/offer + per-member contribution report a subscriber renders.
 // The `id` is the store/API key; `member_connection_ids` are transport-agnostic
 // connection identities (a FIX acceptor id, or an LP-feed member name such as
-// `LP-SIM-01`). Mirrors `celnet.wire` `AggregatedBookDesc`/`AggregatedBookSpec`.
+// `citigroup-sim`, or a listed venue such as `cme-sim`). Mirrors `celnet.wire`
+// `AggregatedBookDesc`/`AggregatedBookSpec`.
 
 /**
  * The instrument-coverage mode of an aggregated book. `ALL_MEMBERS_QUOTE`
@@ -4289,6 +4502,115 @@ export interface WarehouseThreshold {
  * The immutable audit record stamped on every fired hedge (mirrors `HedgeProvenance`
  * / the `RiskTransferProvenance` discipline). Surfaced on the hedge monitor.
  */
+/** Which trader-configurable decision engine produced a journal row. */
+export type DecisionEngine = "acceptance" | "risk_routing" | "hedge";
+
+/** Whether an evaluation actually did anything. */
+export type DecisionOutcome = "fired" | "no_action";
+
+/**
+ * ONE recorded evaluation of ONE decision engine — the audit-log row behind the
+ * Decision Audit surface (mirrors `DecisionRecord`).
+ *
+ * Every field is what the SERVER saw or decided at that instant. In particular a
+ * `no_action` row is a real record with a real `reason`: the whole point of the journal
+ * is that a rule which did NOT fire leaves evidence. `policyPath` is the exact node walk,
+ * so the trader's own decision graph can be rendered with the taken path highlighted.
+ */
+export interface DecisionRecord {
+  /** Process-monotonic sequence number — the stable sort + evidence-citation key. */
+  seq: number;
+  /** When the evaluation happened (epoch NANOS, as the server sends it). */
+  decidedAtNanos: number;
+  engine: DecisionEngine;
+  outcome: DecisionOutcome;
+  /** The verdict in the engine's own vocabulary ("accept"/"hold"/"WAREHOUSE"/…). */
+  outcomeLabel: string;
+  /** The stated reason — always populated on a `no_action` row. */
+  reason: string;
+  /** The node ids walked, in order. Empty ⇒ no graph was walked (`reason` says why). */
+  policyPath: number[];
+  /** Which scoped policy governed ("firm", "book:…", "bucket:…", or the none-marker). */
+  scope: string;
+  book: string;
+  instrument: string;
+  /** Absent when the decision names no counterparty (never fabricated). */
+  counterparty?: string;
+  symbol?: string;
+  desk: string;
+  requestId?: string;
+  positionId?: number;
+  /** Joins this row to the end-to-end lift trace (`TraceEvent.trace_id`). */
+  traceId?: number;
+  /** Joins a fired hedge row to its realised `HedgeProvenance`. */
+  hedgeId?: string;
+  metric: HedgeMetric;
+  netRisk: number;
+  threshold: number;
+  utilization: number;
+  /** RAG band at decision time; empty when the engine has no band concept. */
+  band: string;
+  notional: number;
+  advisory: boolean;
+}
+
+/**
+ * One page of the decision journal, WITH its lossiness accounting. `evicted > 0` means
+ * the retained window has rolled and the surface must say so rather than imply the log
+ * is complete.
+ */
+export interface DecisionJournalPage {
+  records: DecisionRecord[];
+  /** Rows the server has recorded over its lifetime. */
+  totalRecorded: number;
+  /** Rows dropped at ring capacity over its lifetime. */
+  evicted: number;
+}
+
+/** The filters a journal query ANDs together; every field optional. */
+export interface DecisionJournalFilter {
+  engine?: DecisionEngine | undefined;
+  outcome?: DecisionOutcome | undefined;
+  book?: string | undefined;
+  instrument?: string | undefined;
+  counterparty?: string | undefined;
+  sinceNanos?: number | undefined;
+  limit?: number | undefined;
+}
+
+/**
+ * One server-derived rule suggestion (mirrors `RuleAdvice`). Derived from recorded
+ * journal rows and nothing else — `evidenceSeqs` names the exact rows, so a trader can
+ * pull them up in the audit table and check the reasoning before acting.
+ */
+export interface RuleAdvice {
+  adviceId: string;
+  /** The derivation ("hedge_policy_missing", "acceptance_hold_recurring", …). */
+  kind: string;
+  engine: DecisionEngine;
+  title: string;
+  rationale: string;
+  recommendedAction: string;
+  scopeBook: string;
+  scopeInstrument: string;
+  scopeCounterparty?: string;
+  /** The TRUE number of supporting rows (may exceed `evidenceSeqs.length`). */
+  occurrences: number;
+  firstSeen: number;
+  lastSeen: number;
+  /** The cited rows' `seq` values (a sample, capped server-side). */
+  evidenceSeqs: number[];
+  /** Which rule editor to open ("hedging"/"acceptance"/"riskrouting"/…). */
+  editor: string;
+}
+
+/** The advice roster plus the honest denominator it was derived from. */
+export interface RuleAdvicePage {
+  advice: RuleAdvice[];
+  /** How many journal rows the server actually read. */
+  rowsConsidered: number;
+}
+
 export interface HedgeProvenance {
   /** Stable hedge id (audit key). */
   hedgeId: string;

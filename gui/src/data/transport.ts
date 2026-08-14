@@ -16,6 +16,9 @@
  */
 
 import type {
+  DecisionJournalFilter,
+  DecisionJournalPage,
+  RuleAdvicePage,
   AcceptDeskQuoteRequest,
   AcceptDeskQuoteResponse,
   AggregateRatesRiskRequest,
@@ -27,6 +30,8 @@ import type {
   CombinedTailRiskResponse,
   FlowGroupBy,
   FlowWindow,
+  StreetOrderFilter,
+  StreetOrdersView,
   LpFlowMetrics,
   LatencyMetrics,
   BookRatesPositionRequest,
@@ -883,6 +888,20 @@ export interface CelnetTransport {
    */
   listHedgeProvenance(book?: string, instrument?: string): Promise<HedgeProvenance[]>;
 
+  /**
+   * AuthService.ListDecisionJournal (`hedge`) — the DECISION AUDIT LOG: every acceptance
+   * / risk-routing / hedge evaluation, including the ones that fired nothing, each with
+   * its walked path and its stated reason. The reply carries the eviction accounting, so
+   * the surface can state whether the window it shows is complete.
+   */
+  listDecisionJournal(filter?: DecisionJournalFilter): Promise<DecisionJournalPage>;
+
+  /**
+   * AuthService.ListRuleAdvice (`hedge`) — rule suggestions DERIVED from the recorded
+   * journal, each citing the rows it came from. An empty journal derives nothing.
+   */
+  listRuleAdvice(book?: string): Promise<RuleAdvicePage>;
+
   /** AuthService.GetHedgeConfig (`hedge`) — the engine controls (kill-switch, advisory, rate guards). */
   getHedgeConfig(): Promise<HedgeConfig>;
 
@@ -989,6 +1008,18 @@ export interface CelnetTransport {
     window?: FlowWindow,
     lpId?: string,
   ): Promise<LpFlowMetrics[]>;
+
+  /**
+   * AuthService.ListStreetOrders — the street-side EXECUTION analytics: one row per
+   * OUTBOUND street order (what went out, to which LP, on what product,
+   * requested-vs-filled, price + slippage, outcome + reason, the panel it was ranked
+   * against, and its parent hedge) plus the aggregated breakdown on the requested
+   * axis, folded over the WHOLE matching window. The order-level companion to
+   * {@link CelnetTransport.listLpFlowMetrics}, which grades LP behaviour but carries no
+   * order economics. Same `view_analytics` × asset gate.
+   */
+  listStreetOrders(window?: FlowWindow, filter?: StreetOrderFilter): Promise<StreetOrdersView>;
+
 
   /**
    * AuthService.ListLatencyMetrics — the per-stage pipeline-latency rollup

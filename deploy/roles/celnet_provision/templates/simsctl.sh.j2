@@ -7,16 +7,21 @@
 #
 # The simulator fleet is a DEPLOY CONFIGURATION (`celnet_simulators_enabled` plus
 # the per-simulator switches in group_vars), and this script is the one place that
-# knows which legs that configuration turned on. Four inbound connections:
+# knows which legs that configuration turned on. Five inbound connections:
 #
-#   LP-SIM   — N liquidity providers streaming two-ways into the LpFeed gRPC ingest
+#   LP-SIM   — the NAMED over-the-counter counterparty panel (marketaccess-sim,
+#              traderweb-sim, citigroup-sim, jpm-sim) streaming cash/swap/STIR
+#              two-ways into the LpFeed gRPC ingest and accepting orders over FIX
 #              (this is what the Administration → LP Panel reports on)
+#   CME-SIM  — the simulated listed venue (`cme-sim`) quoting the Treasury futures
+#              complex in whole contracts and accepting orders over FIX
 #   RFQ leg  — a FIX client sending one-shot quote requests
 #   RFS leg  — a FIX client subscribing to a streaming (request-for-stream) venue
 #   ESP leg  — a FIX client driving the Market-Data streaming venue off refdata
 #
-# The last three are legs of `fixsimctl`; LP-SIM is `lpsimctl`. This script fans
-# out to both so an operator (and `celnetctl`) has a single verb for "the sims".
+# The last three are legs of `fixsimctl`; LP-SIM is `lpsimctl` and CME-SIM is
+# `cmesimctl`. This script fans out to all three so an operator (and `celnetctl`)
+# has a single verb for "the sims".
 #
 # ## Why `sweep` exists, and why stop always runs it
 #
@@ -41,12 +46,14 @@ set -euo pipefail
 
 BIN_DIR="{{ celnet_bin_dir }}"
 LPSIMCTL="${BIN_DIR}/lpsimctl"
+CMESIMCTL="${BIN_DIR}/cmesimctl"
 FIXSIMCTL="${BIN_DIR}/fixsimctl"
 
 # Which legs this deploy configured. Rendered from group_vars, so the box always
 # reflects the repository rather than whatever was last typed on it.
 SIMS_ENABLED="{{ '1' if celnet_simulators_enabled | default(true) else '0' }}"
 LPSIM_ENABLED="{{ '1' if celnet_lpsim_enabled | default(true) else '0' }}"
+CMESIM_ENABLED="{{ '1' if celnet_cmesim_enabled | default(true) else '0' }}"
 FIXSIM_ENABLED="{{ '1' if celnet_fixsim_enabled | default(true) else '0' }}"
 
 # Seconds to wait for the swept processes to actually disappear. Like the server's
@@ -57,7 +64,7 @@ REAP_WAIT={{ celnet_simulators_reap_wait_seconds | default(10) }}
 # The process images a stray simulator can present. `start-*-sim.sh` is included
 # because the launcher supervises its client in a `while` loop — killing only the
 # client leaves the supervisor to immediately respawn it.
-STRAY_PATTERN='lp[-_]sim|fix[-_]rfq[-_]client|start-fix-sim\.sh|start-lp-sim\.sh'
+STRAY_PATTERN='lp[-_]sim|cme[-_]sim|fix[-_]rfq[-_]client|start-fix-sim\.sh|start-lp-sim\.sh|start-cme-sim\.sh'
 
 log() { echo "[simsctl] $*"; }
 
@@ -114,6 +121,11 @@ start() {
     "$LPSIMCTL" start || log "WARNING: lpsimctl start failed"
     started=1
   fi
+  if [[ "$CMESIM_ENABLED" == "1" && -x "$CMESIMCTL" ]]; then
+    log "starting CME-SIM (listed Treasury-futures venue → LpFeed ingest + FIX orders)"
+    "$CMESIMCTL" start || log "WARNING: cmesimctl start failed"
+    started=1
+  fi
   if [[ "$FIXSIM_ENABLED" == "1" && -x "$FIXSIMCTL" ]]; then
     log "starting FIX simulator (RFQ + RFS + ESP client legs)"
     "$FIXSIMCTL" start || log "WARNING: fixsimctl start failed"
@@ -128,6 +140,7 @@ stop() {
   # accurate, and the whole point of this script is to also catch the ones where it is
   # not.
   [[ -x "$FIXSIMCTL" ]] && { "$FIXSIMCTL" stop || true; }
+  [[ -x "$CMESIMCTL" ]] && { "$CMESIMCTL" stop || true; }
   [[ -x "$LPSIMCTL" ]] && { "$LPSIMCTL" stop || true; }
   sweep || true
 }
@@ -139,6 +152,11 @@ status() {
     "$LPSIMCTL" status || rc=3
   else
     echo "lp-sim: NOT DEPLOYED"
+  fi
+  if [[ "$CMESIM_ENABLED" == "1" && -x "$CMESIMCTL" ]]; then
+    "$CMESIMCTL" status || rc=3
+  else
+    echo "cme-sim: NOT DEPLOYED"
   fi
   if [[ "$FIXSIM_ENABLED" == "1" && -x "$FIXSIMCTL" ]]; then
     "$FIXSIMCTL" status || rc=3

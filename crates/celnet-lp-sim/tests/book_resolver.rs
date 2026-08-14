@@ -1,8 +1,8 @@
 //! Integration test for the **book resolver** — the pure core of the book-aware
 //! feed. Given a set of `AggregatedBookDesc`s (as returned by
-//! `AuthService.ListAggregatedBooks`), the set of `LP-SIM-0N` members this process
+//! `AuthService.ListAggregatedBooks`), the set of NAMED simulated counterparties this process
 //! impersonates, and the instruments it can price, the resolver must produce exactly
-//! the right `(LP member × instrument)` stream set, ignore books with no LP-SIM
+//! the right `(counterparty × instrument)` stream set, ignore books with no rostered
 //! member (and disabled books), and update correctly as books are added, removed, and
 //! edited.
 //!
@@ -27,15 +27,13 @@ use celnet_types::BrokenDate;
 const S: i64 = 1_000_000_000;
 const NOW: i64 = 100 * S;
 
-/// The five members the sim impersonates (`LP-SIM-01`…`LP-SIM-05`).
+/// The named simulated counterparties this process impersonates — the whole roster.
 fn impersonated() -> BTreeSet<String> {
-    let cfg = cfg();
-    (0..cfg.members).map(|i| cfg.member_venue(i)).collect()
+    cfg().member_venues().into_iter().collect()
 }
 
 fn cfg() -> LpSimConfig {
     LpSimConfig {
-        members: 5,
         settlement: BrokenDate::new(2026, 4, 16),
         ..LpSimConfig::default()
     }
@@ -96,23 +94,23 @@ fn resolves_the_exact_member_by_instrument_stream_set() {
     let priceable = ids_of(&bonds);
 
     let books = vec![
-        // An all-members-quote book whose LP-SIM members are LP-SIM-01..03.
+        // An all-members-quote book naming three of the four counterparties.
         book(
             "ust-all",
             true,
-            &["LP-SIM-01", "LP-SIM-02", "LP-SIM-03"],
+            &["marketaccess-sim", "traderweb-sim", "citigroup-sim"],
             AggregationScopeMode::AllMembersQuote,
             &[],
         ),
-        // An explicit-scope book whose members are LP-SIM-04..05, over two instruments.
+        // An explicit-scope book whose member is jpm-sim, over two instruments.
         book(
             "ust-explicit",
             true,
-            &["LP-SIM-04", "LP-SIM-05"],
+            &["jpm-sim"],
             AggregationScopeMode::Explicit,
             &[&ids[0], &ids[1]],
         ),
-        // A book with NO LP-SIM member — must be ignored entirely.
+        // A book with NO rostered member — must be ignored entirely.
         book(
             "external",
             true,
@@ -120,11 +118,11 @@ fn resolves_the_exact_member_by_instrument_stream_set() {
             AggregationScopeMode::AllMembersQuote,
             &[],
         ),
-        // A disabled book naming an LP-SIM member — must be ignored.
+        // A disabled book naming a rostered member — must be ignored.
         book(
             "disabled",
             false,
-            &["LP-SIM-01"],
+            &["marketaccess-sim"],
             AggregationScopeMode::AllMembersQuote,
             &[],
         ),
@@ -132,29 +130,29 @@ fn resolves_the_exact_member_by_instrument_stream_set() {
 
     let plan = resolve_from_descs(&books, &impersonated(), &priceable);
 
-    // ust-all: 3 members × 3 instruments = 9; ust-explicit: 2 members × 2 = 4.
+    // ust-all: 3 members × 3 instruments = 9; ust-explicit: 1 member × 2 = 2.
     assert_eq!(
         plan.len(),
-        9 + 4,
+        9 + 2,
         "exact (member × instrument) stream count"
     );
 
-    // All-members-quote fans LP-SIM-01..03 over every priceable instrument.
-    for m in ["LP-SIM-01", "LP-SIM-02", "LP-SIM-03"] {
+    // All-members-quote fans the three named platform/dealer members over every
+    // priceable instrument.
+    for m in ["marketaccess-sim", "traderweb-sim", "citigroup-sim"] {
         for id in &ids {
             assert!(plan.contains(m, id), "{m} must quote {id}");
         }
     }
-    // Explicit scope restricts LP-SIM-04..05 to the two listed instruments only.
-    for m in ["LP-SIM-04", "LP-SIM-05"] {
-        assert!(plan.contains(m, &ids[0]));
-        assert!(plan.contains(m, &ids[1]));
-        assert!(
-            !plan.contains(m, &ids[2]),
-            "{m} must NOT quote the unlisted {}",
-            ids[2]
-        );
-    }
+    // Explicit scope restricts jpm-sim to the two listed instruments only.
+    let m = "jpm-sim";
+    assert!(plan.contains(m, &ids[0]));
+    assert!(plan.contains(m, &ids[1]));
+    assert!(
+        !plan.contains(m, &ids[2]),
+        "{m} must NOT quote the unlisted {}",
+        ids[2]
+    );
     // The external book's members never appear.
     assert!(!plan.members().contains("FIX-BOX-CELER"));
     assert!(!plan.members().contains("API-LP-7"));
@@ -162,11 +160,10 @@ fn resolves_the_exact_member_by_instrument_stream_set() {
     assert_eq!(
         plan.members(),
         BTreeSet::from([
-            "LP-SIM-01",
-            "LP-SIM-02",
-            "LP-SIM-03",
-            "LP-SIM-04",
-            "LP-SIM-05",
+            "marketaccess-sim",
+            "traderweb-sim",
+            "citigroup-sim",
+            "jpm-sim",
         ])
     );
 }
@@ -195,12 +192,12 @@ fn plan_updates_when_books_are_added_removed_and_edited() {
     );
     assert!(start.is_empty());
 
-    // ADD an all-members book (LP-SIM-01..03).
+    // ADD an all-members book (marketaccess-sim..03).
     let added = resolve_from_descs(
         &[book(
             "ust-all",
             true,
-            &["LP-SIM-01", "LP-SIM-02", "LP-SIM-03"],
+            &["marketaccess-sim", "traderweb-sim", "citigroup-sim"],
             AggregationScopeMode::AllMembersQuote,
             &[],
         )],
@@ -216,7 +213,7 @@ fn plan_updates_when_books_are_added_removed_and_edited() {
         &[book(
             "ust-all",
             true,
-            &["LP-SIM-01", "LP-SIM-02"],
+            &["marketaccess-sim", "traderweb-sim"],
             AggregationScopeMode::Explicit,
             &[&ids[0]],
         )],
@@ -224,10 +221,10 @@ fn plan_updates_when_books_are_added_removed_and_edited() {
         &priceable,
     );
     let d = added.diff(&edited);
-    // Now only LP-SIM-01/02 × ids[0] survive (2 streams); the rest are removed.
+    // Now only marketaccess-sim/02 × ids[0] survive (2 streams); the rest are removed.
     assert_eq!(edited.len(), 2);
-    assert!(edited.contains("LP-SIM-01", &ids[0]));
-    assert!(!edited.contains("LP-SIM-03", &ids[0]));
+    assert!(edited.contains("marketaccess-sim", &ids[0]));
+    assert!(!edited.contains("citigroup-sim", &ids[0]));
     assert_eq!(d.added.len(), 0);
     assert_eq!(d.removed.len(), 9 - 2);
 
@@ -246,38 +243,44 @@ fn priced_streams_stay_within_the_surviving_member_envelope() {
     let bond = &bonds[0];
     let priceable = ids_of(&bonds);
 
-    // An all-members book naming all five LP-SIM members over this one instrument.
+    // An all-members book naming the whole roster over this one instrument.
     let books = vec![book(
         "ust-one",
         true,
         &[
-            "LP-SIM-01",
-            "LP-SIM-02",
-            "LP-SIM-03",
-            "LP-SIM-04",
-            "LP-SIM-05",
+            "marketaccess-sim",
+            "traderweb-sim",
+            "citigroup-sim",
+            "jpm-sim",
         ],
         AggregationScopeMode::AllMembersQuote,
         &[],
     )];
     let plan = resolve_from_descs(&books, &impersonated(), &priceable);
-    assert_eq!(plan.len(), 5, "five members quote the one instrument");
+    assert_eq!(
+        plan.len(),
+        celnet_lp_sim::OTC_ROSTER.len(),
+        "every rostered counterparty quotes the one instrument"
+    );
 
     // Emit one round with faults OFF so every member is fresh (analytic envelope).
     let by_id = bonds.iter().map(|b| (b.instrument_id(), b)).collect();
     let fleet = build_fleet(&cfg, &bonds);
     let quotes = plan_quotes_round(&cfg, &fleet, &by_id, &plan, NOW, 0, &FaultSchedule::off());
-    assert_eq!(quotes.len(), 5);
+    assert_eq!(quotes.len(), celnet_lp_sim::OTC_ROSTER.len());
     // Each LP's OWN two-way is uncrossed (offer ≥ bid); the composite BBO may cross.
     for q in &quotes {
         assert!(q.offer >= q.bid, "an LP's own two-way must not be crossed");
-        assert_eq!(
-            q.ts_nanos, NOW,
-            "a fresh (unfaulted) member reports the query ts"
-        );
+        // A fresh (unfaulted) counterparty reports the query instant back-dated by
+        // its OWN response latency — never AFTER it, which would make the
+        // consolidator's age gate silently inert.
+        assert!(q.ts_nanos <= NOW, "{}: future-dated observation", q.lp_name);
+        let profile = celnet_lp_sim::roster::profile_by_id(celnet_lp_sim::OTC_ROSTER, &q.lp_name)
+            .unwrap_or_else(|| panic!("{} is not a named counterparty", q.lp_name));
+        assert_eq!(NOW - q.ts_nanos, profile.latency_nanos(), "{}", q.lp_name);
     }
 
-    // Analytic envelope over the five members' own top-of-book at NOW.
+    // Analytic envelope over every counterparty's own top-of-book at NOW.
     let instrument = bond.instrument.clone();
     let bids: Vec<f64> = fleet
         .iter()
@@ -315,5 +318,9 @@ fn priced_streams_stay_within_the_surviving_member_envelope() {
         "composite mid {} outside surviving envelope [{min_mid}, {max_mid}]",
         book.composite_mid
     );
-    assert_eq!(book.contributing(), 5, "all five fresh members contribute");
+    assert_eq!(
+        book.contributing(),
+        celnet_lp_sim::OTC_ROSTER.len(),
+        "every fresh counterparty contributes"
+    );
 }

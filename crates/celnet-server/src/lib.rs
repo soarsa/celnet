@@ -494,11 +494,13 @@ impl Edge {
         rates_store.set_lp_hedge_source(
             Arc::clone(&aggregation_hub) as Arc<dyn services::auto_hedge::LpHedgeSource>
         );
-        // The shared hedge-execution → street-side LP flow log (Analytics §2.4): the rates
-        // booking seam records a named-LP hedge fill here (a WON deal for that LP), and the SAME
-        // `Arc` is folded by the LP league-table rollup as an `LpFlowSource` (registered below).
-        let hedge_flow = Arc::new(services::analytics::hedge_flow::HedgeFillFlowLog::new());
-        rates_store.set_hedge_flow_log(Arc::clone(&hedge_flow));
+        // The shared STREET-SIDE EXECUTION log (Analytics §2.4): the rates booking seam
+        // records EVERY outbound street order here — named-LP fills, composite backstops and
+        // honest misses alike, with their full economics and the ranked panel they competed
+        // against. The SAME `Arc` is folded by the LP league-table rollup as an `LpFlowSource`
+        // (registered below) and served by the `ListStreetOrders` RPC.
+        let street_orders = Arc::new(services::analytics::street_orders::StreetOrderLog::new());
+        rates_store.set_street_order_log(Arc::clone(&street_orders));
         let stream = StreamServiceServer::new(
             StreamEdge::with_store_and_fleet(
                 Arc::clone(&link),
@@ -646,6 +648,21 @@ impl Edge {
         // acceptors bind below; the persisted setting is applied to the shared control
         // once the identity store loads (above).
         fix_registry.set_pricing_control(Arc::clone(&pricing_control));
+        // Arm the OUTBOUND street-order router off the same operator-managed registry.
+        // A panel member is routable exactly when its connection is enabled and carries
+        // an `order_endpoint`; the registry re-derives that set after every admin edit,
+        // so adding an endpoint in the UI arms the route without a restart. Wiring this
+        // is what turns a ranked firm quote into a `NewOrderSingle(D)` on a real socket
+        // and a booked fill into something a counterparty actually agreed to — a member
+        // with no endpoint is answered `no_order_endpoint`, never filled from its quote.
+        // The router starts NO threads until a member is actually armed, so an edge with
+        // no configured order routes costs exactly nothing.
+        let street_router = services::street_router::FixStreetRouter::new();
+        fix_registry
+            .set_street_router(Arc::clone(&street_router))
+            .await;
+        rates_store
+            .set_street_router(street_router as Arc<dyn services::auto_hedge::StreetOrderRouter>);
         // ONE admin edge backs both the gRPC server and the WS mirror (shared behind an
         // `Arc`), so the two fronts manage the SAME registry through one entitlement
         // boundary — exactly the single-edge sharing the risk service uses.
@@ -809,6 +826,14 @@ impl Edge {
         // internalise decision stamps into its ring) AND handed to the `AuthEdge` (so the
         // `ListHedgeProvenance` RPC reads that same audit ring).
         let auto_hedge_engine = Arc::new(services::auto_hedge::AutoHedgeEngine::default());
+        // The firm-wide DECISION JOURNAL — one ring shared by all three rule engines, so
+        // "why did acceptance turn that lift away" and "why did the hedge rule not fire"
+        // are answered from ONE audit stream (`docs/DECISION-AUDIT.md`). Bound into the
+        // hedge engine and the desk acceptance gate (the producers) and into the `AuthEdge`
+        // (the `ListDecisionJournal` / `ListRuleAdvice` reader).
+        let decision_journal = Arc::new(services::decision_journal::DecisionJournal::default());
+        auto_hedge_engine.set_journal(Arc::clone(&decision_journal));
+        rfq_desk_edge.set_decision_journal(Arc::clone(&decision_journal));
         // Prime the rates store's auto-hedge / internalisation policy from the persisted config
         // (the exit graph + warehouse thresholds + engine config + known-LP set), so a booked
         // RFQ-desk / FIX-lift fill carrying a priced reference mid resolves its warehouse-vs-
@@ -913,6 +938,10 @@ impl Edge {
             // into, so `ListHedgeProvenance` serves that live audit ring; admin hedge writes
             // then re-prime the rates store's hedge-policy snapshot.
             .with_auto_hedge_engine(Arc::clone(&auto_hedge_engine))
+            // Serve the SAME decision journal the hedge engine + acceptance gate record
+            // into, so the audit surface reads real recorded decisions and the rule advisor
+            // derives its suggestions from exactly those rows.
+            .with_decision_journal(Arc::clone(&decision_journal))
             // Back the transfer RPCs (initiate / accept / reject / cancel / list) with the
             // shared transfer service.
             .with_transfer_service(Arc::clone(&transfer_service))
@@ -934,12 +963,16 @@ impl Edge {
             .with_lp_flow_source(
                 Arc::clone(&aggregation_hub) as Arc<dyn services::analytics::lp::LpFlowSource>
             )
-            // The hedge-execution attribution source: named-LP auto-hedge fills recorded by the
-            // rates booking seam, so an LP that fills our OUTBOUND hedges shows Deals won / Won
-            // notional in the Street-side LP league table (not just client-RFQ panel wins).
+            // The street-side execution source: every outbound street order the rates booking
+            // seam works. A named-LP fill credits that LP a Deal won + Won notional, the LPs it
+            // was ranked against are credited a real Missed and a real cover distance, and a
+            // COMPOSITE backstop credits nobody — so the league table reflects our OUTBOUND
+            // street flow, not just client-RFQ panel wins.
             .with_lp_flow_source(
-                Arc::clone(&hedge_flow) as Arc<dyn services::analytics::lp::LpFlowSource>
+                Arc::clone(&street_orders) as Arc<dyn services::analytics::lp::LpFlowSource>
             )
+            // Back the street-side execution blotter + breakdown RPC with the SAME log.
+            .with_street_order_log(Arc::clone(&street_orders))
             // Back the Latency/Ops analytics RPC with the SAME telemetry hub the
             // `CoreLink` owns — the pinned core + async edges fold their per-stage
             // latency into it, and this RPC reads that store (Analytics pillar B).

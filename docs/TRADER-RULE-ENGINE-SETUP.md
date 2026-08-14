@@ -257,7 +257,12 @@ After a lift runs the full chain:
 - **Risk Dashboard** (Fixed Income → Risk → Risk Dashboard) shows the position rolled up
   under the risk book routing sent it to.
 - **Analytics** (top-level Analytics tab) aggregates the client-flow and street-side
-  liquidity view over time.
+  liquidity view over time. Analytics → **Street Liquidity** carries both halves of the
+  street side: the LP league table (who we trade with, and how they behave) and, beneath
+  it, **street-side execution** — one row per outbound order we sent, with the product,
+  side, requested-vs-filled, price and slippage, outcome and reason, the competing panel,
+  and the parent hedge. Group the breakdown by LP, product family, instrument, tenor
+  bucket or hour. A metric shown as "—" is genuinely absent, never a fabricated zero.
 
 ---
 

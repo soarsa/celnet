@@ -141,3 +141,11 @@ celnet-golden.workspace = true
 # Per-test isolated config dir so parallel test edges never race the one shared
 # identity.json / fix-connections.json path (each `start_*_edge` roots its own).
 tempfile.workspace = true
+# The REAL simulated counterparties the street-order router is proven against
+# (tests/street_routing_e2e.rs): the OTC panel's order acceptor and the listed
+# futures venue, driven over real loopback sockets. Testing the router against a
+# stub would prove only that the stub agrees with itself — the whole point of this
+# seam is that a counterparty, not our own code, decides whether a hedge fills.
+# Acyclic: neither simulator depends on the server.
+celnet-lp-sim.workspace = true
+celnet-cme-sim.workspace = true
