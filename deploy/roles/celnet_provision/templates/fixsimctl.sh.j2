@@ -23,10 +23,15 @@ export FIXSIM_HOST="{{ celnet_fixsim_host | default('127.0.0.1') }}"
 export FIXSIM_ASSET="{{ celnet_fixsim_asset | default('fi') }}"
 export FIXSIM_CURVE="{{ celnet_fixsim_curve | default('USD-OIS') }}"
 export FIXSIM_TENOR="{{ celnet_fixsim_tenor | default('5') }}"
-# rfs = request a STREAM for a size (the venue prices it off the aggregated-book
-# composite for `<curve>-<tenor>Y` and tiers it by the client's pricing group); rfq =
-# one-shot snapshot.
-export FIXSIM_INTENT="{{ celnet_fixsim_intent | default('rfs') }}"
+# Intent MUST match the acceptor kind of the venue THIS leg targets (FIXSIM_PORT). The
+# server gates the dialect on the venue's own kind (`subscription_matches_intent` in
+# services/fix.rs): a fixed_income_QUOTE venue answers ONLY a Snapshot (rfq); Subscribe
+# (rfs) is answered ONLY by a fixed_income_stream / _esp venue. A mismatch is dropped
+# with NO reject and NO log line — the leg looks healthy and streams nothing
+# ("streamed 0 update(s)"), which is exactly how this leg silently died on UAT.
+# This leg targets the QUOTE venue, so it is "rfq"; the streaming flows have their own
+# legs (FIXSIM_STREAM_PORT / FIXSIM_ESP_PORT) against the stream venue.
+export FIXSIM_INTENT="{{ celnet_fixsim_intent | default('rfq') }}"
 # Notional "mix" ⇒ a stream rotates a 100k…30m clip ladder per request (varied booked
 # sizes + DV01); a number pins it. Side "mix" ⇒ a stream rotates pay/receive per request
 # (BUY/SELL booked-deal mix); pay|receive|two-way pins it. Both are overridable.

@@ -42,6 +42,12 @@ pub struct InitiatorResult {
     pub fill_px: Option<f64>,
     /// Whether the execution report reported a fill.
     pub filled: bool,
+    /// Whether a lift (`NewOrderSingle`) was actually transmitted. Distinguishes "the
+    /// venue declined the lift" (`lifted && !filled`) from "no lift was ever sent"
+    /// (`!lifted`) — e.g. the stream published nothing liftable during the hold. Without
+    /// this the two are indistinguishable at the call site and a never-sent lift is
+    /// misreported as a last-look decline.
+    pub lifted: bool,
 }
 
 /// Outcome of an RFS **subscribe-and-hold** cycle: how many streamed `Quote` updates the
@@ -393,84 +399,115 @@ impl<S: MessageStore> Initiator<S> {
         let lift_at = lift_after.map(|d| start + d);
         let mut outcome = StreamOutcome::default();
         let mut awaiting_exec = false;
+        // The freshest liftable line seen on this stream (symbol + per-side top-of-book +
+        // quote handle). Retained across iterations so the lift can still fire once it
+        // falls due on a venue that has gone quiet — see the deadline-driven lift below.
+        let mut last_symbol: Option<Vec<u8>> = None;
+        let mut last_quote_id: Vec<u8> = Vec::new();
+        let mut last_bid: Option<f64> = None;
+        let mut last_offer: Option<f64> = None;
         loop {
-            let frame_bytes = match tokio::time::timeout_at(deadline, reader.next_frame()).await {
-                Err(_elapsed) => break,
-                Ok(Ok(Some(bytes))) => bytes,
+            // Wake at the LIFT instant as well as the hold deadline. The lift used to be
+            // reachable only from inside the snapshot arm, so it fired only if the venue
+            // happened to publish again after `lift_at`; on a thin or slow line the hold
+            // simply expired with NO `NewOrderSingle` ever sent, which the caller then
+            // reported as a last-look decline. Measured on UAT: 6 lift attempts produced
+            // only 4 orders on the wire, and the venue filled 4 of 4 — every "decline"
+            // was really a lift that was never transmitted.
+            let pending_lift = lift_at.is_some()
+                && !awaiting_exec
+                && !outcome.result.filled
+                && !outcome.result.lifted;
+            let wake = match lift_at {
+                Some(t) if pending_lift && t < deadline => t,
+                _ => deadline,
+            };
+            match tokio::time::timeout_at(wake, reader.next_frame()).await {
+                // Woke on the hold deadline itself — the cycle is over.
+                Err(_elapsed) if wake >= deadline => break,
+                // Woke on `lift_at` with no new frame: fall through to the lift below.
+                Err(_elapsed) => {}
                 Ok(Ok(None)) => break,
                 Ok(Err(e)) => return Err(e),
-            };
-            let mt = self.drive(&frame_bytes, sending_time, write_half).await?;
-            match mt {
-                Some(MsgType::MarketDataSnapshotFullRefresh) => {
-                    let frame = FrameCursor::parse(&frame_bytes)
-                        .map_err(|_| std::io::Error::other("bad market-data snapshot frame"))?;
-                    let view = messages::MarketDataSnapshotView::new(frame);
-                    let tob = view.top_of_book();
-                    outcome.updates += 1;
-                    // The streamed snapshot now advertises a liftable QuoteID(117) — capture it
-                    // so the caller can display it and a lift echoes it back.
-                    outcome.result.quote_id = view.quote_id().map(<[u8]>::to_vec);
-                    outcome.result.bid = tob.bid_px;
-                    outcome.result.offer = tob.offer_px;
-                    let lift_due = lift_at.is_some_and(|t| tokio::time::Instant::now() >= t);
-                    if lift_due
-                        && !awaiting_exec
-                        && !outcome.result.filled
-                        && self.policy != LiftPolicy::Observe
-                    {
-                        // Lift the streamed top-of-book by symbol: BUY the offer (LiftOffer)
-                        // or SELL the bid (HitBid) — executing a streaming deal. The lift
-                        // price is read from THIS snapshot's per-side top-of-book (`tob`,
-                        // parsed from the very `35=W` frame that triggered the lift) — the
-                        // FRESHEST published level for that symbol/side, never a price cached
-                        // from an earlier tick. Lifting at the current level (rather than a
-                        // stale one) is what keeps the server's price last-look from
-                        // superseding the order for a market move that already happened.
-                        let hit_bid = self.policy == LiftPolicy::HitBid;
-                        let (side, price) = if hit_bid {
-                            (crate::dialect_fx::SIDE_SELL, tob.bid_px)
-                        } else {
-                            (crate::dialect_fx::SIDE_BUY, tob.offer_px)
-                        };
-                        let Some(symbol) = view.symbol().map(<[u8]>::to_vec) else {
-                            continue;
-                        };
-                        // Echo the streamed QuoteID(117) as the lift handle (empty ⇒ the venue
-                        // falls back to resolving by Symbol(55)).
-                        let quote_id = view.quote_id().map(<[u8]>::to_vec).unwrap_or_default();
-                        let cl = self.mint("C");
-                        let px = price.unwrap_or(0.0);
-                        let order = self.session.send_app(sending_time, |h, e| {
-                            let p = messages::MarketOrderParams {
-                                cl_ord_id: &cl,
-                                symbol: &symbol,
-                                quote_id: &quote_id,
-                                security_type,
-                                side,
-                                qty: 1_000_000.0,
-                                price: px,
-                                transact_time: b"20260530-12:00:01.000",
-                            };
-                            messages::build_new_order_by_symbol(h, &p, e)
-                        });
-                        write_frame(write_half, &order).await?;
-                        awaiting_exec = true;
-                        let exec_deadline = tokio::time::Instant::now() + self.quote_timeout;
-                        if exec_deadline > deadline {
-                            deadline = exec_deadline;
+                Ok(Ok(Some(frame_bytes))) => {
+                    let mt = self.drive(&frame_bytes, sending_time, write_half).await?;
+                    match mt {
+                        Some(MsgType::MarketDataSnapshotFullRefresh) => {
+                            let frame = FrameCursor::parse(&frame_bytes).map_err(|_| {
+                                std::io::Error::other("bad market-data snapshot frame")
+                            })?;
+                            let view = messages::MarketDataSnapshotView::new(frame);
+                            let tob = view.top_of_book();
+                            outcome.updates += 1;
+                            // The streamed snapshot advertises a liftable QuoteID(117) —
+                            // capture it so the caller can display it and a lift echoes it back.
+                            outcome.result.quote_id = view.quote_id().map(<[u8]>::to_vec);
+                            outcome.result.bid = tob.bid_px;
+                            outcome.result.offer = tob.offer_px;
+                            if let Some(sym) = view.symbol().map(<[u8]>::to_vec) {
+                                last_symbol = Some(sym);
+                                // Empty ⇒ the venue falls back to resolving by Symbol(55).
+                                last_quote_id =
+                                    view.quote_id().map(<[u8]>::to_vec).unwrap_or_default();
+                                last_bid = tob.bid_px;
+                                last_offer = tob.offer_px;
+                            }
                         }
+                        Some(MsgType::ExecutionReport) if awaiting_exec => {
+                            let frame = FrameCursor::parse(&frame_bytes)
+                                .map_err(|_| std::io::Error::other("bad exec frame"))?;
+                            let view = messages::ExecReportView::new(frame);
+                            outcome.result.filled = view.exec_type() == Some(messages::EXEC_FILLED);
+                            outcome.result.fill_px = view.last_px();
+                            break;
+                        }
+                        _ => {}
                     }
                 }
-                Some(MsgType::ExecutionReport) if awaiting_exec => {
-                    let frame = FrameCursor::parse(&frame_bytes)
-                        .map_err(|_| std::io::Error::other("bad exec frame"))?;
-                    let view = messages::ExecReportView::new(frame);
-                    outcome.result.filled = view.exec_type() == Some(messages::EXEC_FILLED);
-                    outcome.result.fill_px = view.last_px();
-                    break;
+            }
+
+            // Deadline-driven lift: fires on the first snapshot at/after `lift_at`, and
+            // ALSO at `lift_at` itself when the venue has published nothing since. The
+            // price is the freshest per-side top-of-book captured above — lifting at the
+            // current level (never a stale one) is what keeps the venue's price last-look
+            // from superseding the order for a move that already happened.
+            let lift_due = lift_at.is_some_and(|t| tokio::time::Instant::now() >= t);
+            if lift_due
+                && !awaiting_exec
+                && !outcome.result.filled
+                && !outcome.result.lifted
+                && self.policy != LiftPolicy::Observe
+                && let Some(symbol) = last_symbol.clone()
+            {
+                // BUY the offer (LiftOffer) or SELL the bid (HitBid) — a streaming deal.
+                let hit_bid = self.policy == LiftPolicy::HitBid;
+                let (side, price) = if hit_bid {
+                    (crate::dialect_fx::SIDE_SELL, last_bid)
+                } else {
+                    (crate::dialect_fx::SIDE_BUY, last_offer)
+                };
+                let cl = self.mint("C");
+                let px = price.unwrap_or(0.0);
+                let order = self.session.send_app(sending_time, |h, e| {
+                    let p = messages::MarketOrderParams {
+                        cl_ord_id: &cl,
+                        symbol: &symbol,
+                        quote_id: &last_quote_id,
+                        security_type,
+                        side,
+                        qty: 1_000_000.0,
+                        price: px,
+                        transact_time: b"20260530-12:00:01.000",
+                    };
+                    messages::build_new_order_by_symbol(h, &p, e)
+                });
+                write_frame(write_half, &order).await?;
+                awaiting_exec = true;
+                outcome.result.lifted = true;
+                let exec_deadline = tokio::time::Instant::now() + self.quote_timeout;
+                if exec_deadline > deadline {
+                    deadline = exec_deadline;
                 }
-                _ => {}
             }
         }
         Ok(outcome)

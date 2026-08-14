@@ -1387,8 +1387,15 @@ async fn run_rfs(args: &Args) -> std::io::Result<()> {
             if outcome.result.filled {
                 let px = outcome.result.fill_px.unwrap_or(f64::NAN);
                 println!("[{i}] ✓ streamed quote LIFTED & FILLED @ {px:.8} — deal booked");
+            } else if !outcome.result.lifted {
+                // No `NewOrderSingle` ever went on the wire — the stream published nothing
+                // liftable during the hold. Reporting this as a decline hid a real client
+                // bug, so name it for what it is.
+                println!(
+                    "[{i}] ⊘ no lift sent — stream published no liftable line during the hold"
+                );
             } else {
-                println!("[{i}] ✗ stream lift NOT filled (last-look declined / no auto-quote yet)");
+                println!("[{i}] ✗ stream lift NOT filled (last-look declined by the venue)");
             }
         }
 

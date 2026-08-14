@@ -78,11 +78,23 @@ fi
 # Fixed-income request shape (whole-year OIS tenor, notional in ccy units).
 FIXSIM_CURVE="${FIXSIM_CURVE:-USD-OIS}"
 FIXSIM_TENOR="${FIXSIM_TENOR:-5}"
-# Request intent: "rfs" (default) asks the venue for a STREAM **for a size**, which is
-# what a real rates price-taker sends and what lets the venue's pricing-group tiering act
-# on the requested quantity; the venue prices it off the internal aggregated-book
-# composite for `<curve>-<tenor>Y` (e.g. USD-OIS-5Y). "rfq" selects the one-shot snapshot.
-FIXSIM_INTENT="${FIXSIM_INTENT:-rfs}"
+# Request intent, and it MUST match the acceptor kind this leg targets. The server gates
+# the dialect on the venue's own kind (`rates_intent_for_kind` / `subscription_matches_intent`
+# in services/fix.rs): a FixedIncomeQuote venue answers ONLY a Snapshot (rfq), while
+# Subscribe/Unsubscribe (rfs) is answered ONLY by a FixedIncomeStream / FixedIncomeEsp
+# venue. A mismatched request is dropped with NO reject and NO log line — the leg looks
+# healthy and streams nothing ("streamed 0 update(s)"), which is exactly how this leg
+# silently died on UAT.
+#
+# This main leg targets FIXSIM_PORT, which for `fi` is the fixed_income_QUOTE venue
+# (56002) — so it defaults to "rfq". The streaming flows are driven by their own legs
+# against the stream venue: the ESP leg below, and the RFS leg when a distinct legacy
+# quote-stream venue is configured. FX (56001, kind options) is not gated this way.
+if [ "$FIXSIM_ASSET" = "fi" ]; then
+  FIXSIM_INTENT="${FIXSIM_INTENT:-rfq}"
+else
+  FIXSIM_INTENT="${FIXSIM_INTENT:-rfs}"
+fi
 case "$FIXSIM_INTENT" in
   rfs|stream|subscribe) FIXSIM_INTENT="rfs" ;;
   rfq|snapshot)         FIXSIM_INTENT="rfq" ;;
@@ -396,8 +408,9 @@ elif [ -n "$FIXSIM_STREAM_PORT" ]; then
     STREAM_ARGS=("${RUNNER[@]}" --addr "$FIXSIM_HOST:$FIXSIM_STREAM_PORT" \
       --sender "$FIXSIM_STREAM_SENDER" --target "$FIXSIM_TARGET" \
       --req-id "FIXSIM-RFS-$(date +%s)" \
-      --asset fi --intent rfs --curve "$FIXSIM_CURVE" --notional "$FIXSIM_NOTIONAL" \
-      --side "$FIXSIM_SIDE" --manual-every 0 --lift-every "$FIXSIM_LIFT_EVERY" \
+      --asset rfs --grpc-addr "$FIXSIM_GRPC_ADDR" \
+      --rfs-instruments "$FIXSIM_ESP_INSTRUMENTS" --user "$FIXSIM_USER" \
+      --notional "$FIXSIM_NOTIONAL" \
       --repeat 0 "${STREAM_CADENCE[@]}")
     log "RFS leg: streaming from $FIXSIM_HOST:$FIXSIM_STREAM_PORT ($FIXSIM_STREAM_SENDER); lift every ${FIXSIM_LIFT_EVERY}."
     ( while true; do "${STREAM_ARGS[@]}" || log "RFS client exited ($?) — reconnecting in 5s"; sleep 5; done ) &
@@ -431,7 +444,7 @@ if [ "$FIXSIM_ESP" = "1" ] && [ -n "$FIXSIM_ESP_PORT" ]; then
       --sender "$FIXSIM_ESP_SENDER" --target "$FIXSIM_TARGET" \
       --req-id "FIXSIM-ESP-$(date +%s)" \
       --asset esp --grpc-addr "$FIXSIM_GRPC_ADDR" \
-      --esp-instruments "$FIXSIM_ESP_INSTRUMENTS" --seed "$FIXSIM_ESP_SEED" \
+      --rfs-instruments "$FIXSIM_ESP_INSTRUMENTS" --seed "$FIXSIM_ESP_SEED" \
       --user "$FIXSIM_USER" \
       --notional "$FIXSIM_NOTIONAL" --repeat 0 "${ESP_CADENCE[@]}")
     # NOTE: no --password. The secret reaches the child through the exported

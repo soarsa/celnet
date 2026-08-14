@@ -104,6 +104,14 @@ celnet_fixsim_esp_enabled: true
 # acceptor in the managed registry; override to match the GUI FIX admin.
 celnet_fixsim_stream_port: 56003
 celnet_fixsim_stream_sender: "CELER_RATES_STREAM"
+# The ESP acceptor is a venue of its OWN kind (`fixed_income_esp`, kind 3) — NOT the RFS
+# stream venue. ESP publishes the venue's own clip and runs the group's ESP pricing
+# pipeline, whereas RFS prices the client's requested size; they are different products
+# and must not share a port or a CompID. Leaving these unset makes the ESP leg fall back
+# onto celnet_fixsim_stream_port, which both collapses ESP onto RFS and trips the
+# launcher's CompID-collision guard so the RFS leg is skipped entirely.
+celnet_fixsim_esp_port: 56004
+celnet_fixsim_esp_sender: "CELER_RATES_ESP"
 celnet_fixsim_grpc_addr: "http://127.0.0.1:50051"  # reference-data + login endpoint
 celnet_fixsim_esp_instruments: 8         # top-N most-liquid/relevant instruments to stream (trimmed 15→8)
 celnet_fixsim_esp_seed: "0x5EED1234"     # deterministic seed (hex ok — the launcher normalizes 0x… → decimal)
