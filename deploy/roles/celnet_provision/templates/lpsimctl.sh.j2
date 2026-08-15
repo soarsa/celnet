@@ -9,8 +9,9 @@
 # the release-shipped lp-sim binary (no cargo needed on the host), daemonizes, and
 # logs into the shared log dir. lpsimctl start runs the 5-LP, BOOK-AWARE daemon
 # against the LOCAL server ingest (LPSIM_ADDR): it logs in as the service user, polls
-# the enabled aggregated books every LPSIM_BOOK_POLL secs, and streams LP-SIM-01..05
-# two-ways for exactly the bonds each book scopes — auto-starting/stopping as books
+# the enabled aggregated books every LPSIM_BOOK_POLL secs, and streams the NAMED
+# counterparties' (marketaccess-sim, traderweb-sim, citigroup-sim, jpm-sim) two-ways
+# for exactly the bonds each book scopes — auto-starting/stopping as books
 # change. Override the members / book-poll / login / instruments with celnet_lpsim_*.
 # Set celnet_lpsim_no_book_poll=1 for the broadcast fallback (whole universe, no poll).
 # ---------------------------------------------------------------------------

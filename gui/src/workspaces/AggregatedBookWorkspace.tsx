@@ -41,6 +41,8 @@ import { AggregationPanel } from "./AggregationPanel";
 import { useReferenceData } from "../hooks/useReferenceData";
 import { indexBondDefs, resolveBondDef } from "../lib/bondTerms";
 import {
+  assetTypeTabs,
+  filterInstrumentsByAssetType,
   filterInstrumentsBySelection,
   securityOptions,
 } from "../lib/aggBookSelection";
@@ -232,12 +234,18 @@ export function AggregatedBookWorkspace(): React.ReactElement {
 
   // The selected book + View/Manage mode are persisted so they SURVIVE a tab switch
   // (the workspace unmounting) and are restored on return.
-  const [ui, setUi] = useTableUiState<{ selectedId: string | null; mode: "view" | "manage" }>(
+  const [ui, setUi] = useTableUiState<{
+    selectedId: string | null;
+    mode: "view" | "manage";
+    assetType: string | null;
+  }>(
     "fi-agg-book",
-    { selectedId: null, mode: "view" },
+    { selectedId: null, mode: "view", assetType: null },
   );
   const selectedId = ui.selectedId;
   const setSelectedId = useCallback((id: string | null) => setUi({ selectedId: id }), [setUi]);
+  const assetType = ui.assetType;
+  const setAssetType = useCallback((k: string | null) => setUi({ assetType: k }), [setUi]);
   const mode = canManageLiquidity ? ui.mode : "view";
   const setMode = useCallback((m: "view" | "manage") => setUi({ mode: m }), [setUi]);
 
@@ -366,7 +374,7 @@ export function AggregatedBookWorkspace(): React.ReactElement {
     (ids: string[]): void => update({ aggBookInstrumentSelection: ids }),
     [update],
   );
-  const shownInstruments = useMemo(
+  const selectedInstruments = useMemo(
     () =>
       filterInstrumentsBySelection(
         composite.instruments,
@@ -374,6 +382,38 @@ export function AggregatedBookWorkspace(): React.ReactElement {
         selection,
       ),
     [composite.instruments, refData.instruments, selection],
+  );
+
+  // The ASSET-TYPE axis. A book is defined by its inbound liquidity members; a
+  // trader reads it by what KIND of risk each line is (`sub_asset_type` off the
+  // reference-data taxonomy). Tabs are derived from what is actually streaming,
+  // so an empty tab can never be offered. Computed AFTER the security selection
+  // so the counts match what the tab would show, not what it could show.
+  const assetTabs = useMemo(
+    () => assetTypeTabs(selectedInstruments, refData.instruments),
+    [selectedInstruments, refData.instruments],
+  );
+
+  // Keep the active tab valid as the composite moves: hold the trader's choice
+  // while it still has lines, else fall to the first tab. Never leaves a live
+  // book rendering blank because the previously-selected type went quiet.
+  useEffect(() => {
+    if (assetTabs.length === 0) {
+      if (assetType !== null) setAssetType(null);
+      return;
+    }
+    if (assetType !== null && assetTabs.some((t) => t.key === assetType)) return;
+    setAssetType(assetTabs[0]?.key ?? null);
+  }, [assetTabs, assetType, setAssetType]);
+
+  const shownInstruments = useMemo(
+    () =>
+      filterInstrumentsByAssetType(
+        selectedInstruments,
+        refData.instruments,
+        assetTabs.length === 0 ? null : assetType,
+      ),
+    [selectedInstruments, refData.instruments, assetTabs.length, assetType],
   );
 
   const toggleRow = useCallback((instrumentId: string): void => {
@@ -498,26 +538,57 @@ export function AggregatedBookWorkspace(): React.ReactElement {
               )}
             </div>
           ) : (
-            <div className={styles.selector} role="group" aria-label="select an aggregated book">
-              {books.map((b) => (
-                <button
-                  key={b.id}
-                  type="button"
-                  className={`${styles.bookBtn} ${selectedId === b.id ? styles.bookBtnActive : ""}`}
-                  aria-pressed={selectedId === b.id}
-                  onClick={() => setSelectedId(b.id)}
-                  disabled={!b.enabled}
-                  title={
-                    b.enabled
-                      ? `${b.memberConnectionIds.length} member${b.memberConnectionIds.length === 1 ? "" : "s"}`
-                      : "disabled — publishes no composite"
-                  }
+            <>
+              {/*
+                The BOOK selector only earns screen space when there is a choice to
+                make. With a single defined book the book is context, not a control,
+                and the asset-type strip below is the axis a trader actually reads.
+              */}
+              {books.length > 1 && (
+                <div
+                  className={styles.selector}
+                  role="group"
+                  aria-label="select an aggregated book"
                 >
-                  {b.name}
-                  {!b.enabled && <span className={styles.bookOff}> (off)</span>}
-                </button>
-              ))}
-            </div>
+                  {books.map((b) => (
+                    <button
+                      key={b.id}
+                      type="button"
+                      className={`${styles.bookBtn} ${selectedId === b.id ? styles.bookBtnActive : ""}`}
+                      aria-pressed={selectedId === b.id}
+                      onClick={() => setSelectedId(b.id)}
+                      disabled={!b.enabled}
+                      title={
+                        b.enabled
+                          ? `${b.memberConnectionIds.length} member${b.memberConnectionIds.length === 1 ? "" : "s"}`
+                          : "disabled — publishes no composite"
+                      }
+                    >
+                      {b.name}
+                      {!b.enabled && <span className={styles.bookOff}> (off)</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {assetTabs.length > 0 && (
+                <div className={styles.selector} role="tablist" aria-label="asset type">
+                  {assetTabs.map((t) => (
+                    <button
+                      key={t.key}
+                      type="button"
+                      role="tab"
+                      className={`${styles.bookBtn} ${assetType === t.key ? styles.bookBtnActive : ""}`}
+                      aria-selected={assetType === t.key}
+                      onClick={() => setAssetType(t.key)}
+                      title={`${t.count} live line${t.count === 1 ? "" : "s"}`}
+                    >
+                      {t.label}
+                      <span className={styles.bookOff}> {t.count}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
 
           {selectedBook && (

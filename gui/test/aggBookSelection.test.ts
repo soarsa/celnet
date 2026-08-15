@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 
 import type { AggregatedInstrument, InstrumentDef } from "../src/data/contract";
 import {
+  assetTypeTabs,
+  filterInstrumentsByAssetType,
   filterInstrumentsBySelection,
   filterSecurityGroups,
   groupSecurityOptions,
@@ -161,5 +163,67 @@ describe("filterInstrumentsBySelection", () => {
 
   it("a selection that matches nothing currently quoting yields an empty grid", () => {
     expect(filterInstrumentsBySelection(lines, DEFS, ["not-streaming"])).toHaveLength(0);
+  });
+});
+
+describe("aggBookSelection — asset-type tabs", () => {
+  /** Tag a definition with a taxonomy token (the field the server puts on the wire). */
+  function typed(def: InstrumentDef, subAssetType: string): InstrumentDef {
+    return { ...def, subAssetType };
+  }
+
+  const GOVT = typed(
+    bondDef("91282CJL6", "US Treasury 4.25% 2028", "US Treasury", "US91282CJL63", "91282CJL6"),
+    "government",
+  );
+  const CORP = typed(
+    bondDef("ALPINE30", "Alpine Financial 3% 2030", "Alpine Financial SA", "XS2233188353", "ALP30"),
+    "corporate",
+  );
+  const FUT = typed(
+    bondDef("ZFU26", "5Y T-Note Sep-26", "CME", "US0000000ZF6", "ZFU26X"),
+    "government_future",
+  );
+  /** Carries no taxonomy — the refdata-gap case. */
+  const UNTYPED = typed(
+    bondDef("MYSTERY", "Unclassified 2031", "Nobody", "XS0000000000", "MYST31"),
+    "",
+  );
+  const TAXONOMY: InstrumentDef[] = [GOVT, CORP, FUT, UNTYPED];
+
+  it("offers one tab per asset type PRESENT, desk-ordered, unclassified last", () => {
+    // Deliberately out of display order, and the future is keyed by CUSIP.
+    const streaming = [
+      inst("MYSTERY", "", ""),
+      inst("ZFU26X", "", "ZFU26X"),
+      inst("ALPINE30", "", ""),
+      inst("91282CJL6", "", ""),
+    ];
+    expect(assetTypeTabs(streaming, TAXONOMY).map((t) => t.label)).toEqual([
+      "Government",
+      "Corporate",
+      "Government futures",
+      "Unclassified",
+    ]);
+  });
+
+  it("never invents a tab for an asset type that is not streaming", () => {
+    const govtOnly = [inst("91282CJL6", "", "")];
+    const tabs = assetTypeTabs(govtOnly, TAXONOMY);
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]).toMatchObject({ key: "government", count: 1 });
+  });
+
+  it("counts and filters a CUSIP-keyed line onto its definition's type", () => {
+    // The join must accept the market identifier: the composite may key a line by
+    // CUSIP while reference data keys it by the canonical id.
+    const streaming = [inst("ZFU26X", "", "ZFU26X"), inst("91282CJL6", "", "")];
+    const futures = filterInstrumentsByAssetType(streaming, TAXONOMY, "government_future");
+    expect(futures.map((i) => i.instrumentId)).toEqual(["ZFU26X"]);
+  });
+
+  it("a null tab shows every line — never blank by accident", () => {
+    const streaming = [inst("91282CJL6", "", ""), inst("ALPINE30", "", "")];
+    expect(filterInstrumentsByAssetType(streaming, TAXONOMY, null)).toHaveLength(2);
   });
 });

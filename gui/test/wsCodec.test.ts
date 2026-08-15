@@ -35,6 +35,7 @@ import {
   limitStatusRequestToWire,
   listBooksRequestToWire,
   listEntitiesRequestToWire,
+  listLiquidityProvidersResponseFromWire,
   listPositionsRequestToWire,
   marketFromWire,
   marketToWire,
@@ -190,6 +191,30 @@ describe("wsCodec — frame (de)serialization", () => {
     const parsed = parseFrame(text) as { token: unknown };
     // parseFrame requotes it into a string to survive the parse losslessly.
     expect(BigInt(parsed.token as string)).toBe(token);
+  });
+
+  it("recovers LP-panel nanosecond timestamps through the real parseFrame path", () => {
+    // REGRESSION (observed on a live UAT edge): parseFrame requotes any integer
+    // above MAX_SAFE_INTEGER so it survives the parse losslessly, so a 19-digit
+    // *_nanos field never reaches the decoder as a `number`. Read with the plain
+    // `num` helper it collapsed to 0, and the LP panel rendered "last quote:
+    // never" / "Rate —" / "unresolved id" over four demonstrably healthy feeds.
+    const text =
+      '{"as_of_nanos":1786739476487987184,"inbound_enabled":true,' +
+      '"providers":[{"connection_id":"jpm-sim","quote_updates":5890,' +
+      '"last_quote_nanos":1786739385101072245,"instruments_quoted":155,' +
+      '"fresh_quotes":155,"connection_defined":false}],"quotes":[]}';
+    const panel = listLiquidityProvidersResponseFromWire(
+      parseFrame(text) as Parameters<typeof listLiquidityProvidersResponseFromWire>[0],
+    );
+    expect(panel.asOfNanos).toBeGreaterThan(0);
+    const provider = panel.providers[0];
+    expect(provider?.lastQuoteNanos).toBeGreaterThan(0);
+    expect(provider?.quoteUpdates).toBe(5890);
+    // The age the panel actually renders: ~91s, NOT null (which prints "never").
+    const ageSecs = (panel.asOfNanos - (provider?.lastQuoteNanos ?? 0)) / 1e9;
+    expect(ageSecs).toBeGreaterThan(90);
+    expect(ageSecs).toBeLessThan(92);
   });
 
   it("leaves small integers and non-integers untouched on parse", () => {

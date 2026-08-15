@@ -1,8 +1,10 @@
 //! The **book resolver** — the pure core of the book-aware feed.
 //!
 //! Given (a) the enabled [`AggregatedBookDesc`]s the server currently holds
-//! (from `AuthService.ListAggregatedBooks`), (b) the set of `LP-SIM-0N` member
-//! connection ids *this* process impersonates, and (c) the canonical instrument ids
+//! (from `AuthService.ListAggregatedBooks`), (b) the set of named counterparty
+//! connection ids *this* process impersonates ([`crate::roster::OTC_ROSTER`] —
+//! `marketaccess-sim`, `traderweb-sim`, `citigroup-sim`, `jpm-sim`), and (c) the
+//! canonical instrument ids
 //! (CUSIPs) the sim can actually price (its loaded Treasury universe), it computes
 //! the exact set of **(LP member × instrument)** streams the sim should be emitting.
 //!

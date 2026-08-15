@@ -21,6 +21,141 @@
 
 import type { AggregatedInstrument, InstrumentDef } from "../data/contract";
 
+/**
+ * One asset-type tab over a book's live composite.
+ *
+ * The book is the DEFINITION unit (its members are the inbound liquidity); the
+ * asset type is how a trader reads it. A single book streaming cash govvies,
+ * corporates and listed futures is one composite but three different kinds of
+ * risk, and the tab strip is what separates them.
+ */
+export interface AssetTypeTab {
+  /** The `subAssetType` token, or {@link UNCLASSIFIED_ASSET_TYPE}. */
+  key: string;
+  /** The human label rendered on the tab. */
+  label: string;
+  /** How many live composite lines fall in this tab. */
+  count: number;
+}
+
+/** The bucket for a line whose definition carries no `subAssetType`. */
+export const UNCLASSIFIED_ASSET_TYPE = "unclassified";
+
+/**
+ * Display labels + tab order for the taxonomy `celnet-refdata` puts on the wire.
+ *
+ * Ordered cash-then-derivative, and within cash government-before-credit, so the
+ * strip reads the way a rates desk is organised rather than alphabetically. A
+ * token absent from this table still gets a tab (title-cased, ordered after the
+ * known ones) — the taxonomy can grow server-side without the GUI hiding a line.
+ */
+const ASSET_TYPE_ORDER: readonly { key: string; label: string }[] = [
+  { key: "government", label: "Government" },
+  { key: "corporate", label: "Corporate" },
+  { key: "government_future", label: "Government futures" },
+  { key: "rate_future", label: "Rate futures" },
+  { key: "swap", label: "Swaps" },
+  { key: "money_market", label: "Money market" },
+];
+
+/** Title-case an unknown taxonomy token: `some_new_type` → `Some new type`. */
+function titleCase(token: string): string {
+  const spaced = token.replace(/_/g, " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+/** The label for an asset-type key (known token, unknown token, or unclassified). */
+export function assetTypeLabel(key: string): string {
+  if (key === UNCLASSIFIED_ASSET_TYPE) return "Unclassified";
+  return ASSET_TYPE_ORDER.find((e) => e.key === key)?.label ?? titleCase(key);
+}
+
+/** The ISIN/CUSIP values a definition carries (the same two schemes the picker expands). */
+function marketIdentifiersOf(def: InstrumentDef): string[] {
+  return def.externalIds
+    .filter((ext) => (ext.scheme === "isin" || ext.scheme === "cusip") && ext.value)
+    .map((ext) => ext.value);
+}
+
+/**
+ * Index every definition by ALL of its identifiers (canonical id · ISIN · CUSIP).
+ *
+ * A composite line may be keyed by any one of them — the same identifier expansion
+ * {@link selectedIdentifierSet} relies on — so the join has to accept all three or
+ * a CUSIP-keyed line silently lands in the unclassified bucket.
+ */
+export function indexDefsByIdentifier(
+  defs: readonly InstrumentDef[],
+): Map<string, InstrumentDef> {
+  const index = new Map<string, InstrumentDef>();
+  for (const def of defs) {
+    for (const id of [def.instrumentId, ...marketIdentifiersOf(def)]) {
+      if (id.length > 0 && !index.has(id)) index.set(id, def);
+    }
+  }
+  return index;
+}
+
+/** The asset-type key of a live composite line, via its reference-data definition. */
+export function assetTypeKeyOf(
+  inst: Pick<AggregatedInstrument, "instrumentId" | "isin" | "cusip">,
+  index: ReadonlyMap<string, InstrumentDef>,
+): string {
+  const def =
+    index.get(inst.instrumentId) ??
+    (inst.isin.length > 0 ? index.get(inst.isin) : undefined) ??
+    (inst.cusip.length > 0 ? index.get(inst.cusip) : undefined);
+  const token = def?.subAssetType ?? "";
+  return token.length > 0 ? token : UNCLASSIFIED_ASSET_TYPE;
+}
+
+/**
+ * The tab strip for a book's live composite — one tab per asset type PRESENT,
+ * with its line count. Never invents an empty tab: a book that streams only
+ * govvies shows exactly one tab.
+ *
+ * Known taxonomy tokens lead in {@link ASSET_TYPE_ORDER}; unknown tokens follow
+ * alphabetically; `Unclassified` is always last so a refdata gap never displaces
+ * a real asset type from the front of the strip.
+ */
+export function assetTypeTabs(
+  instruments: readonly AggregatedInstrument[],
+  defs: readonly InstrumentDef[],
+): AssetTypeTab[] {
+  const index = indexDefsByIdentifier(defs);
+  const counts = new Map<string, number>();
+  for (const inst of instruments) {
+    const key = assetTypeKeyOf(inst, index);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const rank = (key: string): number => {
+    if (key === UNCLASSIFIED_ASSET_TYPE) return Number.MAX_SAFE_INTEGER;
+    const known = ASSET_TYPE_ORDER.findIndex((e) => e.key === key);
+    return known >= 0 ? known : ASSET_TYPE_ORDER.length;
+  };
+  return [...counts.entries()]
+    .map(([key, count]) => ({ key, label: assetTypeLabel(key), count }))
+    .sort((a, b) => {
+      const byRank = rank(a.key) - rank(b.key);
+      return byRank !== 0 ? byRank : a.label.localeCompare(b.label);
+    });
+}
+
+/**
+ * Narrow the composite to one asset-type tab. A `null` key (no tab resolved yet)
+ * returns every line — the same never-blank-by-accident rule
+ * {@link filterInstrumentsBySelection} follows.
+ */
+export function filterInstrumentsByAssetType(
+  instruments: readonly AggregatedInstrument[],
+  defs: readonly InstrumentDef[],
+  key: string | null,
+): AggregatedInstrument[] {
+  if (key === null) return [...instruments];
+  const index = indexDefsByIdentifier(defs);
+  return instruments.filter((inst) => assetTypeKeyOf(inst, index) === key);
+}
+
 /** One selectable security in the picker, derived from a bond definition. */
 export interface SecurityOption {
   /** The canonical reference-data `instrumentId` (the value stored in the pref). */

@@ -447,6 +447,31 @@ function num(o: WireObject, key: string): number {
   return typeof v === "number" ? v : 0;
 }
 
+/**
+ * A 64-bit wire integer read as a `number`.
+ *
+ * `parseFrame` recovers any integer literal above `Number.MAX_SAFE_INTEGER` as a
+ * `bigint` so a tradable token stays exact — which means a nanosecond timestamp
+ * (~1.8e18, 19 digits) NEVER arrives as a `number`. Reading one with `num` there
+ * yields its `0` fallback and the field silently vanishes: the LP panel reported
+ * `last quote: never` over four healthy feeds until this existed.
+ *
+ * Sub-millisecond precision is lost past 2^53 ns, which is irrelevant for the age
+ * arithmetic these feed (`now - ts`, rendered to 0.1s) but makes this the WRONG
+ * reader for an identity field — use `numToBigInt` for anything compared for
+ * equality or echoed back to the server.
+ */
+function num64(o: WireObject, key: string): number {
+  const v = o[key];
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (typeof v === "bigint") return Number(v);
+  if (typeof v === "string" && v.length > 0) {
+    const parsed = Number(v);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
 /** A 64-bit wire integer (JSON number) recovered as a `bigint`. */
 function numToBigInt(o: WireObject, key: string): bigint {
   const v = o[key];
@@ -3388,8 +3413,8 @@ function liquidityProviderFromWire(o: WireObject): LiquidityProvider {
     enabled: o["enabled"] === true,
     running: o["running"] === true,
     bookIds: strArrayOf(o, "book_ids"),
-    quoteUpdates: num(o, "quote_updates"),
-    lastQuoteNanos: num(o, "last_quote_nanos"),
+    quoteUpdates: num64(o, "quote_updates"),
+    lastQuoteNanos: num64(o, "last_quote_nanos"),
     instrumentsQuoted: num(o, "instruments_quoted"),
     freshQuotes: num(o, "fresh_quotes"),
     staleQuotes: num(o, "stale_quotes"),
@@ -3408,7 +3433,7 @@ function liquidityProviderQuoteFromWire(o: WireObject): LiquidityProviderQuote {
     offer: num(o, "offer"),
     bidSize: num(o, "bid_size"),
     offerSize: num(o, "offer_size"),
-    tsNanos: num(o, "ts_nanos"),
+    tsNanos: num64(o, "ts_nanos"),
     ageSecs: num(o, "age_secs"),
     weight: num(o, "weight"),
     deviation: num(o, "deviation"),
@@ -3431,7 +3456,7 @@ export function listLiquidityProvidersResponseFromWire(
       ? (quotes as WireObject[]).map(liquidityProviderQuoteFromWire)
       : [],
     inboundEnabled: o["inbound_enabled"] === true,
-    asOfNanos: num(o, "as_of_nanos"),
+    asOfNanos: num64(o, "as_of_nanos"),
   };
 }
 
