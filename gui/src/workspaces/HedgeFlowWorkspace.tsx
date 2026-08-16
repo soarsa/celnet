@@ -22,9 +22,9 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../app/AppContext";
-import type { HedgeIntent, HedgeProvenance } from "../data/contract";
+import type { HedgeProvenance, RiskBookRisk } from "../data/contract";
 import type { HedgeBucket } from "../lib/hedgeBuckets";
-import { bucketsFromIntents, flowShares, flowTotals } from "../lib/hedgeBuckets";
+import { bucketsFromRiskBooks, flowShares, flowTotals } from "../lib/hedgeBuckets";
 import { formatDv01 } from "../lib/hedgeVehicle";
 import styles from "./HedgeFlowWorkspace.module.css";
 
@@ -112,33 +112,44 @@ function Vessel({ bucket }: { bucket: HedgeBucket }): React.ReactElement {
 
 export function HedgeFlowWorkspace(): React.ReactElement {
   const app = useApp();
-  const [intents, setIntents] = useState<HedgeIntent[]>([]);
+  const [books, setBooks] = useState<RiskBookRisk[]>([]);
   const [provenance, setProvenance] = useState<HedgeProvenance[]>([]);
 
-  // Same subscription shape as the hedge monitor: the intent push is the signal, and
-  // the provenance log is refetched on that tick because the engine appends to it as
-  // hedges fire. Bounded to the last 200 intents — this is a live board, not an audit.
+  /*
+   * The board polls CURRENT risk and treats the intent stream as a refresh signal.
+   *
+   * Subscribing to intents alone does not work: the engine publishes one only when it
+   * EVALUATES, so on a quiet desk the board sat on "waiting for the first tick" while
+   * 21 hedges had already fired and every book carried live risk. `listRiskBookRisk()`
+   * returns the state right now with each cap banded server-side, so the board is
+   * populated on first paint. A slow 15s poll covers the case where nothing fires at
+   * all; the intent push refreshes immediately when something does.
+   */
   useEffect(() => {
     let cancelled = false;
-    const refetch = (): void => {
+    const refresh = (): void => {
+      void app.transport
+        .listRiskBookRisk()
+        .then((b) => !cancelled && setBooks(b))
+        .catch(() => undefined);
       void app.transport
         .listHedgeProvenance()
         .then((p) => !cancelled && setProvenance(p))
         .catch(() => undefined);
     };
-    refetch();
-    const dispose = app.transport.streamHedgeIntents((intent) => {
-      if (cancelled) return;
-      setIntents((cur) => [...cur, intent].slice(-200));
-      refetch();
+    refresh();
+    const timer = setInterval(refresh, 15_000);
+    const dispose = app.transport.streamHedgeIntents(() => {
+      if (!cancelled) refresh();
     });
     return () => {
       cancelled = true;
+      clearInterval(timer);
       dispose();
     };
   }, [app.transport]);
 
-  const buckets = useMemo(() => bucketsFromIntents(intents), [intents]);
+  const buckets = useMemo(() => bucketsFromRiskBooks(books), [books]);
   const flow = useMemo(() => flowTotals(provenance), [provenance]);
   const shares = useMemo(() => flowShares(flow), [flow]);
   const needing = buckets.filter((b) => b.needsHedge).length;
@@ -187,7 +198,7 @@ export function HedgeFlowWorkspace(): React.ReactElement {
 
       {buckets.length === 0 ? (
         <p className={styles.empty} data-testid="hedge-flow-empty">
-          Waiting for the first risk-state tick…
+          No risk book reports a computable cap yet…
         </p>
       ) : (
         <ul className={styles.buckets} data-testid="hedge-buckets">

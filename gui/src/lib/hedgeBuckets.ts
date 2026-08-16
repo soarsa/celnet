@@ -21,7 +21,11 @@
  * React-free and I/O-free, so every rule below is directly testable.
  */
 
-import type { HedgeIntent, HedgeProvenance } from "../data/contract";
+import type {
+  HedgeIntent,
+  HedgeProvenance,
+  RiskBookRisk,
+} from "../data/contract";
 
 /** One risk bucket, ready to render as a vessel filling toward its brim. */
 export interface HedgeBucket {
@@ -126,6 +130,72 @@ export function bucketsFromIntents(
         b.utilization - a.utilization ||
         a.book.localeCompare(b.book),
     );
+}
+
+/** Shape one already-banded (utilisation, band) pair into a drawable bucket. */
+function shapeBucket(
+  book: string,
+  band: string,
+  utilization: number,
+  netRisk: number,
+  threshold: number,
+): HedgeBucket {
+  const usable =
+    Number.isFinite(utilization) && utilization > 0 ? utilization : 0;
+  return {
+    book,
+    band,
+    utilization: usable,
+    netRisk,
+    threshold,
+    fill: Math.min(FULL, usable),
+    overflow: usable > FULL ? usable - FULL : 0,
+    needsHedge: usable >= FULL,
+  };
+}
+
+/**
+ * The bucket board from the CURRENT risk poll — the source that actually works on a
+ * quiet desk.
+ *
+ * The hedge-intent stream only publishes when the engine EVALUATES, so a board
+ * subscribed to it alone renders empty until something moves, however much risk is
+ * already on the book. `listRiskBookRisk()` returns the state right now, with each
+ * cap already banded server-side, so the board is populated on first paint and the
+ * intent stream becomes what it should be: the signal to re-poll.
+ *
+ * One vessel per book, taking the book's WORST cap — a book is only as safe as its
+ * tightest constraint, and showing an average would hide the one that breaches. A
+ * book with no computable cap is omitted rather than drawn empty: absent is honest,
+ * a full-looking empty vessel is not.
+ */
+export function bucketsFromRiskBooks(
+  books: readonly RiskBookRisk[],
+): HedgeBucket[] {
+  const buckets: HedgeBucket[] = [];
+  for (const book of books) {
+    let worst: (typeof book.limits)[number] | undefined;
+    for (const limit of book.limits) {
+      if (!Number.isFinite(limit.fraction)) continue;
+      if (worst === undefined || limit.fraction > worst.fraction) worst = limit;
+    }
+    if (worst === undefined) continue;
+    buckets.push(
+      shapeBucket(
+        book.name.length > 0 ? book.name : book.bookId,
+        worst.band,
+        worst.fraction,
+        worst.used,
+        worst.limit,
+      ),
+    );
+  }
+  return buckets.sort(
+    (a, b) =>
+      bandRank(a.band) - bandRank(b.band) ||
+      b.utilization - a.utilization ||
+      a.book.localeCompare(b.book),
+  );
 }
 
 /**

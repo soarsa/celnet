@@ -6,11 +6,12 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { HedgeIntent, HedgeProvenance } from "../src/data/contract";
+import type { HedgeIntent, HedgeProvenance, RiskBookRisk } from "../src/data/contract";
 import {
   bandRank,
   bookLevelFires,
   bucketsFromIntents,
+  bucketsFromRiskBooks,
   flowShares,
   flowTotals,
   hedgesForPosition,
@@ -125,6 +126,54 @@ describe("hedgeBuckets — the bucket board", () => {
   it("ranks an unknown band after every known one, never first", () => {
     expect(bandRank("breach")).toBeLessThan(bandRank("green"));
     expect(bandRank("something-new")).toBeGreaterThan(bandRank("green"));
+  });
+});
+
+describe("hedgeBuckets — the board from the risk poll", () => {
+  /** A book with its per-cap utilisations, as `listRiskBookRisk()` returns them. */
+  function riskBook(
+    bookId: string,
+    name: string,
+    limits: { metric: string; used: number; limit: number; fraction: number; band: string }[],
+  ): RiskBookRisk {
+    return { bookId, name, limits } as unknown as RiskBookRisk;
+  }
+
+  it("takes each book's WORST cap — a book is only as safe as its tightest one", () => {
+    const board = bucketsFromRiskBooks([
+      riskBook("rates-usd", "Rates USD", [
+        { metric: "notional", used: 10_000_000, limit: 5_000_000_000, fraction: 0.002, band: "green" },
+        { metric: "dv01", used: 2820, limit: 5000, fraction: 0.56, band: "amber" },
+      ]),
+    ]);
+    expect(board).toHaveLength(1);
+    // The 0.2% notional cap must NOT mask the 56% DV01 cap.
+    expect(board[0]).toMatchObject({ band: "amber", utilization: 0.56, threshold: 5000 });
+  });
+
+  it("omits a book with no computable cap rather than drawing an empty vessel", () => {
+    // Absent is honest; a full-looking empty bucket is not.
+    const board = bucketsFromRiskBooks([
+      riskBook("no-caps", "No caps", []),
+      riskBook("nan-cap", "NaN cap", [
+        { metric: "dv01", used: 1, limit: 0, fraction: Number.NaN, band: "green" },
+      ]),
+    ]);
+    expect(board).toEqual([]);
+  });
+
+  it("orders worst-first and falls back to the book id when unnamed", () => {
+    const board = bucketsFromRiskBooks([
+      riskBook("calm", "Calm", [
+        { metric: "dv01", used: 10, limit: 100, fraction: 0.1, band: "green" },
+      ]),
+      riskBook("hot-id", "", [
+        { metric: "dv01", used: 127, limit: 100, fraction: 1.27, band: "red" },
+      ]),
+    ]);
+    expect(board.map((b) => b.book)).toEqual(["hot-id", "Calm"]);
+    expect(board[0]?.needsHedge).toBe(true);
+    expect(board[0]?.overflow).toBeCloseTo(0.27, 10);
   });
 });
 
