@@ -1,0 +1,200 @@
+/*
+ * HedgeFlowWorkspace — the hedge bucket board + flow strip.
+ *
+ * MOBILE-FIRST by construction, because a trader checking risk from a phone is the
+ * headline use: the base rules assume a narrow single column and the wider layouts
+ * are additive. The bucket grid uses auto-fit rather than a fixed column count, so
+ * the same markup gives 2 vessels on a phone and 6 on a desk without a breakpoint
+ * per size. Every dimension is clamp()ed against vw so nothing overflows at 320px.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(0.75rem, 2vw, 1.25rem);
+  padding: clamp(0.75rem, 2vw, 1.5rem);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  /* Never let a wide table or long book name push the page sideways on a phone. */
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+}
+
+.title {
+  font-family: var(--font-brand);
+  font-size: clamp(1rem, 3.5vw, 1.35rem);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.subtitle {
+  color: var(--text-tertiary);
+  font-size: clamp(0.7rem, 2.4vw, 0.8rem);
+  margin: 0;
+}
+
+.attention {
+  margin-left: auto;
+  font-size: clamp(0.7rem, 2.4vw, 0.8rem);
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-pill);
+  background: var(--bg-danger-soft);
+  color: var(--text-danger);
+  white-space: nowrap;
+}
+
+.attentionClear {
+  background: var(--bg-accent-soft);
+  color: var(--text-secondary);
+}
+
+/* --- the bucket board ---------------------------------------------------- */
+
+.buckets {
+  display: grid;
+  /* 2-up on the narrowest phone, filling out to as many as fit on a desk. */
+  grid-template-columns: repeat(auto-fit, minmax(clamp(7rem, 26vw, 10rem), 1fr));
+  gap: clamp(0.5rem, 2vw, 1rem);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.bucket {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: clamp(0.5rem, 1.5vw, 0.85rem) 0.4rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  /* Touch target: this card is the drill-in on mobile. */
+  min-height: 44px;
+  text-align: center;
+}
+
+.bucketNeedsHedge {
+  border-color: var(--danger);
+}
+
+.vessel {
+  width: 100%;
+  height: auto;
+  /* The drawing scales with the column; the viewBox does the work. */
+  max-width: 6rem;
+}
+
+.bookName {
+  font-family: var(--font-mono);
+  font-size: clamp(0.65rem, 2.2vw, 0.78rem);
+  color: var(--text-secondary);
+  /* A long book id must ellipsise, never widen the grid track. */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pct {
+  font-family: var(--font-mono);
+  font-size: clamp(0.85rem, 3vw, 1.05rem);
+  font-variant-numeric: tabular-nums;
+}
+
+.bandLabel {
+  font-size: clamp(0.6rem, 2vw, 0.7rem);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.risk {
+  font-family: var(--font-mono);
+  font-size: clamp(0.6rem, 2vw, 0.7rem);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the flow strip ------------------------------------------------------ */
+
+.flow {
+  display: grid;
+  /* Stacks on a phone, three-up as soon as there is room. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+  gap: clamp(0.5rem, 2vw, 1rem);
+}
+
+.leg {
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: clamp(0.6rem, 2vw, 0.9rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.legLabel {
+  font-size: clamp(0.62rem, 2vw, 0.72rem);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.legValue {
+  font-family: var(--font-mono);
+  font-size: clamp(1rem, 4vw, 1.4rem);
+  font-variant-numeric: tabular-nums;
+}
+
+.legBar {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.legFill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+}
+
+.fillCrossed {
+  background: var(--accent);
+}
+
+.fillHedged {
+  background: var(--accent-positive);
+}
+
+.fillWarehoused {
+  background: var(--warning);
+}
+
+.legNote {
+  font-size: clamp(0.6rem, 2vw, 0.7rem);
+  color: var(--text-tertiary);
+}
+
+.empty {
+  color: var(--text-tertiary);
+  font-size: clamp(0.72rem, 2.4vw, 0.85rem);
+  padding: 1rem 0;
+  text-align: center;
+}
+
+/* Respect a user who asked the OS for less motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .legFill {
+    transition: width 220ms var(--ease-out, ease-out);
+  }
+}

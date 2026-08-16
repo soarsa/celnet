@@ -29,6 +29,7 @@ import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { FiStreamingWorkspace } from "../workspaces/FiStreamingWorkspace";
 import { AggregatedBookWorkspace } from "../workspaces/AggregatedBookWorkspace";
 import { RiskDashboardWorkspace } from "../workspaces/RiskDashboardWorkspace";
+import { HedgeFlowWorkspace } from "../workspaces/HedgeFlowWorkspace";
 import { HedgingWorkspace } from "../workspaces/hedging/HedgingWorkspace";
 import { RiskTransferWorkspace } from "../workspaces/risktransfer/RiskTransferWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
@@ -138,6 +139,7 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // editor with ExitAction leaves), the warehouse-threshold config, and the live
   // hedge monitor (advisory intents + provenance + per-book band RAG). Rail-gated
   // on the narrow `hedge` capability × FI. FI-only.
+  hedgeflow: HedgeFlowWorkspace,
   hedging: HedgingWorkspace,
   // Incoming-quote Acceptance is CONSOLIDATED into the "Risk" host as its "Acceptance"
   // tab (no standalone rail row). This id stays valid so any deep-link lands straight on

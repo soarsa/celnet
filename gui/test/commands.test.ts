@@ -418,13 +418,16 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
   });
 
   describe("Hedging top-level domain (auto-hedge hoisted out of the FI rail)", () => {
-    it("HEDGING_WORKSPACES membership: hedging maps to the single 'hedging' domain", () => {
-      expect([...HEDGING_WORKSPACES]).toEqual(["hedging"]);
+    it("HEDGING_WORKSPACES membership: both hedge surfaces map to the 'hedging' domain", () => {
+      expect([...HEDGING_WORKSPACES]).toEqual(["hedgeflow", "hedging"]);
       expect(workspaceDomains("hedging")).toEqual(["hedging"]);
+      expect(workspaceDomains("hedgeflow")).toEqual(["hedging"]);
     });
 
-    it("the Hedging rail is exactly the hedging workspace", () => {
-      expect(railForDomain("hedging").map((r) => r.id)).toEqual(["hedging"]);
+    it("the Hedging rail leads with the flow board, then the rule builder", () => {
+      // Order is the point: "what needs hedging right now" precedes "how should it be
+      // hedged", and the board is the surface a trader opens on a phone.
+      expect(railForDomain("hedging").map((r) => r.id)).toEqual(["hedgeflow", "hedging"]);
     });
 
     it("hedging appears under NO trading/analytics/admin domain (fully hoisted)", () => {
@@ -456,12 +459,12 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
       expect(domainAccessible("hedging", signedOut)).toBe(true);
     });
 
-    it("firstAccessibleWorkspace lands on hedging within the Hedging domain", () => {
+    it("firstAccessibleWorkspace lands on the flow board within the Hedging domain", () => {
       const hedger = navAuth({
         isAdmin: false,
         allow: new Set(["view·fixed_income", "hedge·fixed_income"]),
       });
-      expect(firstAccessibleWorkspace(hedger, "hedging")).toBe("hedging");
+      expect(firstAccessibleWorkspace(hedger, "hedging")).toBe("hedgeflow");
     });
   });
 

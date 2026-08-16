@@ -54,6 +54,7 @@ export type WorkspaceId =
   | "riskdashboard"
   | "filedgers"
   | "riskrouting"
+  | "hedgeflow"
   | "hedging"
   | "acceptance"
   | "risktransfer"
@@ -265,6 +266,12 @@ export const RAIL: readonly {
   // HOISTED out of the FI rail into its OWN top-level "Hedging" domain tab (a
   // {@link HEDGING_WORKSPACES} membership override), next to Analytics — cross-cutting,
   // not FI-nested.
+  // Hedge Flow — the READ-ONLY board that leads the Hedging tab: which risk buckets
+  // are filling toward their limit, and where fired hedges actually sent the risk
+  // (crossed / hedged / warehoused). Placed BEFORE the rule builder because the
+  // question "what needs hedging right now" precedes "how should it be hedged", and
+  // because it is the surface a trader opens on a phone.
+  { id: "hedgeflow", glyph: "◍", label: "Hedge Flow", subtitle: "Buckets at limit · where the risk went", section: "risk", assets: ["fixed_income"], viewCap: { action: "hedge", asset: "fixed_income" } },
   { id: "hedging", glyph: "◈", label: "Hedging Rules", subtitle: "Exit policy · thresholds · execution", section: "risk", assets: ["fixed_income"], viewCap: { action: "hedge", asset: "fixed_income" } },
   // Incoming-quote Acceptance (docs — celnet-acceptance): the trader-composed
   // first-match ACCEPTANCE rule graph is CONSOLIDATED into the "Risk" host as its
@@ -535,6 +542,7 @@ export const ANALYTICS_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceI
  * standing hedge-LP panel) under this domain.
  */
 export const HEDGING_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>([
+  "hedgeflow",
   "hedging",
 ]);
 

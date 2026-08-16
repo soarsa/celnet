@@ -47,6 +47,7 @@ export type WorkspaceId =
   | "riskdashboard"
   | "filedgers"
   | "riskrouting"
+  | "hedgeflow"
   | "hedging"
   | "acceptance"
   | "risktransfer"
