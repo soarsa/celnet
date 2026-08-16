@@ -13,8 +13,8 @@
   flex-direction: column;
   gap: clamp(0.75rem, 2vw, 1.25rem);
   padding: clamp(0.75rem, 2vw, 1.5rem);
-  color: var(--text-primary);
-  font-family: var(--font-ui);
+  color: var(--text-primary, #e8eaf0);
+  font-family: var(--font-ui, system-ui, sans-serif);
   /* Never let a wide table or long book name push the page sideways on a phone. */
   max-width: 100%;
   overflow-x: hidden;
@@ -28,14 +28,14 @@
 }
 
 .title {
-  font-family: var(--font-brand);
+  font-family: var(--font-brand, system-ui, sans-serif);
   font-size: clamp(1rem, 3.5vw, 1.35rem);
   margin: 0;
   letter-spacing: 0.02em;
 }
 
 .subtitle {
-  color: var(--text-tertiary);
+  color: var(--text-tertiary, #9aa0ad);
   font-size: clamp(0.7rem, 2.4vw, 0.8rem);
   margin: 0;
 }
@@ -44,23 +44,28 @@
   margin-left: auto;
   font-size: clamp(0.7rem, 2.4vw, 0.8rem);
   padding: 0.2rem 0.6rem;
-  border-radius: var(--radius-pill);
-  background: var(--bg-danger-soft);
-  color: var(--text-danger);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--bg-danger-soft, rgba(220,38,38,0.16));
+  color: var(--text-danger, #f87171);
   white-space: nowrap;
 }
 
 .attentionClear {
-  background: var(--bg-accent-soft);
-  color: var(--text-secondary);
+  background: var(--bg-accent-soft, rgba(99,102,241,0.14));
+  color: var(--text-secondary, #b8bdc9);
 }
 
 /* --- the bucket board ---------------------------------------------------- */
 
 .buckets {
-  display: grid;
-  /* 2-up on the narrowest phone, filling out to as many as fit on a desk. */
-  grid-template-columns: repeat(auto-fit, minmax(clamp(7rem, 26vw, 10rem), 1fr));
+  /*
+   * FLEX, not an auto-fit grid. With auto-fit the two live books were stretched to
+   * 1fr each and flung to opposite ends of a 1900px screen with a void between them.
+   * The vessels have a natural size and should sit TOGETHER at it, wrapping onto
+   * further rows as books are added. Wrapping still gives the phone its 2-up.
+   */
+  display: flex;
+  flex-wrap: wrap;
   gap: clamp(0.5rem, 2vw, 1rem);
   list-style: none;
   margin: 0;
@@ -72,17 +77,19 @@
   flex-direction: column;
   align-items: center;
   gap: 0.35rem;
+  /* A card's own width — narrow enough that two fit a 320px phone side by side. */
+  flex: 0 0 clamp(8rem, 40vw, 10rem);
   padding: clamp(0.5rem, 1.5vw, 0.85rem) 0.4rem;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  background: var(--bg-raised, #262a35);
+  border: 1px solid var(--border-subtle, rgba(255,255,255,0.09));
+  border-radius: var(--radius-md, 10px);
   /* Touch target: this card is the drill-in on mobile. */
   min-height: 44px;
   text-align: center;
 }
 
 .bucketNeedsHedge {
-  border-color: var(--danger);
+  border-color: var(--danger, #dc2626);
 }
 
 .vessel {
@@ -93,9 +100,9 @@
 }
 
 .bookName {
-  font-family: var(--font-mono);
+  font-family: var(--font-mono, ui-monospace, monospace);
   font-size: clamp(0.65rem, 2.2vw, 0.78rem);
-  color: var(--text-secondary);
+  color: var(--text-secondary, #b8bdc9);
   /* A long book id must ellipsise, never widen the grid track. */
   max-width: 100%;
   overflow: hidden;
@@ -104,7 +111,7 @@
 }
 
 .pct {
-  font-family: var(--font-mono);
+  font-family: var(--font-mono, ui-monospace, monospace);
   font-size: clamp(0.85rem, 3vw, 1.05rem);
   font-variant-numeric: tabular-nums;
 }
@@ -113,13 +120,13 @@
   font-size: clamp(0.6rem, 2vw, 0.7rem);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-tertiary);
+  color: var(--text-tertiary, #9aa0ad);
 }
 
 .risk {
-  font-family: var(--font-mono);
+  font-family: var(--font-mono, ui-monospace, monospace);
   font-size: clamp(0.6rem, 2vw, 0.7rem);
-  color: var(--text-tertiary);
+  color: var(--text-tertiary, #9aa0ad);
   font-variant-numeric: tabular-nums;
 }
 
@@ -133,9 +140,9 @@
 }
 
 .leg {
-  background: var(--bg-inset);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  background: var(--bg-inset, #14161d);
+  border: 1px solid var(--border-subtle, rgba(255,255,255,0.09));
+  border-radius: var(--radius-md, 10px);
   padding: clamp(0.6rem, 2vw, 0.9rem);
   display: flex;
   flex-direction: column;
@@ -146,47 +153,47 @@
   font-size: clamp(0.62rem, 2vw, 0.72rem);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-tertiary);
+  color: var(--text-tertiary, #9aa0ad);
 }
 
 .legValue {
-  font-family: var(--font-mono);
+  font-family: var(--font-mono, ui-monospace, monospace);
   font-size: clamp(1rem, 4vw, 1.4rem);
   font-variant-numeric: tabular-nums;
 }
 
 .legBar {
   height: 4px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-raised);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--bg-raised, #262a35);
   overflow: hidden;
 }
 
 .legFill {
   display: block;
   height: 100%;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-pill, 999px);
 }
 
 .fillCrossed {
-  background: var(--accent);
+  background: var(--accent, #6366f1);
 }
 
 .fillHedged {
-  background: var(--accent-positive);
+  background: var(--rag-green, #16a34a);
 }
 
 .fillWarehoused {
-  background: var(--warning);
+  background: var(--warn, #d97706);
 }
 
 .legNote {
   font-size: clamp(0.6rem, 2vw, 0.7rem);
-  color: var(--text-tertiary);
+  color: var(--text-tertiary, #9aa0ad);
 }
 
 .empty {
-  color: var(--text-tertiary);
+  color: var(--text-tertiary, #9aa0ad);
   font-size: clamp(0.72rem, 2.4vw, 0.85rem);
   padding: 1rem 0;
   text-align: center;

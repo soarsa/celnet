@@ -28,17 +28,25 @@ import { bucketsFromRiskBooks, flowShares, flowTotals } from "../lib/hedgeBucket
 import { formatDv01 } from "../lib/hedgeVehicle";
 import styles from "./HedgeFlowWorkspace.module.css";
 
-/** The server's band → the token the vessel is painted with. */
+/**
+ * The server's band → the app's established RAG palette (the same tokens the hedge
+ * monitor's board paints with), each carrying its literal fallback.
+ *
+ * The fallback is not belt-and-braces: these are applied through `style`, and a
+ * `var()` naming a token this theme does not define resolves to the property's
+ * INITIAL value — `fill: black`, `stroke: none` — which is exactly how the first
+ * cut of this component rendered: black blobs with no outline or handle.
+ */
 const BAND_COLOR: Record<string, string> = {
-  breach: "var(--danger)",
-  red: "var(--danger)",
-  amber: "var(--warning)",
-  green: "var(--accent-positive)",
+  breach: "var(--rag-breach, #7c3aed)",
+  red: "var(--rag-red, #dc2626)",
+  amber: "var(--rag-amber, #d97706)",
+  green: "var(--rag-green, #16a34a)",
 };
 
 /** An unknown band paints neutral rather than guessing at a severity. */
 function bandColor(band: string): string {
-  return BAND_COLOR[band.toLowerCase()] ?? "var(--text-tertiary)";
+  return BAND_COLOR[band.toLowerCase()] ?? "var(--text-tertiary, #9aa0ad)";
 }
 
 /**
@@ -69,14 +77,22 @@ function Vessel({ bucket }: { bucket: HedgeBucket }): React.ReactElement {
           <path d="M14 28 L86 28 L74 104 L26 104 Z" />
         </clipPath>
       </defs>
+      {/*
+        Paint via `style`, never via the fill/stroke ATTRIBUTES: a presentation
+        attribute does not parse `var()`, so `fill="var(--x)"` is invalid and silently
+        falls back to black with no stroke at all.
+      */}
       {/* handle */}
       <path
         d="M24 26 Q50 2 76 26"
-        fill="none"
-        stroke={color}
-        strokeWidth="4"
-        strokeLinecap="round"
-        opacity="0.85"
+        style={{ fill: "none", stroke: color, strokeWidth: 5, strokeLinecap: "round" }}
+        opacity="0.75"
+      />
+      {/* the empty vessel — a dim wash so an under-filled bucket still reads as one */}
+      <path
+        d="M14 28 L86 28 L74 104 L26 104 Z"
+        style={{ fill: color, stroke: "none" }}
+        opacity="0.12"
       />
       {/* the liquid, clipped to the vessel so it takes the bucket's taper */}
       <rect
@@ -84,26 +100,19 @@ function Vessel({ bucket }: { bucket: HedgeBucket }): React.ReactElement {
         y={y}
         width="100"
         height={height}
-        fill={color}
-        opacity="0.9"
+        style={{ fill: color }}
         clipPath={`url(#${clipId})`}
       />
       {/* the vessel outline, drawn over the liquid */}
       <path
         d="M14 28 L86 28 L74 104 L26 104 Z"
-        fill="none"
-        stroke={color}
-        strokeWidth="4"
-        strokeLinejoin="round"
+        style={{ fill: "none", stroke: color, strokeWidth: 5, strokeLinejoin: "round" }}
       />
       {/* spill mark — only when genuinely over the brim */}
       {bucket.overflow > 0 && (
         <path
-          d="M86 28 q10 6 6 16"
-          fill="none"
-          stroke={color}
-          strokeWidth="4"
-          strokeLinecap="round"
+          d="M86 28 q11 7 7 18"
+          style={{ fill: "none", stroke: color, strokeWidth: 5, strokeLinecap: "round" }}
         />
       )}
     </svg>
