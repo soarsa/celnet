@@ -2293,8 +2293,21 @@ impl RatesPositionStore {
                 mid_at_fire: exec.mid_at_fire,
                 slippage_bp: exec.slippage_bp,
                 lp_won: exec.lp_won.clone(),
-                // A real venue fill is NOT advisory; a miss / advisory-mode is.
-                advisory: !exec.is_filled(),
+                // Advisory records a DRY RUN — the policy never tried to trade (Advisory
+                // mode, or a rate cap that forced a shadow run). It must NOT be inferred
+                // from the outcome: a live hedge that fired, routed and got no fill is a
+                // MISS, and a miss leaves real risk on the book.
+                //
+                // Deriving it from `!exec.is_filled()` conflated the two and made the
+                // warehoused figure structurally unreachable, because consumers filter
+                // advisory rows out (`flowTotals`, gui/src/lib/hedgeBuckets.ts). While a
+                // composite backstop existed every shed filled, so nothing was ever
+                // mis-flagged; switching UAT to `LpPanel` exposed it at once — 25 misses
+                // holding 18,322 DV01 reported as "no hedges have fired yet, 0 warehoused".
+                // The street-order side already keeps this distinction (see the comment on
+                // `record_street_order`: an advisory desk must not look like one whose
+                // orders all missed).
+                advisory: outcome.intent.advisory,
                 lps: outcome.intent.lps.clone(),
                 parent_position_id: Some(fill.position_id),
                 // The VEHICLE sizing, when this shed hedged with something other than the
@@ -2574,8 +2587,12 @@ impl RatesPositionStore {
             mid_at_fire: exec.mid_at_fire,
             slippage_bp: exec.slippage_bp,
             lp_won: exec.lp_won.clone(),
-            // A real venue fill is NOT advisory; an honest miss is.
-            advisory: !exec.is_filled(),
+            // Same distinction as the automatic path above: advisory means the desk never
+            // tried to trade, NOT that the trade failed. A trader who fires a suggestion
+            // has deliberately chosen to trade, so only an Advisory-mode policy makes the
+            // resulting record a dry run; a miss stays a live fire whose residual is real
+            // risk the trader must still see.
+            advisory: policy.config.execution.is_advisory(),
             lps: e.lps.clone(),
             parent_position_id: Some(e.fill.position_id),
             vehicle_plan: e
@@ -4988,6 +5005,61 @@ pub(crate) mod tests {
             "a filled bond shed must reduce the book by exactly the hedged amount: \
              net {net}, hedged {} (net still 5000 ⇒ the offsetting leg never booked)",
             exec.external_hedged,
+        );
+    }
+
+    /// A live hedge that fired and got NO fill is a MISS, not an advisory dry run.
+    ///
+    /// Regression for the UAT report of 2026-08-17. `advisory` was derived from the
+    /// OUTCOME (`!exec.is_filled()`), so an unfilled live shed was indistinguishable from a
+    /// policy that never intended to trade. Every consumer filters advisory rows out
+    /// (`flowTotals`, gui/src/lib/hedgeBuckets.ts), so the warehoused total was
+    /// structurally unreachable: with the composite backstop removed (`LpPanel`), 25 real
+    /// misses holding 18,322 DV01 rendered as "No hedges have fired yet · 0 warehoused"
+    /// while the risk buckets sat at 99% amber. A trader cannot see risk the panel is
+    /// filtering away.
+    #[test]
+    fn an_unfilled_live_shed_is_a_miss_not_an_advisory_dry_run() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let mut policy = hedge_policy("wh", 4000.0, 0.5);
+        // The strict posture: no composite backstop, so an unfilled panel is a real miss
+        // rather than a synthetic fill. This is exactly how UAT is configured.
+        policy.config.execution = crate::config::hedge_policy::HedgeExecutionMode::LpPanel;
+        let engine = Arc::clone(&policy.engine);
+        store.set_hedge_policy(Some(policy));
+        // No LP shows a firm price, and there is no backstop ⇒ nothing fills.
+        store.set_lp_hedge_source(Arc::new(NoFillLp));
+
+        let booked = store
+            .book_with_routing(
+                bond_position(0, 50_000_000.0, Side::Buy),
+                priced_attribution(0.0400, 0.0405),
+            )
+            .expect("the bond books");
+
+        let exec = engine
+            .provenance(None, None)
+            .into_iter()
+            .find(|p| p.parent_position_id == Some(booked.position_id))
+            .expect("a shed bond stamps a hedge-execution record even when nothing fills");
+
+        // The fixture must genuinely miss, else it proves nothing.
+        assert_eq!(
+            exec.external_hedged, 0.0,
+            "this fixture must shed NOTHING externally"
+        );
+        assert!(
+            exec.residual > 0.0,
+            "an unfilled shed leaves its whole clip as residual"
+        );
+        // THE FIX: the policy fired for real, so the record is LIVE. Marking it advisory
+        // would hide the residual from every warehoused roll-up.
+        assert!(
+            !exec.advisory,
+            "a live hedge that fired and missed is NOT advisory — marking it so hides \
+             {} DV01 of warehoused risk from the trader",
+            exec.residual,
         );
     }
 
