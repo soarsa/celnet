@@ -418,8 +418,22 @@ impl<S: MessageStore> Initiator<S> {
                 && !awaiting_exec
                 && !outcome.result.filled
                 && !outcome.result.lifted;
+            // Wake on `lift_at` only while it is still AHEAD of us. Once it has passed,
+            // wait on the hold deadline instead — the lift is still fired by the
+            // `lift_due` check below the moment any snapshot lands, so a slow venue does
+            // not lose its lift; we simply stop re-arming a timer that is already due.
+            //
+            // Selecting a PAST instant here spins the loop forever on a venue that has
+            // published nothing: `last_symbol` stays `None`, so the lift cannot fire and
+            // `pending_lift` stays true, pinning `wake` to `lift_at`. `timeout_at` on a
+            // past instant returns `Elapsed` immediately, and the `wake >= deadline` break
+            // cannot fire because `lift_at < deadline` — a hot loop that never reaches the
+            // next instrument. Observed on UAT 2026-08-17: the RFS and ESP legs wedged on
+            // an unquotable bond and burned ~87% CPU each for 2h35m, contributing 4
+            // pricing events against the RFQ leg's 4,662.
+            let now = tokio::time::Instant::now();
             let wake = match lift_at {
-                Some(t) if pending_lift && t < deadline => t,
+                Some(t) if pending_lift && t < deadline && t > now => t,
                 _ => deadline,
             };
             match tokio::time::timeout_at(wake, reader.next_frame()).await {

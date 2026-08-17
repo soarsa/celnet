@@ -8,10 +8,13 @@
 
 use std::time::Duration;
 
+use celnet_fix::dialect_rates::{self, SubscriptionRequest};
 use celnet_fix::framing::{FrameCursor, FrameEncoder};
+use celnet_fix::initiator::{Initiator, LiftPolicy};
 use celnet_fix::messages::{self, Header};
 use celnet_fix::session::{InMemoryStore, Role, Session, SessionConfig, SessionState};
 use celnet_fix::transport::{FrameReader, write_frame};
+use celnet_proto::{AccrualBasis, BrokenDate, PaymentFrequency, Side};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 
@@ -164,6 +167,112 @@ async fn test_request_heartbeat_over_socket() {
         drop(reader);
         drop(sess);
         timeout(DEADLINE, acceptor).await.unwrap().unwrap();
+    };
+    timeout(DEADLINE, body).await.expect("test timed out");
+}
+
+/// A market-data cycle that schedules a LIFT against a venue which publishes **nothing**
+/// must still end at its hold deadline.
+///
+/// Regression for the spin found on UAT 2026-08-17: `collect_md_stream` selected `lift_at`
+/// as its wake instant whenever a lift was still pending, without checking that the instant
+/// was in the future. On a silent venue no snapshot ever arrives, so `last_symbol` stays
+/// `None`, the lift cannot fire, and `pending_lift` stays true — pinning the wake to an
+/// instant already in the past. `timeout_at` on a past instant returns `Elapsed`
+/// immediately, and the `wake >= deadline` break cannot trigger (because
+/// `lift_at < deadline`), so the cycle spun at ~100% CPU forever and never advanced to the
+/// next instrument. The RFS and ESP simulator legs wedged this way for 2h35m at ~87% CPU
+/// each, contributing 4 pricing events against the RFQ leg's 4,662.
+///
+/// The venue here logs on and then deliberately answers the `MarketDataRequest(35=V)` with
+/// silence — exactly the unquotable-instrument case (a bond no liquidity provider prices).
+#[tokio::test]
+async fn md_stream_with_a_pending_lift_ends_on_a_silent_venue() {
+    let body = async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Venue: complete the logon handshake, then publish NOTHING. Session-level outbound
+        // (the logon mirror, heartbeats) still flows; no application data ever does.
+        let acceptor = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (rd, mut wr) = tokio::io::split(stream);
+            let mut reader = FrameReader::new(rd);
+            let mut sess = Session::new(acc_cfg(), InMemoryStore::new());
+            while let Ok(Some(frame)) = reader.next_frame().await {
+                let Ok(action) = sess.on_inbound(&frame, T) else {
+                    continue;
+                };
+                for f in &action.outbound {
+                    if write_frame(&mut wr, f).await.is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+
+        let stream = TcpStream::connect(addr).await.unwrap();
+        // A FIRM lift policy: `lift_after` is only honoured when the policy is not Observe,
+        // so an Observe policy would not reproduce the spin.
+        let mut initiator = Initiator::new(
+            Session::new(init_cfg(), InMemoryStore::new()),
+            LiftPolicy::LiftOffer,
+        );
+        let mut sess = initiator.open(stream, T).await.unwrap();
+
+        let md_req_id = b"MD-SILENT-1".to_vec();
+        let symbol = b"912797UA3".to_vec();
+        let params = dialect_rates::BondMarketDataRequestParams {
+            md_req_id: &md_req_id,
+            symbol: &symbol,
+            coupon_rate: 0.0,
+            coupon_frequency: PaymentFrequency::SemiAnnual,
+            day_count: AccrualBasis::Act365Fixed,
+            maturity: BrokenDate {
+                year: 2026,
+                month: 6,
+                day: 30,
+            },
+            redemption: 100.0,
+            notional: 1_000_000.0,
+            side: Side::TwoWay,
+            subscription: SubscriptionRequest::Subscribe,
+        };
+
+        // The lift falls due HALF-WAY through the hold — the arrangement the ESP/RFS legs
+        // use (`lift_after = hold / 2`), and the one that spun.
+        let hold = Duration::from_millis(300);
+        let started = std::time::Instant::now();
+        let outcome = sess
+            .md_stream(
+                T,
+                dialect_rates::SEC_TYPE_BOND,
+                |hdr, enc| dialect_rates::build_bond_market_data_request(hdr, &params, enc),
+                hold,
+                Some(hold / 2),
+            )
+            .await
+            .expect("md_stream must return, not wedge");
+        let elapsed = started.elapsed();
+
+        // It ended on its own hold deadline rather than spinning.
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "md_stream spun past its {hold:?} hold on a silent venue (took {elapsed:?})"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(250),
+            "md_stream returned before its hold elapsed ({elapsed:?}) — it should wait the \
+             window out, not bail early"
+        );
+        // Nothing was published, so nothing was streamed and no order can have gone out:
+        // a lift with no liftable line must NOT invent one.
+        assert_eq!(outcome.updates, 0, "a silent venue publishes no snapshots");
+        assert!(!outcome.result.lifted, "no line was ever liftable");
+        assert!(!outcome.result.filled, "nothing can fill without a lift");
+
+        drop(sess);
+        let _ = timeout(DEADLINE, acceptor).await;
     };
     timeout(DEADLINE, body).await.expect("test timed out");
 }
