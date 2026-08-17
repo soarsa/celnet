@@ -64,6 +64,9 @@ export FIXSIM_ESP="{{ '1' if celnet_fixsim_esp_enabled | default(false) else '0'
 {% endif %}export FIXSIM_ESP_SENDER="{{ celnet_fixsim_esp_sender | default('CELER_RATES_STREAM') }}"
 export FIXSIM_GRPC_ADDR="{{ celnet_fixsim_grpc_addr | default('http://127.0.0.1:50051') }}"
 export FIXSIM_ESP_INSTRUMENTS="{{ celnet_fixsim_esp_instruments | default('15') }}"
+# Every Nth RFQ is a MANUAL curve request routed to the human rates desk. 1 ⇒ all of them:
+# the RFQ venue is the manual-pricing leg, and auto-quoted OIS on it drowns the blotter.
+export FIXSIM_MANUAL_EVERY="{{ celnet_fixsim_manual_every | default('3') }}"
 export FIXSIM_ESP_SEED="{{ celnet_fixsim_esp_seed | default('0x5EED1234') }}"
 export FIXSIM_USER="{{ celnet_fixsim_user | default('fix-sim@svc.celnet.local') }}"
 {% if celnet_fixsim_password is defined and celnet_fixsim_password %}

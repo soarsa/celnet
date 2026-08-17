@@ -1304,8 +1304,39 @@ async fn run_rfs(args: &Args) -> std::io::Result<()> {
     let hold = std::time::Duration::from_millis(args.stream_hold_ms.max(1));
     let forever = args.repeat == 0;
     let mut i: u64 = 0;
+    // Which downloaded names the aggregated book actually prices, learned by probing.
+    //
+    // The reference-data registry lists every TRADEABLE instrument, which is a strictly
+    // larger set than the QUOTABLE one: a name with no liquidity provider behind it (the
+    // server logs these as "TRADEABLE BUT UNQUOTABLE"), or one outside the LP feed's
+    // configured universe (e.g. zero-coupon Bills while the feed runs `include_bills=0`),
+    // is listed but never publishes a composite. Streaming those spends the whole cycle
+    // budget on lines that cannot tick — on UAT the top-8 registry-order bonds were ALL
+    // unpriceable, so the RFS/ESP legs contributed 4 pricing events against the RFQ leg's
+    // 4,662.
+    //
+    // So: count consecutive silent cycles per instrument and PARK a name after
+    // `PARK_AFTER` of them, concentrating the budget on names the book prices. Parking is
+    // provisional, never permanent — every `REPROBE_EVERY` cycles the parks are cleared so
+    // a name that comes alive later (an LP connects, the book's membership changes) is
+    // picked back up. No name is ever hardcoded in or out.
+    const PARK_AFTER: u32 = 2;
+    const REPROBE_EVERY: u64 = 50;
+    let mut silent_streak: Vec<u32> = vec![0; bonds.len()];
     loop {
-        let bond = &bonds[sim::esp_instrument_index_for(i, bonds.len())];
+        if i > 0 && i % REPROBE_EVERY == 0 {
+            // Re-probe: give every parked name another chance to prove it is live.
+            silent_streak.iter_mut().for_each(|s| *s = 0);
+        }
+        // Advance from the plain round-robin slot to the next name that is not parked. If
+        // every name is parked the book prices nothing we hold, so fall back to the plain
+        // rotation (and keep probing) rather than stalling on an empty selection.
+        let start = sim::esp_instrument_index_for(i, bonds.len());
+        let idx = (0..bonds.len())
+            .map(|off| (start + off) % bonds.len())
+            .find(|&c| silent_streak[c] < PARK_AFTER)
+            .unwrap_or(start);
+        let bond = &bonds[idx];
         let counterparty = sim::counterparty_for(i);
         // In "mix" notional mode rotate the streamed size per request (the RFS venue always streams),
         // so booked streaming bond deals — and their DV01 — show a realistic size spread
@@ -1317,8 +1348,20 @@ async fn run_rfs(args: &Args) -> std::io::Result<()> {
         // rejected at decode rather than read as "no size" — so on the ESP leg this is
         // simply the size the venue is about to ignore, which is what makes the
         // clip-independence observable: the streamed amount comes back different.
+        //
+        // The two legs request DIFFERENT size shapes because they model different flow.
+        // RFS is a client asking the book to price a size it names, so it rotates the
+        // ODD-LOT ladder — sub-round-lot clips a dealer prices wider than street size, the
+        // case the standard clip ladder does not cover. ESP streams the venue's own
+        // published clip and discards whatever the frame carries, so it keeps the round
+        // street ladder; the difference between the size sent and the size streamed back is
+        // precisely what makes ESP's clip-independence observable.
         let stream_notional = if args.notional_mix {
-            sim::rates_notional_for(i)
+            if args.asset == AssetClass::Esp {
+                sim::rates_notional_for(i)
+            } else {
+                sim::bond_odd_lot_notional_for(i)
+            }
         } else {
             args.notional
         };
@@ -1380,6 +1423,22 @@ async fn run_rfs(args: &Args) -> std::io::Result<()> {
             "[{i}] {counterparty} · {} ({}) {venue_tag} — streamed {} snapshot(s)",
             bond.name, bond.instrument_id, outcome.updates
         );
+        // Record whether the book priced this name, and say so the first time a name is
+        // parked — a silently-skipped instrument would otherwise look like a gap in the
+        // rotation with no stated reason.
+        if outcome.updates == 0 {
+            silent_streak[idx] += 1;
+            if silent_streak[idx] == PARK_AFTER {
+                println!(
+                    "    ⚠ {} published nothing in {PARK_AFTER} cycles — parking it; the \
+                     aggregated book does not price this name. Re-probing in \
+                     {REPROBE_EVERY} cycles.",
+                    bond.instrument_id
+                );
+            }
+        } else {
+            silent_streak[idx] = 0;
+        }
         if let (Some(bid), Some(offer)) = (outcome.result.bid, outcome.result.offer) {
             print_quote(outcome.result.quote_id.as_deref(), bid, offer);
         }

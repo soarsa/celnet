@@ -275,6 +275,34 @@ pub fn rates_notional_for(i: u64) -> f64 {
     RATES_NOTIONAL_LADDER[(i as usize) % RATES_NOTIONAL_LADDER.len()]
 }
 
+/// The **round-lot threshold** for a cash-bond clip: at or above this the size is standard
+/// street size; below it the clip is an *odd lot*, which a dealer prices wider than
+/// round-lot size.
+pub const BOND_ROUND_LOT: f64 = 1_000_000.0;
+
+/// A ladder of **odd-lot** cash-bond clip sizes the RFS leg rotates through — every rung
+/// deliberately BELOW [`BOND_ROUND_LOT`], and none of them a round street increment.
+///
+/// The RFS venue exists to answer requests for sizes the standard clip ladder does not
+/// cover: an odd lot is priced off the aggregated-book composite but wider than round-lot
+/// size, so streaming these exercises the odd-lot pricing path rather than re-running the
+/// round-clip path the ESP leg already covers with its own published clip.
+///
+/// Length 7 — coprime with the 28-name counterparty pool and the length-5 side rotation —
+/// so counterparty × side × size varies widely over a run instead of locking into a short
+/// repeating pattern.
+pub const BOND_ODD_LOT_LADDER: &[f64] = &[
+    25_000.0, 50_000.0, 175_000.0, 320_000.0, 640_000.0, 825_000.0, 950_000.0,
+];
+
+/// The **odd-lot** cash-bond notional for RFS stream iteration `i` — a deterministic
+/// rotation over [`BOND_ODD_LOT_LADDER`] (pure function of `i`, no RNG / no wall-clock, so
+/// a replayed stream requests the same sizes). Always in `[25_000, BOND_ROUND_LOT)`.
+#[must_use]
+pub fn bond_odd_lot_notional_for(i: u64) -> f64 {
+    BOND_ODD_LOT_LADDER[(i as usize) % BOND_ODD_LOT_LADDER.len()]
+}
+
 /// The instrument the **ESP streaming client** ([`fix_rfq_client`](../../examples/fix_rfq_client.rs)
 /// `run_esp`) RFS-subscribes on stream cycle `i`, as an index into its downloaded
 /// tradeable universe of `n` instruments — a plain **round-robin** (`i mod n`).
@@ -608,5 +636,49 @@ mod tests {
         assert!(buy <= (n * 7) / 10, "BUYs (lift offer) must not dominate");
         assert!(sell <= (n * 7) / 10, "SELLs (hit bid) must not dominate");
         assert_eq!(buy + sell, n);
+    }
+
+    /// Every RFS rung is a genuine ODD LOT: strictly below the round-lot threshold, and
+    /// never a round street increment (which would make it a small round clip, not an odd
+    /// lot). This is the property that makes the RFS leg exercise the odd-lot pricing path
+    /// instead of duplicating the ESP leg's round-clip path.
+    #[test]
+    fn every_odd_lot_rung_is_below_round_lot_and_not_a_round_clip() {
+        assert!(!BOND_ODD_LOT_LADDER.is_empty());
+        for &size in BOND_ODD_LOT_LADDER {
+            assert!(size > 0.0, "a clip must be positive, got {size}");
+            assert!(
+                size < BOND_ROUND_LOT,
+                "{size} is not an odd lot — it is at or above the {BOND_ROUND_LOT} round lot"
+            );
+            // A round street increment for sub-million size is a whole 100k. Rungs that
+            // land on one (100k, 500k, …) read as small ROUND clips to a dealer.
+            assert!(
+                (size % 100_000.0).abs() > f64::EPSILON,
+                "{size} is a round 100k increment, not an odd lot"
+            );
+        }
+    }
+
+    /// The odd-lot rotation is a pure function of the iteration index — a replayed stream
+    /// requests the same sizes in the same order — and it visits the whole ladder.
+    #[test]
+    fn odd_lot_rotation_is_deterministic_and_covers_the_ladder() {
+        for i in 0..64u64 {
+            assert_eq!(bond_odd_lot_notional_for(i), bond_odd_lot_notional_for(i));
+            assert_eq!(
+                bond_odd_lot_notional_for(i),
+                bond_odd_lot_notional_for(i + BOND_ODD_LOT_LADDER.len() as u64),
+                "the rotation must repeat with the ladder length"
+            );
+        }
+        let seen: std::collections::BTreeSet<u64> = (0..BOND_ODD_LOT_LADDER.len() as u64)
+            .map(|i| bond_odd_lot_notional_for(i) as u64)
+            .collect();
+        assert_eq!(
+            seen.len(),
+            BOND_ODD_LOT_LADDER.len(),
+            "one full pass must visit every distinct rung"
+        );
     }
 }

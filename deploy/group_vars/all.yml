@@ -117,7 +117,20 @@ celnet_fixsim_stream_sender: "CELER_RATES_STREAM"
 celnet_fixsim_esp_port: 56004
 celnet_fixsim_esp_sender: "CELER_RATES_ESP"
 celnet_fixsim_grpc_addr: "http://127.0.0.1:50051"  # reference-data + login endpoint
-celnet_fixsim_esp_instruments: 8         # top-N most-liquid/relevant instruments to stream (trimmed 15→8)
+# Candidate POOL the RFS/ESP legs download from reference data — not the streamed set. The
+# registry lists every TRADEABLE instrument (strictly larger than the QUOTABLE set) in
+# registry order, NOT by liquidity. The client probes the pool and parks names the
+# aggregated book does not price (see `run_esp`), so the pool must be large enough to REACH
+# the priceable names. At 8 it never did: the first 8 registry-order bonds on UAT are the 2
+# the server flags "TRADEABLE BUT UNQUOTABLE" plus 6 zero-coupon Bills the LP feed skips
+# (`include_bills=0`) — every streamed name was unpriceable, and the two legs contributed 4
+# pricing events against the RFQ leg's 4,662.
+celnet_fixsim_esp_instruments: 40        # candidate pool (8→40: reach the ~141 quotable cash bonds)
+# The RFQ venue (CELER_RATES_CELNET) exists for MANUAL curve requests — the ones the venue
+# cannot auto-price and routes to a human rates desk. At 3 only ~1 in 3 was manual and the
+# other two thirds were auto-quoted OIS, which is what drowned the blotter. 1 ⇒ every RFQ is
+# a manual curve request, leaving streaming/agg-book flow to the RFS and ESP legs.
+celnet_fixsim_manual_every: 1            # every Nth RFQ is manual (1 ⇒ all of them)
 celnet_fixsim_esp_seed: "0x5EED1234"     # deterministic seed (hex ok — the launcher normalizes 0x… → decimal)
 # Service login for the ESP refdata gRPC call (AuthService.Login). The FIX simulator acts
 # as a CLIENT counterparty and authenticates as its OWN dedicated, least-privilege account
