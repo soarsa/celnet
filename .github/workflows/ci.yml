@@ -529,3 +529,155 @@ jobs:
           timeout 60 ./target/debug/examples/quote_and_trade
           timeout 60 ./target/debug/examples/stream_blotter
           timeout 60 ./target/debug/examples/price_exotic
+
+  # ---------------------------------------------------------------------------
+  # Client gate — gui/ + excel/ typecheck, unit tests and PRODUCTION builds.
+  #
+  # Why this exists: until 2026-08-17 this workflow had NO node job at all, so
+  # ~139k lines of client source (gui/src 119k + excel/src 21k) were gated only by
+  # the local `just t2` recipe. That is what let a hardcoded market snapshot, a
+  # seven-week-stale SOFR curve and 14 undefined design tokens accumulate on main
+  # unnoticed. These two jobs mirror the node half of `just t2` (justfile §t2).
+  #
+  # Split in two so the cheap half fails fast: `clients` needs no Rust toolchain,
+  # while `clients-e2e` must compile the server because BOTH client e2e suites
+  # boot a real `demo_edge` (gui/e2e/demoEdge.ts, excel/e2e/globalSetup.ts).
+  # ---------------------------------------------------------------------------
+  clients:
+    name: client gate (typecheck + unit + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            gui/package-lock.json
+            excel/package-lock.json
+
+      - name: Install deps (lockfile-exact)
+        run: |
+          npm --prefix gui ci
+          npm --prefix excel ci
+
+      # Typecheck app and e2e trees separately: they are three tsconfig projects
+      # and `tsc -b` at the root covers only the app + node ones.
+      - name: gui — typecheck (app / e2e)
+        run: |
+          npm --prefix gui run typecheck
+          npm --prefix gui run typecheck:e2e
+
+      # A RATCHET, not a soft gate.
+      #
+      # `typecheck:test` is red on main as of 2026-08-17 with 100 errors across ~35
+      # test files — overwhelmingly `noUncheckedIndexedAccess` index accesses
+      # (TS2532/TS18048, 30) and fixtures missing fields their type has since gained
+      # (TS2741/TS2739/TS2322, 39). The tests themselves all PASS (2,342/2,342): this
+      # is type-level debt in TEST code, accumulated precisely because there was no
+      # client CI job to catch it.
+      #
+      # Rather than `continue-on-error` (which lets the number grow unwatched) or
+      # blocking outright (which would land the gate red and get it switched off),
+      # this asserts the count NEVER EXCEEDS the recorded ceiling. New debt fails the
+      # build; paying debt down is free. LOWER THE CEILING as it falls — and delete
+      # this step entirely, folding `typecheck:test` into the blocking step above,
+      # when it reaches 0.
+      - name: gui — typecheck (test tree) — ratchet, must not exceed the ceiling
+        run: |
+          set -uo pipefail
+          CEILING=100
+          npm --prefix gui run typecheck:test > tc-test.log 2>&1 || true
+          COUNT=$(grep -cE 'error TS[0-9]+' tc-test.log || true)
+          echo "gui typecheck:test errors: $COUNT (ceiling $CEILING)"
+          if [ "$COUNT" -gt "$CEILING" ]; then
+            echo "::error::gui typecheck:test regressed: $COUNT errors > ceiling $CEILING"
+            grep -E 'error TS[0-9]+' tc-test.log | head -40
+            exit 1
+          fi
+          if [ "$COUNT" -lt "$CEILING" ]; then
+            echo "::notice::gui typecheck:test improved to $COUNT — lower CEILING in ci.yml to $COUNT"
+          fi
+
+      - name: excel — typecheck (app / e2e)
+        run: |
+          npm --prefix excel run typecheck
+          npm --prefix excel run typecheck:e2e
+
+      - name: gui — unit tests (vitest)
+        run: npm --prefix gui run test
+
+      - name: excel — unit tests (vitest)
+        run: npm --prefix excel run test
+
+      # Production builds, not dev servers — the e2e suites serve the built
+      # bundle, and a build-only failure (a bad import, a broken asset) is
+      # invisible to typecheck and vitest.
+      - name: gui — production build
+        run: npm --prefix gui run build
+
+      - name: excel — production build
+        run: npm --prefix excel run build
+
+  clients-e2e:
+    name: client e2e vs a REAL celnet-server (linux)
+    runs-on: ubuntu-latest
+    # Only worth the Rust compile once the cheap gate is green.
+    needs: clients
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: clients-e2e
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            gui/package-lock.json
+            excel/package-lock.json
+
+      - name: Install deps (lockfile-exact)
+        run: |
+          npm --prefix gui ci
+          npm --prefix excel ci
+
+      # Both suites spawn `cargo run -p celnet-server --example demo_edge`
+      # themselves. Build it first so the spawn is a warm start and the suites'
+      # bounded readiness timeouts are not racing a cold compile.
+      - name: Build demo_edge
+        run: cargo build -p celnet-server --example demo_edge
+
+      - name: Install Playwright chromium
+        run: npx --prefix gui playwright install --with-deps chromium
+
+      # ONLY the `chromium` project. That is the one that boots the real server
+      # (playwright.config.ts sets testIgnore: FIDELITY_SPECS on it). The
+      # `fidelity` project is deliberately excluded here: it runs mock-only
+      # against `?mock`, and its screenshot baselines are all `*-darwin.png`, so
+      # it cannot pass on Linux. Fidelity stays a macOS/local gate.
+      - name: gui — e2e (real server, chromium project)
+        run: npx --prefix gui playwright test --project=chromium
+        working-directory: gui
+
+      - name: excel — e2e (real server, corpus conformance)
+        run: npm --prefix excel run test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: gui/playwright-report/
+          retention-days: 7

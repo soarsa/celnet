@@ -83,7 +83,18 @@ describe("AuthService.Login over the real WS mirror", () => {
     // crafted here; the GATING is the production `UserSession` path (not a stub).
     const restricted: LoginResult = {
       token: "live-session-token",
-      user: { id: "u-r", email: "restricted@celnet.com", displayName: "R", role: "TRADER", disabled: false },
+      // `deskIds` is ALWAYS an array and `allDesks` always present (access.ts:75-85);
+      // this restricted trader is DESKLESS — no desk-routed traffic — which is the
+      // shape that exercises the capability gate without also granting desk scope.
+      user: {
+        id: "u-r",
+        email: "restricted@celnet.com",
+        displayName: "R",
+        role: "TRADER",
+        deskIds: [],
+        allDesks: false,
+        disabled: false,
+      },
       expiresNanos: 10_000_000_000_000_000_000n,
       capabilities: [
         { action: "view", asset: "fx_options" },

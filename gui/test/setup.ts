@@ -109,6 +109,54 @@ if (
   (HTMLCanvasElement.prototype as unknown as { __ctxStub?: boolean }).__ctxStub = true;
 }
 
+/**
+ * jsdom exposes `window.localStorage` only for a non-opaque origin, and the vitest
+ * jsdom environment does not surface it here even though the document origin is a
+ * real one (`http://localhost:3000/`) — probed: `typeof window.localStorage` is
+ * `undefined`. Any suite that reads or clears persisted preferences — the settings
+ * schema, the settings panel, the mobile status app's first-open flag, the
+ * aggregated-book security selection — therefore threw `Cannot read properties of
+ * undefined (reading 'clear')` at `beforeEach`.
+ *
+ * Provide a standards-shaped, in-memory `Storage`: the full DOM `Storage` surface
+ * (`getItem`/`setItem`/`removeItem`/`clear`/`key`/`length`) backed by a Map, with
+ * values coerced to strings exactly as the spec requires. Same class of fix as the
+ * `ResizeObserver` / `scrollIntoView` / `matchMedia` fills above — a JS-DOM
+ * environment gap fill, not a mock of any Celnet functionality: the code under test
+ * is the real persistence path, only the browser primitive is supplied.
+ */
+if (typeof globalThis.localStorage === "undefined") {
+  const makeStorage = (): Storage => {
+    const map = new Map<string, string>();
+    return {
+      get length(): number {
+        return map.size;
+      },
+      clear: (): void => {
+        map.clear();
+      },
+      getItem: (key: string): string | null => map.get(String(key)) ?? null,
+      key: (index: number): string | null => [...map.keys()][index] ?? null,
+      removeItem: (key: string): void => {
+        map.delete(String(key));
+      },
+      setItem: (key: string, value: string): void => {
+        map.set(String(key), String(value));
+      },
+    } as Storage;
+  };
+  Object.defineProperty(globalThis, "localStorage", {
+    value: makeStorage(),
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(globalThis, "sessionStorage", {
+    value: makeStorage(),
+    configurable: true,
+    writable: true,
+  });
+}
+
 afterEach(() => {
   cleanup();
 });

@@ -1,7 +1,12 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2023"],
+    // DOM is required: Playwright `page.evaluate()` callbacks execute IN THE
+    // BROWSER, so e2e specs legitimately reference window / document /
+    // getComputedStyle. This project deliberately does NOT extend
+    // tsconfig.app.json — it needs types:["node"], verbatimModuleSyntax:false,
+    // and must not include src/.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",
