@@ -34,6 +34,8 @@ const config: HedgeConfig = {
   compositeSpreadBp: 0.5,
   vehicles: [],
   exitModes: [{ scopeKind: "book", scopeId: "fi-credit-emea", mode: "suggest" }],
+  // no per-scope model bindings: every scope stays CUSTOM (contract.ts:4853-4856)
+  hedgingModels: [],
 };
 
 /** A whole-lot plan rounded DOWN off the duration-blind proxy — 36 DV01 left behind. */

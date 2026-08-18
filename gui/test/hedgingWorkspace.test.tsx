@@ -62,6 +62,8 @@ const config: HedgeConfig = {
   lpPanels: [
     { scopeKind: "book", scopeId: "fi-rates-emea", include: ["LP-1", "LP-2", "LP-3"], exclude: ["LP-2"] },
   ],
+  // no per-scope model bindings: every scope stays CUSTOM (contract.ts:4853-4856)
+  hedgingModels: [],
   compositeSpreadBp: 0.5,
 };
 

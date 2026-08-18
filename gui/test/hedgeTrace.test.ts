@@ -126,7 +126,7 @@ describe("validateHedgeGraph", () => {
             id: 0,
             condition: {
               field: spec.field,
-              op: spec.validOps[0],
+              op: at(spec.validOps, 0),
               value:
                 spec.kind === "numeric" ? { kind: "num", num: 1 } : { kind: "text", text: "x" },
               onTrue: 1,
