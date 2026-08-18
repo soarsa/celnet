@@ -659,17 +659,22 @@ jobs:
       - name: Build demo_edge
         run: cargo build -p celnet-server --example demo_edge
 
+      # Use the package's own script so the browser revision matches the pinned
+      # @playwright/test (justfile t2 does the same via `e2e:install`). --with-deps
+      # pulls the Linux shared libs headless chromium needs on a bare runner.
       - name: Install Playwright chromium
-        run: npx --prefix gui playwright install --with-deps chromium
+        run: npm --prefix gui run e2e:install -- --with-deps
 
       # ONLY the `chromium` project. That is the one that boots the real server
       # (playwright.config.ts sets testIgnore: FIDELITY_SPECS on it). The
       # `fidelity` project is deliberately excluded here: it runs mock-only
       # against `?mock`, and its screenshot baselines are all `*-darwin.png`, so
       # it cannot pass on Linux. Fidelity stays a macOS/local gate.
-      - name: gui — e2e (real server, chromium project)
-        run: npx --prefix gui playwright test --project=chromium
-        working-directory: gui
+      # `npm --prefix gui run e2e` sets cwd to gui/ for the script, so playwright
+      # finds its own config; `--` forwards the project selector. Same invocation
+      # shape as justfile t2, plus the project filter.
+      - name: gui — e2e (real server, chromium project only)
+        run: npm --prefix gui run e2e -- --project=chromium
 
       - name: excel — e2e (real server, corpus conformance)
         run: npm --prefix excel run test:e2e
