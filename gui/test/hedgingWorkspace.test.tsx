@@ -23,6 +23,7 @@ const state: { app: unknown } = { app: null };
 vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
 
 import { HedgingWorkspace } from "../src/workspaces/hedging/HedgingWorkspace";
+import { at } from "./support";
 
 function policyGraph(): HedgeGraph {
   const rules: HedgeRule[] = [
@@ -255,7 +256,7 @@ describe("HedgingWorkspace — LP panels", () => {
     expect(await screen.findByTestId("lp-panel-row-book-fi-marex")).toBeInTheDocument();
     // The committed config carries the new panel bound to lpPanels.
     expect(app.transport.setHedgeConfig).toHaveBeenCalledTimes(1);
-    const committed = app.transport.setHedgeConfig.mock.calls[0][0] as HedgeConfig;
+    const committed = at(at(app.transport.setHedgeConfig.mock.calls, 0), 0) as HedgeConfig;
     const added = committed.lpPanels.find((p) => p.scopeId === "fi-marex");
     expect(added).toEqual({ scopeKind: "book", scopeId: "fi-marex", include: ["LP-1", "LP-2", "LP-3"], exclude: ["LP-2"] });
   });

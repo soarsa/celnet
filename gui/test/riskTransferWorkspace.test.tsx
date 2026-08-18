@@ -19,9 +19,9 @@ import { RiskTransferInboxWorkspace } from "../src/workspaces/risktransfer/RiskT
 import { RiskTransferAuditWorkspace } from "../src/workspaces/risktransfer/RiskTransferAuditWorkspace";
 
 const BOOKS: RiskBook[] = [
-  { id: "fi-rates-emea", name: "EMEA Rates", parentId: null, deskId: "emea", description: "", limits: null, enabled: true },
-  { id: "fi-emea-sub", name: "EMEA Sub", parentId: "fi-rates-emea", deskId: null, description: "", limits: null, enabled: true },
-  { id: "fi-marex", name: "Marex FI", parentId: null, deskId: "marex", description: "", limits: null, enabled: true },
+  { id: "fi-rates-emea", name: "EMEA Rates", parentId: null, deskId: "emea", description: "", limits: null, enabled: true , assetClass: "fixed_income"},
+  { id: "fi-emea-sub", name: "EMEA Sub", parentId: "fi-rates-emea", deskId: null, description: "", limits: null, enabled: true , assetClass: "fixed_income"},
+  { id: "fi-marex", name: "Marex FI", parentId: null, deskId: "marex", description: "", limits: null, enabled: true , assetClass: "fixed_income"},
 ];
 
 function riskRow(over: Partial<RiskBookRisk> = {}): RiskBookRisk {

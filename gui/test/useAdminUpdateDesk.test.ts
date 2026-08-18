@@ -15,6 +15,7 @@ import { describe, expect, it } from "vitest";
 import type { DeskDesc } from "../src/data/contract";
 import type { CelnetTransport } from "../src/data/transport";
 import { useAdmin } from "../src/hooks/useAdmin";
+import { at } from "./support";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -102,7 +103,7 @@ describe("useAdmin.updateDesk — optimistic desk rename", () => {
       pending = result.current.updateDesk("g10", "EM Rates");
     });
     // Optimistic label applied before the server replies.
-    expect(result.current.desks[0].name).toBe("EM Rates");
+    expect(at(result.current.desks, 0).name).toBe("EM Rates");
 
     await act(async () => {
       deferred.reject(new Error("a desk named `EM Rates` already exists"));

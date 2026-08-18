@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import type { UserDesc } from "../src/data/contract";
 import type { CelnetTransport } from "../src/data/transport";
 import { useAdmin } from "../src/hooks/useAdmin";
+import { at } from "./support";
 
 function makeUser(overrides: Partial<UserDesc> = {}): UserDesc {
   return {
@@ -77,7 +78,7 @@ describe("useAdmin.setUserDesks — optimistic multi-desk membership", () => {
     const { result } = renderHook(() => useAdmin(transport, true));
 
     await waitFor(() => expect(result.current.users).toHaveLength(1));
-    expect(result.current.users[0].deskIds).toEqual([]);
+    expect(at(result.current.users, 0).deskIds).toEqual([]);
 
     // Kick off the membership change but DO NOT resolve the transport yet.
     let pending!: Promise<void>;
@@ -86,8 +87,8 @@ describe("useAdmin.setUserDesks — optimistic multi-desk membership", () => {
     });
 
     // Optimistic: both desks show immediately, before the server replies.
-    expect(result.current.users[0].deskIds).toEqual(["g10", "em"]);
-    expect(result.current.users[0].allDesks).toBe(false);
+    expect(at(result.current.users, 0).deskIds).toEqual(["g10", "em"]);
+    expect(at(result.current.users, 0).allDesks).toBe(false);
     expect(updateCalls).toEqual([
       {
         id: "u1",
@@ -107,8 +108,8 @@ describe("useAdmin.setUserDesks — optimistic multi-desk membership", () => {
       deferred.resolve(reconciled);
       await pending;
     });
-    expect(result.current.users[0]).toEqual(reconciled);
-    expect(result.current.users[0].displayName).toBe("Jane Trader (server)");
+    expect(at(result.current.users, 0)).toEqual(reconciled);
+    expect(at(result.current.users, 0).displayName).toBe("Jane Trader (server)");
   });
 
   it("sends allDesks=true with an empty set when All desks is toggled on", async () => {
@@ -123,15 +124,15 @@ describe("useAdmin.setUserDesks — optimistic multi-desk membership", () => {
       pending = result.current.setUserDesks("u1", [], true);
     });
 
-    expect(result.current.users[0].allDesks).toBe(true);
-    expect(result.current.users[0].deskIds).toEqual([]);
-    expect(updateCalls[0].input).toMatchObject({ deskIds: [], allDesks: true });
+    expect(at(result.current.users, 0).allDesks).toBe(true);
+    expect(at(result.current.users, 0).deskIds).toEqual([]);
+    expect(at(updateCalls, 0).input).toMatchObject({ deskIds: [], allDesks: true });
 
     await act(async () => {
       deferred.resolve(makeUser({ allDesks: true }));
       await pending;
     });
-    expect(result.current.users[0].allDesks).toBe(true);
+    expect(at(result.current.users, 0).allDesks).toBe(true);
   });
 
   it("rolls the roster back and rejects when the update fails", async () => {
@@ -145,7 +146,7 @@ describe("useAdmin.setUserDesks — optimistic multi-desk membership", () => {
     act(() => {
       pending = result.current.setUserDesks("u1", ["g10", "em"], false);
     });
-    expect(result.current.users[0].deskIds).toEqual(["g10", "em"]); // optimistic
+    expect(at(result.current.users, 0).deskIds).toEqual(["g10", "em"]); // optimistic
 
     await act(async () => {
       deferred.reject(new Error("permission_denied"));
@@ -153,6 +154,6 @@ describe("useAdmin.setUserDesks — optimistic multi-desk membership", () => {
     });
 
     // Rolled back to the pre-attempt roster.
-    expect(result.current.users[0].deskIds).toEqual(["g10"]);
+    expect(at(result.current.users, 0).deskIds).toEqual(["g10"]);
   });
 });

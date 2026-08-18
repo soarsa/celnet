@@ -15,6 +15,7 @@ import {
   hedgeFieldUnprovidedReason,
 } from "../src/lib/hedgeFields";
 import { blankHedgeState, traceHedgeGraph, validateHedgeGraph } from "../src/lib/hedgeTrace";
+import { at } from "./support";
 
 /** A client whose id carries the desk's "treat as toxic" marker. */
 const TOXIC_CP = "TOXIC-ALPHA";
@@ -109,10 +110,10 @@ describe("validateHedgeGraph", () => {
     const issues = validateHedgeGraph(graph);
     const dead = issues.filter((i) => i.code === "unprovided_field");
     expect(dead).toHaveLength(1);
-    expect(dead[0].node).toBe(0);
+    expect(at(dead, 0).node).toBe(0);
     // The REASON must reach the trader, not merely the rejection — and it must be the
     // server's own words (parity with the Rust text is enforced separately).
-    expect(dead[0].message).toContain(hedgeFieldUnprovidedReason("counterparty_toxicity") ?? "");
+    expect(at(dead, 0).message).toContain(hedgeFieldUnprovidedReason("counterparty_toxicity") ?? "");
   });
 
   it("flags EVERY unprovided field, and no computed one", () => {

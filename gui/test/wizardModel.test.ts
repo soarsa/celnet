@@ -27,6 +27,7 @@ function draftWith(overrides: Partial<WizardDraft> = {}): WizardDraft {
     parentKey: null,
     deskId: null,
     enabled: true,
+    assetClass: "fx_options", // asset-class-agnostic fixture; a book must name ONE franchise
     limits: null,
   };
   const defaultRule: RiskRule = { id: newRuleId(), conditions: [], bookId: "k1", enabled: true };
@@ -154,6 +155,7 @@ describe("routingErrors — the disabled/unknown-target guard", () => {
         conditions: [{ field: "ccy", op: "eq", value: { kind: "text", text: "EUR" } }],
         bookId: "ghost", // not an enabled key
         enabled: true,
+        assetClass: "fx_options", // asset-class-agnostic fixture; a book must name ONE franchise
       },
       { id: newRuleId(), conditions: [], bookId: "k1", enabled: true },
     ];
@@ -168,6 +170,7 @@ describe("routingErrors — the disabled/unknown-target guard", () => {
         conditions: [{ field: "ccy", op: "eq", value: { kind: "text", text: "EUR" } }],
         bookId: "k1",
         enabled: true,
+        assetClass: "fx_options", // asset-class-agnostic fixture; a book must name ONE franchise
       },
       { id: newRuleId(), conditions: [], bookId: "k1", enabled: true },
     ];
@@ -184,6 +187,7 @@ describe("portfolioErrors — step 1 gating", () => {
       parentKey: null,
       deskId: null,
       enabled: false,
+      assetClass: "fx_options", // asset-class-agnostic fixture; a book must name ONE franchise
       limits: null,
     };
     expect(portfolioErrors([disabled]).some((e) => /enable at least one/i.test(e))).toBe(true);

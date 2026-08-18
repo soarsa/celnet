@@ -18,6 +18,7 @@ import { dirname, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { HEDGE_FIELD_REGISTRY, hedgeFieldUnprovidedReason } from "../src/lib/hedgeFields";
+import { at } from "./support";
 
 const RELATIVE_FIELD_RS = "crates/celnet-hedge-routing/src/field.rs";
 
@@ -90,7 +91,7 @@ function parseRustProviders(source: string): Map<string, RustProvider> {
 function parseRustAll(source: string): string[] {
   const block = /pub const ALL:\s*\[HedgeField;\s*\d+\]\s*=\s*\[([\s\S]*?)\];/.exec(source);
   expect(block, "HedgeField::ALL should be parseable from field.rs").not.toBeNull();
-  return [...(block as RegExpExecArray)[1].matchAll(/HedgeField::(\w+)/g)].map((m) =>
+  return [...at(block as RegExpExecArray, 1).matchAll(/HedgeField::(\w+)/g)].map((m) =>
     toSnakeCase(m[1]),
   );
 }

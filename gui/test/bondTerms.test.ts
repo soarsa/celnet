@@ -44,6 +44,8 @@ function bondDef(over: Partial<InstrumentDef & { bond: BondDef }> = {}): Instrum
       { scheme: "isin", value: "US91282CJM47" },
       { scheme: "cusip", value: "91282CJM4" },
     ],
+    subAssetType: "",
+    region: "",
     family: "bond",
     bond,
     ...over,
@@ -107,6 +109,8 @@ describe("indexBondDefs / resolveBondDef", () => {
       description: "",
       currency: "USD",
       externalIds: [],
+      subAssetType: "",
+      region: "",
       family: "ois",
       ois: {
         index: "SOFR",

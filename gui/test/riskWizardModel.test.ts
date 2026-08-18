@@ -26,6 +26,7 @@ function draftWith(overrides: Partial<RiskWizardDraft> = {}): RiskWizardDraft {
     parentKey: null,
     deskId: null,
     enabled: true,
+    assetClass: "fx_options", // asset-class-agnostic fixture; a book must name ONE franchise
     limits: null,
   };
   const defaultRule: RiskRule = { id: newRuleId(), conditions: [], bookId: "k1", enabled: true };

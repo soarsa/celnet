@@ -84,6 +84,8 @@ function bondDef(
       { scheme: "isin", value: isin },
       { scheme: "cusip", value: cusip },
     ],
+    subAssetType: "",
+    region: "",
     family: "bond",
     bond: {
       issuer: "US Treasury",
