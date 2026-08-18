@@ -573,8 +573,8 @@ jobs:
       # A RATCHET, not a soft gate.
       #
       # `typecheck:test` was red on main with 100 errors when this gate was added.
-      # 71 have since been paid down (all indexed-access errors, and the RiskBook /
-      # WizardBook / InstrumentDef fixtures that had fallen behind their types); 29
+      # 76 have since been paid down (all indexed-access errors, and the RiskBook /
+      # WizardBook / InstrumentDef fixtures that had fallen behind their types); 24
       # remain. The tests themselves all PASS (2,342/2,342) throughout: this is
       # type-level debt in TEST code, accumulated precisely because there was no
       # client CI job to catch it.
@@ -588,7 +588,7 @@ jobs:
       - name: gui — typecheck (test tree) — ratchet, must not exceed the ceiling
         run: |
           set -uo pipefail
-          CEILING=29
+          CEILING=24
           npm --prefix gui run typecheck:test > tc-test.log 2>&1 || true
           COUNT=$(grep -cE 'error TS[0-9]+' tc-test.log || true)
           echo "gui typecheck:test errors: $COUNT (ceiling $CEILING)"

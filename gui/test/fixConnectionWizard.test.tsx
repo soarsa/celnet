@@ -36,6 +36,8 @@ function renderWizard(can: (a: CapabilityAction, s: CapabilityAsset) => boolean)
       running: false,
       boundAddr: "",
       desk: spec.desk ?? "",
+      // no order route configured for this fixture (contract.ts:1852-1857)
+      orderEndpoint: "",
     }),
   );
   render(
