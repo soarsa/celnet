@@ -279,7 +279,8 @@ describe("Quotes row → Create acceptance rule", () => {
 
 /** Render the Acceptance-host instance (the `acceptance` alias) + the seed trigger. */
 async function renderAcceptanceHost(can?: CanFn): Promise<ReturnType<typeof vi.fn>> {
-  const built = makeApp({ can });
+  // `exactOptionalPropertyTypes`: pass the key only when defined, never as undefined
+  const built = makeApp(can !== undefined ? { can } : {});
   state.app = built.app;
   await act(async () => {
     render(

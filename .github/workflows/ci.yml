@@ -563,43 +563,17 @@ jobs:
           npm --prefix gui ci
           npm --prefix excel ci
 
-      # Typecheck app and e2e trees separately: they are three tsconfig projects
-      # and `tsc -b` at the root covers only the app + node ones.
-      - name: gui — typecheck (app / e2e)
+      # Typecheck app, test and e2e trees separately: they are three tsconfig
+      # projects and `tsc -b` at the root covers only the app + node ones.
+      #
+      # `typecheck:test` was RED with 100 errors when this gate was first added, and
+      # was held by a ratchet while the debt was paid down. It reached ZERO on
+      # 2026-08-18, so the ratchet is gone and this is a plain blocking check again.
+      - name: gui — typecheck (app / test / e2e)
         run: |
           npm --prefix gui run typecheck
+          npm --prefix gui run typecheck:test
           npm --prefix gui run typecheck:e2e
-
-      # A RATCHET, not a soft gate.
-      #
-      # `typecheck:test` was red on main with 100 errors when this gate was added.
-      # 86 have since been paid down (all indexed-access errors, and the RiskBook /
-      # WizardBook / InstrumentDef fixtures that had fallen behind their types); 14
-      # remain. The tests themselves all PASS (2,342/2,342) throughout: this is
-      # type-level debt in TEST code, accumulated precisely because there was no
-      # client CI job to catch it.
-      #
-      # Rather than `continue-on-error` (which lets the number grow unwatched) or
-      # blocking outright (which would land the gate red and get it switched off),
-      # this asserts the count NEVER EXCEEDS the recorded ceiling. New debt fails the
-      # build; paying debt down is free. LOWER THE CEILING as it falls — and delete
-      # this step entirely, folding `typecheck:test` into the blocking step above,
-      # when it reaches 0.
-      - name: gui — typecheck (test tree) — ratchet, must not exceed the ceiling
-        run: |
-          set -uo pipefail
-          CEILING=14
-          npm --prefix gui run typecheck:test > tc-test.log 2>&1 || true
-          COUNT=$(grep -cE 'error TS[0-9]+' tc-test.log || true)
-          echo "gui typecheck:test errors: $COUNT (ceiling $CEILING)"
-          if [ "$COUNT" -gt "$CEILING" ]; then
-            echo "::error::gui typecheck:test regressed: $COUNT errors > ceiling $CEILING"
-            grep -E 'error TS[0-9]+' tc-test.log | head -40
-            exit 1
-          fi
-          if [ "$COUNT" -lt "$CEILING" ]; then
-            echo "::notice::gui typecheck:test improved to $COUNT — lower CEILING in ci.yml to $COUNT"
-          fi
 
       - name: excel — typecheck (app / e2e)
         run: |

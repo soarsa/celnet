@@ -14,6 +14,7 @@ const state: { app: unknown } = { app: null };
 vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
 
 import { HedgeDealsView } from "../src/workspaces/HedgeDealsView";
+import { defaultExitAction } from "../src/lib/hedgeExit";
 
 function provenance(over: Partial<HedgeProvenance> = {}): HedgeProvenance {
   return {
@@ -29,17 +30,9 @@ function provenance(over: Partial<HedgeProvenance> = {}): HedgeProvenance {
     policyPath: [0, 1],
     // An EXTERNAL exit action (submit_market_order) — the desk shows external hedges
     // by default; an internalised action (warehouse / cross_internal / …) is hidden.
-    action: {
-      kind: "submit_market_order",
-      instrument: "",
-      size: { kind: "overflow", fixed: 0 },
-      skewBp: null,
-      toEdge: false,
-      style: "immediate",
-      lps: [],
-      internalFirst: false,
-      reason: "",
-    },
+    action: defaultExitAction("submit_market_order"),
+    // `self` vehicle ⇒ no unit arithmetic to record (contract.ts:4669-4672)
+    vehiclePlan: null,
     internalCrossed: 30_000_000,
     externalHedged: 70_000_000,
     residual: 5_000_000,
@@ -121,17 +114,9 @@ describe("HedgeDealsView", () => {
   it("hides internalised (warehouse) decisions by default, reveals them via the toggle", async () => {
     const warehouse = provenance({
       hedgeId: "WH-1",
-      action: {
-        kind: "warehouse",
-        instrument: "",
-        size: { kind: "overflow", fixed: 0 },
-        skewBp: null,
-        toEdge: false,
-        style: "immediate",
-        lps: [],
-        internalFirst: false,
-        reason: "",
-      },
+      action: defaultExitAction("warehouse"),
+      // `self` vehicle ⇒ no unit arithmetic to record (contract.ts:4669-4672)
+      vehiclePlan: null,
       lpWon: null,
       externalHedged: 0,
     });

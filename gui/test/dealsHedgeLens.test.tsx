@@ -14,6 +14,7 @@ import { DealsBlotterWorkspace } from "../src/workspaces/DealsBlotterWorkspace";
 import { createMockTransport } from "../src/data/mockSource";
 import type { CelnetTransport } from "../src/data/transport";
 import type { Deal, HedgeProvenance, ListDealsResponse } from "../src/data/contract";
+import { defaultExitAction } from "../src/lib/hedgeExit";
 
 function fiDeal(over: Partial<Deal>): Deal {
   return {
@@ -47,17 +48,9 @@ function hedge(): HedgeProvenance {
     band: "red",
     policyPath: [0],
     // An EXTERNAL hedge (submit_market_order) — the hedge desk shows external hedges by default.
-    action: {
-      kind: "submit_market_order",
-      instrument: "",
-      size: { kind: "overflow", fixed: 0 },
-      skewBp: null,
-      toEdge: false,
-      style: "immediate",
-      lps: [],
-      internalFirst: false,
-      reason: "",
-    },
+    action: defaultExitAction("submit_market_order"),
+    // `self` vehicle ⇒ no unit arithmetic to record (contract.ts:4669-4672)
+    vehiclePlan: null,
     internalCrossed: 30_000_000,
     externalHedged: 70_000_000,
     residual: 0,
