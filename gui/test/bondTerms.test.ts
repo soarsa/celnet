@@ -23,7 +23,11 @@ import {
 } from "../src/lib/bondTerms";
 
 /** A minimal fixed-coupon bond definition for the join tests. */
-function bondDef(over: Partial<InstrumentDef & { bond: BondDef }> = {}): InstrumentDef {
+/** The `family: "bond"` arm of the union — this builder only ever makes bonds, so
+ *  returning the narrowed member lets callers read `.bond` without a cast. */
+type BondInstrumentDef = Extract<InstrumentDef, { family: "bond" }>;
+
+function bondDef(over: Partial<BondInstrumentDef> = {}): BondInstrumentDef {
   const bond: BondDef = {
     issuer: "US Treasury",
     couponRate: 4.125,
@@ -49,7 +53,9 @@ function bondDef(over: Partial<InstrumentDef & { bond: BondDef }> = {}): Instrum
     family: "bond",
     bond,
     ...over,
-  } as InstrumentDef;
+    // `...over` is Partial<BondInstrumentDef>, so `family`/`bond` above survive it;
+    // the assertion only re-narrows what the spread widens.
+  } as BondInstrumentDef;
 }
 
 /** A composite line carrying only the identity a subscriber joins on. */
@@ -134,7 +140,7 @@ describe("indexBondDefs / resolveBondDef", () => {
     });
     const bondB = bondDef({
       instrumentId: "SHARED",
-      bond: { ...(bondDef().bond as BondDef), couponRate: 9.99 },
+      bond: { ...bondDef().bond, couponRate: 9.99 },
       externalIds: [],
     });
     const index = indexBondDefs([bondA, bondB]);
@@ -197,7 +203,7 @@ describe("bondTermRows", () => {
   });
 
   it("omits the issuer row when blank", () => {
-    const noIssuer = { ...(bondDef().bond as BondDef), issuer: "" };
+    const noIssuer = { ...bondDef().bond, issuer: "" };
     const rows = bondTermRows(noIssuer);
     expect(rows.some((r) => r.key === "issuer")).toBe(false);
   });

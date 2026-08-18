@@ -16,7 +16,7 @@ function note(headline: string, detail?: string): Notification {
     counterparty: "ACME",
     requestKind: "RFQ",
     headline,
-    detail,
+    ...(detail !== undefined ? { detail } : {}),
     alertWorthy: true,
   };
 }

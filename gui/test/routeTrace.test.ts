@@ -18,7 +18,6 @@ import type { RiskRoutingGraph, RoutingNode } from "../src/data/contract";
 import {
   blankFill,
   enumeratePaths,
-  enumerateRules,
   evalOp,
   traceGraph,
   validateGraph,

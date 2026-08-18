@@ -29,7 +29,6 @@ import {
 import type {
   CapabilityAction,
   CapabilityAsset,
-  CorporateAction,
 } from "../src/data/contract";
 import { MockTransport } from "../src/data/mockSource";
 

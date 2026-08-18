@@ -155,7 +155,6 @@ describe("routingErrors — the disabled/unknown-target guard", () => {
         conditions: [{ field: "ccy", op: "eq", value: { kind: "text", text: "EUR" } }],
         bookId: "ghost", // not an enabled key
         enabled: true,
-        assetClass: "fx_options", // asset-class-agnostic fixture; a book must name ONE franchise
       },
       { id: newRuleId(), conditions: [], bookId: "k1", enabled: true },
     ];
@@ -170,7 +169,6 @@ describe("routingErrors — the disabled/unknown-target guard", () => {
         conditions: [{ field: "ccy", op: "eq", value: { kind: "text", text: "EUR" } }],
         bookId: "k1",
         enabled: true,
-        assetClass: "fx_options", // asset-class-agnostic fixture; a book must name ONE franchise
       },
       { id: newRuleId(), conditions: [], bookId: "k1", enabled: true },
     ];

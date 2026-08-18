@@ -52,7 +52,7 @@ function manualNote(
     counterparty: "Meridian Capital",
     requestKind: "RFQ",
     headline: "Manual pricing needed",
-    detail,
+    ...(detail !== undefined ? { detail } : {}),
     reason,
     alertWorthy: true,
   };
