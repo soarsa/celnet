@@ -704,6 +704,42 @@ fn parse_frequency(label: Option<&str>) -> Option<PaymentFrequency> {
     }
 }
 
+/// The sentinel a simulator's `--settlement` accepts to mean "the current UTC date".
+pub const SETTLEMENT_TODAY: &str = "today";
+
+/// Resolve a simulator's `--settlement` token: the literal [`SETTLEMENT_TODAY`] (or a
+/// blank value) yields the CURRENT UTC date; anything else parses as a fixed civil date
+/// via [`parse_civil_date`].
+///
+/// # Why a sentinel rather than a pinned default
+///
+/// A hardcoded valuation date silently rots. The simulators shipped with
+/// `--settlement 2026-04-16` while the SERVER derives its `as_of` from
+/// `OffsetDateTime::now_utc()`, so the two drifted four months apart: the feed kept
+/// quoting Treasury Bills that had matured in July, the book took positions in them, and
+/// hedges were routed on securities that no longer existed. Re-pinning the constant to a
+/// newer date would only restart the same clock.
+///
+/// A fixed date is still accepted, and is still the right choice for a reproducible run —
+/// the seed replays a byte-identical feed only against a fixed valuation date. What
+/// changes is the DEFAULT: track today unless someone deliberately pins it.
+///
+/// Returns `None` when a non-sentinel token is not a valid calendar date, so a typo fails
+/// loudly at startup rather than silently valuing at the wrong date.
+#[must_use]
+pub fn resolve_settlement(s: &str) -> Option<BrokenDate> {
+    let t = s.trim();
+    if t.is_empty() || t.eq_ignore_ascii_case(SETTLEMENT_TODAY) {
+        let now = time::OffsetDateTime::now_utc().date();
+        return Some(BrokenDate::new(
+            now.year(),
+            u8::from(now.month()),
+            now.day(),
+        ));
+    }
+    parse_civil_date(t)
+}
+
 /// Parse a civil date in either ISO (`YYYY-MM-DD`, the universe file) or US
 /// (`MM/DD/YYYY`, the price file) form into a [`BrokenDate`], validated against the
 /// Gregorian calendar. Returns `None` for a blank or unparseable token.
@@ -1085,5 +1121,42 @@ mod tests {
         let keys: std::collections::HashSet<Instrument> =
             gov.iter().map(TreasuryBond::engine_instrument).collect();
         assert_eq!(keys.len(), gov.len(), "engine key collision across regions");
+    }
+
+    /// The `today` sentinel resolves to the CURRENT UTC date — the same clock the server
+    /// derives its `as_of` from, so the feed and the book agree on what is still alive.
+    ///
+    /// Regression for the four-month drift found on UAT 2026-08-17: both simulators
+    /// defaulted to a pinned `2026-04-16` while the server used `now_utc()`, so the feed
+    /// kept quoting Treasury Bills that had matured in July (`912797RF6`, matured
+    /// 2026-07-09) and hedges were routed on securities that no longer existed.
+    #[test]
+    fn the_today_sentinel_resolves_to_the_current_utc_date() {
+        let now = time::OffsetDateTime::now_utc().date();
+        for token in [SETTLEMENT_TODAY, "TODAY", "  today  ", ""] {
+            let d = resolve_settlement(token)
+                .unwrap_or_else(|| panic!("{token:?} must resolve to the current date"));
+            assert_eq!(d.year, now.year(), "token {token:?}");
+            assert_eq!(d.month, u8::from(now.month()), "token {token:?}");
+            assert_eq!(d.day, now.day(), "token {token:?}");
+        }
+    }
+
+    /// A deliberately pinned date is still honoured — a seeded replay is only
+    /// byte-reproducible against a fixed valuation date, so the escape hatch must survive.
+    /// An unparseable token still fails, so a typo cannot silently value at the wrong date.
+    #[test]
+    fn a_pinned_settlement_is_honoured_and_a_bad_one_still_fails() {
+        let d = resolve_settlement("2026-04-16").expect("a pinned ISO date resolves");
+        assert_eq!((d.year, d.month, d.day), (2026, 4, 16));
+        // US form, the price-file spelling, goes through the same parser.
+        let us = resolve_settlement("04/16/2026").expect("a pinned US date resolves");
+        assert_eq!((us.year, us.month, us.day), (2026, 4, 16));
+        for bad in ["not-a-date", "2026-02-30", "2026-13-01"] {
+            assert!(
+                resolve_settlement(bad).is_none(),
+                "{bad:?} must fail loudly rather than resolve"
+            );
+        }
     }
 }

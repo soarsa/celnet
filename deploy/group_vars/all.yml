@@ -178,7 +178,12 @@ celnet_lpsim_no_book_poll: 0             # 1 = broadcast fallback (no book polli
 celnet_lpsim_instruments: "all"          # all (book-aware default), or a CSV of ISINs/CUSIPs
 celnet_lpsim_max_instruments: 8           # cap on instruments (broadcast/local modes only; trimmed 12→8)
 celnet_lpsim_seed: 305419896              # reproducibility seed
-celnet_lpsim_settlement: "2026-04-16"    # valuation date (YYYY-MM-DD)
+# Valuation date. "today" tracks the CURRENT UTC date, matching the server's `as_of`
+# (always `now_utc`). Pinned at 2026-04-16 it drifted four months: the feed kept quoting
+# Treasury Bills that matured in July, the book took positions in them, and hedges routed
+# on securities that no longer existed. Pin a fixed YYYY-MM-DD only for a byte-reproducible
+# replay — re-pinning to a newer date just restarts the same clock.
+celnet_lpsim_settlement: "today"         # valuation date: "today" or a fixed YYYY-MM-DD
 celnet_lpsim_include_bills: 0             # 1 = also stream zero-coupon Bills
 celnet_lpsim_no_faults: 0                # 1 = disable occasional injected staleness/outlier
 # Service login for the book poll (AuthService.Login). The LP simulator authenticates
@@ -216,7 +221,11 @@ celnet_cmesim_enabled: true
 celnet_cmesim_interval: 5                 # seconds between quote rounds (matches lp-sim)
 celnet_cmesim_interval_ms: ""            # sub-second override (ms); "" ⇒ use interval seconds
 celnet_cmesim_seed: 305419896             # reproducibility seed
-celnet_cmesim_settlement: "2026-04-16"   # valuation date; ALSO the front-month roll date
+# Valuation date AND the front-month roll date — a pinned value keeps quoting a delivery
+# month that has stopped trading, because the roll is evaluated against THIS date rather
+# than the wall clock. "today" tracks the current UTC date; pin a fixed YYYY-MM-DD only for
+# a byte-reproducible replay.
+celnet_cmesim_settlement: "today"        # valuation + roll date: "today" or a fixed YYYY-MM-DD
 celnet_cmesim_order_port: "0.0.0.0:5710" # FIX order acceptor; "" ⇒ publish prices only
 
 

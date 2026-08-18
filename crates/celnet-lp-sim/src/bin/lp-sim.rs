@@ -108,9 +108,14 @@ struct Args {
     #[arg(long, default_value_t = 0x1234_5678)]
     seed: u64,
 
-    /// Settlement/valuation date (YYYY-MM-DD) used to build each bond's reference
-    /// schedule and invert its reference yield.
-    #[arg(long, default_value = "2026-04-16")]
+    /// Settlement/valuation date used to build each bond's reference schedule and invert
+    /// its reference yield: `today` (the default) tracks the current UTC date, or pin a
+    /// fixed `YYYY-MM-DD` for a byte-reproducible replay.
+    ///
+    /// The default is deliberately NOT a fixed date. A pinned one rots against the
+    /// server's `as_of` (always `now_utc`) until the feed is quoting matured paper — see
+    /// `universe::resolve_settlement`.
+    #[arg(long, default_value = celnet_lp_sim::universe::SETTLEMENT_TODAY)]
     settlement: String,
 
     /// Also include zero-coupon Bills (priced off the reference mid where the yield
@@ -535,7 +540,9 @@ fn wall_clock() -> String {
 
 /// Parse a `YYYY-MM-DD` date into a [`BrokenDate`], validated against the calendar.
 fn parse_iso_date(s: &str) -> Option<BrokenDate> {
-    celnet_lp_sim::universe::parse_civil_date(s)
+    // Resolves the `today` sentinel as well as a pinned `YYYY-MM-DD`, so the default
+    // valuation date tracks the server's `as_of` instead of rotting against it.
+    celnet_lp_sim::universe::resolve_settlement(s)
 }
 
 #[cfg(test)]

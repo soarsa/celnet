@@ -55,10 +55,15 @@ struct Args {
     #[arg(long, default_value_t = 0x1234_5678)]
     seed: u64,
 
-    /// Settlement/valuation date (YYYY-MM-DD): the instant the listed universe is
-    /// filtered and a product symbol is rolled against, so a contract that has
-    /// stopped trading is never quoted.
-    #[arg(long, default_value = "2026-04-16")]
+    /// Settlement/valuation date: the instant the listed universe is filtered and a
+    /// product symbol is rolled against, so a contract that has stopped trading is never
+    /// quoted. `today` (the default) tracks the current UTC date; pin a fixed
+    /// `YYYY-MM-DD` for a byte-reproducible replay.
+    ///
+    /// A pinned default is what let this venue keep quoting an expired delivery month —
+    /// the roll is evaluated against THIS date, not the wall clock. See
+    /// `universe::resolve_settlement`.
+    #[arg(long, default_value = celnet_lp_sim::universe::SETTLEMENT_TODAY)]
     settlement: String,
 
     /// Network mode: the gRPC endpoint of a running celnet server. When set, the
@@ -98,7 +103,7 @@ impl Args {
 fn main() -> std::process::ExitCode {
     let args = Args::parse();
 
-    let Some(settlement) = celnet_lp_sim::universe::parse_civil_date(&args.settlement) else {
+    let Some(settlement) = celnet_lp_sim::universe::resolve_settlement(&args.settlement) else {
         eprintln!(
             "[cme-sim] ERROR: --settlement must be YYYY-MM-DD, got {:?}",
             args.settlement
