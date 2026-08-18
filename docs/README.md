@@ -23,11 +23,17 @@ corpus was written during a specific wave and has not been revisited since.
 | [IMPLEMENTATION-LEDGER.md](IMPLEMENTATION-LEDGER.md) | Append-only progress log, newest first | `LIVE` |
 | [PARALLEL-SESSIONS.md](PARALLEL-SESSIONS.md) | Lane board and the tiered-gate law (§4.2) | `LIVE` |
 
-⚠ **The architecture family is triplicated and all three are stale.** `ARCHITECTURE.md`
-(as-built), [ARCHITECTURE-TARGET.md](ARCHITECTURE-TARGET.md) (intended) and
-[ARCHITECTURE-DETERMINATION.md](ARCHITECTURE-DETERMINATION.md) (how the target was chosen)
-overlap and were last revised 2026-06-27 … 2026-07-01. Consolidating them into one current
-as-built document plus an archived decision trail is an open task.
+**The architecture family is three documents, and that split is correct.**
+`ARCHITECTURE.md` is the **as-built** record, [ARCHITECTURE-TARGET.md](ARCHITECTURE-TARGET.md)
+the **intended** state, and [ARCHITECTURE-DETERMINATION.md](ARCHITECTURE-DETERMINATION.md) the
+**decision trail** that chose it. An earlier revision of this index called that triplication and
+proposed merging them — that was wrong; merging would destroy a real separation.
+
+The genuine defect was staleness, and it is fixed: `ARCHITECTURE.md`'s §2 crate tree said
+**40 crates** when there were **55** and omitted 15 of them entirely, including the whole
+fixed-income reference-data group and both venue simulators. Re-verified against `ls crates`
+on 2026-08-18 and stamped with its currency. The other two remain design-direction documents
+dated 2026-07-01 and are labelled as such.
 
 ## Analytics, pricing and risk
 
