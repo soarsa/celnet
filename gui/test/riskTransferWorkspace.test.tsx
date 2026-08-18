@@ -17,11 +17,12 @@ vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
 import { RiskTransferWorkspace } from "../src/workspaces/risktransfer/RiskTransferWorkspace";
 import { RiskTransferInboxWorkspace } from "../src/workspaces/risktransfer/RiskTransferInboxWorkspace";
 import { RiskTransferAuditWorkspace } from "../src/workspaces/risktransfer/RiskTransferAuditWorkspace";
+import type { InitiateRiskTransferInput, ListRiskTransfersFilter } from "../src/data/contract";
 
 const BOOKS: RiskBook[] = [
-  { id: "fi-rates-emea", name: "EMEA Rates", parentId: null, deskId: "emea", description: "", limits: null, enabled: true },
-  { id: "fi-emea-sub", name: "EMEA Sub", parentId: "fi-rates-emea", deskId: null, description: "", limits: null, enabled: true },
-  { id: "fi-marex", name: "Marex FI", parentId: null, deskId: "marex", description: "", limits: null, enabled: true },
+  { id: "fi-rates-emea", name: "EMEA Rates", parentId: null, deskId: "emea", description: "", limits: null, enabled: true , assetClass: "fixed_income"},
+  { id: "fi-emea-sub", name: "EMEA Sub", parentId: "fi-rates-emea", deskId: null, description: "", limits: null, enabled: true , assetClass: "fixed_income"},
+  { id: "fi-marex", name: "Marex FI", parentId: null, deskId: "marex", description: "", limits: null, enabled: true , assetClass: "fixed_income"},
 ];
 
 function riskRow(over: Partial<RiskBookRisk> = {}): RiskBookRisk {
@@ -95,7 +96,7 @@ describe("RiskTransferWorkspace (ticket)", () => {
   }
 
   it("loads portfolios, synthesises positions, infers the kind and previews + submits", async () => {
-    const initiate = vi.fn(async () => bookedTransfer());
+    const initiate = vi.fn(async (_input: InitiateRiskTransferInput) => bookedTransfer());
     state.app = makeApp(initiate);
     await act(async () => {
       render(<RiskTransferWorkspace />);
@@ -324,7 +325,7 @@ describe("RiskTransferAuditWorkspace", () => {
   }
 
   it("lists transfers and expands one to its provenance", async () => {
-    const list = vi.fn(async () => [auditTransfer()]);
+    const list = vi.fn(async (_filter: ListRiskTransfersFilter) => [auditTransfer()]);
     state.app = {
       transport: {
         listRiskBooks: vi.fn(async () => BOOKS),
@@ -345,7 +346,7 @@ describe("RiskTransferAuditWorkspace", () => {
   });
 
   it("re-queries when the state filter changes", async () => {
-    const list = vi.fn(async () => [] as RiskTransfer[]);
+    const list = vi.fn(async (_filter: ListRiskTransfersFilter) => [] as RiskTransfer[]);
     state.app = {
       transport: {
         listRiskBooks: vi.fn(async () => BOOKS),

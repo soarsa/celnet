@@ -27,6 +27,7 @@ function draftWith(overrides: Partial<WizardDraft> = {}): WizardDraft {
     parentKey: null,
     deskId: null,
     enabled: true,
+    assetClass: "fx_options", // asset-class-agnostic fixture; a book must name ONE franchise
     limits: null,
   };
   const defaultRule: RiskRule = { id: newRuleId(), conditions: [], bookId: "k1", enabled: true };
@@ -184,6 +185,7 @@ describe("portfolioErrors — step 1 gating", () => {
       parentKey: null,
       deskId: null,
       enabled: false,
+      assetClass: "fx_options", // asset-class-agnostic fixture; a book must name ONE franchise
       limits: null,
     };
     expect(portfolioErrors([disabled]).some((e) => /enable at least one/i.test(e))).toBe(true);

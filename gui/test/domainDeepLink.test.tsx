@@ -61,10 +61,10 @@ describe("domain deep-link seeds activeDomain + the shared screen's single asset
 
     // The domain tab bar reflects the URL's domain (not the fx_options default).
     expect(
-      within(domainTabs()).getByRole("tab", { name: "Fixed Income", exact: true }),
+      within(domainTabs()).getByRole("tab", { name: "Fixed Income" }),
     ).toHaveAttribute("aria-selected", "true");
     expect(
-      within(domainTabs()).getByRole("tab", { name: "FX Options", exact: true }),
+      within(domainTabs()).getByRole("tab", { name: "FX Options" }),
     ).toHaveAttribute("aria-selected", "false");
 
     // The shared Risk screen renders ONLY the FI rates panel — no cross-asset
@@ -83,7 +83,7 @@ describe("domain deep-link seeds activeDomain + the shared screen's single asset
     await renderAt("/?mock&dom=fixed_income");
 
     expect(
-      within(domainTabs()).getByRole("tab", { name: "Fixed Income", exact: true }),
+      within(domainTabs()).getByRole("tab", { name: "Fixed Income" }),
     ).toHaveAttribute("aria-selected", "true");
   });
 
@@ -91,7 +91,7 @@ describe("domain deep-link seeds activeDomain + the shared screen's single asset
     await renderAt("/?mock&view=risk");
 
     expect(
-      within(domainTabs()).getByRole("tab", { name: "FX Options", exact: true }),
+      within(domainTabs()).getByRole("tab", { name: "FX Options" }),
     ).toHaveAttribute("aria-selected", "true");
 
     // The shared Risk screen renders ONLY the FX scenario grid — no cross-asset

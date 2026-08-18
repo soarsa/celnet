@@ -83,10 +83,37 @@ function authTokenOf(raw: string): string | undefined {
 /** The most-recent `authenticate` frame a socket sent, or undefined. */
 function lastAuth(ws: FakeWebSocket): { present: boolean; token: string | undefined } {
   for (let i = ws.sent.length - 1; i >= 0; i--) {
-    const f = JSON.parse(ws.sent[i]) as { type?: string; session_token?: string };
+    const raw = ws.sent[i];
+    if (raw === undefined) continue;
+    const f = JSON.parse(raw) as { type?: string; session_token?: string };
     if (f.type === "authenticate") return { present: true, token: f.session_token };
   }
   return { present: false, token: undefined };
+}
+
+/**
+ * The Nth constructed socket, asserted present.
+ *
+ * `noUncheckedIndexedAccess` types an index access as possibly-undefined, and
+ * `expect(x).toBeDefined()` does NOT narrow the binding for the compiler. Asserting
+ * here both narrows the type and fails with a precise message naming the missing
+ * socket, instead of surfacing later as a property access on `undefined`.
+ */
+function socketAt(index: number): FakeWebSocket {
+  const ws = FakeWebSocket.instances[index];
+  if (ws === undefined) {
+    throw new Error(`expected a constructed FakeWebSocket at index ${index}`);
+  }
+  return ws;
+}
+
+/** The Nth frame a socket sent, asserted present (same narrowing rationale). */
+function sentAt(ws: FakeWebSocket, index: number): string {
+  const raw = ws.sent[index];
+  if (raw === undefined) {
+    throw new Error(`expected socket to have sent a frame at index ${index}`);
+  }
+  return raw;
 }
 
 describe("WS transport — session expiry breaks the reconnect loop", () => {
@@ -103,12 +130,11 @@ describe("WS transport — session expiry breaks the reconnect loop", () => {
 
   it("clears the dead token so the NEXT reconnect authenticates anonymously", () => {
     const transport = new WsTransport({ url: "ws://test/" });
-    const first = FakeWebSocket.instances[0];
-    expect(first).toBeDefined();
+    const first = socketAt(0);
 
     // Open + authenticate anonymously (no token yet).
     first.fireOpen();
-    expect(authTokenOf(first.sent[0])).toBeUndefined();
+    expect(authTokenOf(sentAt(first, 0))).toBeUndefined();
 
     // A login installs a bearer token — re-authenticated on the open socket.
     transport.setSessionToken("dead-token");
@@ -124,8 +150,7 @@ describe("WS transport — session expiry breaks the reconnect loop", () => {
 
     // The transport reconnects at the base backoff…
     vi.advanceTimersByTime(250);
-    const second = FakeWebSocket.instances[1];
-    expect(second).toBeDefined();
+    const second = socketAt(1);
     second.fireOpen();
 
     // …and the reconnect's `authenticate` no longer carries the dead token, so the
@@ -141,7 +166,7 @@ describe("WS transport — session expiry breaks the reconnect loop", () => {
 
   it("does NOT treat an anonymous session's rejection as an expiry", () => {
     const transport = new WsTransport({ url: "ws://test/" });
-    const ws = FakeWebSocket.instances[0];
+    const ws = socketAt(0);
     ws.fireOpen();
 
     const expired = vi.fn();

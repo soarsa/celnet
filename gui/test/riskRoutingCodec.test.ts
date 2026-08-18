@@ -298,6 +298,8 @@ describe("risk-routing codec — roster responses", () => {
         description: "",
         limits: null,
         enabled: true,
+        // carried explicitly so the round-trip actually covers the franchise field
+        assetClass: "fx_options",
       })],
     });
     expect(list).toHaveLength(1);

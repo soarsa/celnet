@@ -18,6 +18,7 @@ import { dirname, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { HEDGE_FIELD_REGISTRY, hedgeFieldUnprovidedReason } from "../src/lib/hedgeFields";
+import { at } from "./support";
 
 const RELATIVE_FIELD_RS = "crates/celnet-hedge-routing/src/field.rs";
 
@@ -73,7 +74,13 @@ function parseRustProviders(source: string): Map<string, RustProvider> {
     /HedgeField::(\w+)\s*=>\s*FieldProvider::(Computed|Unprovided)\s*\{\s*(basis|reason):\s*"((?:[^"\\]|\\[\s\S])*)"/g;
   const out = new Map<string, RustProvider>();
   for (const m of source.matchAll(arm)) {
-    const [, variant, ctor, key, literal] = m;
+    // The regex has four mandatory capture groups, but a RegExpMatchArray types every
+    // element as possibly-undefined; assert rather than destructure so a parse that
+    // silently stops matching fails here with a precise message.
+    const variant = at(m, 1);
+    const ctor = at(m, 2);
+    const key = at(m, 3);
+    const literal = at(m, 4);
     // A `Computed` arm must carry `basis` and an `Unprovided` arm `reason`; anything else
     // means the parse has latched onto something that is not a provider declaration.
     const expectedKey = ctor === "Computed" ? "basis" : "reason";
@@ -90,8 +97,8 @@ function parseRustProviders(source: string): Map<string, RustProvider> {
 function parseRustAll(source: string): string[] {
   const block = /pub const ALL:\s*\[HedgeField;\s*\d+\]\s*=\s*\[([\s\S]*?)\];/.exec(source);
   expect(block, "HedgeField::ALL should be parseable from field.rs").not.toBeNull();
-  return [...(block as RegExpExecArray)[1].matchAll(/HedgeField::(\w+)/g)].map((m) =>
-    toSnakeCase(m[1]),
+  return [...at(block as RegExpExecArray, 1).matchAll(/HedgeField::(\w+)/g)].map((m) =>
+    toSnakeCase(at(m, 1)),
   );
 }
 

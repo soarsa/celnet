@@ -1,4 +1,4 @@
-# ADR-0013 — One sell-side front-end: persona lenses over the market-making loop
+# ADR-0017 — One sell-side front-end: persona lenses over the market-making loop
 
 - **Status:** Accepted as a **design direction** (2026-07-01). Governs the GUI/Excel
   redesign (mockup corpus `docs/gui-redesign/`, 16 surfaces `00-shell` … `15-rates-ticket`).

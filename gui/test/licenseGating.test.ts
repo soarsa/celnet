@@ -148,7 +148,20 @@ describe("license gating — the top-level DOMAIN tab three-state (fe-fi-migrati
   // that derivation over the pure lib predicates so the composition is guarded.
   const domainState = (d: Domain, auth: NavAuth, licensed: LicensePredicate): RailState => {
     if (!domainAccessible(d, auth)) return "hidden";
-    if (d !== "admin" && !licensed(d)) return "gated-upsell";
+    // Mirrors Shell.tsx:229-243 EXACTLY. Admin, Analytics, Hedging and Risk are
+    // cross-asset tabs with no license concept (`licensed` only ranges over
+    // CapabilityAsset), so they never enter gated-upsell — only the trading domains
+    // do. The previous form excluded only "admin", which both mis-stated the
+    // production rule and passed a non-CapabilityAsset to `licensed`.
+    if (
+      d !== "admin" &&
+      d !== "analytics" &&
+      d !== "hedging" &&
+      d !== "risk" &&
+      !licensed(d)
+    ) {
+      return "gated-upsell";
+    }
     return "present";
   };
   const signedOut: NavAuth = { isAdmin: false, can: () => true };

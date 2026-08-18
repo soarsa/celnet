@@ -36,6 +36,8 @@ function future(
     description: "",
     currency: "USD",
     externalIds: [{ scheme: "ticker", value: id }],
+    subAssetType: "",
+    region: "",
     family: "bond_future",
     bondFuture: {
       contractCode: id,
@@ -64,6 +66,8 @@ function bond(id: string, isin: string): InstrumentDef {
     description: "",
     currency: "USD",
     externalIds: [{ scheme: "isin", value: isin }],
+    subAssetType: "",
+    region: "",
     family: "bond",
     bond: {
       issuer: "US Treasury",

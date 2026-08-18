@@ -14,6 +14,7 @@ import {
   updateInputForDeskChange,
   withUserDesks,
 } from "../src/lib/deskAssignment";
+import { at } from "./support";
 
 function makeUser(overrides: Partial<UserDesc> = {}): UserDesc {
   return {
@@ -51,7 +52,7 @@ describe("withUserDesks", () => {
     // Untouched row keeps referential identity so a memoized row never re-renders.
     expect(after[1]).toBe(before[1]);
     // Immutable — the input roster is unchanged.
-    expect(before[0].deskIds).toEqual([]);
+    expect(at(before, 0).deskIds).toEqual([]);
   });
 
   it("encodes All desks as allDesks:true with an empty set", () => {

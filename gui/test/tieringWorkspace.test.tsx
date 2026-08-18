@@ -72,6 +72,8 @@ function session(overrides: Partial<FixConnection> = {}): FixConnection {
     running: true,
     boundAddr: "127.0.0.1:9099",
     desk: "",
+    // no order route configured for this fixture (contract.ts:1852-1857)
+    orderEndpoint: "",
     ...overrides,
   };
 }

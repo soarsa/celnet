@@ -42,6 +42,8 @@ function usdDeposit(id: string, tenor: string): InstrumentDef {
     description: "",
     currency: "USD",
     externalIds: [],
+    subAssetType: "",
+    region: "",
     family: "deposit",
     deposit: {
       index: "SOFR",
@@ -61,6 +63,8 @@ function usdIrs(id: string, tenor: string): InstrumentDef {
     description: "",
     currency: "USD",
     externalIds: [],
+    subAssetType: "",
+    region: "",
     family: "vanilla_irs",
     vanillaIrs: {
       tenor,

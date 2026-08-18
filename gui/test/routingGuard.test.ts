@@ -33,6 +33,7 @@ function book(id: string, enabled: boolean): RiskBook {
     description: "",
     limits: null,
     enabled,
+    assetClass: "fx_options", // asset-class-agnostic fixture; a book must name ONE franchise
   };
 }
 

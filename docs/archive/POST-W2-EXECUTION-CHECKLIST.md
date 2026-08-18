@@ -4,7 +4,7 @@
 > batched leaf-integration lands FAST the instant session-B opens the proto window. Reserves
 > and wires the five landed leaves in ONE coordinated arc:
 > `celnet-{equity,commodity,crypto}-vanilla`, `celnet-rfq`, `celnet-linear`.
-> Pairs with [`POST-W2-INTEGRATION-MANIFEST.md`](POST-W2-INTEGRATION-MANIFEST.md) (the reservation)
+> Pairs with [`POST-W2-INTEGRATION-MANIFEST.md`](../POST-W2-INTEGRATION-MANIFEST.md) (the reservation)
 > — this file is the *execution order*.
 >
 > **House rules honored.** One unversioned contract — every item is **additive** (no

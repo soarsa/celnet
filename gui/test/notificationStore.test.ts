@@ -33,12 +33,12 @@ function note(
     notificationId: opts.id ?? "n1",
     kind,
     atNanos: opts.atNanos ?? 0n,
-    requestId: opts.requestId,
+    ...(opts.requestId !== undefined ? { requestId: opts.requestId } : {}),
     desk: "rates",
     counterparty: "ACME",
     requestKind: "RFQ",
     headline: opts.headline ?? "RFQ from ACME",
-    detail: opts.detail,
+    ...(opts.detail !== undefined ? { detail: opts.detail } : {}),
     // Default alert-worthy so the pre-existing gating tests keep exercising the
     // popup path; the quiet-path tests below pass `alertWorthy: false` explicitly.
     alertWorthy: opts.alertWorthy ?? true,

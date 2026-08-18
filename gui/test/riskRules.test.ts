@@ -18,6 +18,7 @@ import {
   type RuleCondition,
 } from "../src/lib/riskRules";
 import { blankFill, traceGraph, type SampleFill } from "../src/lib/routeTrace";
+import { at } from "./support";
 
 function cond(field: RuleCondition["field"], op: RuleCondition["op"], value: RouteValue): RuleCondition {
   return { field, op, value };
@@ -122,7 +123,7 @@ describe("detectRuleConflicts", () => {
       rule([], "DEFAULT"),
     ];
     const cs = detectRuleConflicts(rules, BOOKS);
-    const dup = cs.find((c) => c.ruleId === rules[1].id && /duplicate/i.test(c.message));
+    const dup = cs.find((c) => c.ruleId === at(rules, 1).id && /duplicate/i.test(c.message));
     expect(dup?.severity).toBe("error");
   });
 
@@ -137,7 +138,7 @@ describe("detectRuleConflicts", () => {
       rule([], "DEFAULT"),
     ];
     const cs = detectRuleConflicts(rules, BOOKS);
-    const shadow = cs.find((c) => c.ruleId === rules[1].id && /unreachable/i.test(c.message));
+    const shadow = cs.find((c) => c.ruleId === at(rules, 1).id && /unreachable/i.test(c.message));
     expect(shadow?.severity).toBe("error");
   });
 
@@ -147,7 +148,7 @@ describe("detectRuleConflicts", () => {
       rule([cond("ccy", "eq", { kind: "text", text: "EUR" })], "BOOK-A"),
     ];
     const cs = detectRuleConflicts(rules, BOOKS);
-    expect(cs.some((c) => c.ruleId === rules[1].id && c.severity === "error")).toBe(true);
+    expect(cs.some((c) => c.ruleId === at(rules, 1).id && c.severity === "error")).toBe(true);
   });
 
   it("requires exactly one default: errors when there is none", () => {

@@ -25,7 +25,17 @@ vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
 import { RiskRoutingWorkspace } from "../src/workspaces/riskrouting/RiskRoutingWorkspace";
 
 function book(id: string, name: string, deskId: string | null = null): RiskBook {
-  return { id, name, parentId: null, deskId, description: "", limits: null, enabled: true };
+  return {
+    id,
+    name,
+    parentId: null,
+    deskId,
+    description: "",
+    limits: null,
+    enabled: true,
+    // the suite's desk roster is RATES
+    assetClass: "fixed_income",
+  };
 }
 function cond(field: RuleCondition["field"], op: RuleCondition["op"], text: string): RuleCondition {
   return { field, op, value: { kind: "text", text } };

@@ -20,6 +20,7 @@ import {
   parseTagQuery,
   type FixMsgFilter,
 } from "../src/lib/fixMessageFilter";
+import { at } from "./support";
 
 /** Fixed reference "now" (ms) — the seed frames sit just before it. */
 const NOW_MS = 1_754_000_000_000;
@@ -149,7 +150,7 @@ describe("messageMatches — structured filters", () => {
     });
     const out = filterFixMessages(SAMPLE, f, NOW_MS);
     expect(out).toHaveLength(1);
-    expect(out[0].msgType).toBe("D");
+    expect(at(out, 0).msgType).toBe("D");
   });
 
   it("an empty filter shows everything with the inbound-first default", () => {

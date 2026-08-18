@@ -20,7 +20,8 @@ import { RiskWorkspace } from "../src/workspaces/RiskWorkspace";
 function renderRisk(initialLens?: "fx" | "rates"): void {
   render(
     <AppProvider transport={createMockTransport()}>
-      <RiskWorkspace initialLens={initialLens} />
+      {/* `exactOptionalPropertyTypes`: spread the prop only when defined */}
+      <RiskWorkspace {...(initialLens !== undefined ? { initialLens } : {})} />
     </AppProvider>,
   );
 }

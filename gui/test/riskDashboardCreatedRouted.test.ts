@@ -65,6 +65,7 @@ function newPortfolio(overrides: Partial<RiskBook> = {}): RiskBook {
     description: "",
     limits: null,
     enabled: true,
+    assetClass: "fixed_income",
     ...overrides,
   };
 }

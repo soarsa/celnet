@@ -175,7 +175,7 @@ describe("tiering validation (mirrors the server guardrail invariants)", () => {
   it("rejects a negative half-spread on a strategy", () => {
     const bad: TieringConfig = {
       ...defaultTieringConfig(),
-      strategies: [{ kind: "FLAT_MARKUP", halfSpread: -1, kappa: 0, sMax: 0 }],
+      strategies: [{ ...defaultTieringStrategy("FLAT_MARKUP"), halfSpread: -1 }],
     };
     expect(validateTiering(bad).strategies[0]?.halfSpread).toBeDefined();
   });
@@ -183,7 +183,7 @@ describe("tiering validation (mirrors the server guardrail invariants)", () => {
   it("rejects a negative strategy sMax on an inventory-skew strategy", () => {
     const bad: TieringConfig = {
       ...defaultTieringConfig(),
-      strategies: [{ kind: "INVENTORY_SKEW", halfSpread: 25, kappa: 0.5, sMax: -1 }],
+      strategies: [{ ...defaultTieringStrategy("INVENTORY_SKEW"), sMax: -1 }],
     };
     expect(validateTiering(bad).strategies[0]?.sMax).toBeDefined();
   });

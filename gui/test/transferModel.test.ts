@@ -34,9 +34,9 @@ const row = (over: Partial<RiskBookRisk>): RiskBookRisk => ({
 });
 
 const books: RiskBook[] = [
-  { id: "fx-emea", name: "FX EMEA", parentId: null, deskId: "emea", description: "", limits: null, enabled: true },
-  { id: "fx-emea-vanilla", name: "Vanilla", parentId: "fx-emea", deskId: null, description: "", limits: null, enabled: true },
-  { id: "fx-apac", name: "FX APAC", parentId: null, deskId: "apac", description: "", limits: null, enabled: true },
+  { id: "fx-emea", name: "FX EMEA", parentId: null, deskId: "emea", description: "", limits: null, enabled: true , assetClass: "fx_options"},
+  { id: "fx-emea-vanilla", name: "Vanilla", parentId: "fx-emea", deskId: null, description: "", limits: null, enabled: true , assetClass: "fx_options"},
+  { id: "fx-apac", name: "FX APAC", parentId: null, deskId: "apac", description: "", limits: null, enabled: true , assetClass: "fx_options"},
 ];
 
 describe("synthesizePositions", () => {
@@ -74,7 +74,7 @@ describe("effectiveDeskId", () => {
   });
   it("returns empty when no ancestor carries a desk", () => {
     const orphan: RiskBook[] = [
-      { id: "x", name: "X", parentId: null, deskId: null, description: "", limits: null, enabled: true },
+      { id: "x", name: "X", parentId: null, deskId: null, description: "", limits: null, enabled: true , assetClass: "fx_options"},
     ];
     expect(effectiveDeskId("x", orphan)).toBe("");
   });

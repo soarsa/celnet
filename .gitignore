@@ -92,3 +92,18 @@ identity.json.tmp
 # Office (Excel/Word) temp lock files
 ~$*
 .e2e-shots/
+
+# ── Runtime state and build output that must never be committed ──────────────
+# (added 2026-08-17 estate cleanup; each of these had a tracked instance on main)
+#
+# Server runtime config, resolved from CWD. `CurveDefinitions::load` returns the
+# built-in default when absent and `save` recreates it, so this is per-deployment
+# state, not a fixture. The bench copy under crates/celnet-bench/ IS a fixture.
+/curve-definitions.json
+# Structured operational logs (executions/orders/pricing/security) — these carry
+# counterparty names, deal ids, notionals and entitlement decisions.
+/logs/
+# Playwright/e2e output written during a run; tracking it dirties the tree and
+# invalidates the gate-runner ledger (which keys on HEAD + a dirty-tree hash).
+gui/e2e/.artifacts/
+gui/.wizard-verify/

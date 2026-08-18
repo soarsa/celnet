@@ -18,6 +18,7 @@ import {
   defaultTieringConfig,
   outboundTwoWayPreview,
   TIERING_PREVIEW_RAW,
+  defaultTieringStrategy,
 } from "../src/lib/tiering";
 import type { TieringConfig } from "../src/data/contract";
 
@@ -102,7 +103,7 @@ describe("outbound two-way preview (the worked-example oracle)", () => {
     const config: TieringConfig = {
       unit: "PRICE_POINTS",
       strategies: [
-        { ...defaultTieringConfig().strategies[0], kind: "FLAT_MARKUP", halfSpread: 0.25 },
+        { ...defaultTieringStrategy("FLAT_MARKUP"), halfSpread: 0.25 },
         {
           kind: "INVENTORY_SKEW",
           halfSpread: 0,

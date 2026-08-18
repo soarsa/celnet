@@ -80,6 +80,8 @@ function fiQuote(counterparty: string): DeskRequest {
     side: "BUY",
     notional: 1e7,
     receivedAtNanos: 1_700_000_000_000_000_000n,
+    // a 30s quote window after receipt
+    expiresAtNanos: 1_700_000_030_000_000_000n,
     state: "QUOTED",
     quote: { price: 0.0405, notional: 1e7, validForMs: 30_000, trader: "Sam" },
   };
@@ -277,7 +279,8 @@ describe("Quotes row → Create acceptance rule", () => {
 
 /** Render the Acceptance-host instance (the `acceptance` alias) + the seed trigger. */
 async function renderAcceptanceHost(can?: CanFn): Promise<ReturnType<typeof vi.fn>> {
-  const built = makeApp({ can });
+  // `exactOptionalPropertyTypes`: pass the key only when defined, never as undefined
+  const built = makeApp(can !== undefined ? { can } : {});
   state.app = built.app;
   await act(async () => {
     render(

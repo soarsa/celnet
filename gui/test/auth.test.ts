@@ -324,7 +324,14 @@ describe("MockTransport auth (offline parity)", () => {
     await expect(t.deleteUser(admin!.id)).rejects.toThrow(/last administrator/);
     // Demoting the only admin to trader is also blocked.
     await expect(
-      t.updateUser(admin!.id, { displayName: "Administrator", role: "TRADER", disabled: false }),
+      t.updateUser(admin!.id, {
+        displayName: "Administrator",
+        role: "TRADER",
+        // the update changes ONLY the role — carry the admin's existing membership
+        deskIds: [...admin!.deskIds],
+        allDesks: admin!.allDesks,
+        disabled: false,
+      }),
     ).rejects.toThrow(/last administrator/);
     // With a second admin present, the first can be removed.
     await t.createUser({

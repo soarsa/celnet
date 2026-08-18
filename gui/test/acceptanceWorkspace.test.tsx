@@ -20,6 +20,7 @@ const state: { app: unknown } = { app: null };
 vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
 
 import { AcceptanceWorkspace } from "../src/workspaces/acceptance/AcceptanceWorkspace";
+import { at } from "./support";
 
 function policyGraph(): AcceptanceGraph {
   const rules: AcceptanceRule[] = [
@@ -104,7 +105,7 @@ describe("AcceptanceWorkspace — rules", () => {
     fireEvent.click(save);
 
     await waitFor(() => expect(updateAcceptanceGraph).toHaveBeenCalledTimes(1));
-    const committed = updateAcceptanceGraph.mock.calls[0][0] as AcceptanceGraph;
+    const committed = at(at(updateAcceptanceGraph.mock.calls, 0), 0) as AcceptanceGraph;
     // With the specific rule disabled, the compiled graph is the single accept default.
     const back = decompileAcceptanceGraphToRules(committed);
     expect(back).toHaveLength(1);

@@ -23,6 +23,7 @@ const state: { app: unknown } = { app: null };
 vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
 
 import { HedgingWorkspace } from "../src/workspaces/hedging/HedgingWorkspace";
+import { at } from "./support";
 
 function policyGraph(): HedgeGraph {
   const rules: HedgeRule[] = [
@@ -61,6 +62,11 @@ const config: HedgeConfig = {
   lpPanels: [
     { scopeKind: "book", scopeId: "fi-rates-emea", include: ["LP-1", "LP-2", "LP-3"], exclude: ["LP-2"] },
   ],
+  // no per-scope bindings: every scope takes its documented default —
+  // exit mode `auto` (contract.ts:4848-4850), model CUSTOM (:4853-4856).
+  hedgingModels: [],
+  exitModes: [],
+  vehicles: [],
   compositeSpreadBp: 0.5,
 };
 
@@ -68,6 +74,10 @@ const advisoryIntent: HedgeIntent = {
   book: "fi-rates-emea",
   instrument: "US10Y",
   action: { ...defaultExitAction("submit_market_order") },
+  // `self` vehicle ⇒ no unit arithmetic to record (contract.ts:4669-4672)
+  vehiclePlan: null,
+  // this fixture is `advisory: true` — nothing traded, a suggestion stands (:4725-4728)
+  exitMode: "suggest",
   band: "breach",
   netRisk: 300_000,
   threshold: 250_000,
@@ -84,6 +94,8 @@ const advisoryIntent: HedgeIntent = {
 };
 
 const provenanceRow: HedgeProvenance = {
+  // `self` vehicle ⇒ no unit arithmetic to record (contract.ts:4669-4672)
+  vehiclePlan: null,
   hedgeId: "H-0001",
   book: "fi-rates-emea",
   instrument: "US10Y",
@@ -255,7 +267,7 @@ describe("HedgingWorkspace — LP panels", () => {
     expect(await screen.findByTestId("lp-panel-row-book-fi-marex")).toBeInTheDocument();
     // The committed config carries the new panel bound to lpPanels.
     expect(app.transport.setHedgeConfig).toHaveBeenCalledTimes(1);
-    const committed = app.transport.setHedgeConfig.mock.calls[0][0] as HedgeConfig;
+    const committed = at(at(app.transport.setHedgeConfig.mock.calls, 0), 0) as HedgeConfig;
     const added = committed.lpPanels.find((p) => p.scopeId === "fi-marex");
     expect(added).toEqual({ scopeKind: "book", scopeId: "fi-marex", include: ["LP-1", "LP-2", "LP-3"], exclude: ["LP-2"] });
   });

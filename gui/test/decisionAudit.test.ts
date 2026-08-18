@@ -23,6 +23,7 @@ import {
   utilizationSeries,
   windowCaveat,
 } from "../src/workspaces/audit/decisionAudit";
+import { defaultExitAction } from "../src/lib/hedgeExit";
 
 function row(over: Partial<DecisionRecord> = {}): DecisionRecord {
   return {
@@ -106,7 +107,7 @@ describe("walked path resolution", () => {
           onFalse: 2,
         },
       },
-      { kind: "action", id: 1, action: { kind: "warehouse" } },
+      { kind: "action", id: 1, action: defaultExitAction("warehouse") },
     ],
   };
 
@@ -134,7 +135,7 @@ describe("walked path resolution", () => {
   it("uses the acceptance vocabulary for an acceptance row", () => {
     const graph: AcceptanceGraph = {
       entry: 0,
-      nodes: [{ kind: "decision", id: 0, action: { kind: "accept" } }],
+      nodes: [{ kind: "decision", id: 0, action: { kind: "accept", reason: "" } }],
     };
     expect(resolveWalkedPath([0], graph, "acceptance")[0]?.label).toContain("Accept");
   });

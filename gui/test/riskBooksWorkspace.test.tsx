@@ -22,6 +22,7 @@ function book(overrides: Partial<RiskBook> = {}): RiskBook {
     description: "",
     limits: null,
     enabled: true,
+    assetClass: "fx_options",
     ...overrides,
   };
 }

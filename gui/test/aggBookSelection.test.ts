@@ -17,6 +17,7 @@ import {
   securityOptions,
   selectedIdentifierSet,
 } from "../src/lib/aggBookSelection";
+import { at } from "./support";
 
 /** A bond instrument definition fixture keyed by its CUSIP, carrying ISIN+CUSIP. */
 function bondDef(
@@ -35,6 +36,8 @@ function bondDef(
       { scheme: "isin", value: isin },
       { scheme: "cusip", value: cusip },
     ],
+    subAssetType: "",
+    region: "",
     family: "bond",
     bond: {
       issuer,
@@ -56,6 +59,8 @@ const DEPOSIT_DEF: InstrumentDef = {
   description: "",
   currency: "USD",
   externalIds: [],
+  subAssetType: "",
+  region: "",
   family: "deposit",
   deposit: {
     index: "SOFR",
@@ -122,7 +127,7 @@ describe("groupSecurityOptions + filterSecurityGroups", () => {
     const groups = groupSecurityOptions(securityOptions(DEFS));
     const hit = filterSecurityGroups(groups, "gilt");
     expect(hit).toHaveLength(1);
-    expect(hit[0].group).toBe("UK DMO");
+    expect(at(hit, 0).group).toBe("UK DMO");
     // An empty query returns every group unchanged.
     expect(filterSecurityGroups(groups, "  ")).toHaveLength(2);
     // A no-match query yields no groups.

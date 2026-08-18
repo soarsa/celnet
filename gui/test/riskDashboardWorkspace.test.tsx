@@ -33,7 +33,17 @@ function riskRow(overrides: Partial<RiskBookRisk> = {}): RiskBookRisk {
 }
 
 function bookOf(id: string, name: string, deskId: string | null = null): RiskBook {
-  return { id, name, parentId: null, deskId, description: "", limits: null, enabled: true };
+  return {
+    id,
+    name,
+    parentId: null,
+    deskId,
+    description: "",
+    limits: null,
+    enabled: true,
+    // asset-class-agnostic fixture; a book must name ONE franchise
+    assetClass: "fx_options",
+  };
 }
 
 function makeApp(opts: {

@@ -529,3 +529,134 @@ jobs:
           timeout 60 ./target/debug/examples/quote_and_trade
           timeout 60 ./target/debug/examples/stream_blotter
           timeout 60 ./target/debug/examples/price_exotic
+
+  # ---------------------------------------------------------------------------
+  # Client gate — gui/ + excel/ typecheck, unit tests and PRODUCTION builds.
+  #
+  # Why this exists: until 2026-08-17 this workflow had NO node job at all, so
+  # ~139k lines of client source (gui/src 119k + excel/src 21k) were gated only by
+  # the local `just t2` recipe. That is what let a hardcoded market snapshot, a
+  # seven-week-stale SOFR curve and 14 undefined design tokens accumulate on main
+  # unnoticed. These two jobs mirror the node half of `just t2` (justfile §t2).
+  #
+  # Split in two so the cheap half fails fast: `clients` needs no Rust toolchain,
+  # while `clients-e2e` must compile the server because BOTH client e2e suites
+  # boot a real `demo_edge` (gui/e2e/demoEdge.ts, excel/e2e/globalSetup.ts).
+  # ---------------------------------------------------------------------------
+  clients:
+    name: client gate (typecheck + unit + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            gui/package-lock.json
+            excel/package-lock.json
+
+      - name: Install deps (lockfile-exact)
+        run: |
+          npm --prefix gui ci
+          npm --prefix excel ci
+
+      # Typecheck app, test and e2e trees separately: they are three tsconfig
+      # projects and `tsc -b` at the root covers only the app + node ones.
+      #
+      # `typecheck:test` was RED with 100 errors when this gate was first added, and
+      # was held by a ratchet while the debt was paid down. It reached ZERO on
+      # 2026-08-18, so the ratchet is gone and this is a plain blocking check again.
+      - name: gui — typecheck (app / test / e2e)
+        run: |
+          npm --prefix gui run typecheck
+          npm --prefix gui run typecheck:test
+          npm --prefix gui run typecheck:e2e
+
+      - name: excel — typecheck (app / e2e)
+        run: |
+          npm --prefix excel run typecheck
+          npm --prefix excel run typecheck:e2e
+
+      - name: gui — unit tests (vitest)
+        run: npm --prefix gui run test
+
+      - name: excel — unit tests (vitest)
+        run: npm --prefix excel run test
+
+      # Production builds, not dev servers — the e2e suites serve the built
+      # bundle, and a build-only failure (a bad import, a broken asset) is
+      # invisible to typecheck and vitest.
+      - name: gui — production build
+        run: npm --prefix gui run build
+
+      - name: excel — production build
+        run: npm --prefix excel run build
+
+  clients-e2e:
+    name: client e2e vs a REAL celnet-server (linux)
+    runs-on: ubuntu-latest
+    # Only worth the Rust compile once the cheap gate is green.
+    needs: clients
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: clients-e2e
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            gui/package-lock.json
+            excel/package-lock.json
+
+      - name: Install deps (lockfile-exact)
+        run: |
+          npm --prefix gui ci
+          npm --prefix excel ci
+
+      # Both suites spawn `cargo run -p celnet-server --example demo_edge`
+      # themselves. Build it first so the spawn is a warm start and the suites'
+      # bounded readiness timeouts are not racing a cold compile.
+      - name: Build demo_edge
+        run: cargo build -p celnet-server --example demo_edge
+
+      # Use the package's own script so the browser revision matches the pinned
+      # @playwright/test (justfile t2 does the same via `e2e:install`). --with-deps
+      # pulls the Linux shared libs headless chromium needs on a bare runner.
+      - name: Install Playwright chromium
+        run: npm --prefix gui run e2e:install -- --with-deps
+
+      # ONLY the `chromium` project. That is the one that boots the real server
+      # (playwright.config.ts sets testIgnore: FIDELITY_SPECS on it). The
+      # `fidelity` project is deliberately excluded here: it runs mock-only
+      # against `?mock`, and its screenshot baselines are all `*-darwin.png`, so
+      # it cannot pass on Linux. Fidelity stays a macOS/local gate.
+      # `npm --prefix gui run e2e` sets cwd to gui/ for the script, so playwright
+      # finds its own config; `--` forwards the project selector. Same invocation
+      # shape as justfile t2, plus the project filter.
+      - name: gui — e2e (real server, chromium project only)
+        run: npm --prefix gui run e2e -- --project=chromium
+
+      - name: excel — e2e (real server, corpus conformance)
+        run: npm --prefix excel run test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: gui/playwright-report/
+          retention-days: 7

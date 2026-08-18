@@ -19,7 +19,17 @@ vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
 import { DefaultRoutePrompt } from "../src/components/DefaultRoutePrompt";
 
 function book(id: string, enabled: boolean): RiskBook {
-  return { id, name: id.toUpperCase(), parentId: null, deskId: null, description: "", limits: null, enabled };
+  return {
+    id,
+    name: id.toUpperCase(),
+    parentId: null,
+    deskId: null,
+    description: "",
+    limits: null,
+    enabled,
+    // asset-class-agnostic fixture; a book must name ONE franchise
+    assetClass: "fx_options",
+  };
 }
 function defaultRule(bookId: string): RiskRule {
   return { id: newRuleId(), conditions: [], bookId, enabled: true };

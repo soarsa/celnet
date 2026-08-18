@@ -658,7 +658,8 @@ describe("navigation gating — workspaceAccessible (slice 5c / #6 per-workspace
   }): NavAuth {
     return {
       isAdmin: opts.isAdmin,
-      signedIn: opts.signedIn,
+      // `exactOptionalPropertyTypes`: pass the key only when defined, never as undefined
+      ...(opts.signedIn !== undefined ? { signedIn: opts.signedIn } : {}),
       can: (action, asset) => opts.allow?.has(`${action}·${asset}`) ?? false,
     };
   }

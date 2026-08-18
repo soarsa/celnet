@@ -45,6 +45,8 @@ function config(overrides: Partial<HedgeConfig> = {}): HedgeConfig {
     compositeSpreadBp: 0.5,
     vehicles: [vehicle],
     exitModes: [{ scopeKind: "book", scopeId: "fi-credit-emea", mode: "suggest" }],
+    // no per-scope model bindings: every scope stays CUSTOM (contract.ts:4853-4856)
+    hedgingModels: [],
     ...overrides,
   };
 }
