@@ -949,19 +949,20 @@ seam as a native arm** — the dispatch→`ModelRegistry` edge the deliverable t
   plugin route's input clone (decoding the underlying) happens only on the opt-in, model-registered
   path, never on the native FX hot path.
 
-### `celnet-xva` and `celnet-replog` — DEFERRED (2026-06-30), no silent dormancy
+### `celnet-xva` and `celnet-replog` — **ACTIVATED** (verified 2026-08-17)
 
-Neither has a clean RPC seam to activate without contract work **outside** item D's disjoint scope
-(`celnet-proto` is owned by other lanes), so per the plan's honest-deferral allowance (and CLAUDE.md
-§2 forbidding mocks/`todo!()`) they are recorded deferred here rather than stubbed:
+Both were deferred on 2026-06-30 for want of a clean RPC seam. **Both have since landed** — this
+section is retained as the activation record rather than deleted, because the *activation plans*
+below are what was actually built. Verified against `origin/main` on 2026-08-17:
 
 - **`celnet-xva`** (`compute_xva(&XvaInputs) -> XvaResult` — CVA/DVA/FVA over a survival-curve grid,
   `cva.rs`). Activation requires a new `XvaService` proto (request/response messages for the
   hazard/LGD/EPE-ENE/funding inputs), a `handle_unary` `"xva"` arm + WS-mirror codec, and the
   `celnet-xva` server dep. It is a **portfolio-level post-trade analytic over an exposure profile**,
   not a per-instrument price arm, so it does not belong on the `ProductEngine` dispatch seam.
-  *Activation plan:* open the proto window with the XVA-service lane, add the message arms +
-  service, wire the server edge over the existing unary/WS codec, and gate against the crate's
+  **DONE:** `rpc PriceXva` on `PricingService` (`celnet.proto:3110`), the server edge
+  (`celnet-server/src/xva_pricing.rs`), the `"price_xva"` WS arm (`ws/mod.rs:883`) and the
+  `celnet-xva` server dep (`Cargo.toml:57`) are all present, gated against the crate's
   closed-form CVA/DVA oracle rows.
 - **`celnet-replog`** (`RaftNode` — a deterministic replicated log over `std::net`, `election.rs`).
   Activation is a **resilience/HA cross-cut**, not a pricing or wire-contract change: it backs the
@@ -972,7 +973,6 @@ Neither has a clean RPC seam to activate without contract work **outside** item 
   `RatesPositionStore` / book commits through `RaftNode::propose`, and gate with the crate's
   partition/election proptests under a multi-node harness.
 
-||||||| 7878048
 ## WS codec from proto descriptor (item G) — `ws-codec-from-proto`
 
 **Goal (ADR-0009).** Drive the WebSocket JSON codec (`celnet-server::ws`) from the proto
@@ -999,8 +999,17 @@ descriptor rather than hand-maintaining it, so it can no longer silently drift f
   `decode_stream_control` arm is forced to keep up (a proto arm added without its decoder arm fails
   the gate).
 
-**Deferred (honest — NOT stubbed; CLAUDE.md §2).** The **unary encode/decode bodies** and the
-**unary verb-naming** are NOT yet generated. Reason: the WS JSON codec is a hand-curated *client*
+**Status 2026-08-17 — SUBSTANTIALLY LANDED, not deferred.** The unary swap is complete for
+**110 of 112 dispatch arms** (measured: 220 `generated_codec::` call sites against 14
+`codec::` in `handle_unary`). Only `list_hedge_suggestions` and `execute_hedge_suggestion`
+remain hand-coded, plus the framing helpers `codec::tagged` / `codec::error_frame` and the
+streaming frames. Two residuals remain open: `generated_codec.rs` is **hand-maintained
+despite its name** (there is no `build.rs` in `celnet-server`; only
+`celnet-proto/build.rs` generates anything), and `codec.rs`'s `diff_support` oracle module
+is `pub` rather than feature-gated, so it ships in the production binary.
+
+The original deferral rationale is retained below because it still explains **why a naive
+descriptor projection cannot be used**, and therefore why the curated override table exists: the WS JSON codec is a hand-curated *client*
 contract that intentionally diverges from a naive descriptor projection in ways the descriptor alone
 does not encode, so a mechanical regeneration would change bytes on the wire (a regression), not
 merely the source of the codec:

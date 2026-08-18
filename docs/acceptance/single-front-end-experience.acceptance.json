@@ -1,7 +1,7 @@
 {
   "deliverable": "single-front-end-experience",
   "title": "One sell-side front-end — persona lenses over the market-making loop (GUI/Excel redesign)",
-  "decision": "ADR-0013-single-front-end-market-making-loop",
+  "decision": "ADR-0017-single-front-end-market-making-loop",
   "description": "The Celnet GUI + Excel redesign (docs/gui-redesign/, 16 mockup surfaces 00-shell … 15-rates-ticket) is one sell-side pricing/distribution/administration front-end built as persona lenses over a single market-making loop (feeds → pricing/model → contribution[LP-make] ⇄ RFQ/LP-take + sales-trader → books/positions → risk/XVA → ops; risk → skew). Every surface is a projection of the one canonical contract, per-asset-class-licensed off the engine entitlement kernel, with FI/rates a first-class peer, each cross-capability link tagged LIVE or TARGET honest to the code. This is the frozen-contract acceptance for the deliverable 'single-front-end-experience'.",
   "assertions": [
     {

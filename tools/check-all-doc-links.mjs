@@ -29,7 +29,12 @@ async function collectSources() {
 }
 
 function slugify(h) {
-  return h.trim().toLowerCase().replace(/[`*_~]/g, '').replace(/[^\w \-]/g, '').replace(/ /g, '-');
+  // NOTE: `_` is deliberately NOT stripped. GitHub's heading-slug algorithm keeps
+  // underscores (they are word characters), so a heading like
+  // "Scaled Smoothed Spread (SCALE_SMOOTH)" slugs to
+  // "scaled-smoothed-spread-scale_smooth". Stripping it as if it were emphasis
+  // produced false "no anchor" failures against links that were in fact correct.
+  return h.trim().toLowerCase().replace(/[`*~]/g, '').replace(/[^\w \-]/g, '').replace(/ /g, '-');
 }
 
 function extractAnchors(filePath, text) {

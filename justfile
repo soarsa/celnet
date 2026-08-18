@@ -454,7 +454,7 @@ check-docs:
     #!/usr/bin/env bash
     set -euo pipefail
     source "$HOME/.cargo/env"
-    node tools/check-doc-links.mjs
+    node tools/check-all-doc-links.mjs
 
 # Verify docs/celnet-capabilities.html has NO horizontal overflow, no element wider
 # than the viewport, and a vertically-reachable footer across a viewport sweep
