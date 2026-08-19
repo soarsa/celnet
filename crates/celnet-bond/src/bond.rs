@@ -41,6 +41,13 @@ pub enum BondError {
     YieldOutOfRange,
     /// The yield solve did not converge within the iteration cap.
     YieldDidNotConverge,
+    /// A z-spread solve was asked for a non-positive or non-finite target price.
+    NonPositiveSpreadPrice,
+    /// The target price lies outside the solvable z-spread range (no bracketing spread
+    /// exists) — typically a price above the bond's undiscounted cashflow sum.
+    SpreadOutOfRange,
+    /// The z-spread solve did not converge within the iteration cap.
+    SpreadDidNotConverge,
 }
 
 impl core::fmt::Display for BondError {
@@ -58,6 +65,15 @@ impl core::fmt::Display for BondError {
             }
             Self::YieldDidNotConverge => {
                 "the yield solve did not converge within the iteration cap"
+            }
+            Self::NonPositiveSpreadPrice => {
+                "a z-spread solve requires a strictly positive target price"
+            }
+            Self::SpreadOutOfRange => {
+                "no z-spread in the solvable range reprices the bond to that price"
+            }
+            Self::SpreadDidNotConverge => {
+                "the z-spread solve did not converge within the iteration cap"
             }
         };
         f.write_str(msg)
