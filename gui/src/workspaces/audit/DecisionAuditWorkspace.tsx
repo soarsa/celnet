@@ -36,7 +36,7 @@ import type {
   HedgeGraph,
   RuleAdvice,
 } from "../../data/contract";
-import { useApp } from "../../app/AppContext";
+import { useApp, type WorkspaceId } from "../../app/AppContext";
 import {
   ENGINE_LABEL,
   OUTCOME_LABEL,
@@ -67,7 +67,7 @@ const COLUMNS: readonly { key: AuditSortKey; label: string; numeric?: boolean }[
 ];
 
 /** The rule editor an advice card deep-links to. */
-const EDITOR_ROUTE: Record<string, string> = {
+const EDITOR_ROUTE: Record<string, WorkspaceId> = {
   hedging: "hedging",
   hedge_config: "hedging",
   hedge_vehicles: "hedging",
@@ -76,7 +76,7 @@ const EDITOR_ROUTE: Record<string, string> = {
 };
 
 export function DecisionAuditWorkspace(): React.ReactElement {
-  const { transport } = useApp();
+  const { transport, setWorkspace } = useApp();
 
   const [engine, setEngine] = useState<DecisionEngine | undefined>();
   const [outcome, setOutcome] = useState<DecisionOutcome | undefined>();
@@ -462,9 +462,23 @@ export function DecisionAuditWorkspace(): React.ReactElement {
                   >
                     Show the {a.evidenceSeqs.length} cited rows
                   </button>
-                  <a className={styles.editorLink} href={`#/${EDITOR_ROUTE[a.editor] ?? "hedging"}`}>
+                  {/*
+                   * Navigate through the app's OWN workspace switch. This was an
+                   * `<a href="#/hedging">`, but nothing in the app reads the URL
+                   * fragment — the only `window.location.hash` reference merely
+                   * PRESERVES it while rewriting query params — so the link set a
+                   * fragment nobody listens to and the button appeared dead. Every
+                   * target in EDITOR_ROUTE is a real WorkspaceId, so the route map
+                   * was right; only the mechanism was wrong.
+                   */}
+                  <button
+                    type="button"
+                    className={styles.editorLink}
+                    onClick={() => setWorkspace(EDITOR_ROUTE[a.editor] ?? "hedging")}
+                    data-testid={`advice-editor-${a.kind}`}
+                  >
                     Open the rule editor
-                  </a>
+                  </button>
                 </div>
               </li>
             ))}
