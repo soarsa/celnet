@@ -90,7 +90,38 @@ function hedgeSearchText(p: HedgeProvenance): string {
   ].join(" ");
 }
 
-export function HedgeDealsView(): React.ReactElement {
+/**
+ * Which leg of the flow a row contributed to — the three totals the Hedge flow band
+ * shows, used as a drill-down filter. `null` (the default) means no leg is selected,
+ * which leaves the blotter's own hedging-only desk filter in charge.
+ */
+export type HedgeLeg = "crossed" | "hedged" | "warehoused";
+
+/**
+ * Does this record contribute to `leg`? The Hedge flow tiles are sums of exactly these
+ * fields, so this predicate is what keeps a total and the rows behind it in agreement.
+ * Exported so that correspondence is testable rather than assumed.
+ */
+export function contributesTo(p: HedgeProvenance, leg: HedgeLeg): boolean {
+  switch (leg) {
+    case "crossed":
+      return p.internalCrossed > 0;
+    case "hedged":
+      return p.externalHedged > 0;
+    case "warehoused":
+      return p.residual > 0;
+  }
+}
+
+export function HedgeDealsView({
+  legFilter = null,
+}: {
+  /**
+   * Show only the rows behind one Hedge flow total. Optional, so the standalone
+   * mounts (Risk dashboard, Deals blotter) are unaffected.
+   */
+  legFilter?: HedgeLeg | null;
+} = {}): React.ReactElement {
   const app = useApp();
   const canView = app.auth.can("hedge", "fixed_income");
 
@@ -144,10 +175,15 @@ export function HedgeDealsView(): React.ReactElement {
   // Newest first, mirroring the client-deals blotter; then apply the hedging-only
   // desk filter (external-only unless "Show internalised" is on) BEFORE search.
   const sorted = useMemo(() => [...rows].sort((a, b) => b.firedAt - a.firedAt), [rows]);
-  const visible = useMemo(
-    () => (showInternalised ? sorted : sorted.filter(isExternalHedge)),
-    [sorted, showInternalised],
-  );
+  // A selected Hedge flow total REPLACES the desk filter rather than stacking with it.
+  // The tiles are sums over every live record, so filtering the external-only view by
+  // `crossed` would show an empty table under a non-zero total — the rows behind an
+  // internal cross are internalised by definition. Selecting a leg means "show me the
+  // rows behind THIS number", so it must be able to reach all of them.
+  const visible = useMemo(() => {
+    if (legFilter !== null) return sorted.filter((p) => contributesTo(p, legFilter));
+    return showInternalised ? sorted : sorted.filter(isExternalHedge);
+  }, [sorted, showInternalised, legFilter]);
   const { query, setQuery, filtered } = useTableFilter(
     visible,
     hedgeSearchText,

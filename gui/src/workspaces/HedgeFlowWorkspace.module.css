@@ -139,6 +139,11 @@
   gap: clamp(0.5rem, 2vw, 1rem);
 }
 
+/*
+ * A total is a DRILL-DOWN into the ledger below, so it is a real <button>: keyboard
+ * reachable, and it carries `aria-pressed` for the selected state. The reset keeps it
+ * looking exactly like the tile it replaced.
+ */
 .leg {
   background: var(--bg-inset, #14161d);
   border: 1px solid var(--border-subtle, rgba(255,255,255,0.09));
@@ -147,6 +152,63 @@
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast, 150ms) ease,
+    background var(--duration-fast, 150ms) ease;
+}
+
+.leg:hover {
+  border-color: var(--border-strong, rgba(255, 255, 255, 0.22));
+}
+
+.leg:focus-visible {
+  outline: 2px solid var(--color-accent, #7c8cff);
+  outline-offset: 2px;
+}
+
+/* The selected total — the ledger below is showing exactly these rows. */
+.legActive {
+  border-color: var(--color-accent, #7c8cff);
+  background: var(--bg-raised, #1b1e27);
+}
+
+.ledger {
+  margin-top: clamp(1rem, 3vw, 1.75rem);
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.09));
+  padding-top: clamp(0.75rem, 2vw, 1.1rem);
+}
+
+.ledgerHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.ledgerTitle {
+  font-size: clamp(0.85rem, 2.2vw, 1rem);
+  margin: 0;
+}
+
+.clearLeg {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--color-accent, #7c8cff);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.clearLeg:focus-visible {
+  outline: 2px solid var(--color-accent, #7c8cff);
+  outline-offset: 2px;
 }
 
 .legLabel {

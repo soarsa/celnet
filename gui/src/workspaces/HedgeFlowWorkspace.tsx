@@ -26,6 +26,7 @@ import type { HedgeProvenance, RiskBookRisk } from "../data/contract";
 import type { HedgeBucket } from "../lib/hedgeBuckets";
 import { bucketsFromRiskBooks, flowShares, flowTotals } from "../lib/hedgeBuckets";
 import { formatDv01 } from "../lib/hedgeVehicle";
+import { HedgeDealsView, type HedgeLeg } from "./HedgeDealsView";
 import styles from "./HedgeFlowWorkspace.module.css";
 
 /**
@@ -123,6 +124,8 @@ export function HedgeFlowWorkspace(): React.ReactElement {
   const app = useApp();
   const [books, setBooks] = useState<RiskBookRisk[]>([]);
   const [provenance, setProvenance] = useState<HedgeProvenance[]>([]);
+  // Which total the ledger below is drilled into; `null` shows the ledger's own view.
+  const [selectedLeg, setSelectedLeg] = useState<HedgeLeg | null>(null);
 
   /*
    * The board polls CURRENT risk and treats the intent stream as a refresh signal.
@@ -163,7 +166,17 @@ export function HedgeFlowWorkspace(): React.ReactElement {
   const shares = useMemo(() => flowShares(flow), [flow]);
   const needing = buckets.filter((b) => b.needsHedge).length;
 
-  const legs = [
+  // `key` is typed so a leg id and the blotter's drill-down filter cannot drift apart:
+  // adding a fourth total without teaching HedgeDealsView about it fails the build.
+  const legs: {
+    key: HedgeLeg;
+    label: string;
+    value: number;
+    share: number;
+    // CSS-module lookups are `string | undefined` under the project's typing.
+    cls: string | undefined;
+    note: string;
+  }[] = [
     {
       key: "crossed",
       label: "Crossed internally",
@@ -229,26 +242,64 @@ export function HedgeFlowWorkspace(): React.ReactElement {
         </ul>
       )}
 
+      {/*
+       * The three totals ARE the blotter's INTERNAL / EXTERNAL / RESIDUAL columns
+       * summed, so they are drill-downs rather than readouts: selecting one filters
+       * the ledger below to the rows that produced that number. Splitting a total
+       * from its evidence across two screens is what made a `WAREHOUSED 0` sitting
+       * above thirteen rows carrying residual impossible to reconcile.
+       */}
       <div className={styles.flow} data-testid="hedge-flow-legs">
-        {legs.map((leg) => (
-          <div key={leg.key} className={styles.leg} data-testid={`hedge-flow-${leg.key}`}>
-            <span className={styles.legLabel}>{leg.label}</span>
-            <span className={styles.legValue}>{formatDv01(leg.value)}</span>
-            <span className={styles.legBar}>
-              <span
-                className={`${styles.legFill} ${leg.cls}`}
-                style={{ width: `${leg.share * 100}%` }}
-              />
-            </span>
-            <span className={styles.legNote}>{leg.note}</span>
-          </div>
-        ))}
+        {legs.map((leg) => {
+          const active = selectedLeg === leg.key;
+          return (
+            <button
+              key={leg.key}
+              type="button"
+              aria-pressed={active}
+              className={`${styles.leg} ${active ? styles.legActive : ""}`}
+              onClick={() => setSelectedLeg(active ? null : leg.key)}
+              data-testid={`hedge-flow-${leg.key}`}
+            >
+              <span className={styles.legLabel}>{leg.label}</span>
+              <span className={styles.legValue}>{formatDv01(leg.value)}</span>
+              <span className={styles.legBar}>
+                <span
+                  className={`${styles.legFill} ${leg.cls}`}
+                  style={{ width: `${leg.share * 100}%` }}
+                />
+              </span>
+              <span className={styles.legNote}>{leg.note}</span>
+            </button>
+          );
+        })}
       </div>
       <p className={styles.legNote}>
         {flow.fires === 0
           ? "No hedges have fired yet — advisory (dry-run) fires are excluded."
           : `From ${flow.fires} fired hedge${flow.fires === 1 ? "" : "s"} · advisory fires excluded.`}
       </p>
+
+      <section className={styles.ledger} data-testid="hedge-flow-ledger">
+        <header className={styles.ledgerHead}>
+          <h3 className={styles.ledgerTitle}>
+            {selectedLeg === null
+              ? "Hedge ledger"
+              : `Hedge ledger · ${legs.find((l) => l.key === selectedLeg)?.label}`}
+          </h3>
+          {selectedLeg !== null && (
+            <button
+              type="button"
+              className={styles.clearLeg}
+              onClick={() => setSelectedLeg(null)}
+              data-testid="hedge-flow-clear-leg"
+            >
+              Clear filter
+            </button>
+          )}
+        </header>
+        <HedgeDealsView legFilter={selectedLeg} />
+      </section>
     </div>
   );
 }
