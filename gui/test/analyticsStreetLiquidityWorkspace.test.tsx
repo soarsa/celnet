@@ -255,6 +255,72 @@ describe("StreetExecution (the order-level half of the workspace)", () => {
     expect(screen.queryByText("0 ns")).toBeNull();
   });
 
+  it("calls an unroutable order a SETUP fault, not a market one, and says which LP", async () => {
+    // `no_order_endpoint` means the order never left the building: the LP is quoting,
+    // but no order route is configured, so nobody was asked. On the wire it arrives as
+    // the same `no_liquidity` outcome a genuinely quiet market produces — and the two
+    // demand opposite responses (fix a setting vs widen the panel / accept the risk),
+    // so the UI must not render them identically.
+    const { app } = makeApp([], {
+      orders: [
+        streetOrder({
+          orderId: "SO-CFG",
+          lpId: "citigroup-sim",
+          outcome: "no_liquidity",
+          reason: "no_order_endpoint",
+          filledQty: 0,
+          filledPrice: undefined,
+          slippageBp: undefined,
+        }),
+      ],
+      breakdown: [breakdownRow()],
+      totalMatching: 1,
+    });
+    await renderWorkspace(app);
+
+    // The chip does NOT borrow the market-shaped label. Asserted on the CHIP itself —
+    // the outcome FILTER also lists "No liquidity" as an <option>, and matching that
+    // would make this pass for the wrong reason.
+    const chip = screen.getByTestId("street-outcome-chip");
+    expect(chip.textContent).toBe("Not sent · setup");
+    expect(chip.getAttribute("data-config-fault")).toBe("true");
+
+    // A standing banner states it without needing a hover, names the provider, and
+    // points at where the setting lives.
+    const banner = screen.getByTestId("street-config-fault");
+    expect(banner.textContent).toContain("could not");
+    expect(banner.textContent).toContain("citigroup-sim");
+    expect(banner.textContent).toContain("Administration");
+  });
+
+  it("leaves a GENUINE no-price alone — no setup banner, no borrowed label", async () => {
+    // The counter-case that stops the banner becoming noise: `no_firm_lp_price` IS a
+    // market fact (nobody showed an executable price), so it keeps the market label and
+    // raises no configuration alarm.
+    const { app } = makeApp([], {
+      orders: [
+        streetOrder({
+          orderId: "SO-MKT",
+          lpId: undefined,
+          outcome: "no_liquidity",
+          reason: "no_firm_lp_price",
+          filledQty: 0,
+          filledPrice: undefined,
+          slippageBp: undefined,
+          competitors: [],
+        }),
+      ],
+      breakdown: [breakdownRow()],
+      totalMatching: 1,
+    });
+    await renderWorkspace(app);
+
+    const chip = screen.getByTestId("street-outcome-chip");
+    expect(chip.textContent).toBe("No liquidity");
+    expect(chip.getAttribute("data-config-fault")).toBeNull();
+    expect(screen.queryByTestId("street-config-fault")).toBeNull();
+  });
+
   it("labels a composite backstop explicitly and never as an LP", async () => {
     const { app } = makeApp([], {
       orders: [

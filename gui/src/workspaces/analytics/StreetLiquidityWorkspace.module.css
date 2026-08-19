@@ -358,3 +358,27 @@
   color: var(--warning, #b26a00);
   font-weight: var(--weight-emphasis);
 }
+
+/*
+ * A configuration fault is not a market outcome, so it does not borrow the outcome
+ * chip palette. It reads as an operational warning — the desk cannot hedge until
+ * someone changes a setting — rather than as another shade of "the street was quiet".
+ */
+.chipConfigFault {
+  background: color-mix(in oklab, var(--warn, #d9822b) 18%, transparent);
+  border-color: color-mix(in oklab, var(--warn, #d9822b) 55%, transparent);
+  color: var(--warn, #d9822b);
+  font-weight: var(--weight-emphasis, 600);
+}
+
+.configFaultBanner {
+  margin: 0 0 var(--space-3, 0.75rem);
+  padding: 0.6rem 0.85rem;
+  border: 1px solid color-mix(in oklab, var(--warn, #d9822b) 45%, transparent);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm, 4px);
+  background: color-mix(in oklab, var(--warn, #d9822b) 10%, transparent);
+  color: var(--text-primary, #e8eaf0);
+  font-size: var(--type-small, 0.85rem);
+  line-height: 1.45;
+}

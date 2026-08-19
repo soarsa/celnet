@@ -173,6 +173,39 @@ const ROUTING_REASONS: Readonly<Record<string, string>> = {
     "Composite by configuration — this desk's execution mode is composite-only, so the street was never asked.",
 };
 
+/**
+ * The reasons that are OUR OWN CONFIGURATION rather than a market fact.
+ *
+ * The distinction matters more than it looks. Every one of these collapses into the
+ * `no_liquidity` / `cancelled` outcome on the wire, so the chip alone reads "No
+ * liquidity" — indistinguishable from a genuinely illiquid market. But an unroutable
+ * order means nobody was ever ASKED: the desk is not short of liquidity, it is short of
+ * setup, and the two call for opposite responses (fix a config vs widen the panel or
+ * accept the risk). Surfacing them apart is what stops a half-configured panel looking
+ * like a quiet market — the server already draws this line when it records the reason;
+ * this is the UI honouring it instead of flattening it back out.
+ */
+const CONFIG_FAULT_REASONS: ReadonlySet<string> = new Set([
+  "no_order_endpoint",
+  "no_order_router_configured",
+  "session_unavailable",
+  "composite_venue_configured",
+]);
+
+/** Whether this order failed because of our setup rather than the market. */
+function isConfigFault(reason: string | undefined): boolean {
+  return reason !== undefined && CONFIG_FAULT_REASONS.has(reason);
+}
+
+/**
+ * The chip label. A configuration fault says so INSTEAD of borrowing the market-shaped
+ * outcome label: "Not sent · setup" is the honest summary of an order that never left
+ * the building, where "No liquidity" would blame the street for it.
+ */
+function chipLabel(o: StreetOrder): string {
+  return isConfigFault(o.reason) ? "Not sent · setup" : outcomeLabel(o.outcome);
+}
+
 function reasonTitle(reason: string | undefined): string | undefined {
   if (reason === undefined) return undefined;
   const routing = ROUTING_REASONS[reason];
@@ -386,6 +419,18 @@ export function StreetExecution(): React.ReactElement {
     });
   }, []);
 
+  // The orders on screen that failed on OUR setup rather than the market, and the
+  // providers involved. Derived from the rendered rows so it always agrees with what
+  // the blotter shows under the active filters — never a separate count that can drift.
+  const configFaults = useMemo(
+    () => view.orders.filter((o) => isConfigFault(o.reason)),
+    [view.orders],
+  );
+  const configFaultLps = useMemo(
+    () => [...new Set(configFaults.map((o) => o.lpId).filter((id): id is string => !!id))].sort(),
+    [configFaults],
+  );
+
   const sortedBreakdown = useMemo(() => {
     const col = BREAKDOWN_COLUMNS.find((c) => c.key === sortKey);
     const rows = [...view.breakdown];
@@ -559,6 +604,32 @@ export function StreetExecution(): React.ReactElement {
           Showing {fmtCount(view.orders.length)} of {fmtCount(view.totalMatching)} matching
           orders, newest first.
         </p>
+        {/*
+          A STANDING banner whenever any shown order failed on our own setup. The
+          per-row chip already says "Not sent · setup", but a desk that cannot hedge
+          should not have to hover a row to find that out — an order that never left
+          the building is an operational fault, and it is named here with the exact
+          providers involved and where to fix them.
+        */}
+        {configFaults.length > 0 && (
+          <p className={styles.configFaultBanner} role="status" data-testid="street-config-fault">
+            <strong>
+              {fmtCount(configFaults.length)} order{configFaults.length === 1 ? "" : "s"} could not
+              be sent — configuration, not market.
+            </strong>{" "}
+            {configFaultLps.length > 0 ? (
+              <>
+                No order route is configured for {configFaultLps.join(", ")}. These providers may be
+                quoting, but an order cannot reach them, so the risk stays with the desk. Set the
+                order route on each connection in <strong>Administration → Connections</strong>.
+              </>
+            ) : (
+              <>
+                The outbound order seam is not wired for this desk, so no provider could be asked.
+              </>
+            )}
+          </p>
+        )}
         {view.orders.length === 0 ? (
           <p className={styles.empty}>No street orders match these filters.</p>
         ) : (
@@ -679,10 +750,12 @@ function OrderRow({ order: o }: { order: StreetOrder }): React.ReactElement {
       </td>
       <td className={styles.rowLabel}>
         <span
-          className={`${styles.chip} ${styles[`chip-${o.outcome}`] ?? ""}`}
+          className={`${styles.chip} ${isConfigFault(o.reason) ? styles.chipConfigFault : (styles[`chip-${o.outcome}`] ?? "")}`}
           title={reasonTitle(o.reason)}
+          data-testid="street-outcome-chip"
+          data-config-fault={isConfigFault(o.reason) ? "true" : undefined}
         >
-          {outcomeLabel(o.outcome)}
+          {chipLabel(o)}
         </span>
       </td>
       <td
