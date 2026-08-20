@@ -73,9 +73,9 @@ pub use crosswalk::{
 pub use curated::curated_universe;
 pub use futures::{
     ContractTerms, DeliveryConvention, FutureSpecError, LISTED_CONTRACT_MONTHS, LISTED_CYCLE_START,
-    NOTIONAL_YIELD, TREASURY_FUTURES_TERMS, TreasuryFutureSpec, contracts_for_delivery_month,
-    front_contract, front_contract_id, front_contracts, is_product_symbol, listed_universe_on,
-    treasury_futures_universe,
+    NOTIONAL_YIELD, TREASURY_FUTURES_TERMS, TreasuryFutureSpec, contract_face_value,
+    contracts_for_delivery_month, front_contract, front_contract_id, front_contracts,
+    is_product_symbol, listed_universe_on, treasury_futures_universe,
 };
 pub use isin::{build as build_isin, check_digit, is_well_formed};
 pub use model::{CivilYmd, GovBondSpec};

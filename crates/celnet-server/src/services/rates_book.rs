@@ -3008,7 +3008,19 @@ fn venue_denomination(plan: Option<&HedgeRatioPlan>, size: f64) -> (f64, f64) {
         // figure back on the wire for the one case the rounding exists to prevent (a target
         // below one whole lot); `execute_external` refuses a non-positive venue quantity,
         // which is the honest "too small to hedge with this vehicle".
-        Some(p) if p.dv01_per_unit > 0.0 => (p.units.abs(), p.dv01_per_unit),
+        //
+        // The listed venue denominates order quantity in FACE, not in contract counts: one
+        // whole lot IS one contract's face value, which is what keeps a bond and a future in
+        // the same units on one aggregated book. So a contract count goes on the wire
+        // multiplied by the contract's face; the DV01 per wire-unit divides by the same
+        // factor, leaving the risk conversion exact.
+        Some(p) if p.dv01_per_unit > 0.0 => {
+            match celnet_refdata::contract_face_value(&p.hedge_instrument_id) {
+                Some(face) if face > 0.0 => (p.units.abs() * face, p.dv01_per_unit / face),
+                // A vehicle that is not a listed contract trades in its own units already.
+                _ => (p.units.abs(), p.dv01_per_unit),
+            }
+        }
         _ => (size, 1.0),
     }
 }
@@ -6599,6 +6611,75 @@ pub(crate) mod tests {
             "an LP miss honestly backstops to the composite"
         );
         assert!(!exec.advisory, "a live composite shed is not advisory");
+    }
+
+    /// **A listed vehicle goes to the wire in FACE, and the risk conversion stays exact.**
+    ///
+    /// The last unit in the 2026-08-20 chain. Sending whole CONTRACTS still came back
+    /// `NOT_A_WHOLE_LOT` for `UBU26 qty=2`, because this venue denominates order quantity in
+    /// face — `contract_lot_size` IS the contract's face value, and its quoted clips are
+    /// `contracts × face`. That is a deliberate design: one denomination across the whole
+    /// aggregated book is what lets a cash bond and a future sit on the same panel.
+    ///
+    /// So the wire gets `units × face`, and `risk_per_venue_unit` divides by the same
+    /// factor — the product is invariant, so the book still reduces by exactly the DV01 the
+    /// contracts removed.
+    #[test]
+    fn a_listed_vehicle_is_sent_in_face_with_an_exact_risk_conversion() {
+        use celnet_hedge_routing::Dv01Basis;
+        let dv01_per_contract = 133.8721;
+        let plan = HedgeRatioPlan {
+            hedge_instrument_id: "UBU26".to_owned(),
+            unit_label: "contracts".to_owned(),
+            whole_units: true,
+            basis: Dv01Basis::Analytic,
+            target_dv01: 290.32,
+            dv01_per_unit: dv01_per_contract,
+            exact_units: 2.168_663,
+            units: 2.0,
+            hedged_dv01: 2.0 * dv01_per_contract,
+            residual_dv01: 22.58,
+        };
+        let (venue_quantity, risk_per_venue_unit) = venue_denomination(Some(&plan), 267.74);
+
+        // UB's contract face is 100,000, so two contracts is 200,000 of face — a whole
+        // multiple of the lot, which is precisely what the venue was refusing before.
+        assert!(
+            (venue_quantity - 200_000.0).abs() < 1e-6,
+            "expected 200000 face, got {venue_quantity}"
+        );
+        assert!(
+            (venue_quantity % 100_000.0).abs() < 1e-6,
+            "the wire quantity must be a whole multiple of the contract face"
+        );
+        // The invariant that matters: quantity × risk-per-unit is still the DV01 the two
+        // contracts actually remove, so nothing about the book's accounting moved.
+        assert!(
+            (venue_quantity * risk_per_venue_unit - 2.0 * dv01_per_contract).abs() < 1e-9,
+            "risk conversion must be exact"
+        );
+    }
+
+    /// A vehicle that is NOT a listed contract keeps its own units — the face lookup must
+    /// not silently rescale something it does not recognise.
+    #[test]
+    fn an_unlisted_vehicle_keeps_its_own_units() {
+        use celnet_hedge_routing::Dv01Basis;
+        let plan = HedgeRatioPlan {
+            hedge_instrument_id: "SOME-OTC-BENCHMARK".to_owned(),
+            unit_label: "1mm face".to_owned(),
+            whole_units: false,
+            basis: Dv01Basis::Analytic,
+            target_dv01: 500.0,
+            dv01_per_unit: 100.0,
+            exact_units: 5.0,
+            units: 5.0,
+            hedged_dv01: 500.0,
+            residual_dv01: 0.0,
+        };
+        let (q, r) = venue_denomination(Some(&plan), 500.0);
+        assert!((q - 5.0).abs() < 1e-9, "unlisted vehicle keeps its units");
+        assert!((r - 100.0).abs() < 1e-9);
     }
 
     /// **The blotter records what was SENT, in the venue's own units.**
