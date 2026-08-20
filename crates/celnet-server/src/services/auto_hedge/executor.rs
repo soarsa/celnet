@@ -1036,6 +1036,48 @@ mod tests {
         assert!(fill.residual.abs() < 1e-9, "a full fill leaves no residual");
     }
 
+    /// A plan that rounds BELOW one whole contract puts no order on the wire at all.
+    ///
+    /// The second half of the 2026-08-20 regression, and the subtler half: the first fix
+    /// only used the plan's contract count when it was non-zero, so a sub-one-lot target
+    /// fell back to the DV01 figure and went to the venue as `ZFU26 qty=38.3346` — the
+    /// exact shape the whole-lot rounding exists to prevent. Caught on UAT by checking the
+    /// live wire after the deploy rather than trusting the fix.
+    #[test]
+    fn a_plan_below_one_whole_contract_sends_nothing() {
+        let router = WholeLotVenue {
+            seen: std::sync::Mutex::new(Vec::new()),
+        };
+        let fill = execute_external(
+            &ExternalHedgeRequest {
+                instrument: "ZFU26",
+                net_risk: 50_000.0,
+                size: 38.3346,
+                // The plan rounded to zero contracts — there is nothing tradeable here.
+                venue_quantity: 0.0,
+                risk_per_venue_unit: 40.1992,
+                mid: 107.39,
+                bp_scale: 1e-2,
+                mode: HedgeExecutionMode::LpPanel,
+                composite_spread_bp: 0.5,
+            },
+            &FixedLp {
+                lp: "cme-sim",
+                price: 107.39,
+            },
+            &router,
+        );
+        assert!(
+            router.seen.lock().expect("seen lock").is_empty(),
+            "nothing may reach the venue when the plan rounds to zero lots"
+        );
+        assert!(fill.lp_won.is_none(), "a no-op shed did not trade");
+        assert!(
+            (fill.residual - 38.3346).abs() < 1e-9,
+            "the whole target stays an honest residual"
+        );
+    }
+
     /// The self-hedge shape is unchanged: with the two denominations equal, the venue is
     /// asked for the size itself and the fill needs no conversion.
     #[test]

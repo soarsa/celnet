@@ -3001,7 +3001,12 @@ fn genuine_position_dv01(fill: &RatesPosition, dealt_clean_price: Option<f64>) -
 /// coincide, so the pair is `(size, 1.0)` and behaviour is unchanged.
 fn venue_denomination(plan: Option<&HedgeRatioPlan>, size: f64) -> (f64, f64) {
     match plan {
-        Some(p) if p.dv01_per_unit > 0.0 && p.units.abs() > 0.0 => (p.units.abs(), p.dv01_per_unit),
+        // A resolved plan is ALWAYS authoritative for the venue quantity — including when it
+        // rounds to ZERO contracts. Falling back to `size` on a zero-unit plan puts the DV01
+        // figure back on the wire for the one case the rounding exists to prevent (a target
+        // below one whole lot); `execute_external` refuses a non-positive venue quantity,
+        // which is the honest "too small to hedge with this vehicle".
+        Some(p) if p.dv01_per_unit > 0.0 => (p.units.abs(), p.dv01_per_unit),
         _ => (size, 1.0),
     }
 }
