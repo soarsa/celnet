@@ -364,6 +364,22 @@
  * chip palette. It reads as an operational warning — the desk cannot hedge until
  * someone changes a setting — rather than as another shade of "the street was quiet".
  */
+/*
+ * The venue's own reject text, printed under the outcome chip.
+ *
+ * Secondary in weight but genuinely present: an operator scanning the blotter should be
+ * able to see WHY a row was rejected without hovering it. Sized down and de-emphasised so
+ * it reads as a qualifier on the chip rather than competing with it.
+ */
+.outcomeReason {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  color: var(--text-muted, #8b93a7);
+  white-space: nowrap;
+}
+
 .chipConfigFault {
   background: color-mix(in oklab, var(--warn, #d9822b) 18%, transparent);
   border-color: color-mix(in oklab, var(--warn, #d9822b) 55%, transparent);

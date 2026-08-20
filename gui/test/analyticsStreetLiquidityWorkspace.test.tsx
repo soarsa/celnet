@@ -321,6 +321,66 @@ describe("StreetExecution (the order-level half of the workspace)", () => {
     expect(screen.queryByTestId("street-config-fault")).toBeNull();
   });
 
+  it("PRINTS a venue reject reason on the row instead of hiding it in a hover", async () => {
+    // The UAT report of 2026-08-20: five futures sheds came back "Rejected" with no
+    // stated reason. The reason was on the wire the whole time (`NOT_A_WHOLE_LOT`) and
+    // only ever reachable by hovering — which is the same mistake as the config-fault
+    // tooltip, and nobody hovers a blotter.
+    const { app } = makeApp([], {
+      orders: [
+        streetOrder({
+          orderId: "SO-24",
+          lpId: "cme-sim",
+          instrument: "ZTU26",
+          outcome: "rejected",
+          reason: "NOT_A_WHOLE_LOT",
+          filledQty: 0,
+          filledPrice: undefined,
+          slippageBp: undefined,
+        }),
+      ],
+      breakdown: [breakdownRow()],
+      totalMatching: 1,
+    });
+    await renderWorkspace(app);
+
+    // The chip still says what happened…
+    expect(screen.getByTestId("street-outcome-chip").textContent).toBe("Rejected");
+    // …and the row now also says WHY, visibly.
+    const reason = screen.getByTestId("street-outcome-reason");
+    expect(reason.textContent).toBe("not a whole lot");
+    // A venue refusal is the counterparty's answer, not our configuration — it must not
+    // be relabelled as a setup fault or raise the setup banner.
+    expect(
+      screen.getByTestId("street-outcome-chip").getAttribute("data-config-fault"),
+    ).toBeNull();
+    expect(screen.queryByTestId("street-config-fault")).toBeNull();
+  });
+
+  it("prints an UNKNOWN venue code rather than swallowing it", async () => {
+    // A code we have no gloss for is still the most useful text on the row; show it
+    // de-underscored rather than dropping it because it is not in the vocabulary.
+    const { app } = makeApp([], {
+      orders: [
+        streetOrder({
+          orderId: "SO-X",
+          lpId: "cme-sim",
+          outcome: "rejected",
+          reason: "SOME_NEW_VENUE_CODE",
+          filledQty: 0,
+          filledPrice: undefined,
+          slippageBp: undefined,
+        }),
+      ],
+      breakdown: [breakdownRow()],
+      totalMatching: 1,
+    });
+    await renderWorkspace(app);
+    expect(screen.getByTestId("street-outcome-reason").textContent).toBe(
+      "SOME NEW VENUE CODE",
+    );
+  });
+
   it("labels a composite backstop explicitly and never as an LP", async () => {
     const { app } = makeApp([], {
       orders: [

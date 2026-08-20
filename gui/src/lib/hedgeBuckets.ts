@@ -132,6 +132,25 @@ export function bucketsFromIntents(
     );
 }
 
+/**
+ * The utilisation percentage AS DISPLAYED, in whole percent.
+ *
+ * `toFixed(0)` alone rounds 99.94% up to "100%", which put two buckets on the board
+ * reading "100% of limit" directly under a header saying "no bucket at limit" — the badge
+ * tests `utilization >= 1` exactly, so the two disagreed by construction. Worse, "100%"
+ * on a book that is merely *near* its cap sends a desk hunting for a breach that has not
+ * happened.
+ *
+ * So a bucket that is under its limit is capped at 99: **"100%" means AT the limit**, and
+ * the number now agrees with the badge, the band, and `needsHedge`. Over the limit still
+ * reports the true figure (a 150% bucket says 150%).
+ */
+export function displayPercent(utilization: number): number {
+  if (!Number.isFinite(utilization) || utilization <= 0) return 0;
+  if (utilization >= FULL) return Math.round(utilization * 100);
+  return Math.min(99, Math.round(utilization * 100));
+}
+
 /** Shape one already-banded (utilisation, band) pair into a drawable bucket. */
 function shapeBucket(
   book: string,

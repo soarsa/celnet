@@ -174,6 +174,76 @@ const ROUTING_REASONS: Readonly<Record<string, string>> = {
 };
 
 /**
+ * The VENUE's own reject codes — the `Text(58)` an LP sim (and any real FIX counterparty)
+ * puts on an execution report, mirrored from `celnet_lp_sim::RejectReason::detail`.
+ *
+ * These are a counterparty's ANSWER, not our configuration, so they are not config faults.
+ * But they are the most actionable text on the row — `NOT_A_WHOLE_LOT` says the order was
+ * mis-sized, which no amount of staring at "Rejected" will tell you — so they are rendered
+ * INLINE beside the chip rather than hidden in a hover.
+ */
+const VENUE_REASONS: Readonly<Record<string, { short: string; full: string }>> = {
+  NOT_A_WHOLE_LOT: {
+    short: "not a whole lot",
+    full: "This instrument trades in whole lots only, and OrderQty(38) was not a whole multiple of the lot size. The order was mis-sized before it was sent — nothing about the market refused it.",
+  },
+  NO_MARKET: {
+    short: "no live two-way",
+    full: "The counterparty had no live two-way price for that instrument at the moment the order arrived.",
+  },
+  NO_LIQUIDITY: {
+    short: "no eligible liquidity",
+    full: "No eligible quoted liquidity to fill against on the side we needed.",
+  },
+  INSTRUMENT_NOT_QUOTED: {
+    short: "instrument not quoted",
+    full: "This counterparty does not quote that Symbol(55) at all.",
+  },
+  INVALID_QUANTITY: {
+    short: "invalid quantity",
+    full: "OrderQty(38) must be a positive, finite quantity.",
+  },
+  INVALID_LIMIT_PRICE: {
+    short: "invalid limit price",
+    full: "Price(44) must be a positive, finite price.",
+  },
+  NOT_MARKETABLE: {
+    short: "not marketable",
+    full: "The limit price was away from the counterparty's quoted market.",
+  },
+  FOK_UNFILLABLE: {
+    short: "fill-or-kill unfillable",
+    full: "The full quantity was not available at an eligible price, so the order was killed in full.",
+  },
+  RESTING_TIF_UNSUPPORTED: {
+    short: "resting TIF unsupported",
+    full: "Quote-driven venue: only IOC(3) and FOK(4) are accepted; a resting TimeInForce(59) cannot be honoured.",
+  },
+  ORDER_TYPE_UNSUPPORTED: {
+    short: "order type unsupported",
+    full: "OrdType(40) must be market(1), limit(2) or previously-quoted(D).",
+  },
+};
+
+/**
+ * The short reason to print UNDER the outcome chip, or `undefined` when the chip already
+ * says everything (a config fault relabels the chip itself; a plain fill has no reason).
+ *
+ * Deliberately shown rather than tooltipped: a reject that does not say why is a dead end
+ * for whoever is on the desk, and "Rejected" on its own is exactly that.
+ */
+function inlineReason(o: StreetOrder): string | undefined {
+  if (o.reason === undefined || o.reason.length === 0) return undefined;
+  if (isConfigFault(o.reason)) return undefined;
+  const venue = VENUE_REASONS[o.reason];
+  if (venue !== undefined) return venue.short;
+  const routing = ROUTING_REASONS[o.reason];
+  // A known routing reason is already spelled out on the chip's own tooltip and is often
+  // long; show the raw code so the row still says something specific.
+  return routing !== undefined ? o.reason.replace(/_/g, " ") : o.reason.replace(/_/g, " ");
+}
+
+/**
  * The reasons that are OUR OWN CONFIGURATION rather than a market fact.
  *
  * The distinction matters more than it looks. Every one of these collapses into the
@@ -210,6 +280,8 @@ function reasonTitle(reason: string | undefined): string | undefined {
   if (reason === undefined) return undefined;
   const routing = ROUTING_REASONS[reason];
   if (routing !== undefined) return routing;
+  const venue = VENUE_REASONS[reason];
+  if (venue !== undefined) return `${reason} — ${venue.full}`;
   // Anything else is the VENUE's own Text(58) code, verbatim.
   return `Venue reason: ${reason}`;
 }
@@ -757,6 +829,11 @@ function OrderRow({ order: o }: { order: StreetOrder }): React.ReactElement {
         >
           {chipLabel(o)}
         </span>
+        {inlineReason(o) !== undefined && (
+          <span className={styles.outcomeReason} data-testid="street-outcome-reason">
+            {inlineReason(o)}
+          </span>
+        )}
       </td>
       <td
         className={styles.num}

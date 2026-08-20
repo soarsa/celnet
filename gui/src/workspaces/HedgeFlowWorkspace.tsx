@@ -24,7 +24,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import type { HedgeProvenance, RiskBookRisk } from "../data/contract";
 import type { HedgeBucket } from "../lib/hedgeBuckets";
-import { bucketsFromRiskBooks, flowShares, flowTotals } from "../lib/hedgeBuckets";
+import { bucketsFromRiskBooks, flowShares, flowTotals, displayPercent } from "../lib/hedgeBuckets";
 import { formatDv01 } from "../lib/hedgeVehicle";
 import { HedgeDealsView, type HedgeLeg } from "./HedgeDealsView";
 import styles from "./HedgeFlowWorkspace.module.css";
@@ -71,7 +71,7 @@ function Vessel({ bucket }: { bucket: HedgeBucket }): React.ReactElement {
       className={styles.vessel}
       viewBox="0 0 100 112"
       role="img"
-      aria-label={`${bucket.book}: ${(bucket.utilization * 100).toFixed(0)}% of limit, ${bucket.band}`}
+      aria-label={`${bucket.book}: ${displayPercent(bucket.utilization)}% of limit, ${bucket.band}`}
     >
       <defs>
         <clipPath id={clipId}>
@@ -231,7 +231,7 @@ export function HedgeFlowWorkspace(): React.ReactElement {
               data-testid={`hedge-bucket-${b.book}`}
             >
               <Vessel bucket={b} />
-              <span className={styles.pct}>{(b.utilization * 100).toFixed(0)}%</span>
+              <span className={styles.pct}>{displayPercent(b.utilization)}%</span>
               <span className={styles.bookName} title={b.book}>
                 {b.book}
               </span>

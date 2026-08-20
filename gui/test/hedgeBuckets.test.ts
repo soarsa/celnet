@@ -12,6 +12,7 @@ import {
   bookLevelFires,
   bucketsFromIntents,
   bucketsFromRiskBooks,
+  displayPercent,
   flowShares,
   flowTotals,
   hedgesForPosition,
@@ -233,5 +234,30 @@ describe("hedgeBuckets — trade→hedge lineage", () => {
     const orphans = bookLevelFires(records);
     expect(orphans).toHaveLength(1);
     expect(orphans[0]?.internalCrossed).toBe(2500);
+  });
+});
+
+describe("displayPercent — the number must agree with the badge", () => {
+  it("does NOT round a book that is under its limit up to 100%", () => {
+    // The UAT report of 2026-08-20: rates-usd sat at 4,997 of a 5,000 cap — 99.94% — and
+    // the tile printed "100%" directly under a header reading "no bucket at limit". The
+    // badge tests `>= 1` exactly, so the two could only ever disagree. 99% is the honest
+    // ceiling for "close to, but not at, the limit".
+    expect(displayPercent(4997 / 5000)).toBe(99);
+    expect(displayPercent(0.999_9)).toBe(99);
+  });
+
+  it("reserves 100% for a book that is genuinely AT the limit", () => {
+    expect(displayPercent(1)).toBe(100);
+  });
+
+  it("reports a real breach at its true size rather than clamping it", () => {
+    expect(displayPercent(1.5)).toBe(150);
+  });
+
+  it("treats an unconfigured or nonsense budget as 0, never NaN", () => {
+    expect(displayPercent(Number.NaN)).toBe(0);
+    expect(displayPercent(Number.POSITIVE_INFINITY)).toBe(0);
+    expect(displayPercent(-1)).toBe(0);
   });
 });
