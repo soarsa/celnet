@@ -264,6 +264,8 @@ fn shed(
         instrument: INSTRUMENT,
         net_risk: 50_000.0,
         size,
+        venue_quantity: size,
+        risk_per_venue_unit: 1.0,
         mid: 100.0,
         bp_scale: 1e-2,
         mode,

@@ -2181,6 +2181,8 @@ impl RatesPositionStore {
                 return;
             }
 
+            let (venue_quantity, risk_per_venue_unit) =
+                venue_denomination(plan.as_ref(), effective_external);
             let req = crate::services::auto_hedge::ExternalHedgeRequest {
                 // The LP panel is asked for the TRADEABLE security, falling back to the family
                 // label only when the cell resolves none. Asking for a family ("BOND") can
@@ -2191,6 +2193,8 @@ impl RatesPositionStore {
                 instrument: &execution_instrument,
                 net_risk: book_risk,
                 size: effective_external,
+                venue_quantity,
+                risk_per_venue_unit,
                 mid,
                 bp_scale: kind.bp_scale(),
                 mode: policy.config.execution,
@@ -2519,10 +2523,13 @@ impl RatesPositionStore {
             return Err("no hedge policy is primed — the engine cannot execute".to_owned());
         };
         let e = &row.exec;
+        let (venue_quantity, risk_per_venue_unit) = venue_denomination(e.plan.as_ref(), e.size);
         let req = crate::services::auto_hedge::ExternalHedgeRequest {
             instrument: &e.execution_instrument,
             net_risk: e.net_risk,
             size: e.size,
+            venue_quantity,
+            risk_per_venue_unit,
             mid: e.mid,
             bp_scale: e.bp_scale,
             mode: policy.config.execution,
@@ -2979,6 +2986,23 @@ fn genuine_position_dv01(fill: &RatesPosition, dealt_clean_price: Option<f64>) -
         // The analytic path did not produce a usable number: fall back to the coarse
         // proxy AND say so, rather than silently presenting a duration-blind size as exact.
         _ => proxy(),
+    }
+}
+
+/// Split a shed into **what the venue is asked to trade** and **what one venue unit removes**.
+///
+/// A vehicle hedge sheds DV01 by trading a *lot-denominated* instrument, so the two are in
+/// different denominations: the book accounts in DV01, while the venue trades contracts and
+/// rejects anything that is not a whole lot. Asking the venue in DV01 got every futures shed
+/// rejected `NOT_A_WHOLE_LOT` on UAT — a plan for 14 `ZTU26` went to the wire as 484.5648 —
+/// so no external hedge ever filled and the book pinned at its cap.
+///
+/// Without a plan the self-hedge sells the same security back, where the two denominations
+/// coincide, so the pair is `(size, 1.0)` and behaviour is unchanged.
+fn venue_denomination(plan: Option<&HedgeRatioPlan>, size: f64) -> (f64, f64) {
+    match plan {
+        Some(p) if p.dv01_per_unit > 0.0 && p.units.abs() > 0.0 => (p.units.abs(), p.dv01_per_unit),
+        _ => (size, 1.0),
     }
 }
 

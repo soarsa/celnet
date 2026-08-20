@@ -530,8 +530,26 @@ pub struct ExternalHedgeRequest<'a> {
     pub instrument: &'a str,
     /// The signed net risk (its sign selects the hedge side).
     pub net_risk: f64,
-    /// The external size to hedge (native metric units; `≤ 0` ⇒ nothing to do).
+    /// The external size to hedge, in the **budget metric** (DV01 for a rates book;
+    /// `≤ 0` ⇒ nothing to do). This is the risk-side number: what the book reduces by,
+    /// what the residual is measured in, and what the provenance records.
     pub size: f64,
+    /// What the VENUE is asked to trade, in the **venue's own units** — contracts for a
+    /// listed future, face for a cash bond.
+    ///
+    /// This is deliberately separate from [`Self::size`]. A vehicle hedge sheds DV01 by
+    /// trading a *lot-denominated* instrument, and a venue that trades whole lots rejects
+    /// anything else outright: sending the DV01 figure as the order quantity got every
+    /// futures shed rejected `NOT_A_WHOLE_LOT` on UAT (a plan for 14 ZTU26 contracts went
+    /// to the wire asking for 484.5648), so the book never drained and pinned at its cap.
+    ///
+    /// Equal to `size` when the two are the same denomination (the self-hedge).
+    pub venue_quantity: f64,
+    /// How much budget-metric risk ONE venue unit removes — the plan's DV01 per contract.
+    ///
+    /// The venue reports fills in its own units, so this converts them back to the budget
+    /// metric before the book reduces. `1.0` when `venue_quantity == size`.
+    pub risk_per_venue_unit: f64,
     /// The reference composite mid at fire.
     pub mid: f64,
     /// One bp in the instrument's price convention (rate `1e-4`, clean price `1e-2`).
@@ -589,7 +607,7 @@ pub fn execute_external(
     lp: &dyn LpHedgeSource,
     router: &dyn StreetOrderRouter,
 ) -> ExternalHedgeFill {
-    if req.size <= 0.0 || req.mode.is_advisory() {
+    if req.size <= 0.0 || req.venue_quantity <= 0.0 || req.mode.is_advisory() {
         return ExternalHedgeFill::miss(req.size, req.mid);
     }
 
@@ -597,7 +615,9 @@ pub fn execute_external(
     // record can report who else showed a firm price and how far the cover sat — see
     // `ExternalHedgeFill::panel`.
     let panel = if req.mode.tries_lp_panel() {
-        lp.rank(req.instrument, req.net_risk, req.size)
+        // Rank on what the venue is actually asked for: executable depth is a question
+        // about the venue's own units, not about DV01.
+        lp.rank(req.instrument, req.net_risk, req.venue_quantity)
     } else {
         Vec::new()
     };
@@ -608,14 +628,17 @@ pub fn execute_external(
             lp_id: &member.lp_id,
             instrument: req.instrument,
             side: celnet_analytics::StreetSide::shedding(req.net_risk),
-            quantity: req.size,
+            quantity: req.venue_quantity,
             limit_price: member.price,
             ord_type: HEDGE_ORD_TYPE,
             time_in_force: HEDGE_TIME_IN_FORCE,
         };
         let record = RouteRecord::from_answer(&intent, router.route(&intent));
         let traded = record.outcome.is_fill();
-        let filled = record.filled;
+        // The venue fills in ITS units; the book reduces in the budget metric. Convert
+        // once, here, so every downstream number (fill, residual, the offsetting leg) is
+        // denominated the way its consumer expects.
+        let filled = record.filled * req.risk_per_venue_unit;
         let price = record.price.unwrap_or(member.price);
         attempts.push(record);
         if traded && filled > 0.0 {
@@ -931,6 +954,114 @@ mod tests {
         }
     }
 
+    /// A router that records exactly what quantity it was asked for, and refuses anything
+    /// that is not a whole lot — the behaviour a listed-futures venue actually has.
+    struct WholeLotVenue {
+        seen: std::sync::Mutex<Vec<f64>>,
+    }
+    impl StreetOrderRouter for WholeLotVenue {
+        fn route(&self, intent: &StreetOrderIntent<'_>) -> RouteAnswer {
+            self.seen.lock().expect("seen lock").push(intent.quantity);
+            if (intent.quantity - intent.quantity.round()).abs() > f64::EPSILON {
+                return RouteAnswer::Rejected {
+                    reason: "NOT_A_WHOLE_LOT".to_owned(),
+                    latency_nanos: 100_000,
+                };
+            }
+            RouteAnswer::Traded(RoutedFill {
+                filled: intent.quantity,
+                price: intent.limit_price,
+                reason: None,
+                latency_nanos: 250_000,
+            })
+        }
+    }
+
+    /// **A vehicle hedge asks the venue in CONTRACTS, and books the fill in DV01.**
+    ///
+    /// Regression for the UAT report of 2026-08-20. The externalised size is denominated in
+    /// the budget metric (DV01), and it was being put straight onto the wire as the order
+    /// quantity — so a plan for 14 `ZTU26` contracts asked the venue for 484.5648 and CME
+    /// rejected every single futures shed `NOT_A_WHOLE_LOT`. Nothing ever filled, the book
+    /// never drained, and both risk buckets sat pinned at 100% of limit while the hedge
+    /// blotter cheerfully showed hedges firing.
+    ///
+    /// The two denominations must stay separate end to end: the venue trades lots, the book
+    /// accounts in DV01.
+    #[test]
+    fn a_vehicle_hedge_asks_the_venue_in_whole_contracts_not_dv01() {
+        let dv01_per_contract = 34.2707;
+        let contracts = 14.0;
+        let router = WholeLotVenue {
+            seen: std::sync::Mutex::new(Vec::new()),
+        };
+        let req = ExternalHedgeRequest {
+            instrument: "ZTU26",
+            net_risk: 50_000.0,
+            // The risk-side number — deliberately NOT a whole number.
+            size: contracts * dv01_per_contract,
+            venue_quantity: contracts,
+            risk_per_venue_unit: dv01_per_contract,
+            mid: 103.5,
+            bp_scale: 1e-2,
+            mode: HedgeExecutionMode::LpPanel,
+            composite_spread_bp: 0.5,
+        };
+        let fill = execute_external(
+            &req,
+            &FixedLp {
+                lp: "cme-sim",
+                price: 103.5,
+            },
+            &router,
+        );
+
+        let seen = router.seen.lock().expect("seen lock").clone();
+        assert_eq!(
+            seen,
+            vec![contracts],
+            "the venue must be asked in contracts"
+        );
+        assert!(
+            fill.lp_won.is_some(),
+            "a whole-lot order fills; before the fix this was rejected NOT_A_WHOLE_LOT"
+        );
+        // …and what comes back is converted to the budget metric, so the book reduces by
+        // the DV01 the contracts actually removed.
+        assert!(
+            (fill.filled - contracts * dv01_per_contract).abs() < 1e-9,
+            "fill must be reported in DV01, got {}",
+            fill.filled
+        );
+        assert!(fill.residual.abs() < 1e-9, "a full fill leaves no residual");
+    }
+
+    /// The self-hedge shape is unchanged: with the two denominations equal, the venue is
+    /// asked for the size itself and the fill needs no conversion.
+    #[test]
+    fn a_self_hedge_still_asks_the_venue_in_the_budget_metric() {
+        let router = WholeLotVenue {
+            seen: std::sync::Mutex::new(Vec::new()),
+        };
+        let fill = execute_external(
+            &req(
+                50_000.0,
+                25.0,
+                100.0,
+                1e-2,
+                HedgeExecutionMode::LpPanel,
+                0.5,
+            ),
+            &FixedLp {
+                lp: "LP-1",
+                price: 99.99,
+            },
+            &router,
+        );
+        assert_eq!(router.seen.lock().expect("seen lock").clone(), vec![25.0]);
+        assert!((fill.filled - 25.0).abs() < 1e-9);
+    }
+
     fn req(
         net_risk: f64,
         size: f64,
@@ -943,6 +1074,10 @@ mod tests {
             instrument: "USSW10",
             net_risk,
             size,
+            // These fixtures hedge in the budget metric itself (the self-hedge shape), so
+            // the venue and risk denominations coincide.
+            venue_quantity: size,
+            risk_per_venue_unit: 1.0,
             mid,
             bp_scale,
             mode,
