@@ -1,5 +1,6 @@
 # Memory index
 
+- [Hedge orders were denominated in DV01, not contracts](hedge-orders-denominated-in-dv01.md) — why the books pinned at 100%: every futures shed was rejected NOT_A_WHOLE_LOT. Three-pass fix; also the 100% rounding artifact + the wash-book limit/threshold split.
 - [Hedge rate cap was a LIFETIME cap — desk deadlock](hedge-rate-cap-lifetime-deadlock.md) — root cause of "portfolios don't offset"; wedged the pre-trade gate too. Fixed ce38b59e; lists THREE prior diagnoses that were wrong.
 - [CS01 = z-spread solved off the live price](cs01-z-spread-from-live-price.md) — design decided + analytics built/validated (0237e614); wire + 5-client integration still to do.
 - [UAT sim was 100% OIS — RFS/ESP wedged](uat-sim-all-ois-rfs-esp-wedged.md) — spin bug in collect_md_stream FIXED (a4f85332, +regression); the agg-book legs still stream registry-order instruments the book cannot price.
