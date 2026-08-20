@@ -2257,7 +2257,8 @@ impl RatesPositionStore {
                 &ctx.product,
                 hedge_maturity_years(fill),
                 book_risk,
-                effective_external,
+                venue_quantity,
+                risk_per_venue_unit,
                 outcome
                     .provenance
                     .as_ref()
@@ -2620,7 +2621,8 @@ impl RatesPositionStore {
             &e.instrument,
             hedge_maturity_years(&e.fill),
             e.net_risk,
-            e.size,
+            venue_quantity,
+            risk_per_venue_unit,
             Some(prov.hedge_id.clone()).filter(|id| !id.is_empty()),
             e.fill.position_id,
             now,
@@ -3074,6 +3076,13 @@ fn hedge_maturity_years(fill: &RatesPosition) -> Option<f64> {
 /// is absent only where there was no round trip to measure (an unroutable member, a
 /// backstop).
 #[allow(clippy::too_many_arguments)]
+/// Record what the street was asked for, **in the venue's own units**.
+///
+/// `requested` is the quantity that actually went on the wire (contracts for a listed
+/// future), NOT the budget-metric size — the blotter is a record of orders, so a row
+/// reading "484.5648" against a plan for 14 contracts describes an order nobody sent.
+/// `risk_per_venue_unit` converts the composite row's fill (which is carried in the budget
+/// metric) back into the same units, so every quantity on one row is denominated alike.
 fn record_street_order(
     log: Option<&Arc<crate::services::analytics::street_orders::StreetOrderLog>>,
     exec: &crate::services::auto_hedge::ExternalHedgeFill,
@@ -3083,6 +3092,7 @@ fn record_street_order(
     tenor_years: Option<f64>,
     net_risk: f64,
     requested: f64,
+    risk_per_venue_unit: f64,
     parent_hedge_id: Option<String>,
     parent_position_id: u64,
     ts_nanos: i64,
@@ -3213,7 +3223,13 @@ fn record_street_order(
         venue,
         family,
         tenor_years,
-        filled_qty: exec.filled,
+        // `exec.filled` is in the budget metric; this row's `requested` is in venue units,
+        // so convert rather than print two denominations side by side on one row.
+        filled_qty: if risk_per_venue_unit > 0.0 {
+            exec.filled / risk_per_venue_unit
+        } else {
+            exec.filled
+        },
         filled_price: outcome.is_fill().then_some(exec.hedge_price),
         slippage_bp: outcome.is_fill().then_some(exec.slippage_bp),
         outcome,
@@ -6583,6 +6599,65 @@ pub(crate) mod tests {
             "an LP miss honestly backstops to the composite"
         );
         assert!(!exec.advisory, "a live composite shed is not advisory");
+    }
+
+    /// **The blotter records what was SENT, in the venue's own units.**
+    ///
+    /// Second-order regression from the 2026-08-20 UAT report. Once the wire was fixed to
+    /// ask for whole contracts, the blotter still logged the budget-metric size — so a plan
+    /// for 1 `ZFU26` showed as "Requested 38.3347" next to a fill of 0, and the row looked
+    /// like the bug was still there. A blotter row that names a quantity nobody sent is
+    /// worse than no row: it sends the desk chasing a fix that has already shipped.
+    #[test]
+    fn the_street_blotter_records_the_venue_quantity_not_the_dv01() {
+        use crate::services::analytics::street_orders::{StreetOrderFilter, StreetOrderLog};
+        use crate::services::auto_hedge::{ExternalHedgeFill, HedgeVenue};
+
+        let log = Arc::new(StreetOrderLog::new());
+        let dv01_per_contract = 40.1992;
+        let contracts = 1.0;
+        // A composite backstop fill, carried (as always) in the budget metric.
+        let exec = ExternalHedgeFill {
+            filled: contracts * dv01_per_contract,
+            residual: 0.0,
+            hedge_price: 107.39,
+            mid_at_fire: 107.39,
+            slippage_bp: 0.5,
+            lp_won: Some(HedgeVenue::COMPOSITE_LABEL.to_owned()),
+            venue: Some(HedgeVenue::Composite),
+            panel: Vec::new(),
+            attempts: Vec::new(),
+        };
+        record_street_order(
+            Some(&log),
+            &exec,
+            crate::config::hedge_policy::HedgeExecutionMode::Composite,
+            "ZFU26",
+            "bond_future",
+            Some(4.6),
+            -500.0,
+            contracts,
+            dv01_per_contract,
+            Some("HDG-1".to_owned()),
+            7,
+            1_787_000_000_000_000_000,
+        );
+
+        let orders = log.orders(None, None, &StreetOrderFilter::default(), 10);
+        assert_eq!(orders.len(), 1);
+        let o = &orders[0];
+        assert!(
+            (o.requested_qty - contracts).abs() < 1e-9,
+            "requested must be CONTRACTS, got {}",
+            o.requested_qty
+        );
+        // …and the fill is converted back to the same denomination, so one row never
+        // carries two different units.
+        assert!(
+            (o.filled_qty - contracts).abs() < 1e-9,
+            "filled must be CONTRACTS, got {}",
+            o.filled_qty
+        );
     }
 
     /// PART C: a hedge that fills on a NAMED LP is attributed to that LP in the street-side LP
