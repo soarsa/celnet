@@ -568,3 +568,48 @@
 .detailAbsent {
   color: var(--text-tertiary);
 }
+
+/* Client-side search + outcome filter above the trace list. Deliberately separate from
+   the symbol / counterparty boxes in the header, which are SERVER filters that re-query:
+   these narrow what is already on screen, with no round trip. */
+.tableTools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2, 8px);
+}
+
+.outcomeFilter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.outcomeFilterLabel {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.outcomeFilterSelect {
+  font: inherit;
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm, 4px);
+  padding: 4px 8px;
+}
+
+.outcomeFilterSelect:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.emptyRow {
+  text-align: center;
+  padding: var(--space-4, 16px);
+  color: var(--text-tertiary);
+}

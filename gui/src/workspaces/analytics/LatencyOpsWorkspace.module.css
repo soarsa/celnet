@@ -433,3 +433,49 @@
   background: var(--lat-tint);
   flex: 0 0 auto;
 }
+
+/* The search + band-filter row above the table. Sits between the tone legend and the
+   scrollport so the controls read as belonging to the table they narrow. */
+.tableTools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2, 8px);
+}
+
+.toneFilter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toneFilterLabel {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.toneFilterSelect {
+  font: inherit;
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm, 4px);
+  padding: 4px 8px;
+}
+
+.toneFilterSelect:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* An honest "nothing matched" row, spanning the full grid so it reads as the table's
+   own state rather than a stray cell. */
+.emptyRow {
+  text-align: center;
+  padding: var(--space-4, 16px);
+  color: var(--text-tertiary);
+}

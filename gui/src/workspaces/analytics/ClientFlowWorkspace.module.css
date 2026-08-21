@@ -339,3 +339,47 @@
   color: var(--danger);
   font-weight: var(--weight-emphasis);
 }
+
+/* Search + fishing-band controls above the table (mirrors the Latency/Ops treatment so
+   the two analytics blotters carry one affordance, not two dialects). */
+.tableTools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2, 8px);
+}
+
+.bandFilter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bandFilterLabel {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.bandFilterSelect {
+  font: inherit;
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm, 4px);
+  padding: 4px 8px;
+}
+
+.bandFilterSelect:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.emptyRow {
+  text-align: center;
+  padding: var(--space-4, 16px);
+  color: var(--text-tertiary);
+}

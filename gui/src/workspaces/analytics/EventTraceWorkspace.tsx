@@ -28,6 +28,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useApp } from "../../app/AppContext";
+import { TableSearch } from "../../components/TableSearch";
 import type { TraceFocus } from "../../app/AppContext";
 import type { TraceEvent, TraceOutcome, TraceSummary } from "../../data/contract";
 import { traceStageLabel } from "../../data/contract";
@@ -128,6 +129,13 @@ export function EventTraceWorkspace(): React.ReactElement {
 
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  // Distinct from the symbol / counterparty boxes above, which are SERVER filters that
+  // re-query. This one narrows the traces already on screen without a round trip, and
+  // reaches fields the server filters do not expose — the outcome, the last stage, and
+  // the trace id itself, which is what you have when someone sends you one.
+  const [query, setQuery] = useState("");
+  // Outcome is a small closed vocabulary and the first thing anyone triages on.
+  const [outcomeFilter, setOutcomeFilter] = useState("");
 
   // Debounce the filter inputs into the applied (fetched) filter values.
   useEffect(() => {
@@ -287,12 +295,39 @@ export function EventTraceWorkspace(): React.ReactElement {
   }, []);
 
   const rows = summaries ?? [];
+
+  /** Every distinct outcome present, so the filter offers only reachable values. */
+  const outcomeOptions = useMemo(
+    () => [...new Set(rows.map((t) => t.outcome))].sort((a, b) => a.localeCompare(b)),
+    [rows],
+  );
+
+  const matchedRows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return rows.filter((t) => {
+      if (outcomeFilter !== "" && t.outcome !== outcomeFilter) return false;
+      if (needle === "") return true;
+      return [
+        String(t.traceId),
+        t.symbol,
+        t.counterparty ?? "",
+        t.outcome,
+        t.lastStage,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(needle);
+    });
+  }, [rows, query, outcomeFilter]);
+
   const visibleRows = useMemo(() => {
-    if (sortKey === null) return rows; // preserve server order (newest first)
+    if (sortKey === null) return matchedRows; // preserve server order (newest first)
     const col = COLUMNS.find((c) => c.key === sortKey);
-    if (!col) return rows;
-    return [...rows].sort((a, b) => compareSort(col.sortValue(a), col.sortValue(b), sortDir));
-  }, [rows, sortKey, sortDir]);
+    if (!col) return matchedRows;
+    return [...matchedRows].sort((a, b) =>
+      compareSort(col.sortValue(a), col.sortValue(b), sortDir),
+    );
+  }, [matchedRows, sortKey, sortDir]);
 
   const ariaSort = (key: string): "ascending" | "descending" | "none" =>
     sortKey === key ? (sortDir === "asc" ? "ascending" : "descending") : "none";
@@ -331,6 +366,12 @@ export function EventTraceWorkspace(): React.ReactElement {
         <div className={styles.panes}>
           <TraceList
             rows={visibleRows}
+            totalRows={rows.length}
+            query={query}
+            onQueryChange={setQuery}
+            outcomeFilter={outcomeFilter}
+            onOutcomeFilter={setOutcomeFilter}
+            outcomeOptions={outcomeOptions}
             loading={listLoading}
             error={listError}
             symbolInput={symbolInput}
@@ -361,6 +402,14 @@ export function EventTraceWorkspace(): React.ReactElement {
 
 interface TraceListProps {
   rows: readonly TraceSummary[];
+  /** Total traces loaded, before the client-side search — the "M" in "N of M". */
+  totalRows: number;
+  query: string;
+  onQueryChange: (v: string) => void;
+  outcomeFilter: string;
+  onOutcomeFilter: (v: string) => void;
+  /** Only the outcomes actually present, so the select never offers a dead option. */
+  outcomeOptions: readonly string[];
   loading: boolean;
   error: string | null;
   symbolInput: string;
@@ -377,6 +426,12 @@ interface TraceListProps {
 
 function TraceList({
   rows,
+  totalRows,
+  query,
+  onQueryChange,
+  outcomeFilter,
+  onOutcomeFilter,
+  outcomeOptions,
   loading,
   error,
   symbolInput,
@@ -430,6 +485,34 @@ function TraceList({
       ) : rows.length === 0 ? (
         <p className={styles.empty}>No traces match.</p>
       ) : (
+        <>
+        <div className={styles.tableTools}>
+          <TableSearch
+            query={query}
+            onQueryChange={onQueryChange}
+            shown={rows.length}
+            total={totalRows}
+            label="Search traces"
+            placeholder="Filter by trace id, symbol, outcome or stage…"
+          />
+          <label className={styles.outcomeFilter}>
+            <span className={styles.outcomeFilterLabel}>Outcome</span>
+            <select
+              className={styles.outcomeFilterSelect}
+              value={outcomeFilter}
+              aria-label="Filter by trace outcome"
+              data-testid="event-trace-outcome-filter"
+              onChange={(e) => onOutcomeFilter(e.target.value)}
+            >
+              <option value="">Any outcome</option>
+              {outcomeOptions.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         <div className={styles.tableScroll}>
           <table className={styles.table} data-testid="event-trace-list">
             <caption className={styles.caption}>Recent traces — newest first</caption>
@@ -488,6 +571,7 @@ function TraceList({
             </tbody>
           </table>
         </div>
+        </>
       )}
     </div>
   );

@@ -94,6 +94,46 @@ afterEach(() => {
 });
 
 describe("EventTraceWorkspace", () => {
+  it("searches loaded traces WITHOUT a round trip, reaching fields the server filters cannot", async () => {
+    // The symbol / counterparty boxes above are SERVER filters that re-query. This one
+    // narrows what is already on screen and reaches the trace id, the outcome and the
+    // last stage — the trace id in particular being what you have when someone sends
+    // you one.
+    const { app } = makeApp([summary(), REJECTED], new Map());
+    await renderWorkspace(app);
+    expect(screen.getAllByTestId("trace-row")).toHaveLength(2);
+
+    const before = app as { transport: { listTraces: { mock: { calls: unknown[] } } } };
+    const callsBefore = before.transport.listTraces.mock.calls.length;
+
+    fireEvent.change(screen.getByLabelText("Search traces"), { target: { value: "hedge_fired" } });
+    expect(screen.getAllByTestId("trace-row")).toHaveLength(1);
+    // No refetch: narrowing the loaded page must not go back to the server.
+    expect(before.transport.listTraces.mock.calls.length).toBe(callsBefore);
+
+    // …and by the trace id itself.
+    fireEvent.change(screen.getByLabelText("Search traces"), { target: { value: "7" } });
+    expect(screen.getAllByTestId("trace-row")).toHaveLength(1);
+  });
+
+  it("offers only outcomes that are actually present, and filters to one", async () => {
+    const { app } = makeApp([summary(), REJECTED], new Map());
+    await renderWorkspace(app);
+
+    const select = screen.getByTestId("event-trace-outcome-filter");
+    // A dead option is worse than no filter — the vocabulary comes from the rows.
+    const values = within(select)
+      .getAllByRole("option")
+      .map((o) => (o as HTMLOptionElement).value);
+    expect(values).toContain("hedged");
+    expect(values).toContain("rejected");
+
+    fireEvent.change(select, { target: { value: "rejected" } });
+    const rows = screen.getAllByTestId("trace-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("GBPUSD");
+  });
+
   it("renders the recent-traces list with symbol, counterparty, outcome + total latency", async () => {
     const { app } = makeApp([summary(), REJECTED], new Map());
     await renderWorkspace(app);

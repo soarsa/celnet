@@ -106,6 +106,45 @@ afterEach(() => {
 });
 
 describe("LatencyOpsWorkspace", () => {
+  it("searches stages by label AND by raw op tag", async () => {
+    // Two names for one row: the label is what the eye reads on screen, the op is what a
+    // trace or a log line carries. Someone arriving from either must find the stage.
+    const { app } = makeApp(metrics([stage(), BOOK]));
+    await renderWorkspace(app);
+    expect(screen.getAllByRole("row")).toHaveLength(3); // header + 2 stages
+
+    const search = screen.getByLabelText("Search stages");
+    fireEvent.change(search, { target: { value: "Ack→fill" } });
+    expect(screen.getAllByRole("row")).toHaveLength(2);
+
+    // …and the same row by its op tag, which never appears in the label.
+    fireEvent.change(search, { target: { value: "vanilla_price" } });
+    const rows = screen.getAllByRole("row");
+    expect(rows).toHaveLength(2);
+    expect(rows[1]?.textContent).toContain("Price (pinned core)");
+  });
+
+  it("filters to a latency BAND — the question this table exists to answer", async () => {
+    // The band is derived from p99, so it is not a value any text filter could reach:
+    // `stage()` is well inside budget, BOOK is milliseconds and therefore red.
+    const { app } = makeApp(metrics([stage(), BOOK]));
+    await renderWorkspace(app);
+
+    fireEvent.change(screen.getByTestId("latency-tone-filter"), { target: { value: "red" } });
+    const rows = screen.getAllByRole("row");
+    expect(rows).toHaveLength(2);
+    expect(rows[1]?.textContent).toContain("Ack→fill→book");
+  });
+
+  it("says so honestly when nothing matches, rather than showing an empty grid", async () => {
+    const { app } = makeApp(metrics([stage()]));
+    await renderWorkspace(app);
+    fireEvent.change(screen.getByLabelText("Search stages"), {
+      target: { value: "no-such-stage" },
+    });
+    expect(screen.getByText(/No stage matches this search or band/)).toBeTruthy();
+  });
+
   it("renders a stage row with adaptive-unit latencies (ns and µs)", async () => {
     const { app } = makeApp(metrics([stage()]));
     await renderWorkspace(app);

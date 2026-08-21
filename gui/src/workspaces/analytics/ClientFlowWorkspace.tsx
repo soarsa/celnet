@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../../app/AppContext";
+import { TableSearch } from "../../components/TableSearch";
 import type { ClientFlowMetrics, FlowGroupBy } from "../../data/contract";
 import styles from "./ClientFlowWorkspace.module.css";
 
@@ -163,6 +164,14 @@ export function ClientFlowWorkspace(): React.ReactElement {
   const [loading, setLoading] = useState(false);
   const [sortKey, setSortKey] = useState<string>("dpmNet");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  // The grouping axis changes what a row IS (a client, a desk, a product), so the search
+  // deliberately matches the row LABEL rather than a fixed field — it stays correct as
+  // the axis changes underneath it.
+  const [query, setQuery] = useState("");
+  // Fishing band is derived from the score, so it is not a value you could filter as
+  // text — and "show me only the high-fishing clients" is the question this table exists
+  // to answer.
+  const [bandFilter, setBandFilter] = useState<FishBand | "">("");
 
   const axis = GROUP_BY_OPTIONS.find((g) => g.id === groupBy)?.axis ?? "Client";
   const columns = useMemo(() => metricColumns(axis), [axis]);
@@ -242,10 +251,15 @@ export function ClientFlowWorkspace(): React.ReactElement {
   );
 
   const visibleRows = useMemo(() => {
-    const filtered =
+    const byProduct =
       productFilterEnabled && product !== "all"
         ? rows.filter((r) => r.label === PRODUCT_OPTIONS.find((p) => p.id === product)?.assetLabel)
         : rows;
+    const needle = query.trim().toLowerCase();
+    const filtered = byProduct.filter((r) => {
+      if (bandFilter !== "" && fishBand(r.fishingScore) !== bandFilter) return false;
+      return needle === "" || r.label.toLowerCase().includes(needle);
+    });
     const col = columns.find((c) => c.key === sortKey);
     const labelSort = sortKey === "label";
     const withSort = [...filtered];
@@ -255,7 +269,7 @@ export function ClientFlowWorkspace(): React.ReactElement {
       return compareSort(col.sortValue(a), col.sortValue(b), sortDir);
     });
     return withSort;
-  }, [rows, columns, sortKey, sortDir, product, productFilterEnabled]);
+  }, [rows, columns, sortKey, sortDir, product, productFilterEnabled, query, bandFilter]);
 
   const ariaSort = (key: string): "ascending" | "descending" | "none" =>
     sortKey === key ? (sortDir === "asc" ? "ascending" : "descending") : "none";
@@ -338,9 +352,35 @@ export function ClientFlowWorkspace(): React.ReactElement {
         <p className={styles.empty}>Sign in to view client-flow analytics.</p>
       ) : loading && rows.length === 0 ? (
         <p className={styles.empty}>Loading client-flow metrics…</p>
-      ) : visibleRows.length === 0 ? (
+      ) : rows.length === 0 ? (
         <p className={styles.empty}>No client-flow metrics for this selection.</p>
       ) : (
+        <>
+        <div className={styles.tableTools}>
+          <TableSearch
+            query={query}
+            onQueryChange={setQuery}
+            shown={visibleRows.length}
+            total={rows.length}
+            label={`Search by ${axis.toLowerCase()}`}
+            placeholder={`Filter by ${axis.toLowerCase()}…`}
+          />
+          <label className={styles.bandFilter}>
+            <span className={styles.bandFilterLabel}>Fishing</span>
+            <select
+              className={styles.bandFilterSelect}
+              value={bandFilter}
+              aria-label="Filter by fishing band"
+              data-testid="client-flow-band-filter"
+              onChange={(e) => setBandFilter(e.target.value as FishBand | "")}
+            >
+              <option value="">Any band</option>
+              <option value="high">High</option>
+              <option value="mid">Mid</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+        </div>
         <div className={styles.tableScroll}>
           <table className={styles.table}>
             <caption className={styles.caption}>
@@ -374,6 +414,13 @@ export function ClientFlowWorkspace(): React.ReactElement {
               </tr>
             </thead>
             <tbody>
+              {visibleRows.length === 0 && (
+                <tr>
+                  <td className={styles.emptyRow} colSpan={columns.length + 1}>
+                    No {axis.toLowerCase()} matches this search or band.
+                  </td>
+                </tr>
+              )}
               {visibleRows.map((r) => {
                 const band = fishBand(r.fishingScore);
                 return (
@@ -426,6 +473,7 @@ export function ClientFlowWorkspace(): React.ReactElement {
             </tbody>
           </table>
         </div>
+        </>
       )}
     </section>
   );
