@@ -10,16 +10,13 @@
  * that anchor and maturity is anchor + tenor whole years (SOFR OIS, ACT/360).
  */
 
-import type { Deal, Side } from "../data/contract";
-import { fmtRate, fmtClock, fmtCompact } from "../lib/format";
+import { TradeDetailsModal } from "../components/TradeDetailsModal";
+import type { Deal } from "../data/contract";
+import { clientTradeDetails } from "../lib/tradeDetails";
+import { fmtClock, fmtCompact } from "../lib/format";
 import { fmtEdgeBps, hedgeBandLabel, internaliseLabel } from "../lib/internalise";
 import styles from "./DealTicket.module.css";
 
-function directionLabel(side: Side): string {
-  if (side === "BUY") return "Pay fixed (payer)";
-  if (side === "SELL") return "Receive fixed (receiver)";
-  return "Two-way";
-}
 
 /** `{year,month,day}` → ISO civil date `2026-06-29`. */
 function fmtCivil(d: { year: number; month: number; day: number }): string {
@@ -53,42 +50,13 @@ export function DealTicket({ deal, onClose }: DealTicketProps): React.ReactEleme
   const ref = deal.curveSet.referenceDate;
   // OIS is spot-starting off the curve anchor; maturity is anchor + tenor years.
   const maturity = { year: ref.year + deal.instrument.tenorYears, month: ref.month, day: ref.day };
-  const notionalText = fmtCompact(deal.notional);
 
   return (
-    <aside
-      className={styles.ticket}
-      role="dialog"
-      aria-modal="false"
-      aria-label={`Deal ${deal.dealId}`}
-    >
-      <header className={styles.header}>
-        <div>
-          <span className={`${styles.kindTag} ${deal.kind === "IOI" ? styles.ioi : styles.rfq}`}>
-            {deal.kind}
-          </span>
-          <h2 className={styles.title}>
-            {deal.instrument.tenorYears}Y {ccy} OIS
-          </h2>
-          <p className={styles.subtitle}>{deal.counterparty}</p>
-        </div>
-        <button type="button" className={styles.close} onClick={onClose} aria-label="Close ticket">
-          ×
-        </button>
-      </header>
-
-      <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Economics</h3>
-        <dl className={styles.dl}>
-          <Row label="Product" value={`${ccy} SOFR OIS`} />
-          <Row label="Tenor" value={`${deal.instrument.tenorYears}Y`} />
-          <Row label="Direction (desk)" value={directionLabel(deal.side)} />
-          <Row label="Notional" value={`${notionalText} ${ccy}`} mono />
-          <Row label="Dealt rate" value={fmtRate(deal.price)} mono />
-          <Row label="Fixed coupon" value={fmtRate(deal.instrument.fixedRate)} mono />
-        </dl>
-      </section>
-
+    <TradeDetailsModal
+      details={clientTradeDetails(deal)}
+      onClose={onClose}
+      extra={
+        <>
       <section className={styles.section}>
         <h3 className={styles.sectionTitle}>Schedule &amp; settlement</h3>
         <dl className={styles.dl}>
@@ -162,19 +130,8 @@ export function DealTicket({ deal, onClose }: DealTicketProps): React.ReactEleme
         </section>
       )}
 
-      <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>References</h3>
-        <dl className={styles.dl}>
-          <Row label="Deal ID" value={deal.dealId} mono />
-          <Row label="Request ID" value={deal.requestId} mono />
-          {deal.positionId !== undefined && (
-            <Row label="Position ID" value={String(deal.positionId)} mono />
-          )}
-          {deal.correlationId !== undefined && (
-            <Row label="Correlation ID" value={deal.correlationId} mono />
-          )}
-        </dl>
-      </section>
-    </aside>
+        </>
+      }
+    />
   );
 }

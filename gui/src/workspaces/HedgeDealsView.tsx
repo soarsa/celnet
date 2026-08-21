@@ -32,6 +32,8 @@ import { describeExitAction, isExternalExitAction } from "../lib/hedgeExit";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import type { HedgeProvenance } from "../data/contract";
 import type { StreetOrder, StreetOrdersView } from "../data/contract";
+import { TradeDetailsModal } from "../components/TradeDetailsModal";
+import { hedgeTradeDetails } from "../lib/tradeDetails";
 import styles from "./HedgeDealsView.module.css";
 
 /** A hedge band label → RAG class key (mirrors the Hedging monitor). */
@@ -114,112 +116,6 @@ export function contributesTo(p: HedgeProvenance, leg: HedgeLeg): boolean {
   }
 }
 
-
-/** Compact quantity — street quantities span single contracts to millions of face. */
-function fmtQty(q: number): string {
-  if (!Number.isFinite(q)) return "—";
-  return new Intl.NumberFormat("en-US", {
-    notation: Math.abs(q) >= 10_000 ? "compact" : "standard",
-    maximumFractionDigits: 2,
-  }).format(q);
-}
-
-/**
- * The orders ONE hedge decision put on the wire.
- *
- * Rendered as its own labelled table under the ledger rather than as an expanded row,
- * because `DataTable` has no row-expansion seam and bolting one on for a single caller
- * would fork the shared model — the thing the table sweep just spent its time removing.
- *
- * Every column here answers a question the ledger above cannot: WHO was asked (the
- * provider, or the composite backstop when the street showed nothing), for HOW MUCH,
- * what came BACK, and — the one that matters when a book will not drain — WHY it did
- * not fill.
- */
-function HedgeOrderDetail({
-  hedgeId,
-  orders,
-  onClose,
-}: {
-  readonly hedgeId: string;
-  readonly orders: readonly StreetOrder[];
-  readonly onClose: () => void;
-}): React.ReactElement {
-  const filled = orders.filter((o) => o.filledQty > 0).length;
-  return (
-    <section className={styles.orderDetail} data-testid="hedge-order-detail">
-      <header className={styles.orderDetailHead}>
-        <h3 className={styles.orderDetailTitle}>
-          Orders sent to market · <span className={styles.orderDetailHedge}>{hedgeId}</span>
-        </h3>
-        <span className={styles.orderDetailCount}>
-          {orders.length} order{orders.length === 1 ? "" : "s"} · {filled} filled
-        </span>
-        <button
-          type="button"
-          className={styles.orderDetailClose}
-          onClick={onClose}
-          data-testid="hedge-order-detail-close"
-        >
-          Close
-        </button>
-      </header>
-      <div className={styles.orderDetailScroll}>
-        <table className={styles.orderTable}>
-          <caption className={styles.orderCaption}>
-            One row per order actually sent, oldest first — the order a shed walked its panel in.
-          </caption>
-          <thead>
-            <tr>
-              <th scope="col">Order</th>
-              <th scope="col">Provider</th>
-              <th scope="col">Instrument</th>
-              <th scope="col">Side</th>
-              <th scope="col">Requested</th>
-              <th scope="col">Filled</th>
-              <th scope="col">Fill px</th>
-              <th scope="col">Outcome</th>
-            </tr>
-          </thead>
-          <tbody>
-            {orders.map((o) => (
-              <tr key={o.orderId} data-testid={`hedge-order-row-${o.orderId}`}>
-                <td className={styles.orderMono}>{o.orderId}</td>
-                <td>
-                  {o.lpId ?? (
-                    <span
-                      className={styles.orderComposite}
-                      title="No provider was credited — the street showed no firm price, so this went to the composite backstop or nowhere at all."
-                    >
-                      composite
-                    </span>
-                  )}
-                </td>
-                <td className={styles.orderMono}>{o.instrument}</td>
-                <td>{o.side}</td>
-                <td className={styles.orderNum}>{fmtQty(o.requestedQty)}</td>
-                <td className={styles.orderNum}>{fmtQty(o.filledQty)}</td>
-                <td className={styles.orderNum}>
-                  {o.filledPrice === undefined ? "—" : o.filledPrice.toFixed(6)}
-                </td>
-                <td>
-                  <span className={styles.orderOutcome}>{o.outcome.replace(/_/g, " ")}</span>
-                  {o.reason !== undefined && o.reason !== "" && (
-                    // The reason is printed, not tooltipped. A hedge that did not reduce
-                    // the book is diagnosed by this string and nothing else.
-                    <span className={styles.orderReason} data-testid="hedge-order-reason">
-                      {o.reason.replace(/_/g, " ")}
-                    </span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
 
 export function HedgeDealsView({
   legFilter = null,
@@ -561,28 +457,33 @@ export function HedgeDealsView({
             // CONSTRUCTION — that is a fact, not missing data, and must not read as a
             // failed load.
             return (
-              <span className={styles.ordersNone} title={
-                isExternalHedge(p)
-                  ? "This hedge externalised, but no street order was recorded against it."
-                  : "Internalised — nothing was sent to the street."
-              }>
+              <button
+                type="button"
+                className={styles.ordersNone}
+                data-testid={`hedge-orders-toggle-${p.hedgeId}`}
+                title={
+                  isExternalHedge(p)
+                    ? "This hedge externalised, but no street order was recorded against it."
+                    : "Internalised — nothing was sent to the street."
+                }
+                // Still openable: a hedge with no orders STILL has a decision worth
+                // reading, and that is exactly the case a desk needs to inspect.
+                onClick={() => setOpenHedgeId(p.hedgeId)}
+              >
                 {isExternalHedge(p) ? "none recorded" : "—"}
-              </span>
+              </button>
             );
           }
           const filled = orders.filter((o) => o.filledQty > 0).length;
-          const open = openHedgeId === p.hedgeId;
           return (
             <button
               type="button"
               className={styles.ordersToggle}
-              aria-expanded={open}
+              // Opens the SHARED trade-details modal — the same surface, and the same
+              // affordance, the client blotter opens for a client fill.
               data-testid={`hedge-orders-toggle-${p.hedgeId}`}
-              onClick={() => setOpenHedgeId(open ? null : p.hedgeId)}
+              onClick={() => setOpenHedgeId(p.hedgeId)}
             >
-              <span aria-hidden="true" className={styles.ordersCaret}>
-                {open ? "▾" : "▸"}
-              </span>
               {orders.length} sent
               <span className={filled > 0 ? styles.ordersFilled : styles.ordersUnfilled}>
                 {filled} filled
@@ -601,6 +502,11 @@ export function HedgeDealsView({
     rows: filtered,
     allRows: visible,
   });
+
+  const openHedge = useMemo(
+    () => (openHedgeId === null ? undefined : rows.find((p) => p.hedgeId === openHedgeId)),
+    [rows, openHedgeId],
+  );
 
   const isOffline = !app.transport.label.startsWith("live");
   // The "external" total reflects the CURRENTLY-VISIBLE set (the filtered desk view).
@@ -680,16 +586,16 @@ export function HedgeDealsView({
                   : `No hedges match “${query}”.`
               }
             />
-            {openHedgeId !== null && (
-              <HedgeOrderDetail
-                hedgeId={openHedgeId}
-                orders={ordersByHedge.get(openHedgeId) ?? []}
-                onClose={() => setOpenHedgeId(null)}
-              />
-            )}
+
           </>
         )}
       </Panel>
+      <TradeDetailsModal
+        details={
+          openHedge === undefined ? null : hedgeTradeDetails(openHedge, ordersByHedge.get(openHedge.hedgeId) ?? [])
+        }
+        onClose={() => setOpenHedgeId(null)}
+      />
     </div>
   );
 }

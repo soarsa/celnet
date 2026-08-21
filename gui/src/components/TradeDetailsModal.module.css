@@ -1,0 +1,252 @@
+/* The one trade-detail popup. Shared by every blotter, so the chrome is defined once
+   here rather than per-surface — two dialogs that drift are how "view the trade" ends up
+   meaning two different things. */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5, 20px);
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(980px, 100%);
+  /* Bounded, with the BODY scrolling — the header stays put while a hedge with a deep
+     panel scrolls its orders. Same rule the tables follow. */
+  max-height: min(86vh, 900px);
+  min-height: 0;
+  background: var(--bg-raised);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg, 10px);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  outline: none;
+}
+
+.dialog:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4, 16px);
+  padding: var(--space-4, 16px) var(--space-5, 20px);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.headMain {
+  min-width: 0;
+}
+
+.kindClient,
+.kindHedge {
+  display: inline-block;
+  font-size: var(--type-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 8px;
+  border-radius: 999px;
+  margin-bottom: 6px;
+}
+
+.kindClient {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* A hedge is the desk's OWN trade, not a client's — coloured apart so the two are never
+   misread for one another at a glance. */
+.kindHedge {
+  color: var(--warn, #d9a441);
+  background: rgba(217, 164, 65, 0.14);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--type-h3, 1.05rem);
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.subtitle {
+  margin: 2px 0 0;
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+.close {
+  margin-left: auto;
+  flex: none;
+  font: inherit;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  background: none;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm, 4px);
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.close:hover {
+  color: var(--text-primary);
+}
+.close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-4, 16px) var(--space-5, 20px) var(--space-5, 20px);
+}
+
+/* Sections flow into as many columns as fit rather than a fixed grid: a client trade has
+   three, a vehicle hedge four, and neither should leave a dead column. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-4, 16px);
+}
+
+.section {
+  min-width: 0;
+}
+
+.sectionTitle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3, 12px);
+  margin: 0 0 var(--space-2, 8px);
+  font-size: var(--type-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+
+.sectionCount {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-tertiary);
+}
+
+.rows {
+  margin: 0;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3, 12px);
+  padding: 3px 0;
+  border-top: 1px solid var(--grid-line, rgba(255, 255, 255, 0.05));
+}
+
+.label {
+  flex: none;
+  width: 46%;
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+.hintMark {
+  margin-left: 4px;
+  opacity: 0.6;
+}
+
+.value {
+  margin: 0;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--type-caption);
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.num {
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+/* --- the hedge's street orders -------------------------------------------------- */
+
+.ordersScroll {
+  margin-top: var(--space-2, 8px);
+  overflow: auto;
+  max-height: min(34vh, 380px);
+  overscroll-behavior: contain;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+}
+
+.orders {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--type-caption);
+}
+
+.ordersCaption {
+  caption-side: top;
+  text-align: left;
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  color: var(--text-tertiary);
+}
+
+.orders thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-inset);
+  text-align: left;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: var(--weight-emphasis);
+  padding: 6px var(--space-3, 12px);
+  white-space: nowrap;
+}
+
+.orders tbody td {
+  padding: 6px var(--space-3, 12px);
+  border-top: 1px solid var(--grid-line, rgba(255, 255, 255, 0.06));
+  vertical-align: baseline;
+}
+
+.composite {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.outcome {
+  text-transform: capitalize;
+}
+
+.reason {
+  display: block;
+  font-size: 0.9em;
+  color: var(--text-tertiary);
+}
+
+.noOrders {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+}
+
+.section + .section {
+  margin-top: var(--space-4, 16px);
+}

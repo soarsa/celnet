@@ -193,31 +193,48 @@ describe("HedgeDealsView", () => {
     const toggle = await screen.findByTestId("hedge-orders-toggle-HDG-1");
     expect(toggle.textContent).toContain("2 sent");
     expect(toggle.textContent).toContain("1 filled");
-    expect(screen.queryByTestId("hedge-order-detail")).toBeNull();
+    expect(screen.queryByTestId("trade-details-modal")).toBeNull();
 
     fireEvent.click(toggle);
-    const detail = screen.getByTestId("hedge-order-detail");
-    expect(within(detail).getByTestId("hedge-order-row-SO-4")).toBeTruthy();
+    // The SHARED modal — the same surface the client blotter opens for a client fill.
+    const modal = screen.getByTestId("trade-details-modal");
+    expect(within(modal).getByTestId("trade-details-kind").textContent).toBe("Hedge");
+    expect(within(modal).getByTestId("trade-details-order-SO-4")).toBeTruthy();
 
     // …and the REASON is printed, not tooltipped: it is the whole diagnosis when a
     // hedge fires and the book does not move.
-    expect(within(detail).getByTestId("hedge-order-reason").textContent).toBe(
+    expect(within(modal).getByTestId("trade-details-order-reason").textContent).toBe(
       "NOT A WHOLE LOT",
     );
   });
 
   it("distinguishes an INTERNALISED decision from one whose orders are missing", async () => {
     // An internalised hedge never asks the street, so having no orders is a fact about
-    // what it did — not missing data. Reading it as a failed load would send a desk
-    // hunting for a fetch that never should have happened.
+    // what it did — not missing data. It stays OPENABLE, because the decision itself is
+    // still worth reading; what changes is what the modal says about the absence.
     const built = makeApp({
-      rows: [provenance({ hedgeId: "HDG-9", externalHedged: 0, residual: 500 })],
+      rows: [
+        provenance({
+          hedgeId: "HDG-9",
+          action: defaultExitAction("warehouse"),
+          vehiclePlan: null,
+          lpWon: null,
+          externalHedged: 0,
+        }),
+      ],
       orders: [],
     });
     state.app = built.app;
     render(<HedgeDealsView />);
-    await screen.findByTestId("hedge-deal-row-HDG-9");
-    expect(screen.queryByTestId("hedge-orders-toggle-HDG-9")).toBeNull();
+    // Internalised rows are hidden by default — reveal them, then read the cell.
+    fireEvent.click(await screen.findByTestId("hedge-show-internalised"));
+    const toggle = await screen.findByTestId("hedge-orders-toggle-HDG-9");
+    expect(toggle.textContent).toBe("—");
+
+    fireEvent.click(toggle);
+    expect(screen.getByTestId("trade-details-no-orders").textContent).toContain(
+      "never asks the street",
+    );
   });
 
   it("shows the honest empty note when no hedges have fired", async () => {
