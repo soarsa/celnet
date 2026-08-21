@@ -15,7 +15,7 @@
  * hedge ledger, not a per-deal join. Numbers are right-aligned + tabular so they line
  * up; DV01-family amounts read in the shared compact units. Theme-aware via tokens.
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useApp } from "../app/AppContext";
 import { DataTable } from "../components/DataTable";
@@ -31,6 +31,7 @@ import { fmtCompact, fmtRate } from "../lib/format";
 import { describeExitAction, isExternalExitAction } from "../lib/hedgeExit";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import type { HedgeProvenance } from "../data/contract";
+import type { StreetOrder, StreetOrdersView } from "../data/contract";
 import styles from "./HedgeDealsView.module.css";
 
 /** A hedge band label → RAG class key (mirrors the Hedging monitor). */
@@ -113,6 +114,113 @@ export function contributesTo(p: HedgeProvenance, leg: HedgeLeg): boolean {
   }
 }
 
+
+/** Compact quantity — street quantities span single contracts to millions of face. */
+function fmtQty(q: number): string {
+  if (!Number.isFinite(q)) return "—";
+  return new Intl.NumberFormat("en-US", {
+    notation: Math.abs(q) >= 10_000 ? "compact" : "standard",
+    maximumFractionDigits: 2,
+  }).format(q);
+}
+
+/**
+ * The orders ONE hedge decision put on the wire.
+ *
+ * Rendered as its own labelled table under the ledger rather than as an expanded row,
+ * because `DataTable` has no row-expansion seam and bolting one on for a single caller
+ * would fork the shared model — the thing the table sweep just spent its time removing.
+ *
+ * Every column here answers a question the ledger above cannot: WHO was asked (the
+ * provider, or the composite backstop when the street showed nothing), for HOW MUCH,
+ * what came BACK, and — the one that matters when a book will not drain — WHY it did
+ * not fill.
+ */
+function HedgeOrderDetail({
+  hedgeId,
+  orders,
+  onClose,
+}: {
+  readonly hedgeId: string;
+  readonly orders: readonly StreetOrder[];
+  readonly onClose: () => void;
+}): React.ReactElement {
+  const filled = orders.filter((o) => o.filledQty > 0).length;
+  return (
+    <section className={styles.orderDetail} data-testid="hedge-order-detail">
+      <header className={styles.orderDetailHead}>
+        <h3 className={styles.orderDetailTitle}>
+          Orders sent to market · <span className={styles.orderDetailHedge}>{hedgeId}</span>
+        </h3>
+        <span className={styles.orderDetailCount}>
+          {orders.length} order{orders.length === 1 ? "" : "s"} · {filled} filled
+        </span>
+        <button
+          type="button"
+          className={styles.orderDetailClose}
+          onClick={onClose}
+          data-testid="hedge-order-detail-close"
+        >
+          Close
+        </button>
+      </header>
+      <div className={styles.orderDetailScroll}>
+        <table className={styles.orderTable}>
+          <caption className={styles.orderCaption}>
+            One row per order actually sent, oldest first — the order a shed walked its panel in.
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">Order</th>
+              <th scope="col">Provider</th>
+              <th scope="col">Instrument</th>
+              <th scope="col">Side</th>
+              <th scope="col">Requested</th>
+              <th scope="col">Filled</th>
+              <th scope="col">Fill px</th>
+              <th scope="col">Outcome</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map((o) => (
+              <tr key={o.orderId} data-testid={`hedge-order-row-${o.orderId}`}>
+                <td className={styles.orderMono}>{o.orderId}</td>
+                <td>
+                  {o.lpId ?? (
+                    <span
+                      className={styles.orderComposite}
+                      title="No provider was credited — the street showed no firm price, so this went to the composite backstop or nowhere at all."
+                    >
+                      composite
+                    </span>
+                  )}
+                </td>
+                <td className={styles.orderMono}>{o.instrument}</td>
+                <td>{o.side}</td>
+                <td className={styles.orderNum}>{fmtQty(o.requestedQty)}</td>
+                <td className={styles.orderNum}>{fmtQty(o.filledQty)}</td>
+                <td className={styles.orderNum}>
+                  {o.filledPrice === undefined ? "—" : o.filledPrice.toFixed(6)}
+                </td>
+                <td>
+                  <span className={styles.orderOutcome}>{o.outcome.replace(/_/g, " ")}</span>
+                  {o.reason !== undefined && o.reason !== "" && (
+                    // The reason is printed, not tooltipped. A hedge that did not reduce
+                    // the book is diagnosed by this string and nothing else.
+                    <span className={styles.orderReason} data-testid="hedge-order-reason">
+                      {o.reason.replace(/_/g, " ")}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 export function HedgeDealsView({
   legFilter = null,
 }: {
@@ -155,6 +263,45 @@ export function HedgeDealsView({
       : fetchError instanceof Error
         ? fetchError.message
         : "failed to load hedge provenance";
+
+  /**
+   * The street orders EVERY fired hedge produced, indexed by the hedge that produced
+   * them.
+   *
+   * The ledger above records the hedge DECISION — the band, the action, what was
+   * internalised, what was externalised, the residual. It has never shown the orders
+   * that decision actually put on the wire: which provider was asked, for how much, and
+   * what came back. That is the half a desk needs when a hedge does not reduce the book,
+   * because "external 0" is a symptom and the reject reason is the cause.
+   *
+   * Fetched unfiltered and indexed here rather than per-row on demand: the join key is
+   * already on the order (`parentHedgeId`), one request serves every row, and a
+   * per-row fetch would issue one round trip per expand on a ledger that streams.
+   */
+  const { data: streetData } = useCachedResource<StreetOrdersView>(
+    "hedgeStreetOrders",
+    () => app.transport.listStreetOrders(),
+    { enabled: canView },
+  );
+  const ordersByHedge = useMemo(() => {
+    const index = new Map<string, StreetOrder[]>();
+    for (const o of streetData?.orders ?? []) {
+      const parent = o.parentHedgeId;
+      if (parent === undefined || parent === "") continue;
+      const bucket = index.get(parent);
+      if (bucket === undefined) index.set(parent, [o]);
+      else bucket.push(o);
+    }
+    // Oldest first WITHIN a hedge: a shed walks its panel in rank order, and reading the
+    // refusals in the order they happened is what shows how far down it got.
+    for (const bucket of index.values()) {
+      bucket.sort((a, b) => Number(a.tsNanos - b.tsNanos));
+    }
+    return index;
+  }, [streetData]);
+
+  /** The hedge whose orders are expanded, or `null`. */
+  const [openHedgeId, setOpenHedgeId] = useState<string | null>(null);
 
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
@@ -388,8 +535,64 @@ export function HedgeDealsView({
         sortKey: "mode",
         filter: { kind: "select" },
       },
+      {
+        key: "orders",
+        header: "Orders sent",
+        description:
+          "The street orders this hedge decision actually put on the wire — how many were sent, and how many came back filled. Open a row to see each one: the provider, the size asked for, and the reason any of them declined.",
+        width: 150,
+        align: "left",
+        // The canonical text carries the reject reasons too, so searching the ledger for
+        // "whole lot" surfaces the HEDGES whose orders were refused for it — not just the
+        // orders themselves on a different screen.
+        accessor: (p) => {
+          const orders = ordersByHedge.get(p.hedgeId) ?? [];
+          if (orders.length === 0) return "";
+          const filled = orders.filter((o) => o.filledQty > 0).length;
+          const reasons = orders.map((o) => o.reason ?? "").filter((r) => r !== "");
+          return `${orders.length} sent ${filled} filled ${reasons.join(" ")}`;
+        },
+        sortValue: (p) => (ordersByHedge.get(p.hedgeId) ?? []).length,
+        sortKey: "orders",
+        cell: (p) => {
+          const orders = ordersByHedge.get(p.hedgeId) ?? [];
+          if (orders.length === 0) {
+            // An internalised decision never asks the street, so it has no orders BY
+            // CONSTRUCTION — that is a fact, not missing data, and must not read as a
+            // failed load.
+            return (
+              <span className={styles.ordersNone} title={
+                isExternalHedge(p)
+                  ? "This hedge externalised, but no street order was recorded against it."
+                  : "Internalised — nothing was sent to the street."
+              }>
+                {isExternalHedge(p) ? "none recorded" : "—"}
+              </span>
+            );
+          }
+          const filled = orders.filter((o) => o.filledQty > 0).length;
+          const open = openHedgeId === p.hedgeId;
+          return (
+            <button
+              type="button"
+              className={styles.ordersToggle}
+              aria-expanded={open}
+              data-testid={`hedge-orders-toggle-${p.hedgeId}`}
+              onClick={() => setOpenHedgeId(open ? null : p.hedgeId)}
+            >
+              <span aria-hidden="true" className={styles.ordersCaret}>
+                {open ? "▾" : "▸"}
+              </span>
+              {orders.length} sent
+              <span className={filled > 0 ? styles.ordersFilled : styles.ordersUnfilled}>
+                {filled} filled
+              </span>
+            </button>
+          );
+        },
+      },
     ],
-    [],
+    [ordersByHedge, openHedgeId],
   );
 
   const grid = useGridState<HedgeProvenance>({
@@ -477,6 +680,13 @@ export function HedgeDealsView({
                   : `No hedges match “${query}”.`
               }
             />
+            {openHedgeId !== null && (
+              <HedgeOrderDetail
+                hedgeId={openHedgeId}
+                orders={ordersByHedge.get(openHedgeId) ?? []}
+                onClose={() => setOpenHedgeId(null)}
+              />
+            )}
           </>
         )}
       </Panel>

@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
-import type { HedgeProvenance } from "../src/data/contract";
+import type { HedgeProvenance, StreetOrder } from "../src/data/contract";
 
 const state: { app: unknown } = { app: null };
 vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
@@ -46,18 +46,55 @@ function provenance(over: Partial<HedgeProvenance> = {}): HedgeProvenance {
   };
 }
 
-function makeApp(opts: { can?: boolean; rows?: HedgeProvenance[] } = {}) {
+/** A street order as the analytics seam reports it, joined to its parent hedge. */
+function order(over: Partial<StreetOrder> = {}): StreetOrder {
+  return {
+    orderId: "SO-1",
+    tsNanos: 1_700_000_000_000_000_000n,
+    lpId: "cme-sim",
+    venue: "named_lp",
+    instrument: "ZTU26",
+    family: "bond_future",
+    tenorYears: 2,
+    side: "sell",
+    requestedQty: 1_800_000,
+    filledQty: 1_800_000,
+    requestedPrice: 103.5,
+    filledPrice: 103.5,
+    slippageBp: 0,
+    outcome: "filled",
+    reason: undefined,
+    competitors: [],
+    parentHedgeId: "HDG-1",
+    parentPositionId: 7n,
+    orderType: undefined,
+    timeInForce: undefined,
+    responseLatencyNanos: undefined,
+    ...over,
+  };
+}
+
+function makeApp(
+  opts: { can?: boolean; rows?: HedgeProvenance[]; orders?: StreetOrder[] } = {},
+) {
   const listHedgeProvenance = vi.fn(async () => opts.rows ?? []);
+  const listStreetOrders = vi.fn(async () => ({
+    orders: opts.orders ?? [],
+    breakdown: [],
+    totalMatching: (opts.orders ?? []).length,
+  }));
   return {
     app: {
       transport: {
         label: "in-app",
         listHedgeProvenance,
+        listStreetOrders,
         streamHedgeIntents: vi.fn(() => () => {}),
       },
       auth: { can: () => opts.can ?? true },
     },
     listHedgeProvenance,
+    listStreetOrders,
   };
 }
 
@@ -130,6 +167,57 @@ describe("HedgeDealsView", () => {
     // Turn on "Show internalised" — the warehouse row now appears.
     fireEvent.click(screen.getByTestId("hedge-show-internalised"));
     expect(await screen.findByTestId("hedge-deal-row-WH-1")).toBeInTheDocument();
+  });
+
+  it("shows the ORDERS a hedge put on the wire — the half the ledger never carried", async () => {
+    // The ledger records the DECISION. Until now nothing on this screen said which
+    // provider was asked, for how much, or what came back — so a hedge that did not
+    // reduce the book looked identical to one that did.
+    const built = makeApp({
+      rows: [provenance({ hedgeId: "HDG-1", externalHedged: 308.4 })],
+      orders: [
+        order({ orderId: "SO-4", filledQty: 1_800_000, outcome: "filled" }),
+        order({
+          orderId: "SO-3",
+          filledQty: 0,
+          filledPrice: undefined,
+          outcome: "rejected",
+          reason: "NOT_A_WHOLE_LOT",
+        }),
+      ],
+    });
+    state.app = built.app;
+    render(<HedgeDealsView />);
+
+    // The count is visible on the row without opening anything.
+    const toggle = await screen.findByTestId("hedge-orders-toggle-HDG-1");
+    expect(toggle.textContent).toContain("2 sent");
+    expect(toggle.textContent).toContain("1 filled");
+    expect(screen.queryByTestId("hedge-order-detail")).toBeNull();
+
+    fireEvent.click(toggle);
+    const detail = screen.getByTestId("hedge-order-detail");
+    expect(within(detail).getByTestId("hedge-order-row-SO-4")).toBeTruthy();
+
+    // …and the REASON is printed, not tooltipped: it is the whole diagnosis when a
+    // hedge fires and the book does not move.
+    expect(within(detail).getByTestId("hedge-order-reason").textContent).toBe(
+      "NOT A WHOLE LOT",
+    );
+  });
+
+  it("distinguishes an INTERNALISED decision from one whose orders are missing", async () => {
+    // An internalised hedge never asks the street, so having no orders is a fact about
+    // what it did — not missing data. Reading it as a failed load would send a desk
+    // hunting for a fetch that never should have happened.
+    const built = makeApp({
+      rows: [provenance({ hedgeId: "HDG-9", externalHedged: 0, residual: 500 })],
+      orders: [],
+    });
+    state.app = built.app;
+    render(<HedgeDealsView />);
+    await screen.findByTestId("hedge-deal-row-HDG-9");
+    expect(screen.queryByTestId("hedge-orders-toggle-HDG-9")).toBeNull();
   });
 
   it("shows the honest empty note when no hedges have fired", async () => {
