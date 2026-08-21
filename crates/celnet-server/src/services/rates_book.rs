@@ -2208,6 +2208,13 @@ impl RatesPositionStore {
             // `LpPanelThenComposite` reaches the composite backstop and pure `LpPanel` records an
             // honest miss (never a fabricated fill, guardrail 2).
             let router = self.street_router();
+            // Best-order timer O4 (`OpKind::HedgeExecute`): bracket the EXECUTION — a real
+            // order on a real venue, with a real round trip. It is deliberately separate
+            // from `HedgeFire` (the pure decision, microseconds): folding the two together
+            // is what made the booking commit look like it cost milliseconds when almost
+            // all of it was an outbound network wait, and the two call for opposite
+            // responses — "our hedge logic is slow" vs "the street took 6ms to answer".
+            let hedge_exec_t0 = std::time::Instant::now();
             let exec = match self.lp_hedge_source.get() {
                 Some(src) => {
                     crate::services::auto_hedge::execute_external(&req, src.as_ref(), router)
@@ -2218,6 +2225,10 @@ impl RatesPositionStore {
                     router,
                 ),
             };
+            self.record_latency(
+                celnet_observability::OpKind::HedgeExecute,
+                u64::try_from(hedge_exec_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            );
             // Book the offsetting leg into the same book so the warehoused net reduces by the
             // filled amount. `book_into_risk_book` re-runs the hard-cap gate (a reducing leg
             // never breaches, §8.3) and does NOT recurse into `stamp_internalise`. Every rates
@@ -2537,6 +2548,7 @@ impl RatesPositionStore {
             composite_spread_bp: policy.config.composite_spread_bp,
         };
         let router = self.street_router();
+        let hedge_exec_t0 = std::time::Instant::now();
         let exec = match self.lp_hedge_source.get() {
             Some(src) => crate::services::auto_hedge::execute_external(&req, src.as_ref(), router),
             None => crate::services::auto_hedge::execute_external(
@@ -2545,6 +2557,10 @@ impl RatesPositionStore {
                 router,
             ),
         };
+        self.record_latency(
+            celnet_observability::OpKind::HedgeExecute,
+            u64::try_from(hedge_exec_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
@@ -6329,6 +6345,51 @@ pub(crate) mod tests {
         assert!(
             count_of(OpKind::HedgeFire) > 0,
             "the auto-hedge decision records the HedgeFire stage, got {stats:?}"
+        );
+    }
+
+    /// **The venue round trip is its own stage, not part of the booking commit.**
+    ///
+    /// The auto-hedge EXECUTION puts a real order on a real venue and blocks on the
+    /// answer. That wait used to be unmeasured, so it was folded into `Book` — which is
+    /// why a live desk read 5-6ms for "Ack→fill→book" while the hedge DECISION read 26us.
+    /// A stage that silently contains someone else's network call cannot be optimised,
+    /// because the number never points at the thing that is slow.
+    #[test]
+    fn the_hedge_venue_round_trip_is_measured_apart_from_the_booking_commit() {
+        use celnet_observability::OpKind;
+        let store = RatesPositionStore::new();
+        let hub = Arc::new(crate::services::telemetry::TelemetryHub::new(1_000_000_000));
+        store.set_telemetry(Arc::clone(&hub));
+        store.set_routing(Some(single_book_graph("wh")));
+        // An EXTERNAL policy, an LP that quotes, and a router that trades — so the shed
+        // genuinely reaches the street seam rather than warehousing.
+        store.set_hedge_policy(Some(external_hedge_policy("wh", 100_000.0, 0.5)));
+        store.set_lp_hedge_source(Arc::new(StubLp {
+            lp: "LP-SIM-01",
+            bid: 0.0404,
+            offer: 0.0406,
+        }));
+        store.set_street_router(Arc::new(TradesAtQuote));
+
+        store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
+            .expect("books");
+
+        let stats = hub.stage_stats();
+        let count_of = |k: OpKind| -> u64 {
+            stats
+                .iter()
+                .find(|s| s.kind == k)
+                .map_or(0, |s| s.snapshot.count)
+        };
+        assert!(
+            count_of(OpKind::HedgeExecute) > 0,
+            "the external hedge execution records its own stage, got {stats:?}"
+        );
+        assert!(
+            count_of(OpKind::HedgeFire) > 0,
+            "the decision still records its own stage, got {stats:?}"
         );
     }
 

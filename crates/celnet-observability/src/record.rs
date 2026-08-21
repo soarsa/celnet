@@ -57,12 +57,24 @@ pub enum OpKind {
     /// Risk-routing decision-graph evaluation for an accepted trade.
     RiskRoute = 12,
     /// Auto-hedge fire (threshold breach → hedge action) on the booking tier.
+    ///
+    /// The DECISION only. The execution that follows it — a real order on a real venue,
+    /// with a real round trip — is [`Self::HedgeExecute`]; keeping them apart is the
+    /// difference between "our hedge logic is slow" and "the street took 6ms to answer",
+    /// which call for opposite responses.
     HedgeFire = 13,
+    /// Auto-hedge EXECUTION: the external order round trip to the venue (route → fill /
+    /// decline / expiry), measured at the street seam.
+    ///
+    /// Previously unmeasured, and therefore invisible — the wait was folded into
+    /// [`Self::Book`], which made the booking commit look like it cost milliseconds when
+    /// almost all of it was an outbound network call.
+    HedgeExecute = 14,
 }
 
 impl OpKind {
     /// The number of distinct kinds; used to size per-kind aggregation arrays.
-    pub const COUNT: usize = 14;
+    pub const COUNT: usize = 15;
 
     /// Stable, vendor-neutral label for metrics and structured logs.
     #[must_use]
@@ -82,6 +94,7 @@ impl OpKind {
             OpKind::Book => "book",
             OpKind::RiskRoute => "risk_route",
             OpKind::HedgeFire => "hedge_fire",
+            OpKind::HedgeExecute => "hedge_execute",
         }
     }
 
@@ -104,7 +117,8 @@ impl OpKind {
             OpKind::QuoteAccept => "Quote→lift / accept",
             OpKind::Book => "Ack→fill→book",
             OpKind::RiskRoute => "Risk routing",
-            OpKind::HedgeFire => "Auto-hedge fire",
+            OpKind::HedgeFire => "Auto-hedge decision",
+            OpKind::HedgeExecute => "Auto-hedge execution (venue round trip)",
         }
     }
 
@@ -127,6 +141,7 @@ impl OpKind {
             11 => Some(OpKind::Book),
             12 => Some(OpKind::RiskRoute),
             13 => Some(OpKind::HedgeFire),
+            14 => Some(OpKind::HedgeExecute),
             _ => None,
         }
     }
