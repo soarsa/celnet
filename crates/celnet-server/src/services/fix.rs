@@ -2218,7 +2218,13 @@ impl FixSession {
                         // Book at the ACTUAL last-look fill price (`premium`, already the
                         // policy result for a market-data lift), so the booked position and
                         // deal carry the real dealt level, not the raw streamed quote.
-                        if edge.book_fix_lift_priced(request_id, premium).is_none() {
+                        // Carry the LIFT's own direction: on a two-way stream the stored request
+                        // has none, so this is the only place the booked side can come from.
+                        let lift_side = if is_sell { Side::Sell } else { Side::Buy };
+                        if edge
+                            .book_fix_lift_priced(request_id, premium, Some(lift_side))
+                            .is_none()
+                        {
                             filled = false;
                             const REJECT: &[u8] =
                                 b"rates lift rejected: pre-trade / risk-book limit breach";
