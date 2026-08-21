@@ -373,6 +373,7 @@ describe("engine config round-trip", () => {
       ],
       maxClip: 150_000_000,
       maxHedgesPerInterval: 20,
+      dispatch: "sync",
       dailyExternalNotionalCap: 2_000_000_000,
       lpPanels: [],
       compositeSpreadBp: 0.5,
@@ -395,6 +396,9 @@ describe("engine config round-trip", () => {
       deskEnabled: [{ desk: "emea", enabled: true }],
       maxClip: 150_000_000,
       maxHedgesPerInterval: 20,
+      // Deliberately the NON-default: a fixture that only ever carries the proto3
+      // zero passes even when the field is dropped on the wire entirely.
+      dispatch: "async",
       dailyExternalNotionalCap: 2_000_000_000,
       lpPanels: [
         { scopeKind: "book", scopeId: "fi-rates-emea", include: ["LP-1", "LP-2", "LP-3"], exclude: ["LP-2"] },

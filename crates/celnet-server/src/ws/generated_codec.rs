@@ -6935,6 +6935,7 @@ impl WireBuilder for HedgeConfigDesc {
             }
             "max_clip" => self.max_clip = f64_or_zero(value),
             "max_hedges_per_interval" => self.max_hedges_per_interval = u32_or_zero(value),
+            "dispatch" => self.dispatch = i32_or_zero(value),
             "daily_external_notional_cap" => {
                 self.daily_external_notional_cap = f64_or_zero(value);
             }
@@ -9675,6 +9676,7 @@ impl WireAdapter for HedgeConfigDesc {
             "max_hedges_per_interval" => {
                 Some(WireVal::U64(u64::from(self.max_hedges_per_interval)))
             }
+            "dispatch" => Some(WireVal::I64(i64::from(self.dispatch))),
             "daily_external_notional_cap" => Some(WireVal::F64(self.daily_external_notional_cap)),
             "lp_panels" => Some(WireVal::RepeatedMsg(
                 self.lp_panels

@@ -2281,6 +2281,10 @@ export class MockTransport implements CelnetTransport {
   private mockHedgeConfig: HedgeConfig = {
     killSwitch: false,
     execution: "lp_panel_then_composite",
+  // The historical posture, and the one the in-app desk should demonstrate: the hedge
+  // completes before the fill returns, so a mock walkthrough shows the offsetting leg
+  // and the provenance together.
+  dispatch: "sync",
     compositeSpreadBp: 0.5,
     deskEnabled: [
       { desk: "emea", enabled: true },

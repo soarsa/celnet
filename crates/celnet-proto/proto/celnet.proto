@@ -5618,6 +5618,22 @@ enum HedgeExecutionModeEnum {
   HEDGE_EXEC_LP_PANEL_THEN_COMPOSITE = 3;
 }
 
+// WHEN a live external hedge runs relative to the fill that triggered it.
+//
+// Distinct from `HedgeExecutionModeEnum`, which says WHERE it executes. This says
+// whether the client's booking commit waits for it.
+enum HedgeDispatchEnum {
+  // Run the external hedge INSIDE the booking commit, and wait for the venue's answer
+  // before the fill is acknowledged. The offsetting leg and the provenance record are
+  // both in place the instant the fill returns, at the cost of putting a venue round
+  // trip on the client's critical path.
+  HEDGE_DISPATCH_SYNC = 0;
+  // Book the fill first and run the external hedge immediately after, off the booking
+  // path. The client is acknowledged without waiting for our own risk management to
+  // round-trip a venue; the offsetting leg and provenance land a moment later.
+  HEDGE_DISPATCH_ASYNC = 1;
+}
+
 // What a hedge POLICY GRAPH binds to — the scope of an exit-policy decision graph
 // (mirrors `crate::config::hedge_policy::HedgePolicyScope`). A fill in book B is
 // governed by the most-specific applicable policy: B's own BOOK policy, else the
@@ -5994,6 +6010,10 @@ message HedgeConfigDesc {
   // warehouse-to-a-DV01-budget). Empty ⇒ CUSTOM everywhere, i.e. every scope resolves
   // its authored exit-policy graph exactly as it always did.
   repeated HedgingModelBinding hedging_models = 11;
+  // WHEN a live external hedge runs relative to the fill (sync = inside the booking
+  // commit; async = immediately after it, off the client's critical path). Defaults to
+  // SYNC, which is the historical behaviour.
+  HedgeDispatchEnum dispatch = 12;
 }
 
 // Read a scoped hedge policy graph (gated `hedge` × asset). Absent until defined.

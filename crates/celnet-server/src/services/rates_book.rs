@@ -357,6 +357,14 @@ pub struct RatesPositionStore {
     /// and `ListStreetOrders` serves the blotter + breakdowns off it. `None` (the unit-test
     /// default) means the recording call is a no-op.
     street_orders: OnceLock<Arc<crate::services::analytics::street_orders::StreetOrderLog>>,
+    /// A WEAK handle to this store, so an asynchronously-dispatched hedge can own a
+    /// reference for the life of its own work.
+    ///
+    /// Weak, not strong: a strong self-reference is a reference cycle the store could
+    /// never be dropped out of. Absent (or already dead) simply means the async path is
+    /// unavailable and the hedge runs inline — degrading to the synchronous behaviour is
+    /// always safe, whereas skipping the hedge never is.
+    self_handle: OnceLock<std::sync::Weak<RatesPositionStore>>,
     /// The **standing hedge suggestions** raised under a `Suggest`-mode scope (§6.5) — the
     /// manual half of suggest-then-exit. A breach in such a scope computes the whole hedge
     /// (band, action, vehicle, DV01 ratio, whole-lot rounding) and publishes it here
@@ -441,6 +449,7 @@ impl RatesPositionStore {
         Self {
             inner: RwLock::new(Vec::new()),
             next_id: AtomicU64::new(1),
+            self_handle: OnceLock::new(),
             limits: RwLock::new(LimitTree::new()),
             consensus: OnceLock::new(),
             routing: RwLock::new(None),
@@ -484,6 +493,18 @@ impl RatesPositionStore {
     /// records an honest miss — never a fabricated LP fill.
     pub fn set_lp_hedge_source(&self, src: Arc<dyn crate::services::auto_hedge::LpHedgeSource>) {
         let _ = self.lp_hedge_source.set(src);
+    }
+
+    /// Install the store's own weak handle (once, at wiring time). Required for
+    /// [`HedgeDispatch`](crate::config::hedge_policy::HedgeDispatch)`::Async`; without it
+    /// a hedge configured async runs inline.
+    pub fn set_self_handle(&self, me: &Arc<RatesPositionStore>) {
+        let _ = self.self_handle.set(Arc::downgrade(me));
+    }
+
+    /// An owned handle to this store, when one was installed and is still alive.
+    fn me(&self) -> Option<Arc<RatesPositionStore>> {
+        self.self_handle.get().and_then(std::sync::Weak::upgrade)
     }
 
     /// Attach the live **street-order router** — the outbound FIX seam that actually
@@ -1379,12 +1400,45 @@ impl RatesPositionStore {
         // price-tolerance verdict and stamp it onto the fill for the deal blotter. A no-op
         // otherwise (the manual `BookRatesPosition` path, or no policy) — byte-identical.
         // `booking_trace_id` threads the lift's trace so the hedge decision/fire emit stages.
-        self.stamp_internalise(
-            &position,
-            resolved_book.as_deref(),
-            &attribution,
-            booking_trace_id,
-        );
+        // Auto-hedge dispatch (`HedgeDispatch`): the hedge is the DESK's risk management,
+        // not part of confirming the client's trade — but running it here, inline, puts a
+        // blocking venue round trip on the client's booking commit (measured ~6ms p99 on
+        // UAT against a hedge decision of ~26us).
+        //
+        // `Async` detaches the whole hedge — decision and execution together, so the
+        // ordering between them is unchanged and only its relationship to the FILL moves.
+        // What is given up is simultaneity: the offsetting leg and the provenance record
+        // land a moment after the fill returns rather than with it.
+        //
+        // Falls back to inline whenever the async path is unavailable (no self-handle
+        // installed, or the store is being dropped). Degrading to synchronous is always
+        // safe; silently skipping the hedge never is.
+        let dispatch = self
+            .hedge_policy
+            .read()
+            .expect("rates hedge-policy lock poisoned")
+            .as_ref()
+            .map_or(crate::config::hedge_policy::HedgeDispatch::Sync, |p| {
+                p.config.dispatch
+            });
+        match dispatch.is_async().then(|| self.me()).flatten() {
+            Some(me) => {
+                let fill = position.clone();
+                let attribution = attribution.clone();
+                let book = resolved_book.clone();
+                std::thread::spawn(move || {
+                    me.stamp_internalise(&fill, book.as_deref(), &attribution, booking_trace_id);
+                });
+            }
+            None => {
+                self.stamp_internalise(
+                    &position,
+                    resolved_book.as_deref(),
+                    &attribution,
+                    booking_trace_id,
+                );
+            }
+        }
         // O3: record the ack→fill→book commit latency into the per-`OpKind` store (mirrors the
         // FX sink). Off the pinned pricing core; a no-op when no hub is installed.
         self.record_latency(
@@ -6345,6 +6399,97 @@ pub(crate) mod tests {
         assert!(
             count_of(OpKind::HedgeFire) > 0,
             "the auto-hedge decision records the HedgeFire stage, got {stats:?}"
+        );
+    }
+
+    /// **`Sync` keeps the hedge on the booking path; `Async` takes it off.**
+    ///
+    /// The synchronous case is the historical contract and several callers depend on it:
+    /// the offsetting leg and the provenance record are BOTH in place the instant
+    /// `book_with_routing` returns. Asserting that immediately after booking is exactly
+    /// the guarantee `Sync` makes.
+    #[test]
+    fn sync_dispatch_completes_the_hedge_before_the_fill_returns() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let mut policy = external_hedge_policy("wh", 100_000.0, 0.5);
+        policy.config.dispatch = crate::config::hedge_policy::HedgeDispatch::Sync;
+        store.set_hedge_policy(Some(policy));
+        store.set_lp_hedge_source(Arc::new(StubLp {
+            lp: "LP-SIM-01",
+            bid: 0.0404,
+            offer: 0.0406,
+        }));
+        store.set_street_router(Arc::new(TradesAtQuote));
+
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
+            .expect("books");
+        assert!(
+            store.internalise_of(booked.position_id).is_some(),
+            "under Sync the hedge is complete by the time the fill returns",
+        );
+    }
+
+    /// Under `Async` the fill returns without waiting — and the hedge still happens.
+    ///
+    /// Both halves matter. A fill that returns early has bought nothing if the hedge was
+    /// dropped, so this waits (bounded) for the detached work to land rather than
+    /// asserting its absence, which would pass just as well for a hedge that never ran.
+    #[test]
+    fn async_dispatch_detaches_the_hedge_but_still_runs_it() {
+        let store = Arc::new(RatesPositionStore::new());
+        store.set_self_handle(&store);
+        store.set_routing(Some(single_book_graph("wh")));
+        let mut policy = external_hedge_policy("wh", 100_000.0, 0.5);
+        policy.config.dispatch = crate::config::hedge_policy::HedgeDispatch::Async;
+        store.set_hedge_policy(Some(policy));
+        store.set_lp_hedge_source(Arc::new(StubLp {
+            lp: "LP-SIM-01",
+            bid: 0.0404,
+            offer: 0.0406,
+        }));
+        store.set_street_router(Arc::new(TradesAtQuote));
+
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
+            .expect("books");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while store.internalise_of(booked.position_id).is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the detached hedge must still run — async moves it off the path, it does \
+                 not drop it",
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    /// Async configured but NO self-handle installed ⇒ the hedge runs inline.
+    ///
+    /// Degrading to synchronous is always safe; silently skipping the hedge never is, so
+    /// the missing handle must not become a missing hedge.
+    #[test]
+    fn async_without_a_self_handle_falls_back_to_running_inline() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let mut policy = external_hedge_policy("wh", 100_000.0, 0.5);
+        policy.config.dispatch = crate::config::hedge_policy::HedgeDispatch::Async;
+        store.set_hedge_policy(Some(policy));
+        store.set_lp_hedge_source(Arc::new(StubLp {
+            lp: "LP-SIM-01",
+            bid: 0.0404,
+            offer: 0.0406,
+        }));
+        store.set_street_router(Arc::new(TradesAtQuote));
+
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
+            .expect("books");
+        assert!(
+            store.internalise_of(booked.position_id).is_some(),
+            "no handle ⇒ inline, never skipped",
         );
     }
 

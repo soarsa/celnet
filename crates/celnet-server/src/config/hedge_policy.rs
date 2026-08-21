@@ -242,6 +242,72 @@ impl HedgeScopeKind {
 
 /// How a live hedge decision is **executed** once the policy resolves an external exit
 /// action — the "Both — config per policy" control
+/// **When** a live external hedge runs relative to the fill that triggered it.
+///
+/// Distinct from [`HedgeExecutionMode`], which says WHERE it executes. This says whether
+/// the client's booking commit waits for it.
+///
+/// The distinction is worth a config field because it is a genuine trade-off, not an
+/// optimisation. `route()` blocks on a real venue round trip, so under
+/// [`Sync`](HedgeDispatch::Sync) that wait sits on the client's critical path — measured
+/// at ~6ms p99 on UAT, against a hedge DECISION of ~26us. Under
+/// [`Async`](HedgeDispatch::Async) the fill is acknowledged first and the hedge follows
+/// immediately after, off that path.
+///
+/// What you give up asynchronously is simultaneity: the offsetting leg and the
+/// provenance record land a moment AFTER the fill returns rather than with it. A desk
+/// that reconciles the two in the same breath — or a test that reads provenance straight
+/// after booking — wants `Sync`. A desk that cares about acknowledgement latency wants
+/// `Async`. Neither is universally right, which is exactly why it is configured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum HedgeDispatch {
+    /// Run the external hedge inside the booking commit and wait for the venue.
+    /// The historical behaviour, and the default.
+    #[default]
+    Sync,
+    /// Book the fill first; run the external hedge immediately after, off the path.
+    Async,
+}
+
+impl HedgeDispatch {
+    /// Every dispatch, in stable (proto-ordinal) order.
+    pub const ALL: [HedgeDispatch; 2] = [HedgeDispatch::Sync, HedgeDispatch::Async];
+
+    /// Stable snake_case label for audit / logging.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            HedgeDispatch::Sync => "sync",
+            HedgeDispatch::Async => "async",
+        }
+    }
+
+    /// Whether the fill is acknowledged without waiting for the venue.
+    #[must_use]
+    pub const fn is_async(self) -> bool {
+        matches!(self, HedgeDispatch::Async)
+    }
+
+    /// Wire ordinal → dispatch. An unknown ordinal reads as `Sync`: the safe direction,
+    /// since a fill that waits is never wrong, only slower.
+    #[must_use]
+    pub const fn from_i32(v: i32) -> Self {
+        match v {
+            1 => HedgeDispatch::Async,
+            _ => HedgeDispatch::Sync,
+        }
+    }
+
+    /// Dispatch → wire ordinal.
+    #[must_use]
+    pub const fn to_i32(self) -> i32 {
+        match self {
+            HedgeDispatch::Sync => 0,
+            HedgeDispatch::Async => 1,
+        }
+    }
+}
+
 /// (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §6). Replaces the former
 /// boolean `advisory_only`: [`Advisory`](HedgeExecutionMode::Advisory) is the old dry-run
 /// posture; the three live modes each name a concrete venue path the executor drives.
@@ -632,6 +698,10 @@ pub struct HedgeConfigDef {
     /// Max hedges fired per rate-limit interval; `0` ⇒ unbounded.
     #[serde(default)]
     pub max_hedges_per_interval: u32,
+    /// WHEN a live external hedge runs relative to the fill. `#[serde(default)]` ⇒ an
+    /// existing `identity.json` loads as `Sync`, the historical behaviour.
+    #[serde(default)]
+    pub dispatch: HedgeDispatch,
     /// A daily externalised-notional cap; `0` ⇒ unbounded.
     #[serde(default, with = "nonfinite_f64")]
     pub daily_external_notional_cap: f64,
@@ -698,6 +768,7 @@ impl Default for HedgeConfigDef {
             desk_enabled: Vec::new(),
             max_clip: 0.0,
             max_hedges_per_interval: 0,
+            dispatch: HedgeDispatch::Sync,
             daily_external_notional_cap: 0.0,
             lp_panels: Vec::new(),
             vehicles: HedgeVehicleRegistry::default(),

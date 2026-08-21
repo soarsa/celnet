@@ -5015,6 +5015,7 @@ fn hedge_config_desc_to_json(c: &HedgeConfigDesc) -> Value {
         ),
         "max_clip": c.max_clip,
         "max_hedges_per_interval": c.max_hedges_per_interval,
+        "dispatch": c.dispatch,
         "daily_external_notional_cap": c.daily_external_notional_cap,
         "lp_panels": Value::Array(
             c.lp_panels.iter().map(hedge_lp_panel_desc_to_json).collect(),
@@ -5091,6 +5092,7 @@ fn hedge_config_desc_from_json(v: &Value) -> Result<HedgeConfigDesc> {
         desk_enabled,
         max_clip: f64_or_zero(o, "max_clip"),
         max_hedges_per_interval: u32_or_zero(o, "max_hedges_per_interval"),
+        dispatch: enum_or_zero(o, "dispatch"),
         daily_external_notional_cap: f64_or_zero(o, "daily_external_notional_cap"),
         lp_panels,
         composite_spread_bp: f64_or_zero(o, "composite_spread_bp"),

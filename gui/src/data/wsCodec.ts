@@ -17,6 +17,7 @@
  */
 
 import type {
+  HedgeDispatch,
   DecisionEngine,
   DecisionJournalFilter,
   DecisionJournalPage,
@@ -4846,6 +4847,20 @@ export function hedgeExecutionFromWire(n: number): HedgeExecutionMode {
   return HEDGE_EXEC_FROM[n] ?? "lp_panel_then_composite";
 }
 
+const HEDGE_DISPATCH_WIRE: Record<HedgeDispatch, number> = { sync: 0, async: 1 };
+const HEDGE_DISPATCH_FROM: readonly HedgeDispatch[] = ["sync", "async"];
+/** The wire `HedgeDispatchEnum` i32 tag. */
+export function hedgeDispatchToWire(d: HedgeDispatch): number {
+  return HEDGE_DISPATCH_WIRE[d];
+}
+/**
+ * A GUI dispatch from the wire i32 tag. Out of range reads as `sync` — the proto3
+ * default, and the safe direction: a fill that waits is never wrong, only slower.
+ */
+export function hedgeDispatchFromWire(n: number): HedgeDispatch {
+  return HEDGE_DISPATCH_FROM[n] ?? "sync";
+}
+
 const HEDGE_POLICY_SCOPE_WIRE: Record<HedgePolicyScopeKind, number> = {
   firm: 0,
   book: 1,
@@ -5477,6 +5492,7 @@ export function hedgeConfigToWire(c: HedgeConfig): WireObject {
     desk_enabled: c.deskEnabled.map(hedgeDeskToggleToWire),
     max_clip: c.maxClip,
     max_hedges_per_interval: c.maxHedgesPerInterval,
+    dispatch: hedgeDispatchToWire(c.dispatch),
     daily_external_notional_cap: c.dailyExternalNotionalCap,
     lp_panels: c.lpPanels.map(hedgeLpPanelToWire),
     composite_spread_bp: c.compositeSpreadBp,
@@ -5495,6 +5511,7 @@ export function hedgeConfigFromWire(o: WireObject): HedgeConfig {
     deskEnabled: array(o, "desk_enabled").map(hedgeDeskToggleFromWire),
     maxClip: num(o, "max_clip"),
     maxHedgesPerInterval: num(o, "max_hedges_per_interval"),
+    dispatch: hedgeDispatchFromWire(enumNum(o, "dispatch")),
     dailyExternalNotionalCap: num(o, "daily_external_notional_cap"),
     lpPanels: array(o, "lp_panels").map(hedgeLpPanelFromWire),
     compositeSpreadBp: num(o, "composite_spread_bp"),

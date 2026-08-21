@@ -7000,6 +7000,9 @@ fn hedge_config_full() -> HedgeConfigDesc {
         ],
         max_clip: 50_000_000.0,
         max_hedges_per_interval: 10,
+        // The NON-default, so the differential proves the field survives BOTH codecs
+        // rather than passing on a shared zero.
+        dispatch: 1,
         daily_external_notional_cap: 1_000_000_000.0,
         // The standing hedging LP panels: a book-scoped include+exclude and a desk-scoped
         // exclude-only (the repeated-nested-message edge, each with repeated-string fields).
@@ -7032,6 +7035,7 @@ fn hedge_config_body() -> Value {
         ],
         "max_clip": 50_000_000.0,
         "max_hedges_per_interval": 10,
+        "dispatch": 1,
         "daily_external_notional_cap": 1_000_000_000.0,
         "lp_panels": [
             { "scope_kind": HedgeScopeKindEnum::HedgeScopeBook as i32, "scope_id": "gm",

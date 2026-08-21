@@ -4115,6 +4115,17 @@ export type HedgeExecutionMode =
   | "lp_panel_then_composite";
 
 /**
+ * WHEN a live external hedge runs relative to the fill that triggered it (mirrors
+ * `HedgeDispatchEnum`, ordinals sync=0 / async=1). Distinct from
+ * {@link HedgeExecutionMode}, which says WHERE it executes:
+ *  - `sync`  — inside the booking commit; the fill waits for the venue's answer, so the
+ *              offsetting leg and provenance are in place the instant it returns.
+ *  - `async` — immediately after the commit, off the client's critical path; the fill is
+ *              acknowledged without waiting, and the hedge lands a moment later.
+ */
+export type HedgeDispatch = "sync" | "async";
+
+/**
  * The scope a HEDGE POLICY graph binds to (mirrors `HedgePolicyScopeKindEnum`,
  * ordinals firm=0 / book=1 / bucket=2). DISTINCT from {@link HedgeScopeKind} (the
  * warehouse-threshold / LP-panel desk/book/instrument scope):
@@ -4824,6 +4835,8 @@ export interface HedgeConfig {
   maxClip: number;
   /** Max hedges fired per rate-limit interval (0 ⇒ unbounded). */
   maxHedgesPerInterval: number;
+  /** WHEN a live external hedge runs relative to the fill (mirrors field 12). */
+  dispatch: HedgeDispatch;
   /** A daily externalised-notional cap (0 ⇒ unbounded). */
   dailyExternalNotionalCap: number;
   /**
