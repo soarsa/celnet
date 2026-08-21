@@ -381,6 +381,56 @@ describe("StreetExecution (the order-level half of the workspace)", () => {
     );
   });
 
+  it("searches the blotter by id, instrument, provider AND reason", async () => {
+    const { app } = makeApp([], {
+      orders: [
+        streetOrder({
+          orderId: "SO-24",
+          lpId: "cme-sim",
+          instrument: "ZTU26",
+          outcome: "rejected",
+          reason: "NOT_A_WHOLE_LOT",
+          filledQty: 0,
+          filledPrice: undefined,
+          slippageBp: undefined,
+        }),
+        streetOrder({
+          orderId: "SO-99",
+          lpId: "jpm-sim",
+          instrument: "912797UJ4",
+          outcome: "no_liquidity",
+          reason: "no_firm_lp_price",
+          filledQty: 0,
+          filledPrice: undefined,
+          slippageBp: undefined,
+        }),
+      ],
+      breakdown: [breakdownRow()],
+      totalMatching: 2,
+    });
+    await renderWorkspace(app);
+
+    const search = screen.getByLabelText("Search street orders");
+    expect(screen.getAllByTestId("street-outcome-chip")).toHaveLength(2);
+
+
+    // The selects above can only narrow on the server's closed vocabularies. Searching
+    // the REASON is the case they cannot express — and it is the one that matters, since
+    // "show me everything rejected as mis-sized" is a real question.
+    act(() => {
+      fireEvent.change(search, { target: { value: "whole lot" } });
+    });
+    expect(screen.getAllByTestId("street-outcome-chip")).toHaveLength(1);
+    expect(screen.getByTestId("street-outcome-reason").textContent).toBe("not a whole lot");
+
+    act(() => {
+      fireEvent.change(search, { target: { value: "912797UJ4" } });
+    });
+    const rows = screen.getAllByTestId("street-outcome-chip");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toBe("No liquidity");
+  });
+
   it("labels a composite backstop explicitly and never as an LP", async () => {
     const { app } = makeApp([], {
       orders: [

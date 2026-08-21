@@ -135,11 +135,34 @@
 
 /* --- table ---------------------------------------------------------------- */
 
+/*
+ * The BOUNDED scrollport the sticky header pins against.
+ *
+ * `thead th` below is already `position: sticky; top: 0` — but sticky resolves against
+ * the nearest SCROLLING ancestor, and this box only ever declared `overflow-x`. With no
+ * bounded height and no vertical overflow of its own, the nearest scroller was the page,
+ * so the header scrolled away with the rows and the "sticky" declaration did nothing on
+ * every one of these blotters.
+ *
+ * Capping the height gives the header something to stick to and puts the scroll in the
+ * BODY where it belongs. `min()` keeps it responsive: a short viewport gets a proportional
+ * table rather than one taller than the screen, and a tall monitor stops at a length that
+ * still reads as a table rather than a page.
+ */
 .tableScroll {
-  overflow-x: auto;
+  overflow: auto;
+  max-height: min(62vh, 720px);
+  overscroll-behavior: contain;
   border: 1px solid var(--hairline);
   border-radius: var(--r-md);
   background: var(--bg-raised);
+}
+
+/* The header sits above the horizontally-sticky first column (z-index 2 below), so it
+   needs to outrank it — otherwise the row label paints over the header on a diagonal
+   scroll, which is only visible once the body actually scrolls. */
+.tableScroll thead th {
+  z-index: 3;
 }
 
 .table {

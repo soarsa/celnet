@@ -12,14 +12,18 @@
  * mutation.
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
+import { DataTable } from "../components/DataTable";
 import { InstrumentDialog } from "../components/InstrumentDialog";
 import { Panel } from "../components/Panel";
+import { TableSearch } from "../components/TableSearch";
 import { INSTRUMENT_FAMILY_LABELS, type InstrumentDef } from "../data/contract";
+import { useGridState } from "../hooks/useGridState";
 import { useReferenceData } from "../hooks/useReferenceData";
+import type { ColumnDef } from "../lib/grid";
 import admin from "./AdminWorkspace.module.css";
 import styles from "./ReferenceDataWorkspace.module.css";
 
@@ -96,6 +100,112 @@ export function ReferenceDataWorkspace(): React.ReactElement {
     setShowCreate(false);
   };
 
+  // The registry is the one screen that answers "does this instrument exist, and how is
+  // it set up" — which is a lookup, not a browse. Text search over id/name/identifiers
+  // plus a family/currency filter is what makes that answerable on a real universe;
+  // scrolling a few hundred rows looking for a CUSIP is not.
+  const columns = useMemo<ColumnDef<InstrumentDef>[]>(
+    () => [
+      {
+        key: "instrumentId",
+        header: "Id",
+        width: 190,
+        align: "left",
+        accessor: (d) => d.instrumentId,
+        sortKey: "instrumentId",
+        filter: { kind: "text" },
+        cell: (d) => <span className={admin.mono}>{d.instrumentId}</span>,
+      },
+      {
+        key: "name",
+        header: "Name",
+        width: 260,
+        align: "left",
+        accessor: (d) => d.name,
+        sortKey: "name",
+        filter: { kind: "text" },
+        cell: (d) => <span className={admin.nameCell}>{d.name}</span>,
+      },
+      {
+        key: "currency",
+        header: "Currency",
+        width: 110,
+        align: "left",
+        accessor: (d) => d.currency,
+        sortKey: "currency",
+        filter: { kind: "select" },
+        cell: (d) => <span className={admin.mono}>{d.currency}</span>,
+      },
+      {
+        key: "family",
+        header: "Family",
+        width: 150,
+        align: "left",
+        accessor: (d) => INSTRUMENT_FAMILY_LABELS[d.family],
+        sortKey: "family",
+        filter: { kind: "select" },
+        cell: (d) => (
+          <span className={styles.familyTag}>{INSTRUMENT_FAMILY_LABELS[d.family]}</span>
+        ),
+      },
+      {
+        key: "externalIds",
+        header: "External ids",
+        width: 280,
+        align: "left",
+        // The accessor flattens every scheme/value pair so a search for an ISIN or a
+        // CUSIP finds the row even though the cell renders chips.
+        accessor: (d) => d.externalIds.map((x) => `${x.scheme} ${x.value}`).join(" "),
+        filter: { kind: "text" },
+        cell: (d) => <ExternalIds def={d} />,
+      },
+      ...(canEdit
+        ? ([
+            {
+              key: "actions",
+              header: "Actions",
+              width: 170,
+              align: "left",
+              // Row actions are not data: no accessor text, so they never match a
+              // search and never offer a filter.
+              accessor: () => "",
+              cell: (d) => (
+                <div className={admin.rowActions}>
+                  <Button variant="secondary" onClick={() => openEdit(d)}>
+                    Edit
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => void runAction(() => data.deleteInstrument(d.instrumentId))}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              ),
+            },
+          ] as ColumnDef<InstrumentDef>[])
+        : []),
+    ],
+    [canEdit, data, openEdit, runAction],
+  );
+
+  const [query, setQuery] = useState("");
+  const searched = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (needle === "") return data.instruments;
+    return data.instruments.filter((d) =>
+      columns.some((c) => c.accessor(d).toLowerCase().includes(needle)),
+    );
+  }, [data.instruments, query, columns]);
+
+  const grid = useGridState<InstrumentDef>({
+    tableId: "reference-data-instruments",
+    columns,
+    rows: searched,
+    allRows: data.instruments,
+    initialSort: { key: "instrumentId", dir: "asc" },
+  });
+
   const headActions = (
     <div className={admin.headActions}>
       <Button variant="ghost" onClick={() => void data.refetch()} disabled={data.isLoading}>
@@ -125,52 +235,25 @@ export function ReferenceDataWorkspace(): React.ReactElement {
         {data.instruments.length === 0 ? (
           <p className={admin.empty}>No instrument definitions yet.</p>
         ) : (
-          <table className={admin.table}>
-            <thead>
-              <tr>
-                <th scope="col">Id</th>
-                <th scope="col">Name</th>
-                <th scope="col">Currency</th>
-                <th scope="col">Family</th>
-                <th scope="col">External ids</th>
-                {canEdit && (
-                  <th scope="col" className={admin.actionsCol}>
-                    Actions
-                  </th>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {data.instruments.map((def) => (
-                <tr key={def.instrumentId}>
-                  <td className={admin.mono}>{def.instrumentId}</td>
-                  <td className={admin.nameCell}>{def.name}</td>
-                  <td className={admin.mono}>{def.currency}</td>
-                  <td>
-                    <span className={styles.familyTag}>{INSTRUMENT_FAMILY_LABELS[def.family]}</span>
-                  </td>
-                  <td>
-                    <ExternalIds def={def} />
-                  </td>
-                  {canEdit && (
-                    <td className={admin.actionsCol}>
-                      <div className={admin.rowActions}>
-                        <Button variant="secondary" onClick={() => openEdit(def)}>
-                          Edit
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          onClick={() => void runAction(() => data.deleteInstrument(def.instrumentId))}
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <>
+            <TableSearch
+              query={query}
+              onQueryChange={setQuery}
+              shown={grid.shown}
+              total={grid.total}
+              label="Search instruments"
+              placeholder="Filter by id, name or identifier…"
+            />
+            <DataTable
+              label="Instruments"
+              columns={columns}
+              grid={grid}
+              rowKey={(d) => d.instrumentId}
+              rowProps={(d) => ({ "data-testid": `instrument-row-${d.instrumentId}` })}
+              hideRowCount
+              emptyState="No instrument matches this search."
+            />
+          </>
         )}
       </Panel>
 

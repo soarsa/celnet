@@ -32,6 +32,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../../app/AppContext";
+import { TableSearch } from "../../components/TableSearch";
 import type {
   StreetBreakdownRow,
   StreetDimension,
@@ -441,6 +442,11 @@ export function StreetExecution(): React.ReactElement {
   const [lpFilter, setLpFilter] = useState("");
   const [familyFilter, setFamilyFilter] = useState("");
   const [outcomeFilter, setOutcomeFilter] = useState<StreetOutcome | "">("");
+  // Free-text search across the LOADED page. The selects above narrow on the server's own
+  // closed vocabularies (LP, family, outcome); this answers the other question a desk
+  // actually asks — "where did SO-24 / CUSIP 912797UJ4 go" — which no closed vocabulary
+  // can express.
+  const [orderQuery, setOrderQuery] = useState("");
   const [view, setView] = useState<StreetOrdersView>(EMPTY_VIEW);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -498,6 +504,38 @@ export function StreetExecution(): React.ReactElement {
     () => view.orders.filter((o) => isConfigFault(o.reason)),
     [view.orders],
   );
+
+  /**
+   * The blotter rows after the free-text search.
+   *
+   * Matches what an operator actually types: the order and parent-hedge ids, the
+   * instrument, the provider, and the outcome/reason vocabulary — the reason included, so
+   * searching "whole lot" pulls up every mis-sized order at once.
+   */
+  const searchedOrders = useMemo(() => {
+    const needle = orderQuery.trim().toLowerCase();
+    if (needle === "") return view.orders;
+    return view.orders.filter((o) =>
+      [
+        o.orderId,
+        o.parentHedgeId ?? "",
+        o.instrument,
+        o.lpId ?? "",
+        o.family,
+        o.side,
+        outcomeLabel(o.outcome),
+        // BOTH spellings of the reason: the raw wire code (`NOT_A_WHOLE_LOT`, which an
+        // operator may paste from a log) and the de-underscored text the row actually
+        // PRINTS. Searching only the raw code means typing what you can see on screen
+        // finds nothing, which is the fastest way to make a search box feel broken.
+        o.reason ?? "",
+        inlineReason(o) ?? "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(needle),
+    );
+  }, [view.orders, orderQuery]);
   const configFaultLps = useMemo(
     () => [...new Set(configFaults.map((o) => o.lpId).filter((id): id is string => !!id))].sort(),
     [configFaults],
@@ -705,7 +743,16 @@ export function StreetExecution(): React.ReactElement {
         {view.orders.length === 0 ? (
           <p className={styles.empty}>No street orders match these filters.</p>
         ) : (
-          <div className={styles.tableScroll}>
+          <>
+            <TableSearch
+              query={orderQuery}
+              onQueryChange={setOrderQuery}
+              shown={searchedOrders.length}
+              total={view.orders.length}
+              label="Search street orders"
+              placeholder="Search id, instrument, provider or reason…"
+            />
+            <div className={styles.tableScroll}>
             <table className={styles.table}>
               <caption className={styles.caption}>
                 Outbound street orders — one row per order sent
@@ -772,12 +819,13 @@ export function StreetExecution(): React.ReactElement {
                 </tr>
               </thead>
               <tbody>
-                {view.orders.map((o) => (
+                {searchedOrders.map((o) => (
                   <OrderRow key={o.orderId} order={o} />
                 ))}
               </tbody>
             </table>
           </div>
+          </>
         )}
       </section>
     </>
