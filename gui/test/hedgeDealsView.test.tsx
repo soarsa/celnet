@@ -169,6 +169,23 @@ describe("HedgeDealsView", () => {
     expect(await screen.findByTestId("hedge-deal-row-WH-1")).toBeInTheDocument();
   });
 
+  it("renders the fired time from epoch NANOS, not as an out-of-range date", async () => {
+    // `HedgeProvenance.fired_at` is epoch nanoseconds. Passing it straight to `new Date`
+    // is ~57,000 years out of range, so the whole column rendered "Invalid Date" — the
+    // kind of break that survives because nobody reads a timestamp they already know.
+    const built = makeApp({
+      rows: [provenance({ hedgeId: "HDG-T", firedAt: 1_787_173_452_008_410_400 })],
+    });
+    state.app = built.app;
+    render(<HedgeDealsView />);
+    const row = await screen.findByTestId("hedge-deal-row-HDG-T");
+    expect(row.textContent).not.toContain("Invalid Date");
+    // Asserted as a SHAPE, not a literal clock: the rendered time is local, so pinning
+    // "21:04:12" only passes in UTC and fails everywhere else — a test that breaks on the
+    // reader's timezone tells you nothing about the bug it was written for.
+    expect(row.textContent).toMatch(/^\d{2}:\d{2}:\d{2}/);
+  });
+
   it("shows the ORDERS a hedge put on the wire — the half the ledger never carried", async () => {
     // The ledger records the DECISION. Until now nothing on this screen said which
     // provider was asked, for how much, or what came back — so a hedge that did not

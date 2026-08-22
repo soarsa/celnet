@@ -282,6 +282,9 @@ export function DecisionAuditWorkspace(): React.ReactElement {
                   <th
                     key={c.key}
                     scope="col"
+                    // `numeric` was declared on the column model and never applied, so a
+                    // right-aligned value sat under a left-aligned label.
+                    className={c.numeric === true ? styles.num : undefined}
                     aria-sort={
                       sort.key === c.key
                         ? sort.dir === "asc"

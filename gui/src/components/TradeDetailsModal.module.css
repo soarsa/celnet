@@ -206,6 +206,14 @@
   color: var(--text-tertiary);
 }
 
+/* A header must sit over its own column. The numeric cells below are right-aligned, so a
+   blanket `text-align: left` on every `th` put REQUESTED / FILLED / FILL PX at the far
+   left of columns whose values hug the right edge — the value and its label ended up
+   under different things. The header follows the cell, per column. */
+.orders thead th.num {
+  text-align: right;
+}
+
 .orders thead th {
   position: sticky;
   top: 0;

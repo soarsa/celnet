@@ -82,9 +82,15 @@ function OrdersTable({
               <th scope="col">Provider</th>
               <th scope="col">Instrument</th>
               <th scope="col">Side</th>
-              <th scope="col">Requested</th>
-              <th scope="col">Filled</th>
-              <th scope="col">Fill px</th>
+              <th scope="col" className={styles.num}>
+                Requested
+              </th>
+              <th scope="col" className={styles.num}>
+                Filled
+              </th>
+              <th scope="col" className={styles.num}>
+                Fill px
+              </th>
               <th scope="col">Outcome</th>
             </tr>
           </thead>

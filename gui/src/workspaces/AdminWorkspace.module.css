@@ -147,6 +147,13 @@
   border-color: color-mix(in oklch, var(--danger, oklch(62% 0.2 25)) 50%, transparent);
 }
 
+/* Scoped past the base `.table thead th`, which out-specifies a bare `.actionsCol`
+   (0,1,2 vs 0,1,0). Without this the "Actions" label sat left while its buttons sat
+   right — the same header-vs-column split as the numeric columns. */
+.table thead th.actionsCol {
+  text-align: right;
+}
+
 .actionsCol {
   text-align: right;
   white-space: nowrap;

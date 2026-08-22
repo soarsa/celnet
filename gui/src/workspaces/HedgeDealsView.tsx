@@ -45,7 +45,13 @@ function ragKey(band: string): "green" | "amber" | "red" | "breach" {
 }
 
 /** A hedge `firedAt` (epoch MILLIS, UTC) as a 24h clock. */
-function timeOf(ms: number): string {
+function timeOf(nanos: number): string {
+  // `HedgeProvenance.fired_at` is epoch NANOSECONDS (proto field 13, "epoch nanos, UTC"),
+  // and the engine stamps it from `now_nanos`. Feeding that straight to `new Date(ms)`
+  // lands ~57,000 years out of range, so every row rendered "Invalid Date" — verified
+  // against a real wire value (1787173452008410400 → Invalid Date before, 21:04:12 after).
+  const ms = nanos / 1e6;
+  if (!Number.isFinite(ms) || ms <= 0) return "—";
   return new Date(ms).toLocaleTimeString("en-GB", { hour12: false });
 }
 
