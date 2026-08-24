@@ -4406,14 +4406,35 @@ fn rates_pre_trade(
         vega: 0.0,
     };
     let exclude = position.position_id;
+
+    // Build each standing position's fact ONCE, here, and reuse it for every scope.
+    //
+    // The three closures below are called per scope (`book → entity → firm`), and each
+    // previously re-walked the whole book and recomputed `rates_linear_exposure` from
+    // scratch — four full passes over every position per booking, with the bond arm taking
+    // the DV01 memo's read lock on each one. That is O(positions) work multiplied by a
+    // constant nobody was counting, and it is why the pre-trade gate grew from 25us at 14
+    // positions to ~1.1ms at 1,320 on UAT while the write commit stayed under 120us.
+    //
+    // One pass, one exposure per position. The facts are then FILTERED per scope, so every
+    // scope still sees exactly the positions it saw before, in the same order, and
+    // `firm_aggregate_rates` folds an identical sequence — the exact-fold contract the
+    // sharded roll-up depends on is untouched. This is a constant-factor fix, not an
+    // asymptotic one: the gate is still O(positions), just once instead of four times.
+    let standing: Vec<(&RatesPosition, RatesRiskFact)> = positions
+        .iter()
+        .filter(|p| exclude == 0 || p.position_id != exclude)
+        .map(|p| (p, rates_risk_fact_of(p)))
+        .collect();
     let others = |scope: LimitScope| {
-        positions
+        standing
             .iter()
-            .filter(move |p| exclude == 0 || p.position_id != exclude)
-            .filter(move |p| rates_scope_matches(scope, p))
+            .filter(move |(p, _)| rates_scope_matches(scope, p))
     };
     let node_at = |scope: LimitScope| -> NodeAggregate {
-        let sum: f64 = others(scope).map(rates_linear_exposure).sum();
+        // `RatesRiskFact::dv01` IS `rates_linear_exposure` (see `rates_risk_fact_of`), so
+        // the sum reads the value already computed rather than recomputing it.
+        let sum: f64 = others(scope).map(|(_, f)| f.dv01).sum();
         let mut node = NodeAggregate::empty(scope.group_value().unwrap_or(0));
         node.net_greeks.delta_base = sum;
         node
@@ -4427,8 +4448,8 @@ fn rates_pre_trade(
     // contains the proposed position by construction, so it belongs in every projection.
     let rates_at = |scope: LimitScope| -> RatesNodeAggregate {
         let facts: Vec<RatesRiskFact> = others(scope)
-            .chain(std::iter::once(position))
-            .map(rates_risk_fact_of)
+            .map(|(_, f)| f.clone())
+            .chain(std::iter::once(rates_risk_fact_of(position)))
             .collect();
         firm_aggregate_rates(&facts)
             .book(GATE_CCY)
@@ -4601,6 +4622,51 @@ pub(crate) mod tests {
                 })),
             }),
         }
+    }
+
+    /// **The pre-trade gate isolates scopes** — a book's own limit sees only that book.
+    ///
+    /// Guards the single-pass refactor. The gate used to re-walk `positions` per scope;
+    /// it now walks once and FILTERS the built facts, so the predicate that decides which
+    /// positions a scope sees moved. If that filter were wrong the gate would silently
+    /// aggregate the whole firm into every book limit — which fails safe (it over-counts,
+    /// so it rejects) and would therefore never show up as a missing rejection, only as
+    /// spurious ones. Asserted from both sides for that reason.
+    #[test]
+    fn the_pre_trade_gate_sees_only_the_scope_it_is_checking() {
+        use celnet_limits::{LimitMetric, LimitSpec};
+
+        // Two books under one entity, each already carrying one 5y 10mm OIS.
+        let standing = vec![position(1, 1, 10), position(2, 1, 20)];
+        let one_dv01 = rates_linear_exposure(&standing[0]).abs();
+        assert!(one_dv01 > 0.0, "the fixture must carry real exposure");
+
+        // A BOOK-scoped cap that one position fits inside but two would not.
+        let mut limits = LimitTree::new();
+        limits.set(
+            LimitScope::Book(BookId(10)),
+            LimitSpec::hard(LimitMetric::Dv01, one_dv01 * 2.5),
+        );
+
+        // Booking a THIRD position into book 10 projects book 10 to 2 x one_dv01 — inside
+        // its own cap. It only breaches if the gate wrongly folds book 20 in as well.
+        let incoming = position(0, 1, 10);
+        let result = rates_pre_trade(&standing, &limits, &incoming);
+        assert_eq!(
+            result.decision,
+            PreTradeDecision::Accept,
+            "book 10's cap must not see book 20's position",
+        );
+
+        // …and the cap still binds on its OWN book: a third position into book 10 takes it
+        // past 2.5x. Without this the test would pass on a gate that sees nothing at all.
+        let crowded = vec![position(1, 1, 10), position(2, 1, 10)];
+        let result = rates_pre_trade(&crowded, &limits, &position(0, 1, 10));
+        assert_eq!(
+            result.decision,
+            PreTradeDecision::Reject,
+            "three positions in book 10 must breach book 10's own cap",
+        );
     }
 
     /// The `Bucket`-scope subtree roll-up (§5): a bucket's net DV01 is its root book's
