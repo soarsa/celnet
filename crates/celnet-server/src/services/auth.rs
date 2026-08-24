@@ -1165,7 +1165,31 @@ impl AuthService for AuthEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        self.require_admin(&req.session_token)?;
+        // READING the desk roster is not an administrative act, and gating it as one
+        // broke a real trader: a user holding `risk_transfer` opened Risk Transfer and got
+        // "administrative privilege required", because the page needs the desk list to
+        // offer a cross-desk target. The capability they had was the right one; the check
+        // was asking a different question.
+        //
+        // Desk names are not privileged — they are already on the deals blotter, the
+        // quotes blotter and the connections roster for any signed-in trader. What IS
+        // privileged is CHANGING them, and `create_desk` / `update_desk` / `delete_desk`
+        // keep `require_admin` unchanged.
+        //
+        // An admin still passes: `Role::Admin` resolves to `CapabilitySet::grant_all()`,
+        // so every existing caller is unaffected. This widens the read to holders of the
+        // named capability and to nobody else.
+        // `View` is the platform's read floor, and the roster spans both franchises — a
+        // desk is not an asset class — so holding the floor on EITHER is enough to read it.
+        let who = self.authenticate(&req.session_token)?;
+        if !AssetClass::ALL.iter().any(|asset| {
+            who.capabilities()
+                .allows(Capability::new(Action::View, *asset))
+        }) {
+            return Err(Status::permission_denied(
+                "view capability required to read the desk roster",
+            ));
+        }
         let desks = self.lock().desks.iter().map(desk_to_wire).collect();
         Ok(Response::new(ListDesksResponse {
             desks,
@@ -4330,6 +4354,7 @@ async fn hash_async(plain: String) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::clock::Clock;
 
@@ -4455,6 +4480,50 @@ mod tests {
         )
     }
 
+    /// **A trader who holds the read floor can read the desk roster.**
+    ///
+    /// Regression for the UAT report of 2026-08-24: a user holding `risk_transfer` opened
+    /// Risk Transfer and got "administrative privilege required". The page needs the desk
+    /// list to offer a cross-desk target, and `ListDesks` demanded the coarse admin flag —
+    /// so the capability the user actually had could never satisfy it.
+    ///
+    /// Desk names are not privileged: they are already on the deals blotter, the quotes
+    /// blotter and the connections roster for any signed-in trader. CHANGING them is
+    /// privileged, and create/update/delete still require admin.
+    #[tokio::test]
+    async fn a_trader_with_the_view_floor_can_list_desks() {
+        let (svc, _path, sessions) = edge("list-desks-view");
+        // A plain TRADER — not an admin. `role_caps` carries the default trader bundle,
+        // which includes the `View` floor; nothing here grants administrative authority.
+        let token = sessions
+            .issue(AuthenticatedUser {
+                user_id: "ben".to_owned(),
+                email: "ben@celnet.com".to_owned(),
+                display_name: "Ben".to_owned(),
+                role: Role::Trader,
+                desk_ids: vec!["marex".to_owned()],
+                all_desks: false,
+                role_caps: AssetClass::ALL
+                    .iter()
+                    .map(|a| Capability::new(Action::View, *a))
+                    .collect(),
+                cap_grants: vec![],
+                cap_denies: vec![],
+            })
+            .expect("session issues")
+            .token;
+        let out = svc
+            .list_desks(Request::new(ListDesksRequest {
+                session_token: token,
+                correlation_id: None,
+            }))
+            .await;
+        assert!(
+            out.is_ok(),
+            "a trader holding View must read the roster, got {:?}",
+            out.err(),
+        );
+    }
     // --- build_curve (Curves Part B inc.2): reference-data → bootstrapped curve ------
 
     use crate::config::curve_calibration::calibration_instrument;
