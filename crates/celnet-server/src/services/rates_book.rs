@@ -357,14 +357,18 @@ pub struct RatesPositionStore {
     /// and `ListStreetOrders` serves the blotter + breakdowns off it. `None` (the unit-test
     /// default) means the recording call is a no-op.
     street_orders: OnceLock<Arc<crate::services::analytics::street_orders::StreetOrderLog>>,
-    /// A WEAK handle to this store, so an asynchronously-dispatched hedge can own a
-    /// reference for the life of its own work.
+    /// The detached-hedge work queue, drained by ONE long-lived worker.
     ///
-    /// Weak, not strong: a strong self-reference is a reference cycle the store could
-    /// never be dropped out of. Absent (or already dead) simply means the async path is
-    /// unavailable and the hedge runs inline — degrading to the synchronous behaviour is
-    /// always safe, whereas skipping the hedge never is.
-    self_handle: OnceLock<std::sync::Weak<RatesPositionStore>>,
+    /// The first cut spawned an OS thread per booking. That is not cheap at booking rates:
+    /// the phase breakdown on UAT put 0.9-2.4ms in the dispatch bucket, dwarfing the
+    /// pre-trade gate (25-100us) and the write commit (19-118us) it was meant to get out
+    /// of the way of — async moved the venue round trip off the path and put a thread
+    /// spawn there instead.
+    ///
+    /// Bounded, deliberately: a full queue means the hedge worker is not keeping up, and
+    /// the honest response is to run that hedge INLINE (slower, still correct) rather than
+    /// grow an unbounded backlog of risk nobody is working.
+    hedge_queue: OnceLock<std::sync::mpsc::SyncSender<HedgeJob>>,
     /// The **standing hedge suggestions** raised under a `Suggest`-mode scope (§6.5) — the
     /// manual half of suggest-then-exit. A breach in such a scope computes the whole hedge
     /// (band, action, vehicle, DV01 ratio, whole-lot rounding) and publishes it here
@@ -449,7 +453,7 @@ impl RatesPositionStore {
         Self {
             inner: RwLock::new(Vec::new()),
             next_id: AtomicU64::new(1),
-            self_handle: OnceLock::new(),
+            hedge_queue: OnceLock::new(),
             limits: RwLock::new(LimitTree::new()),
             consensus: OnceLock::new(),
             routing: RwLock::new(None),
@@ -495,16 +499,31 @@ impl RatesPositionStore {
         let _ = self.lp_hedge_source.set(src);
     }
 
-    /// Install the store's own weak handle (once, at wiring time). Required for
+    /// Start the detached-hedge dispatcher (once, at wiring time). Required for
     /// [`HedgeDispatch`](crate::config::hedge_policy::HedgeDispatch)`::Async`; without it
-    /// a hedge configured async runs inline.
+    /// there is no queue to hand work to and a hedge configured async runs inline.
     pub fn set_self_handle(&self, me: &Arc<RatesPositionStore>) {
-        let _ = self.self_handle.set(Arc::downgrade(me));
-    }
-
-    /// An owned handle to this store, when one was installed and is still alive.
-    fn me(&self) -> Option<Arc<RatesPositionStore>> {
-        self.self_handle.get().and_then(std::sync::Weak::upgrade)
+        // One worker, started once, draining the queue for the life of the process — in
+        // place of a thread per booking. The worker holds a WEAK handle and exits when the
+        // store goes away, so it never keeps a dropped store alive.
+        let (tx, rx) = std::sync::mpsc::sync_channel::<HedgeJob>(HEDGE_QUEUE_DEPTH);
+        if self.hedge_queue.set(tx).is_err() {
+            return; // already started
+        }
+        let weak = Arc::downgrade(me);
+        let _ = std::thread::Builder::new()
+            .name("celnet-hedge-dispatch".to_owned())
+            .spawn(move || {
+                while let Ok(job) = rx.recv() {
+                    let Some(store) = weak.upgrade() else { return };
+                    store.stamp_internalise(
+                        &job.fill,
+                        job.book.as_deref(),
+                        &job.attribution,
+                        job.trace_id,
+                    );
+                }
+            });
     }
 
     /// Attach the live **street-order router** — the outbound FIX seam that actually
@@ -1418,6 +1437,13 @@ impl RatesPositionStore {
         // price-tolerance verdict and stamp it onto the fill for the deal blotter. A no-op
         // otherwise (the manual `BookRatesPosition` path, or no policy) — byte-identical.
         // `booking_trace_id` threads the lift's trace so the hedge decision/fire emit stages.
+        // The trace phase ends HERE, before dispatch. Conflating the two hid the real cost
+        // once already: the first breakdown blamed "trace" for 1-2ms when `TraceHub::record`
+        // is a non-blocking `try_send` and cannot cost that — what the bucket actually
+        // contained was the hedge dispatch below.
+        let trace_ns = trace_t0.elapsed();
+        let dispatch_t0 = std::time::Instant::now();
+
         // Auto-hedge dispatch (`HedgeDispatch`): the hedge is the DESK's risk management,
         // not part of confirming the client's trade — but running it here, inline, puts a
         // blocking venue round trip on the client's booking commit (measured ~6ms p99 on
@@ -1439,23 +1465,26 @@ impl RatesPositionStore {
             .map_or(crate::config::hedge_policy::HedgeDispatch::Sync, |p| {
                 p.config.dispatch
             });
-        match dispatch.is_async().then(|| self.me()).flatten() {
-            Some(me) => {
-                let fill = position.clone();
-                let attribution = attribution.clone();
-                let book = resolved_book.clone();
-                std::thread::spawn(move || {
-                    me.stamp_internalise(&fill, book.as_deref(), &attribution, booking_trace_id);
-                });
-            }
-            None => {
-                self.stamp_internalise(
-                    &position,
-                    resolved_book.as_deref(),
-                    &attribution,
-                    booking_trace_id,
-                );
-            }
+        let queued = dispatch.is_async()
+            && self.hedge_queue.get().is_some_and(|tx| {
+                // `try_send`, never `send`: blocking here would put the queue's depth back
+                // on the client's booking commit, which is the whole thing async exists to
+                // avoid. A refusal falls through to inline below.
+                tx.try_send(HedgeJob {
+                    fill: position.clone(),
+                    book: resolved_book.clone(),
+                    attribution: attribution.clone(),
+                    trace_id: booking_trace_id,
+                })
+                .is_ok()
+            });
+        if !queued {
+            self.stamp_internalise(
+                &position,
+                resolved_book.as_deref(),
+                &attribution,
+                booking_trace_id,
+            );
         }
         // Name the phase when the booking runs long. WARN rather than a metric because the
         // aggregate ALREADY exists (`OpKind::Book`) and is not the thing that is missing:
@@ -1463,7 +1492,7 @@ impl RatesPositionStore {
         // is a per-occurrence fact, not a distribution.
         let total = book_t0.elapsed();
         if total >= SLOW_BOOKING_THRESHOLD {
-            let trace_ns = trace_t0.elapsed();
+            let dispatch_ns = dispatch_t0.elapsed();
             tracing::warn!(
                 class = celnet_observability::LogClass::Risk.label(),
                 position_id = position.position_id,
@@ -1471,6 +1500,7 @@ impl RatesPositionStore {
                 pre_trade_gate_us = gate_ns.as_micros(),
                 write_commit_us = commit_ns.as_micros(),
                 trace_emit_us = trace_ns.as_micros(),
+                hedge_dispatch_us = dispatch_ns.as_micros(),
                 positions = g_len,
                 "booking commit exceeded its budget — phase breakdown",
             );
@@ -3634,6 +3664,22 @@ struct BondDv01Memo {
     /// constructed (memoized too, so a malformed bond is not re-attempted per position).
     per_unit: HashMap<BondDv01Key, Option<f64>>,
 }
+
+/// One detached auto-hedge, carried to the worker. Owned throughout — the worker outlives
+/// the booking that queued it.
+struct HedgeJob {
+    fill: RatesPosition,
+    book: Option<String>,
+    attribution: RatesRoutingAttribution,
+    trace_id: Option<u64>,
+}
+
+/// How many detached hedges may be queued before dispatch degrades to inline.
+///
+/// Small on purpose. This is a work queue for risk management, not a buffer: a deep
+/// backlog would mean the book's real hedge state lags its position state by however long
+/// the queue is, which is exactly the divergence the ledger exists to rule out.
+const HEDGE_QUEUE_DEPTH: usize = 64;
 
 /// A booking slower than this names its phase breakdown in the log.
 ///
