@@ -1202,6 +1202,13 @@ impl RatesPositionStore {
         // snapshot→write window is the standard pre-trade TOCTOU: a hard breach still
         // rejects here and leaves the book unmutated, the post-trade limit monitor
         // backstopping any concurrent joint breach.
+        // Phase timers. The `Book` stage is a composite — pre-trade gate, then the write
+        // commit, then the trace emission — and a p99 five times its own p50 says one of
+        // them tails while the others do not. Reading the code cannot say which: the gate
+        // is O(positions) but memoised, the commit takes the store's only write lock, and
+        // the trace emit is off-core. So the booking measures itself and NAMES the phase
+        // when it runs long, rather than anyone guessing from an aggregate.
+        let gate_t0 = std::time::Instant::now();
         {
             let limits = self.limits.read().expect("rates limit tree lock poisoned");
             if !limits.is_empty() {
@@ -1280,6 +1287,12 @@ impl RatesPositionStore {
             }
         }
 
+        let gate_ns = gate_t0.elapsed();
+        // Measured OUTSIDE the guard's scope below so it includes the wait to ACQUIRE the
+        // write lock, not just the work done under it — a booking blocked behind a reader
+        // is exactly the tail this is looking for, and timing only the critical section
+        // would hide it.
+        let commit_t0 = std::time::Instant::now();
         let mut g = self
             .inner
             .write()
@@ -1307,6 +1320,9 @@ impl RatesPositionStore {
         } else {
             g.push(position.clone());
         }
+        // Captured before the guard drops: the gate's cost is O(this), so an outlier is
+        // only interpretable next to the book size that produced it.
+        let g_len = g.len();
         drop(g);
 
         // Risk routing (§4): stamp the risk book resolved above (before the per-book gate),
@@ -1351,6 +1367,8 @@ impl RatesPositionStore {
         // stage events at their TRUE instants (before the hedge decision below, so the timeline
         // orders correctly). A no-op when no hub / no request_id / an unknown request_id — the
         // manual-booking + gRPC-accept paths never bound a trace. Off the pinned core (guardrail 11).
+        let commit_ns = commit_t0.elapsed();
+        let trace_t0 = std::time::Instant::now();
         let booking_trace_id = self
             .trace
             .get()
@@ -1438,6 +1456,24 @@ impl RatesPositionStore {
                     booking_trace_id,
                 );
             }
+        }
+        // Name the phase when the booking runs long. WARN rather than a metric because the
+        // aggregate ALREADY exists (`OpKind::Book`) and is not the thing that is missing:
+        // what is missing is which of its three parts produced a given outlier, and that
+        // is a per-occurrence fact, not a distribution.
+        let total = book_t0.elapsed();
+        if total >= SLOW_BOOKING_THRESHOLD {
+            let trace_ns = trace_t0.elapsed();
+            tracing::warn!(
+                class = celnet_observability::LogClass::Risk.label(),
+                position_id = position.position_id,
+                total_us = total.as_micros(),
+                pre_trade_gate_us = gate_ns.as_micros(),
+                write_commit_us = commit_ns.as_micros(),
+                trace_emit_us = trace_ns.as_micros(),
+                positions = g_len,
+                "booking commit exceeded its budget — phase breakdown",
+            );
         }
         // O3: record the ack→fill→book commit latency into the per-`OpKind` store (mirrors the
         // FX sink). Off the pinned pricing core; a no-op when no hub is installed.
@@ -3598,6 +3634,12 @@ struct BondDv01Memo {
     /// constructed (memoized too, so a malformed bond is not re-attempted per position).
     per_unit: HashMap<BondDv01Key, Option<f64>>,
 }
+
+/// A booking slower than this names its phase breakdown in the log.
+///
+/// 1ms is the stated budget for the whole tick→book path, so a single booking commit at
+/// or above it has consumed the entire budget on its own.
+const SLOW_BOOKING_THRESHOLD: std::time::Duration = std::time::Duration::from_millis(1);
 
 static BOND_DV01_MEMO: OnceLock<RwLock<BondDv01Memo>> = OnceLock::new();
 
