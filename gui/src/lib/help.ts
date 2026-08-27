@@ -742,6 +742,36 @@ const ENTRY_LIST: readonly HelpEntry[] = [
     ],
   },
   {
+    id: "concept.hedge-lifecycle",
+    category: "concept",
+    title: "Reading the hedge flow",
+    purpose: "See how far a hedge actually got — and spot risk that was sized for exit but never left.",
+    howItWorks:
+      "The Hedging screen follows one hedge through its whole life, in four tabs: FLOW (what is filling up and how far the exit got), MONITOR (the live engine — mode, kill-switch, standing suggestions), BLOTTER (the executed-hedge ledger) and RULES (how hedging is configured). On the Flow tab, the bucket board shows which portfolios are filling toward their limit, and the ribbon beneath it shows the journey: EXPOSURE (what the desk carries) → DECIDED (what the engine sized, split into crossed internally / shed externally / warehoused) → STREET (how many orders were sent and how many actually filled) → RESIDUAL (sized but never shed — still ours). The gap between stages is the point. The three risk figures are all DV01; the STREET stage is deliberately a COUNT of orders, never a sum of quantities, because a bond future is denominated in contract face and a swap in notional — adding them would produce a number that means nothing. Selecting a stage or a flow leg opens the Blotter tab filtered to the rows behind it.",
+    example: {
+      scenario: "The engine reports hedges firing, but the books stay pinned at their limit.",
+      rows: [
+        { label: "Exposure", value: "4,997 DV01 carried" },
+        { label: "Decided", value: "1,240 DV01 — 308 crossed · 932 external · 0 warehoused" },
+        { label: "Street", value: "0/12 filled — 12 shed nothing · NOT_A_WHOLE_LOT ×12" },
+        { label: "Banner", value: "“Nothing is filling” — every order was refused" },
+      ],
+      takeaway: "Hedges can fire perfectly and still shed no risk. The Street stage is where you find out.",
+    },
+    howToConfigure: [
+      "Open Hedging → Flow. The bucket board is worst-first, so the work queue is leftmost.",
+      "Read the ribbon left to right; a large drop between Decided and Street means orders are not filling.",
+      "A red “Nothing is filling” banner names the dominant reject reason — a venue code like NOT_A_WHOLE_LOT, or one of ours like no_firm_lp_price.",
+      "Click any stage (or a flow leg) to open the Blotter filtered to the rows behind that number.",
+      "Use the Monitor tab for the engine's own state: mode, kill-switch, and standing suggestions you can act on.",
+    ],
+    whenToUse:
+      "Every morning, and whenever a portfolio sits at its limit while hedging appears to be running. It is the fastest way to tell “the engine is not firing” apart from “the engine is firing and the street is refusing”, which look identical on every other screen.",
+    risks:
+      "A venue reject code and one of our own reason codes are different problems with different owners: NOT_A_WHOLE_LOT is the counterparty refusing the order as sent, while no_order_endpoint or no_firm_lp_price is our own configuration. Street orders that carry no hedge id are reported separately and are NOT counted in the sent/filled figures — a non-zero count there means the audit walk is incomplete, not that the desk was idle. Advisory (dry-run) fires are excluded from every figure. Finally, a portfolio's risk LIMIT and its hedge THRESHOLD are separate numbers: a bucket can read full while the engine correctly does nothing, because the threshold that triggers hedging has not been crossed.",
+    keywords: ["hedge", "hedging", "flow", "lifecycle", "ribbon", "street", "fill", "reject", "NOT_A_WHOLE_LOT", "residual", "warehoused", "blotter", "bucket", "drop-off", "stalled"],
+  },
+  {
     id: "concept.hedge-rule-from-pricing-group",
     category: "concept",
     title: "Create a hedging rule from a pricing group",

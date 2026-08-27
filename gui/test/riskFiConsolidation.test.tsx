@@ -8,7 +8,7 @@
  * `RiskWorkspace` at its FI rates lens. That "Scenario" tab AND its netted rates
  * scenario-risk surface are dropped; the ledger views are promoted to siblings of
  * Dashboard / Portfolios / Routing / Acceptance (the executed-hedge ledger split into
- * its own "Hedge blotter" sibling) and composed verbatim.
+ * the hedge ledger now living on the Hedging host) and composed verbatim.
  *
  * These render the REAL workspaces inside the REAL `AppProvider` driving the REAL
  * offline `MockTransport`, seeded via the genuine submit→quote→accept desk flow (no
@@ -131,9 +131,9 @@ describe("FI Risk consolidation — the Risk panel carries the folded-in ledger 
       .map((b) => b.textContent);
     // The ledger views are now siblings of the management tabs — the client-deals
     // blotter surfaces as "Client blotter", with the executed-hedge ledger split into
-    // its own "Hedge blotter" sibling …
+    // the hedge ledger having moved to the Hedging host …
     expect(labels).toEqual(
-      expect.arrayContaining(["Positions", "Quotes", "Client blotter", "Hedge blotter"]),
+      expect.arrayContaining(["Positions", "Quotes", "Client blotter"]),
     );
     // … the old single "Deals" tab is gone (split into Client/Hedge blotters) …
     expect(labels).not.toContain("Deals");

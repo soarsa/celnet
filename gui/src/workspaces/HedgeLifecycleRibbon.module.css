@@ -1,0 +1,215 @@
+/*
+ * HedgeLifecycleRibbon — the exposure → decided → street → residual strip.
+ *
+ * MOBILE-FIRST, matching its host board: the base rule is a single stacked column and
+ * the horizontal ribbon is the additive wide case. The connecting arrows are the one
+ * piece of pure decoration here, so they are `aria-hidden` in the markup and simply
+ * rotate to point DOWN when the ribbon stacks — an arrow pointing right through a
+ * vertical list would describe a flow that is not on screen.
+ *
+ * Every colour resolves through a token with a literal fallback: these are the same
+ * RAG tokens the bucket board paints with, and a `var()` naming a token the theme
+ * does not define falls back to the property's initial value — which is how the
+ * first cut of the bucket board rendered as black blobs.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: clamp(0.6rem, 2vw, 1rem);
+  background: var(--bg-raised, #171a21);
+  border: 1px solid var(--border-subtle, #262b36);
+  border-radius: var(--radius-md, 8px);
+  max-width: 100%;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.75rem;
+}
+
+.title {
+  font-family: var(--font-brand, system-ui, sans-serif);
+  font-size: clamp(0.85rem, 3vw, 1rem);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 0;
+  color: var(--text-secondary, #c2c7d0);
+}
+
+.caption {
+  margin: 0;
+  font-size: clamp(0.68rem, 2.2vw, 0.78rem);
+  color: var(--text-tertiary, #9aa0ad);
+}
+
+/*
+ * The stall banner. Loud on purpose: it fires precisely when every other number on
+ * the page looks healthy, so a quiet treatment would lose to the greens around it.
+ */
+.stalled {
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-danger-soft, rgba(220, 38, 38, 0.12));
+  border: 1px solid var(--danger, #dc2626);
+  color: var(--text-danger, #fca5a5);
+  font-size: clamp(0.72rem, 2.4vw, 0.82rem);
+  line-height: 1.45;
+}
+
+.ribbon {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.step {
+  display: flex;
+  min-width: 0;
+}
+
+.arrow {
+  display: block;
+  width: 100%;
+  text-align: center;
+  color: var(--text-tertiary, #9aa0ad);
+  font-size: 0.9rem;
+  line-height: 1;
+  /* Points DOWN while the ribbon is stacked; the wide layout rotates it back. */
+  transform: rotate(90deg);
+}
+
+/*
+ * A stage is a button when it drills and a div when it does not, so the shared
+ * appearance is defined once here and `all: unset` strips the UA button chrome
+ * rather than fighting it property by property.
+ */
+.stage {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0.5rem 0.65rem;
+  background: var(--bg-inset, #101319);
+  border: 1px solid var(--border-subtle, #262b36);
+  border-radius: var(--radius-md, 8px);
+  transition:
+    border-color var(--duration-fast, 150ms) var(--ease-out, ease),
+    background-color var(--duration-fast, 150ms) var(--ease-out, ease);
+}
+
+button.stage {
+  cursor: pointer;
+}
+
+button.stage:hover,
+button.stage:focus-visible {
+  border-color: var(--border-strong, #39414f);
+  background: var(--bg-accent-soft, rgba(96, 165, 250, 0.08));
+}
+
+button.stage:focus-visible {
+  outline: 2px solid var(--accent, var(--color-accent, #60a5fa));
+  outline-offset: 2px;
+}
+
+.stageActive {
+  border-color: var(--accent, var(--color-accent, #60a5fa));
+  background: var(--bg-accent-soft, rgba(96, 165, 250, 0.1));
+}
+
+.stageWarn {
+  border-color: var(--warn, #d97706);
+}
+
+.stageLabel {
+  font-size: clamp(0.6rem, 2vw, 0.68rem);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary, #9aa0ad);
+}
+
+.stageValue {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: clamp(0.95rem, 3.4vw, 1.2rem);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary, #e8eaf0);
+}
+
+.stageUnit {
+  font-family: var(--font-ui, system-ui, sans-serif);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary, #9aa0ad);
+}
+
+.stageDetail {
+  font-size: clamp(0.65rem, 2.1vw, 0.74rem);
+  color: var(--text-secondary, #c2c7d0);
+  /* Long reason lists wrap instead of pushing the ribbon sideways on a phone. */
+  overflow-wrap: anywhere;
+}
+
+.unfilled {
+  color: var(--text-danger, #fca5a5);
+  font-weight: 600;
+}
+
+.foot {
+  margin: 0;
+  font-size: clamp(0.65rem, 2.1vw, 0.74rem);
+  color: var(--text-tertiary, #9aa0ad);
+}
+
+.unlinked {
+  color: var(--warn, #d97706);
+}
+
+/*
+ * The wide case: lay the stages out horizontally and turn the arrows back. 46rem is
+ * where four stages plus their arrows stop being cramped, not a device width.
+ */
+@media (min-width: 46rem) {
+  .ribbon {
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0.4rem;
+  }
+
+  .step {
+    flex: 1 1 0;
+  }
+
+  /* The arrow columns take only their own width; the stages share the rest. */
+  .step:nth-child(even) {
+    flex: 0 0 auto;
+    align-items: center;
+  }
+
+  .arrow {
+    transform: none;
+    width: auto;
+    padding: 0 0.1rem;
+  }
+}
+
+/* Honour a reduced-motion preference: the hover transitions are the only motion. */
+@media (prefers-reduced-motion: reduce) {
+  .stage {
+    transition: none;
+  }
+}
