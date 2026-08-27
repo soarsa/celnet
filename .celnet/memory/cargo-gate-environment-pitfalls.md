@@ -1,6 +1,6 @@
 ---
 name: cargo-gate-environment-pitfalls
-description: "On this M4, cargo nextest orchestration wedges and freshly-built test binaries first-launch-stall under build churn — use cargo test, keep the machine quiet."
+description: "Ways a cargo gate here lies: nextest wedges, first-launch stalls, stale binaries, GPU contention — and grepping COLORIZED output for ^error reports a clean gate on 21 compile errors."
 metadata: 
   node_type: memory
   type: project
@@ -45,7 +45,27 @@ Two reproducible **environment** failure modes hit hard on 2026-06-08 while gati
    default profile serializes `engine`/`replog-consensus` but NOT gpu. Same family as the
    tokio-conformance timeouts (#3): heavy resource-bound tests need exclusive access here.
 
-Root cause of all three: **this single M4 cannot run concurrent heavy cargo builds** (mesh
+6. **A grep-filtered gate reports CLEAN on a workspace that does not compile
+   (2026-08-24):** cargo emits **ANSI colour codes**, so an error line begins
+   `\x1b[1m\x1b[91m`, not `e` — `grep -E "^error"` matches nothing, forever. Piping to
+   `head` and reading `$?` compounds it: that is `head`'s status, 0 either way. This
+   produced **three consecutive false "clean" reads** (`check --workspace --all-targets`,
+   `clippy -D warnings`, `fmt --check`) while `celnet-server` had **21 compile errors**,
+   some in code that had never compiled. It surfaced only when a later `cargo test`
+   printed past the filter. **Redirect to a file, capture the REAL exit code, strip ANSI
+   before grepping:**
+
+   ```bash
+   cargo clippy -p <crate> --all-targets -- -D warnings > /tmp/out.txt 2>&1; echo "EXIT=$?"
+   sed 's/\x1b\[[0-9;]*m//g' /tmp/out.txt | grep -E "^(error|warning)" -A 6 | head -40
+   ```
+
+   Never end a gate command with `| head` and read `$?` (use `${PIPESTATUS[0]}`).
+   **Trust the exit code; silence from a filter is not evidence of success.** A gate you
+   cannot read is worse than one you did not run — it turns "not checked" into "verified".
+   Bit the risk-transfer work: [[risk-transfer-lists-real-positions]].
+
+Root cause of the environment failures (1-5): **this single M4 cannot run concurrent heavy cargo builds** (mesh
 sessions + churn). The lesson that recurs: **serializing is faster than parallelizing** for
 heavy Rust gates here — which is exactly what [[w2-parallel-session-collision]] and the
 §4.1 "compute courtesy" board rule encode. Keep cargo stages serial; only toolchain-disjoint
