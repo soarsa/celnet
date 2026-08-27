@@ -1398,6 +1398,12 @@ function ratesPositionToWire(p: RatesPosition): WireObject {
     entity: p.entity,
     book: p.book,
     instrument: ratesInstrumentToWire(p.instrument),
+    // Server OUTPUTS on the way back; a booking request states the position, never its
+    // risk. `risk` is omitted rather than zero-filled — sending a zero vector would
+    // assert "this position carries no risk", which is a claim, not an absence.
+    risk_book: p.riskBook ?? "",
+    net_notional: p.netNotional ?? 0,
+    ...(p.risk === undefined ? {} : { risk: riskVectorToWire(p.risk) }),
   };
 }
 
@@ -2058,11 +2064,17 @@ export function curveScenarioResultFromWire(
 
 /** Decode a wire `RatesPosition` (the inverse of `ratesPositionToWire`). */
 export function ratesPositionFromWire(o: WireObject): RatesPosition {
+  const risk = optRiskVectorFromWire(o);
   return {
     positionId: numToBigInt(o, "position_id"),
     entity: num(o, "entity"),
     book: num(o, "book"),
     instrument: ratesInstrumentFromWire(child(o, "instrument")),
+    riskBook: str(o, "risk_book"),
+    netNotional: num(o, "net_notional"),
+    // Spread rather than assign: under `exactOptionalPropertyTypes` an optional property
+    // may be absent or a value, never an explicit `undefined`.
+    ...(risk === undefined ? {} : { risk }),
   };
 }
 
@@ -3190,6 +3202,9 @@ export function riskPositionFromWire(o: WireObject): RiskPosition {
   };
   const attribution = attributionFromWire(o);
   if (attribution !== undefined) p.attribution = attribution;
+  p.riskBook = str(o, "risk_book");
+  const risk = optRiskVectorFromWire(o);
+  if (risk !== undefined) p.risk = risk;
   return p;
 }
 
@@ -6500,6 +6515,22 @@ export function riskVectorFromWire(o: WireObject): RiskVector {
     vega: num(o, "vega"),
     theta: num(o, "theta"),
   };
+}
+
+/**
+ * Decode an OPTIONAL `RiskVectorDesc` off a parent object's `risk` key.
+ *
+ * `undefined` when the server did not send one — kept distinct from a zero vector, which
+ * is the positive claim that a position carries no risk.
+ */
+export function optRiskVectorFromWire(o: WireObject): RiskVector | undefined {
+  const raw = o["risk"];
+  return raw && typeof raw === "object" ? riskVectorFromWire(raw as WireObject) : undefined;
+}
+
+/** Encode a `RiskVectorDesc` (dense — every field a number). */
+export function riskVectorToWire(r: RiskVector): WireObject {
+  return { dv01: r.dv01, delta: r.delta, gamma: r.gamma, vega: r.vega, theta: r.theta };
 }
 
 /** Decode a `MovedRiskDesc` (`risk` may be absent ⇒ a zero vector). */

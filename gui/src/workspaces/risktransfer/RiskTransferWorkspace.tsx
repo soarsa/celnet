@@ -3,8 +3,9 @@
  * REQUIREMENTS.md §9.1). The manual move of EXISTING risk between risk portfolios —
  * the complement to routing (which auto-assigns NEW fills). The trader:
  *
- *   1. picks a SOURCE portfolio, then multi-selects its (synthesised) position lots,
- *      each showing its live risk;
+ *   1. picks a SOURCE portfolio, then multi-selects its positions — listed from the
+ *      server (`listPositions` + `listRatesPositions`, both filtered on the routing
+ *      graph's risk-book stamp), each showing its own server-computed risk;
  *   2. picks a TARGET portfolio (and, optionally, hands off to a named trader) — the
  *      ticket INFERS the kind (same desk ⇒ re-attribution; other desk ⇒ desk-to-desk;
  *      a trader ⇒ hand-off) and explains what it means;
@@ -17,9 +18,12 @@
  * Submit calls `initiateRiskTransfer`: a re-attribution returns BOOKED (applied
  * immediately); a desk-to-desk / trader hand-off returns PENDING for the counterparty's
  * inbox. On success the ticket re-fetches `listRiskBookRisk` and shows the move landed.
- * The synthesised position lots are ILLUSTRATIVE — server-authoritative on a real
- * backend; the moved economics are driven by the quantity, and the mock's risk math
- * uses the notional (see transferModel.ts). Reads the transport + auth via `useApp()`.
+ *
+ * The position lots were once SYNTHESISED here — a book's aggregate risk sliced into
+ * lots with hashed ids — which made the screen look complete while every transfer was
+ * refused `position <id> is not booked in either book`. They are now the server's own
+ * positions; the moved economics are driven by the quantity against them (see
+ * transferModel.ts). Reads the transport + auth via `useApp()`.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -30,6 +34,7 @@ import type {
   RiskBook,
   RiskBookRisk,
   RiskTransfer,
+  RiskVector,
   TransferPriceBasis,
   UserDesc,
 } from "../../data/contract";
@@ -39,8 +44,8 @@ import {
   effectiveDeskId,
   inferKind,
   kindMeaning,
-  synthesizePositions,
   PAR_MARK,
+  type PositionLine,
 } from "./transferModel";
 import { RiskTransferInboxWorkspace } from "./RiskTransferInboxWorkspace";
 import { RiskTransferAuditWorkspace } from "./RiskTransferAuditWorkspace";
@@ -142,6 +147,13 @@ function deskName(id: string, desks: readonly DeskDesc[]): string {
 }
 
 /**
+ * The risk a position carries when the server sent no vector at all — distinct from a
+ * position the server priced at zero, but indistinguishable to the arithmetic below, so
+ * it is named once here rather than spelled out at each call site.
+ */
+const ZERO_RISK: RiskVector = { dv01: 0, delta: 0, gamma: 0, vega: 0, theta: 0 };
+
+/**
  * RiskTransferTicketPanel — the FI Risk Transfer INITIATE ticket (this file's original
  * body, extracted VERBATIM as the default "Risk Transfer" tab of the consolidated
  * {@link RiskTransferWorkspace} shell). See the file header for the full ticket flow.
@@ -228,7 +240,63 @@ function RiskTransferTicketPanel(): React.ReactElement {
     () => risk.find((r) => r.bookId === sourceBookId) ?? null,
     [risk, sourceBookId],
   );
-  const lines = useMemo(() => (sourceRow ? synthesizePositions(sourceRow) : []), [sourceRow]);
+  // The source book's REAL positions, from the server.
+  //
+  // These were previously SYNTHESISED: the book's aggregate risk sliced into lots with
+  // ids minted from a hash. The screen looked complete and could never transfer anything —
+  // the server refused every one with `position <id> is not booked in either book`,
+  // correctly, because those ids named nothing. `RatesPosition` now carries its risk-book
+  // stamp and its server-computed DV01, so the ticket can list what is actually there.
+  const [lines, setLines] = useState<PositionLine[]>([]);
+  const [linesError, setLinesError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!signedIn || sourceBookId === "") {
+      setLines([]);
+      return;
+    }
+    let cancelled = false;
+    setLinesError(null);
+    void (async (): Promise<void> => {
+      try {
+        // BOTH asset books, one path. The server transfers FX and rates positions
+        // through the same applier (`TransferApplier::classify` probes both books), and
+        // the source dropdown offers every enabled risk book — so listing only one asset
+        // would leave the ticket dead on the other. Both messages now carry the same
+        // `riskBook` stamp and the same `risk` vector, so the two listings differ only in
+        // where the notional and the label come from.
+        const [fx, rates] = await Promise.all([
+          app.transport.listPositions({}),
+          app.transport.listRatesPositions({}),
+        ]);
+        if (cancelled) return;
+        const fxLines: PositionLine[] = fx.positions
+          .filter((p) => p.riskBook === sourceBookId)
+          .map((p) => ({
+            id: p.positionId,
+            label: `#${p.positionId} · ${p.org.ccyPair.base}${p.org.ccyPair.quote} ${p.optionType}`,
+            notionalBase: p.notionalBase,
+            risk: p.risk ?? ZERO_RISK,
+          }));
+        const ratesLines: PositionLine[] = rates.positions
+          .filter((p) => p.riskBook === sourceBookId)
+          .map((p) => ({
+            id: p.positionId,
+            label: `#${p.positionId} · ${p.instrument.tenorYears}Y OIS`,
+            notionalBase: p.netNotional ?? 0,
+            risk: p.risk ?? ZERO_RISK,
+          }));
+        setLines([...fxLines, ...ratesLines]);
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setLines([]);
+          setLinesError(e instanceof Error ? e.message : "failed to load positions");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [app.transport, signedIn, sourceBookId]);
   const selectedLines = useMemo(
     () => lines.filter((l) => selectedIds.has(l.id.toString())),
     [lines, selectedIds],
@@ -385,6 +453,15 @@ function RiskTransferTicketPanel(): React.ReactElement {
         </p>
       )}
 
+      {/* Reported separately from `loadError`: failing to load the source book's
+          positions is a different problem from failing to load the books themselves, and
+          says something the operator can act on — the ticket has nothing to move. */}
+      {linesError !== null && (
+        <p className={styles.error} role="alert" data-testid="transfer-positions-error">
+          Could not load the source portfolio's positions: {linesError}
+        </p>
+      )}
+
       <form className={styles.grid} onSubmit={onSubmit} aria-label="Risk transfer ticket">
         {/* --- 1 · source portfolio + positions --------------------------------- */}
         <section className={styles.card} aria-labelledby="xfer-source-h">
@@ -445,8 +522,9 @@ function RiskTransferTicketPanel(): React.ReactElement {
                 );
               })}
               <p className={styles.hint}>
-                Position lots are synthesised from the portfolio&apos;s live risk for this
-                illustration; on a live desk they are server-authoritative.
+                Each line is a position the server holds in this portfolio, with its
+                server-computed DV01. Selecting one names it by its own position id — the
+                identity the transfer is booked against.
               </p>
             </div>
           )}

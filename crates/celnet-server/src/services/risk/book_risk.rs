@@ -467,6 +467,7 @@ mod tests {
                     side: Side::Buy as i32,
                 })),
             }),
+            ..Default::default()
         };
         let agg = aggregate_facts(&book, &[], &[ois]);
 
@@ -509,6 +510,7 @@ mod tests {
                     side: Side::Sell as i32,
                 })),
             }),
+            ..Default::default()
         };
         let agg = aggregate_facts(&book, &[], &[sell]);
 
@@ -742,6 +744,7 @@ mod tests {
                     side: Side::Buy as i32,
                 })),
             }),
+            ..Default::default()
         };
         let booked_rates = rates.book(ois).expect("rates book");
         assert_eq!(

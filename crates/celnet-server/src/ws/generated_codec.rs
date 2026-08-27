@@ -4244,6 +4244,21 @@ impl WireBuilder for VegaPillar {
     }
 }
 
+impl WireBuilder for RiskVectorDesc {
+    const MESSAGE: &'static str = "RiskVectorDesc";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "dv01" => self.dv01 = f64_or_zero(value),
+            "delta" => self.delta = f64_or_zero(value),
+            "gamma" => self.gamma = f64_or_zero(value),
+            "vega" => self.vega = f64_or_zero(value),
+            "theta" => self.theta = f64_or_zero(value),
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
 impl WireBuilder for RatesRiskScope {
     const MESSAGE: &'static str = "RatesRiskScope";
     fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
@@ -4264,6 +4279,11 @@ impl WireBuilder for RatesPosition {
             "position_id" => self.position_id = u64_or_zero(value),
             "entity" => self.entity = u32_or_zero(value),
             "book" => self.book = u32_or_zero(value),
+            "risk_book" => self.risk_book = string_or_empty(value),
+            "net_notional" => self.net_notional = f64_or_zero(value),
+            // `opt_msg`, not `req_msg`: the risk vector is a server OUTPUT, so a
+            // booking request omits it and `set` is still called with `None`.
+            "risk" => self.risk = opt_msg::<RiskVectorDesc>(value, "risk")?,
             "instrument" => {
                 self.instrument = Some(req_msg::<RatesInstrument>(value, "instrument")?);
             }
@@ -4690,6 +4710,12 @@ impl WireAdapter for RatesPosition {
             "position_id" => Some(WireVal::U64(self.position_id)),
             "entity" => Some(WireVal::U64(u64::from(self.entity))),
             "book" => Some(WireVal::U64(u64::from(self.book))),
+            "risk_book" => Some(WireVal::Str(self.risk_book.as_str())),
+            "net_notional" => Some(WireVal::F64(self.net_notional)),
+            "risk" => self
+                .risk
+                .as_ref()
+                .map(|r| WireVal::Msg(r as &dyn WireAdapter)),
             "instrument" => self
                 .instrument
                 .as_ref()
@@ -4770,6 +4796,11 @@ impl WireAdapter for RiskPosition {
                 .attribution
                 .as_ref()
                 .map(|a| WireVal::Msg(a as &dyn WireAdapter)),
+            "risk_book" => Some(WireVal::Str(self.risk_book.as_str())),
+            "risk" => self
+                .risk
+                .as_ref()
+                .map(|r| WireVal::Msg(r as &dyn WireAdapter)),
             _ => None,
         }
     }

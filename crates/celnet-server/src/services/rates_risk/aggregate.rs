@@ -284,6 +284,7 @@ mod tests {
                     side: side as i32,
                 })),
             }),
+            ..Default::default()
         }
     }
 

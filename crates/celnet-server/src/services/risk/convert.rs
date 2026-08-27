@@ -377,6 +377,7 @@ pub fn fact_to_position(
     fact: &RiskFact,
     wire_id: u64,
     attribution: Option<AttributionRecord>,
+    risk_book: String,
 ) -> RiskPosition {
     let p = &fact.measure.position;
     // The wire `RiskPosition` carries an FX vanilla leg (the proto is unchanged —
@@ -419,6 +420,18 @@ pub fn fact_to_position(
         premium_style: celnet_proto::PremiumStyle::from(premium_style) as i32,
         surface_version: fact.surface_version,
         attribution,
+        risk_book,
+        // The canonical, notional-scaled sensitivities straight off the marked leaf — the
+        // SAME per-position numbers the risk cube aggregates and `fx_transfer_view` hands
+        // the transfer applier. Published so a client can show what a position carries
+        // without re-deriving it; `dv01` is 0 for FX vanilla (the rates arm carries it).
+        risk: Some(celnet_proto::RiskVectorDesc {
+            dv01: 0.0,
+            delta: fact.measure.leaf.greeks.delta_base,
+            gamma: fact.measure.leaf.greeks.gamma,
+            vega: fact.measure.leaf.greeks.vega,
+            theta: fact.measure.leaf.greeks.theta,
+        }),
     }
 }
 

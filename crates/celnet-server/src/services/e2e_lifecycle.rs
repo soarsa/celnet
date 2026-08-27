@@ -122,6 +122,7 @@ fn sell_fill(notional: f64) -> RatesPosition {
                 side: Side::Sell as i32,
             })),
         }),
+        ..Default::default()
     }
 }
 

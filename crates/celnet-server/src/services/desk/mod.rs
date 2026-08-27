@@ -1049,6 +1049,7 @@ impl RfqDeskEdge {
                     entity: 0,
                     book: 0,
                     instrument: Some(booked_instrument.clone()),
+                    ..Default::default()
                 },
                 RatesRoutingAttribution {
                     counterparty: current.counterparty.clone(),
@@ -1431,6 +1432,7 @@ impl RfqDeskService for RfqDeskEdge {
                 entity: 0,
                 book: 0,
                 instrument: Some(booked_instrument.clone()),
+                ..Default::default()
             },
             RatesRoutingAttribution {
                 counterparty: current.counterparty.clone(),

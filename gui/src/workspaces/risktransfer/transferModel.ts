@@ -31,70 +31,23 @@ import type { RiskBook, RiskBookRisk, RiskVector, TransferKind } from "../../dat
  */
 export const PAR_MARK = 100;
 
-/** The maximum number of synthetic lots a portfolio's risk row is split into. */
-const MAX_LOTS = 4;
-
-/** A synthesised, selectable position line derived from a portfolio's live risk row. */
-export interface PositionLine {
-  /** Stable synthetic id (deterministic from the book id + lot index) → `positionIds`. */
-  id: bigint;
-  /** Human label, e.g. "EMEA Rates — lot 2/3". */
-  label: string;
-  /** The signed base-currency notional this lot carries (+ long / − short). */
-  notionalBase: number;
-  /** This lot's slice of the portfolio's pass-through risk vector. */
-  risk: RiskVector;
-}
-
-/** A small, deterministic 63-bit hash of a string → a stable synthetic position id. */
-function hashToBigInt(s: string): bigint {
-  let h = 1469598103934665603n; // FNV-1a 64-bit offset basis
-  for (let i = 0; i < s.length; i += 1) {
-    h ^= BigInt(s.charCodeAt(i));
-    h = (h * 1099511628211n) & 0x7fffffffffffffffn; // FNV prime, kept in the i64 domain
-  }
-  // Never 0 — a 0 id reads as "unset" downstream.
-  return h === 0n ? 1n : h;
-}
-
-/** A deterministic weight in [1, 2) for lot `i` of `bookId` (stable across renders). */
-function lotWeight(bookId: string, i: number): number {
-  const h = Number(hashToBigInt(`${bookId}#${i}`) % 1000n);
-  return 1 + h / 1000;
-}
-
 /**
- * Split a portfolio's live risk row into deterministic, labelled position lots whose
- * notionals + risk vectors SUM to the row's totals (so selecting every lot reproduces
- * the book). The lot count tracks the row's `positionCount`, capped at {@link MAX_LOTS}.
+ * One transferable position, as the ticket lists it.
+ *
+ * `id` is the SERVER's `positionId`. It used to be a hash of the book id and a lot
+ * index, because the positions themselves were synthesised from the portfolio's
+ * aggregate risk — so every transfer was refused `position <id> is not booked in either
+ * book`. The ticket now lists what the server actually holds.
  */
-export function synthesizePositions(row: RiskBookRisk): PositionLine[] {
-  const n = Math.min(MAX_LOTS, Math.max(1, row.positionCount));
-  const rowDv01 = row.dv01 ?? 0;
-  const weights: number[] = [];
-  let sumW = 0;
-  for (let i = 0; i < n; i += 1) {
-    const w = lotWeight(row.bookId, i);
-    weights.push(w);
-    sumW += w;
-  }
-  const lines: PositionLine[] = [];
-  for (let i = 0; i < n; i += 1) {
-    const frac = weights[i]! / sumW;
-    lines.push({
-      id: hashToBigInt(`${row.bookId}#lot#${i}`),
-      label: `${row.name} — lot ${i + 1}/${n}`,
-      notionalBase: row.netNotional * frac,
-      risk: {
-        dv01: rowDv01 * frac,
-        delta: row.delta * frac,
-        gamma: row.gamma * frac,
-        vega: row.vega * frac,
-        theta: row.theta * frac,
-      },
-    });
-  }
-  return lines;
+export interface PositionLine {
+  /** The server-assigned position id — the identity a transfer is booked against. */
+  id: bigint;
+  /** Human label for the row. */
+  label: string;
+  /** The signed base-currency notional this position carries (+ long / − short). */
+  notionalBase: number;
+  /** The position's risk vector. DV01 is server-computed; nothing here is derived. */
+  risk: RiskVector;
 }
 
 /**

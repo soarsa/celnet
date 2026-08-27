@@ -4621,6 +4621,7 @@ pub(crate) mod tests {
                     side: Side::Buy as i32,
                 })),
             }),
+            ..Default::default()
         }
     }
 
@@ -4713,6 +4714,7 @@ pub(crate) mod tests {
                     side: side as i32,
                 })),
             }),
+            ..Default::default()
         }
     }
 
@@ -5143,6 +5145,7 @@ pub(crate) mod tests {
                     ..Default::default()
                 })),
             }),
+            ..Default::default()
         }
     }
 
@@ -5179,6 +5182,7 @@ pub(crate) mod tests {
             entity: 1,
             book: 7,
             instrument: None,
+            ..Default::default()
         };
         assert_eq!(hedge_execution_instrument(&bare), None);
     }
@@ -5239,6 +5243,7 @@ pub(crate) mod tests {
             entity: 1,
             book: 7,
             instrument: None,
+            ..Default::default()
         };
         assert!(offsetting_rates_leg(&bare, 0.5).is_none());
     }
@@ -5920,6 +5925,7 @@ pub(crate) mod tests {
                     side: side as i32,
                 })),
             }),
+            ..Default::default()
         }
     }
 
@@ -7320,6 +7326,7 @@ pub(crate) mod tests {
                     ..Default::default()
                 })),
             }),
+            ..Default::default()
         }
     }
 
@@ -7489,6 +7496,7 @@ pub(crate) mod tests {
                 entity: 1,
                 book: 7,
                 instrument: None,
+                ..Default::default()
             }),
             None
         );

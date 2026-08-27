@@ -2354,6 +2354,21 @@ message RiskPosition {
   // Who quoted/holds this position (presence-tracked): the attribution chain that
   // keys the who's-trading roll-up. Absent ⇒ unattributed.
   optional AttributionRecord attribution = 9;
+  // The RISK BOOK the routing graph stamped this position into (`"fx-emea"`), or empty
+  // when it routed nowhere. Distinct from `org.book`, the netting book: a risk book is
+  // the portfolio a trader actually sees and moves risk between.
+  //
+  // The SAME field `RatesPosition` carries. The server already held this stamp (the
+  // transfer applier reads it to validate membership) but never published it, so no
+  // client could list "the positions in FX EMEA" — which is why the risk-transfer ticket
+  // fabricated lots instead of listing them.
+  string risk_book = 10;
+  // The position's OWN risk: the canonical, notional-scaled sensitivities off the marked
+  // leaf — the same per-position numbers the risk cube aggregates. `dv01` is absent (0)
+  // for FX vanilla, mirroring the per-book gate skipping `max_dv01`.
+  //
+  // Same shape, same meaning, same server-authority as `RatesPosition.risk`.
+  RiskVectorDesc risk = 11;
 }
 
 // A scope filter pinning the position listing / drill to one dimension subtree
@@ -8854,6 +8869,30 @@ message RatesPosition {
   // The linear-rates instrument to price (the USD-SOFR OIS P0 arm; the oneof grows
   // additively exactly as in `RatesPriceRequest`).
   RatesInstrument instrument = 4;
+  // The RISK BOOK the routing graph stamped this position into (`"rates-usd"`), or
+  // empty when it routed nowhere.
+  //
+  // Distinct from `book` above, which is the numeric NETTING book. A risk book is the
+  // portfolio a trader actually sees and moves risk between, and it was previously
+  // knowable only inside the server: the stamp lives in the position store's own map, so
+  // no client could ask "which positions are in RATES USD". The risk-transfer ticket
+  // filled that gap by SYNTHESISING lots from the book's aggregate risk and minting ids
+  // for them — ids that matched nothing, so every transfer was rejected
+  // `position <id> is not booked in either book`.
+  string risk_book = 5;
+  // The position's signed notional in the instrument's own currency.
+  double net_notional = 6;
+  // The position's OWN risk, computed server-side by the same measure the pre-trade gate
+  // and the hedge sizer use. For a linear-rates position only `dv01` is populated.
+  //
+  // Carried because a client cannot honestly derive it: the bond arm needs a cashflow
+  // schedule and a memoised analytic derivative. A per-position risk number invented in
+  // the GUI is exactly the illustration this field exists to retire.
+  //
+  // It is `RiskVectorDesc` — the SAME per-position risk shape `RiskPosition` carries —
+  // so a client that lists positions across asset classes reads one shape, not one per
+  // asset class.
+  RiskVectorDesc risk = 7;
 }
 
 // A scope filter narrowing a rates risk aggregate to one `(entity, book, ccy)`

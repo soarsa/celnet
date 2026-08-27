@@ -90,6 +90,7 @@ fn ois_position(id: u64, entity: u32, book: u32, side: Side) -> RatesPosition {
                 side: side as i32,
             })),
         }),
+        ..Default::default()
     }
 }
 

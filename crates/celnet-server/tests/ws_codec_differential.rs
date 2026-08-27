@@ -2679,6 +2679,14 @@ fn full_risk_position() -> RiskPosition {
             won: Some(true),
             lp_count: Some(3),
         }),
+        risk_book: "fx-emea".to_owned(),
+        risk: Some(RiskVectorDesc {
+            dv01: 0.0,
+            delta: 420_000.0,
+            gamma: 12.5,
+            vega: 8_100.0,
+            theta: -640.0,
+        }),
     }
 }
 
@@ -2694,6 +2702,8 @@ fn sparse_risk_position() -> RiskPosition {
         premium_style: 0,
         surface_version: 0,
         attribution: None,
+        risk_book: String::new(),
+        risk: None,
     }
 }
 
@@ -2954,6 +2964,15 @@ fn ois_rates_position() -> RatesPosition {
                 notional: 1_000_000.0,
                 side: 1,
             })),
+        }),
+        risk_book: "fi-rates-emea".to_owned(),
+        net_notional: -1_000_000.0,
+        risk: Some(RiskVectorDesc {
+            dv01: -480.5,
+            delta: 0.0,
+            gamma: 0.0,
+            vega: 0.0,
+            theta: 0.0,
         }),
     }
 }

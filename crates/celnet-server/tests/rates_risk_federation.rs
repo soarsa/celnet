@@ -81,6 +81,7 @@ fn position(
                 side: side as i32,
             })),
         }),
+        ..Default::default()
     }
 }
 

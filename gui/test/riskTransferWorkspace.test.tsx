@@ -1,15 +1,27 @@
 /**
  * Risk-transfer workspace render tests — behaviour + accessibility, driven with
- * `useApp` mocked (no server). The ticket loads portfolios, synthesises selectable
- * position lots, infers the kind, previews the move and submits; the inbox renders the
- * live pending set with accept/reject + the four-eyes note; the audit blotter lists
+ * `useApp` mocked (no server). The ticket loads portfolios, LISTS the server's positions
+ * in the selected one, infers the kind, previews the move and submits; the inbox renders
+ * the live pending set with accept/reject + the four-eyes note; the audit blotter lists
  * records and expands one to its provenance.
+ *
+ * The ticket used to SYNTHESISE its position lots from a book's aggregate risk, so these
+ * tests needed no position listing at all — and the screen they exercised could never
+ * transfer anything, because the ids it minted named nothing the server held. The mock
+ * transport below now supplies both listings, which is what makes the selection real.
  */
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-import type { RiskBook, RiskBookRisk, RiskTransfer } from "../src/data/contract";
+import type {
+  OisInstrument,
+  RatesPosition,
+  RiskBook,
+  RiskBookRisk,
+  RiskPosition,
+  RiskTransfer,
+} from "../src/data/contract";
 
 const state: { app: unknown } = { app: null };
 vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
@@ -23,7 +35,51 @@ const BOOKS: RiskBook[] = [
   { id: "fi-rates-emea", name: "EMEA Rates", parentId: null, deskId: "emea", description: "", limits: null, enabled: true , assetClass: "fixed_income"},
   { id: "fi-emea-sub", name: "EMEA Sub", parentId: "fi-rates-emea", deskId: null, description: "", limits: null, enabled: true , assetClass: "fixed_income"},
   { id: "fi-marex", name: "Marex FI", parentId: null, deskId: "marex", description: "", limits: null, enabled: true , assetClass: "fixed_income"},
+  { id: "fx-emea", name: "FX EMEA", parentId: null, deskId: "emea", description: "", limits: null, enabled: true , assetClass: "fx_options"},
 ];
+
+const OIS: OisInstrument = {
+  tenorYears: 5,
+  fixedRate: 0.041,
+  notional: 100_000_000,
+  direction: "PAY_FIXED",
+};
+
+/** One booked rates position in `fi-rates-emea`, as `ListRatesPositions` returns it. */
+function ratesPos(id: bigint, dv01: number): RatesPosition {
+  return {
+    positionId: id,
+    entity: 1,
+    book: 1,
+    instrument: OIS,
+    riskBook: "fi-rates-emea",
+    netNotional: 100_000_000,
+    risk: { dv01, delta: 0, gamma: 0, vega: 0, theta: 0 },
+  };
+}
+
+/** One booked FX vanilla in `fx-emea`, as `ListPositions` returns it. */
+function fxPos(id: bigint, delta: number): RiskPosition {
+  return {
+    positionId: id,
+    org: { trader: 1, book: 1, desk: 1, ccyPair: { base: "EUR", quote: "USD" }, location: 1, entity: 1 },
+    optionType: "CALL",
+    notionalBase: 25_000_000,
+    inputs: { spot: 1.1, strike: 1.1, vol: 0.09, t: 0.5, rDom: 0.04, rFor: 0.02 },
+    quotedDelta: "SPOT_UNADJUSTED",
+    premiumStyle: "DOMESTIC_PIPS",
+    surfaceVersion: 1n,
+    riskBook: "fx-emea",
+    risk: { dv01: 0, delta, gamma: 2, vega: 50, theta: -4 },
+  };
+}
+
+const RATES_POSITIONS: RatesPosition[] = [
+  ratesPos(101n, -8_000),
+  ratesPos(102n, -8_000),
+  ratesPos(103n, -9_000),
+];
+const FX_POSITIONS: RiskPosition[] = [fxPos(201n, 400), fxPos(202n, 600)];
 
 function riskRow(over: Partial<RiskBookRisk> = {}): RiskBookRisk {
   return {
@@ -47,6 +103,7 @@ const RISK: RiskBookRisk[] = [
   riskRow(),
   riskRow({ bookId: "fi-emea-sub", name: "EMEA Sub", netNotional: 50_000_000 }),
   riskRow({ bookId: "fi-marex", name: "Marex FI", netNotional: 20_000_000 }),
+  riskRow({ bookId: "fx-emea", name: "FX EMEA", netNotional: 50_000_000, dv01: null }),
 ];
 
 const AUTH = { user: { id: "u", email: "admin@celnet.com" }, isAdmin: true, can: () => true };
@@ -68,6 +125,10 @@ describe("RiskTransferWorkspace (ticket)", () => {
           { id: "marex", name: "Marex" },
         ]),
         listUsers: vi.fn(async () => []),
+        // BOTH listings — the ticket reads them through one path, so a mock that stubs
+        // only one would hide exactly the asset-class gap this ticket had.
+        listPositions: vi.fn(async () => ({ positions: FX_POSITIONS })),
+        listRatesPositions: vi.fn(async () => ({ positions: RATES_POSITIONS })),
         initiateRiskTransfer: initiate,
       },
       auth: AUTH,
@@ -95,7 +156,7 @@ describe("RiskTransferWorkspace (ticket)", () => {
     };
   }
 
-  it("loads portfolios, synthesises positions, infers the kind and previews + submits", async () => {
+  it("loads portfolios, lists their positions, infers the kind and previews + submits", async () => {
     const initiate = vi.fn(async (_input: InitiateRiskTransferInput) => bookedTransfer());
     state.app = makeApp(initiate);
     await act(async () => {
@@ -103,12 +164,17 @@ describe("RiskTransferWorkspace (ticket)", () => {
     });
     expect(screen.getByRole("heading", { name: /risk transfer/i })).toBeInTheDocument();
 
-    // Pick the source portfolio → position lots appear.
+    // Pick the source portfolio → its SERVER positions appear, named by their own ids.
     const source = await screen.findByTestId("xfer-source");
     await act(async () => {
       fireEvent.change(source, { target: { value: "fi-rates-emea" } });
     });
     fireEvent.click(await screen.findByTestId("xfer-select-all"));
+    expect(screen.getByText(/#101/)).toBeInTheDocument();
+
+    // Submitting must name those ids — the whole point: a transfer is booked against
+    // position identities the server holds, not against ids the ticket invented.
+    const expectedIds = RATES_POSITIONS.map((p) => p.positionId);
 
     // Pick a same-desk target → kind = re-attribution.
     fireEvent.change(screen.getByTestId("xfer-target"), { target: { value: "fi-emea-sub" } });
@@ -119,7 +185,26 @@ describe("RiskTransferWorkspace (ticket)", () => {
     fireEvent.click(screen.getByTestId("xfer-submit"));
     await waitFor(() => expect(initiate).toHaveBeenCalledTimes(1));
     expect(initiate.mock.calls[0]![0]).toMatchObject({ kind: "RE_ATTRIBUTE", quantityFull: true });
+    expect(initiate.mock.calls[0]![0].source.positionIds).toEqual(expectedIds);
     expect(await screen.findByTestId("xfer-result")).toHaveTextContent(/booked/i);
+  });
+
+  it("lists an FX portfolio's positions too — not just the rates book", async () => {
+    // The ticket once listed only `listRatesPositions`, so selecting an FX portfolio
+    // showed nothing at all while the server's applier handled FX transfers perfectly
+    // well. Both asset classes now come back through the same path.
+    state.app = makeApp();
+    await act(async () => {
+      render(<RiskTransferWorkspace />);
+    });
+    await act(async () => {
+      fireEvent.change(await screen.findByTestId("xfer-source"), { target: { value: "fx-emea" } });
+    });
+    fireEvent.click(await screen.findByTestId("xfer-select-all"));
+    expect(screen.getByText(/#201/)).toBeInTheDocument();
+    expect(screen.getByText(/#202/)).toBeInTheDocument();
+    // ...and NOT the rates book's positions, which belong to a different portfolio.
+    expect(screen.queryByText(/#101/)).not.toBeInTheDocument();
   });
 
   it("infers DESK_TO_DESK for a cross-desk target", async () => {
@@ -137,7 +222,9 @@ describe("RiskTransferWorkspace (ticket)", () => {
     await act(async () => {
       render(<RiskTransferWorkspace />);
     });
-    fireEvent.change(await screen.findByTestId("xfer-source"), { target: { value: "fi-rates-emea" } });
+    await act(async () => {
+      fireEvent.change(await screen.findByTestId("xfer-source"), { target: { value: "fi-rates-emea" } });
+    });
     fireEvent.click(await screen.findByTestId("xfer-select-all"));
     fireEvent.change(screen.getByTestId("xfer-target"), { target: { value: "fi-emea-sub" } });
     fireEvent.click(screen.getByTestId("xfer-basis-AGREED"));

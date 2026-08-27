@@ -19,7 +19,7 @@ use celnet_proto::{
 };
 
 use crate::error::{ClientError, ClientResult};
-use crate::risk::{Entitlements, principal_or_grant_all};
+use crate::risk::{Entitlements, RiskVector, principal_or_grant_all};
 
 /// A civil (calendar) date: `year`, `month` 1..=12, `day` 1..=31.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -748,7 +748,7 @@ impl RatesPriced {
 /// cell, and the linear-rates instrument it holds. The linear-rates analogue of
 /// [`crate::RiskPosition`]. The settlement currency is taken from the priced
 /// [`UsdSofrCurve`], never carried per position.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RatesPosition {
     /// The position identity (one current fact per id). `0` on a fresh booking ⇒
     /// the server assigns an id; a non-zero id upserts that position.
@@ -761,6 +761,22 @@ pub struct RatesPosition {
     pub book: u32,
     /// The linear-rates instrument the position holds (the USD-SOFR OIS arm).
     pub instrument: Ois,
+    /// The RISK BOOK the routing graph stamped this position into, or empty when it
+    /// routed nowhere. A server OUTPUT — set on a listing, ignored on a booking.
+    ///
+    /// Distinct from [`Self::book`], the numeric netting book: a risk book is the
+    /// portfolio a trader sees and moves risk between.
+    pub risk_book: String,
+    /// The position's signed notional in the instrument's own currency. Server OUTPUT.
+    pub net_notional: f64,
+    /// The position's OWN risk as the server computed it — for a linear-rates position
+    /// only `dv01` is populated. Server OUTPUT; `None` on a position the client built.
+    ///
+    /// Carried rather than derived because a client cannot honestly derive it (the bond
+    /// arm needs a cashflow schedule and a memoised analytic derivative), and because it
+    /// is the SAME shape [`crate::RiskPosition`] reports — one per-position risk shape
+    /// across asset classes.
+    pub risk: Option<RiskVector>,
 }
 
 impl RatesPosition {
@@ -773,6 +789,9 @@ impl RatesPosition {
             entity,
             book,
             instrument,
+            risk_book: String::new(),
+            net_notional: 0.0,
+            risk: None,
         }
     }
 
@@ -784,12 +803,19 @@ impl RatesPosition {
         self
     }
 
-    pub(crate) fn to_wire(self) -> WireRatesPosition {
+    // `&self`, not `self`: the type stopped being `Copy` when it gained the risk-book
+    // stamp (a `String`), and every caller holds it behind a reference.
+    pub(crate) fn to_wire(&self) -> WireRatesPosition {
         WireRatesPosition {
             position_id: self.position_id,
             entity: self.entity,
             book: self.book,
             instrument: Some(self.instrument.to_wire()),
+            // Server OUTPUTS. A booking request states the position, never its risk —
+            // sending a locally-invented DV01 is the exact habit these fields retire.
+            risk_book: String::new(),
+            net_notional: 0.0,
+            risk: None,
         }
     }
 
@@ -804,6 +830,9 @@ impl RatesPosition {
             entity: w.entity,
             book: w.book,
             instrument,
+            risk_book: w.risk_book.clone(),
+            net_notional: w.net_notional,
+            risk: w.risk.as_ref().map(RiskVector::from_wire),
         })
     }
 }

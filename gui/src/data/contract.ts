@@ -1575,6 +1575,19 @@ export interface RiskPosition {
   premiumStyle: PremiumStyle;
   surfaceVersion: bigint;
   attribution?: AttributionRecord;
+  /**
+   * The RISK BOOK the routing graph stamped this position into (`"fx-emea"`), or empty
+   * when it routed nowhere — the portfolio a trader sees and moves risk between, as
+   * distinct from `org.book`, the netting book.
+   */
+  riskBook?: string;
+  /**
+   * The position's own risk: the canonical, notional-scaled sensitivities off the marked
+   * leaf — the same numbers the risk cube aggregates. `dv01` is 0 for FX vanilla.
+   *
+   * The SAME shape {@link RatesPosition.risk} carries.
+   */
+  risk?: RiskVector;
 }
 
 /** The limit metric a utilization row measures (`celnet.wire.LimitMetricKind`),
@@ -5524,6 +5537,25 @@ export interface RatesPosition {
   book: number;
   /** The OIS to price against the request `curveSet` (the only P0 arm). */
   instrument: OisInstrument;
+  /**
+   * The RISK BOOK the routing graph stamped this position into (`"rates-usd"`), or
+   * empty when it routed nowhere. Distinct from {@link book}, the numeric netting book:
+   * a risk book is the portfolio a trader sees and moves risk between.
+   */
+  riskBook?: string;
+  /** The position's signed notional (+ long / − short). Server-populated. */
+  netNotional?: number;
+  /**
+   * The position's own risk, computed server-side — never derived in the client. Only
+   * `dv01` is populated for a linear-rates position.
+   *
+   * Optional because these three are server OUTPUTS: a booking request constructs a
+   * position without them, and forcing a caller to supply a zero would be inventing a
+   * risk number, which is the exact habit this field exists to end. It is the SAME
+   * {@link RiskVector} {@link RiskPosition.risk} carries, so a screen listing positions
+   * across asset classes reads one shape.
+   */
+  risk?: RiskVector;
 }
 
 /**
