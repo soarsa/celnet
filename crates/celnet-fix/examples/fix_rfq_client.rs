@@ -1324,7 +1324,7 @@ async fn run_rfs(args: &Args) -> std::io::Result<()> {
     const REPROBE_EVERY: u64 = 50;
     let mut silent_streak: Vec<u32> = vec![0; bonds.len()];
     loop {
-        if i > 0 && i % REPROBE_EVERY == 0 {
+        if i > 0 && i.is_multiple_of(REPROBE_EVERY) {
             // Re-probe: give every parked name another chance to prove it is live.
             silent_streak.iter_mut().for_each(|s| *s = 0);
         }
