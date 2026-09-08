@@ -22,6 +22,7 @@ corpus was written during a specific wave and has not been revisited since.
 | [adr/README.md](adr/README.md) | Numbered architecture decisions | `LIVE` |
 | [IMPLEMENTATION-LEDGER.md](IMPLEMENTATION-LEDGER.md) | Append-only progress log, newest first | `LIVE` |
 | [PARALLEL-SESSIONS.md](PARALLEL-SESSIONS.md) | Lane board and the tiered-gate law (§4.2) | `LIVE` |
+| [presentation/README.md](presentation/README.md) | Self-contained HTML decks for showing the product — FI screen wireframes + architecture | `LIVE` |
 
 **The architecture family is three documents, and that split is correct.**
 `ARCHITECTURE.md` is the **as-built** record, [ARCHITECTURE-TARGET.md](ARCHITECTURE-TARGET.md)

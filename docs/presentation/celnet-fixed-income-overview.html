@@ -1,0 +1,1522 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Celnet — Fixed Income overview &amp; architecture</title>
+<meta name="description" content="Wireframe walkthrough of the Celnet fixed-income screens and how the platform fits together." />
+<style>
+/* ==========================================================================
+   Celnet — Fixed Income overview deck.
+   Self-contained: inline CSS + inline SVG only. No fonts/JS/CDN/images fetched.
+   Wireframe register on purpose: schematic hairlines + mono labels, so the
+   audience reads STRUCTURE and FLOW, not a colour scheme. One accent (coral)
+   carries the annotation numbers and the "this is the point" highlight.
+   Every screen plate mirrors the real rail rows / tabs / columns in
+   gui/src/lib/commands.ts + gui/src/workspaces/*, not invented surfaces.
+   ========================================================================== */
+:root {
+  --paper:      #F6F5F1;
+  --paper-2:    #FFFFFF;
+  --ink:        #191C22;
+  --ink-2:      #4A4F5C;
+  --ink-3:      #878C99;
+  --line:       #C9C7BF;
+  --line-soft:  #E2E0D9;
+  --fill:       #EDEBE4;
+  --fill-2:     #E4E1D8;
+  --coral:      #E2542F;
+  --coral-soft: rgba(226,84,47,0.10);
+  --indigo:     #3F3FBF;
+  --green:      #1E7A5A;
+  --amber:      #A9721A;
+  --mono: ui-monospace, "SF Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+  --sans: "Inter", "Helvetica Neue", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --r: 3px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--ink); color: var(--ink); }
+body { font-family: var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden; }
+
+/* ---- deck scaffolding: fixed 1280x720 canvas, JS-scaled to the viewport ---- */
+#deck { position: fixed; inset: 0; display: grid; place-items: center; background: #14161B; }
+.slide { position: absolute; width: 1280px; height: 720px; background: var(--paper);
+  transform-origin: center center; opacity: 0; pointer-events: none;
+  display: flex; flex-direction: column; padding: 44px 56px 40px;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.55); }
+.slide.on { opacity: 1; pointer-events: auto; }
+
+/* ---- slide furniture ---- */
+.eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--coral); margin: 0 0 10px; }
+h1 { font-size: 58px; line-height: 1.02; letter-spacing: -0.028em; margin: 0 0 18px; font-weight: 620; }
+h2 { font-size: 30px; line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 6px; font-weight: 600; }
+.sub { font-size: 14.5px; line-height: 1.45; color: var(--ink-2); margin: 0 0 20px; max-width: 78ch; }
+.sub b { color: var(--ink); font-weight: 600; }
+.slide footer { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--line-soft);
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); letter-spacing: 0.06em; }
+.slide footer .where { color: var(--ink-2); }
+.body { display: flex; gap: 26px; flex: 1; min-height: 0; }
+.body.stack { flex-direction: column; justify-content: center; }
+
+/* ---- annotation column ---- */
+.notes { width: 316px; flex: 0 0 316px; display: flex; flex-direction: column; gap: 11px; }
+.note { display: grid; grid-template-columns: 20px 1fr; gap: 9px; align-items: start; }
+.note .n { width: 20px; height: 20px; border-radius: 50%; background: var(--coral); color: #fff;
+  font-family: var(--mono); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+.note p { margin: 0; font-size: 12.5px; line-height: 1.42; color: var(--ink-2); }
+.note p b { color: var(--ink); font-weight: 620; }
+.note p code { font-family: var(--mono); font-size: 11px; background: var(--fill);
+  border: 1px solid var(--line-soft); border-radius: var(--r); padding: 0 3px; color: var(--ink); }
+.notes .kicker { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--ink-3); border-bottom: 1px solid var(--line-soft);
+  padding-bottom: 6px; }
+
+/* ---- wireframe primitives ------------------------------------------------
+   Everything below is deliberately flat: 1px hairlines, hatched placeholders,
+   mono micro-labels. A pane is .wf; regions inside it are .wf-pane.        */
+.wf { flex: 1; min-width: 0; border: 1.5px solid var(--ink); background: var(--paper-2);
+  border-radius: var(--r); display: flex; flex-direction: column; overflow: hidden; position: relative; }
+.wf-chrome { display: flex; align-items: center; gap: 14px; height: 30px; padding: 0 10px;
+  border-bottom: 1px solid var(--line); background: var(--fill); flex: 0 0 30px; }
+.wf-chrome .brand { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; }
+.wf-tabs { display: flex; gap: 4px; }
+.tab { font-family: var(--mono); font-size: 10px; padding: 3px 8px; border: 1px solid var(--line);
+  border-radius: 2px; color: var(--ink-3); background: var(--paper-2); white-space: nowrap; }
+.tab.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.tab.hi { border-color: var(--coral); color: var(--coral); background: var(--coral-soft); }
+.wf-chrome .right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.wf-body { flex: 1; display: flex; min-height: 0; }
+.wf-rail { flex: 0 0 132px; border-right: 1px solid var(--line); background: var(--fill);
+  padding: 7px 6px; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+.rail-sec { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-3); padding: 7px 5px 3px; }
+.rail-row { font-family: var(--mono); font-size: 10px; color: var(--ink-2); padding: 4px 6px;
+  border-radius: 2px; display: flex; gap: 6px; align-items: center; white-space: nowrap; overflow: hidden; }
+.rail-row .g { width: 11px; text-align: center; color: var(--ink-3); }
+.rail-row.on { background: var(--ink); color: var(--paper); }
+.rail-row.on .g { color: var(--paper); }
+.rail-row.hi { background: var(--coral-soft); color: var(--coral); box-shadow: inset 2px 0 0 var(--coral); }
+.wf-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 9px; }
+.wf-cols { display: flex; gap: 8px; flex: 1; min-height: 0; }
+.wf-rows { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; }
+.wf-pane { border: 1px solid var(--line); border-radius: var(--r); background: var(--paper-2);
+  display: flex; flex-direction: column; min-height: 0; min-width: 0; position: relative; }
+.wf-pane > h4 { margin: 0; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--ink-3); padding: 6px 8px; border-bottom: 1px solid var(--line-soft);
+  display: flex; align-items: center; gap: 8px; }
+.wf-pane > h4 .tag { margin-left: auto; font-size: 8.5px; letter-spacing: 0.06em; color: var(--ink-3);
+  border: 1px solid var(--line-soft); border-radius: 2px; padding: 1px 4px; text-transform: none; }
+.pad { padding: 8px; display: flex; flex-direction: column; gap: 7px; min-height: 0; flex: 1; }
+.hatch { background-image: repeating-linear-gradient(-45deg, var(--line-soft) 0 1px, transparent 1px 7px);
+  border: 1px dashed var(--line); border-radius: var(--r); }
+.ph { flex: 1; display: grid; place-items: center; font-family: var(--mono); font-size: 10px;
+  color: var(--ink-3); letter-spacing: 0.08em; min-height: 30px; }
+
+/* tabular grids — the blotter/ladder register that dominates an FI desk */
+.grid { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 9.5px; }
+.grid th { text-align: left; font-weight: 600; color: var(--ink-3); letter-spacing: 0.05em;
+  padding: 4px 7px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.grid td { padding: 3.5px 7px; border-bottom: 1px solid var(--line-soft); color: var(--ink-2);
+  white-space: nowrap; }
+.grid td.n, .grid th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.grid tr.sel td { background: var(--coral-soft); color: var(--ink); }
+.grid tr.sel td:first-child { box-shadow: inset 2px 0 0 var(--coral); }
+.grid td b { color: var(--ink); font-weight: 700; }
+.bid { color: var(--indigo); } .ask { color: var(--coral); } .pos { color: var(--green); } .neg { color: var(--coral); }
+
+/* chips, pills, buttons, meters */
+.chip { font-family: var(--mono); font-size: 9px; border: 1px solid var(--line); border-radius: 999px;
+  padding: 1.5px 7px; color: var(--ink-2); background: var(--paper-2); white-space: nowrap; }
+.chip.on { border-color: var(--ink); background: var(--ink); color: var(--paper); }
+.chip.warn { border-color: var(--amber); color: var(--amber); }
+.chip.good { border-color: var(--green); color: var(--green); }
+.chip.bad  { border-color: var(--coral); color: var(--coral); }
+.btn { font-family: var(--mono); font-size: 9.5px; border: 1px solid var(--ink); border-radius: 2px;
+  padding: 3px 10px; background: var(--paper-2); color: var(--ink); white-space: nowrap; }
+.btn.solid { background: var(--ink); color: var(--paper); }
+.btn.accent { background: var(--coral); border-color: var(--coral); color: #fff; }
+.btn.ghost { border-color: var(--line); color: var(--ink-3); }
+.row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.row.tight { gap: 4px; }
+.spacer { flex: 1; }
+.meter { height: 6px; border: 1px solid var(--line); border-radius: 999px; background: var(--fill); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--ink); }
+.meter i.warn { background: var(--amber); } .meter i.bad { background: var(--coral); }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+.tile { border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; background: var(--paper-2); }
+.tile .k { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-3); }
+.tile .v { font-family: var(--mono); font-size: 15px; font-weight: 700; color: var(--ink); margin-top: 2px;
+  font-variant-numeric: tabular-nums; }
+.tile .d { font-family: var(--mono); font-size: 9px; color: var(--ink-3); }
+.tile.hi { border-color: var(--coral); background: var(--coral-soft); }
+.tile.hi .v { color: var(--coral); }
+
+/* form-ish blocks for ticket / editor plates */
+.field { display: flex; flex-direction: column; gap: 3px; }
+.field .lab { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-3); }
+.field .box { border: 1px solid var(--line); border-radius: 2px; padding: 4px 7px; background: var(--paper-2);
+  font-family: var(--mono); font-size: 10.5px; color: var(--ink); display: flex; align-items: center; gap: 6px; }
+.field .box .cursor { width: 1px; height: 12px; background: var(--coral); }
+.field .box.sel { border-color: var(--coral); box-shadow: 0 0 0 2px var(--coral-soft); }
+.fgrid { display: grid; gap: 7px; }
+.fgrid.c2 { grid-template-columns: 1fr 1fr; } .fgrid.c3 { grid-template-columns: repeat(3,1fr); }
+.fgrid.c4 { grid-template-columns: repeat(4,1fr); }
+
+/* node-graph register (routing / hedging / pricing pipelines) */
+.canvas { flex: 1; min-height: 0; position: relative; background-image:
+  radial-gradient(circle at 1px 1px, var(--line-soft) 1px, transparent 0); background-size: 14px 14px;
+  border-radius: var(--r); overflow: hidden; }
+.node { position: absolute; border: 1.5px solid var(--ink); border-radius: var(--r); background: var(--paper-2);
+  padding: 5px 8px; font-family: var(--mono); font-size: 9.5px; color: var(--ink); min-width: 96px;
+  box-shadow: 2px 2px 0 var(--fill-2); }
+.node .t { font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+.node.accent { border-color: var(--coral); box-shadow: 2px 2px 0 var(--coral-soft); }
+.node.leaf { border-style: dashed; }
+.canvas svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+/* callout markers — inline badges that flow with the label they annotate, so a
+   number can never land on top of a value the audience is trying to read */
+.mkh { display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 50%;
+  background: var(--coral); color: #fff; font-family: var(--mono); font-size: 9px; font-weight: 700;
+  margin-right: 5px; vertical-align: middle; flex: 0 0 auto; }
+/* legacy pinned marker (unused on plates; kept for one-off diagrams) */
+.mk { position: absolute; width: 19px; height: 19px; border-radius: 50%; background: var(--coral);
+  color: #fff; font-family: var(--mono); font-size: 10.5px; font-weight: 700; display: grid;
+  place-items: center; z-index: 5; box-shadow: 0 0 0 2.5px var(--paper-2); }
+
+/* lifecycle diagram — plain CSS boxes (no SVG text metrics to drift) */
+.flow { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.flow-row { display: flex; align-items: stretch; gap: 0; }
+.step { flex: 1; min-width: 0; border: 1.5px solid var(--ink); border-radius: var(--r);
+  background: var(--paper-2); padding: 11px 13px; }
+.step.accent { border-color: var(--coral); }
+.step .t { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step.accent .t { color: var(--coral); }
+.step .d { font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); margin-top: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step .d.dim { color: var(--ink-3); }
+.link { flex: 0 0 40px; display: grid; place-items: center; font-family: var(--mono);
+  font-size: 13px; color: var(--ink); }
+.link.coral { color: var(--coral); }
+.turn { display: flex; justify-content: flex-end; padding-right: 60px; font-family: var(--mono);
+  font-size: 13px; color: var(--ink); }
+.loopback { border-left: 1.5px dashed var(--coral); border-right: 1.5px dashed var(--coral);
+  border-bottom: 1.5px dashed var(--coral); border-radius: 0 0 var(--r) var(--r); height: 44px;
+  margin: 0 60px; position: relative; }
+.loopback span { position: absolute; left: 50%; bottom: -8px; transform: translateX(-50%);
+  background: var(--paper); padding: 0 12px; font-family: var(--mono); font-size: 10px;
+  color: var(--coral); white-space: nowrap; }
+.obs { border: 1px dashed var(--line); border-radius: var(--r); background: var(--fill);
+  padding: 9px 12px; display: flex; gap: 18px; align-items: baseline; }
+.obs b { font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); }
+.obs span { font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
+
+/* full-bleed diagram slides */
+.diagram { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.diagram svg { width: 100%; height: 100%; }
+.legend { display: flex; gap: 16px; font-family: var(--mono); font-size: 10px; color: var(--ink-2); margin-top: 10px; }
+.legend i { display: inline-block; width: 20px; height: 0; border-top: 2px solid var(--ink); vertical-align: middle; margin-right: 6px; }
+.legend i.dash { border-top-style: dashed; } .legend i.coral { border-color: var(--coral); }
+
+/* cover + section + text slides */
+.cover { justify-content: center; }
+.cover .rule { width: 96px; height: 4px; background: var(--coral); margin-bottom: 26px; }
+.cover .meta { font-family: var(--mono); font-size: 12px; color: var(--ink-2); line-height: 1.7; }
+.lede { font-size: 20px; line-height: 1.42; color: var(--ink); max-width: 60ch; font-weight: 380; }
+.lede b { font-weight: 640; }
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.card { border: 1px solid var(--line); border-radius: var(--r); padding: 14px; background: var(--paper-2); }
+.card h5 { margin: 0 0 6px; font-size: 14px; letter-spacing: -0.01em; }
+.card p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--ink-2); }
+.card .num { font-family: var(--mono); font-size: 10px; color: var(--coral); letter-spacing: 0.1em; margin-bottom: 8px; }
+
+/* deck controls */
+#hud { position: fixed; bottom: 14px; right: 18px; display: flex; gap: 10px; align-items: center;
+  font-family: var(--mono); font-size: 11px; color: #7B808F; z-index: 20; }
+#hud button { font: inherit; color: #C3C7D2; background: #23262F; border: 1px solid #363A45;
+  border-radius: 3px; padding: 3px 9px; cursor: pointer; }
+#hud button:hover { border-color: var(--coral); color: #fff; }
+#hud .count { font-variant-numeric: tabular-nums; }
+
+/* ---- layer-cake bands (architecture slide) ---- */
+.band { display: flex; align-items: stretch; gap: 6px; border: 1px solid var(--line);
+  border-radius: var(--r); background: var(--paper-2); padding: 6px; margin: 3px 0; }
+.band.accent { border-color: var(--coral); background: var(--coral-soft); }
+.band.muted { background: var(--fill); }
+.band .bl { flex: 0 0 96px; display: flex; align-items: center; font-family: var(--mono);
+  font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); }
+.band .bx { flex: 1; border: 1px solid var(--line); border-radius: 2px; background: var(--paper-2);
+  padding: 5px 8px; min-width: 0; }
+.band .bx.wide { flex: 6; }
+.band .bx b { display: block; font-family: var(--mono); font-size: 10.5px; color: var(--ink);
+  font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.band .bx i { display: block; font-style: normal; font-size: 9.5px; color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arrow { text-align: center; font-family: var(--mono); font-size: 9.5px; color: var(--ink-3);
+  letter-spacing: 0.06em; padding: 1px 0; }
+.arrow code { font-size: 9.5px; color: var(--coral); }
+.fgrid.c1 { grid-template-columns: 1fr; }
+
+/* print → one landscape page per slide (File ▸ Print ▸ Save as PDF) */
+@media print {
+  @page { size: 1280px 720px; margin: 0; }
+  html, body { background: #fff; overflow: visible; }
+  #deck { position: static; display: block; }
+  #hud { display: none; }
+  .slide { position: static !important; opacity: 1 !important; transform: none !important;
+    box-shadow: none; break-after: page; }
+}
+</style>
+</head>
+<body>
+<div id="deck">
+
+<!-- ================= 1 · COVER ================= -->
+<section class="slide cover">
+  <div class="rule"></div>
+  <p class="eyebrow">Platform walkthrough · wireframes</p>
+  <h1>Celnet — Fixed&nbsp;Income</h1>
+  <p class="lede" style="margin-bottom:26px">The screens a rates and credit desk actually works on, and
+  the <b>one architecture</b> underneath that serves them — and every other asset class — through a
+  single wire contract.</p>
+  <div class="meta">
+    Prices in from the street · quotes out to clients · fills routed to risk · risk exited by policy<br/>
+    Every plate here mirrors a screen that exists in the product today.
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">docs/presentation</span><span>01</span></footer>
+</section>
+
+<!-- ================= 2 · THE ONE-SENTENCE STORY ================= -->
+<section class="slide">
+  <p class="eyebrow">Why it hangs together</p>
+  <h2>One contract, one core, many surfaces</h2>
+  <p class="sub">Fixed income is not a bolt-on module. It is the <b>same pricing dispatch, the same risk
+  cube, the same fan-out and the same wire contract</b> that FX options use, entered through a different
+  lens. That is the governing tenet: never fork a per-asset-class path — generalise the seam.</p>
+  <div class="body stack" style="gap:18px">
+    <div class="cards">
+      <div class="card">
+        <div class="num">01</div><h5>One wire contract</h5>
+        <p>A single, current, unversioned schema. The GUI, the FIX counterparty, the Rust SDK, Excel and the
+        CLI all speak it — so a capability lands on all five surfaces or it is not done.</p>
+      </div>
+      <div class="card">
+        <div class="num">02</div><h5>One hot core</h5>
+        <p>A pinned, lock-free, zero-allocation pricing path fed by a busy-polling ingest ring, physically
+        separated from the async edge. Bonds, swaps and options share it.</p>
+      </div>
+      <div class="card">
+        <div class="num">03</div><h5>One risk spine</h5>
+        <p>Fills route into a firm-wide hierarchy of risk portfolios; risk is normalised to a
+        convention-free canonical form, rolled up in one cube, and exited by a trader-authored policy.</p>
+      </div>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <div class="num">04</div><h5>Configured, not coded</h5>
+        <p>Pricing pipelines, tiering, routing rules, acceptance rules and hedge policies are all
+        drag-and-drop decision graphs a trader composes — no release needed to change desk behaviour.</p>
+      </div>
+      <div class="card">
+        <div class="num">05</div><h5>Everything is observable</h5>
+        <p>Per-stage p50/p99 of the tick&nbsp;→&nbsp;quote pipeline, per-LP win rates, and a per-lift trace
+        stitching price&nbsp;→&nbsp;order&nbsp;→&nbsp;risk&nbsp;→&nbsp;hedge under one id.</p>
+      </div>
+      <div class="card">
+        <div class="num">06</div><h5>Built for the whole book</h5>
+        <p>Sized for investment-banking portfolios and high-performance counterparties from day one:
+        horizontal scale-out, batch pricing across many instruments and tenors.</p>
+      </div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">The premise</span><span>02</span></footer>
+</section>
+
+<!-- ================= 3 · ARCHITECTURE LAYER CAKE ================= -->
+<section class="slide">
+  <p class="eyebrow">Architecture at a glance</p>
+  <h2>How the platform is stacked</h2>
+  <p class="sub">A flat Rust workspace of small, one-way-dependent crates. Read it top-down: clients speak
+  one contract to the async edge; the edge hands work to a pinned hot core; the core calls pure pricing
+  leaves; risk, liquidity and durability sit alongside as their own layers.</p>
+  <div class="body stack" style="gap:0">
+    <div class="band">
+      <span class="bl">Clients</span>
+      <div class="bx"><b>Trading GUI</b><i>React · WebSocket</i></div>
+      <div class="bx"><b>FIX 4.4</b><i>counterparties · venues</i></div>
+      <div class="bx"><b>Rust SDK</b><i>celnet-client</i></div>
+      <div class="bx"><b>Excel add-in</b><i>=CELNET.*</i></div>
+      <div class="bx"><b>CLI</b><i>celnet-cli</i></div>
+    </div>
+    <div class="arrow">▼&nbsp; one current, unversioned wire contract &nbsp;<code>celnet-proto</code> &nbsp;▼</div>
+    <div class="band accent">
+      <span class="bl">Async edge</span>
+      <div class="bx"><b>celnet-server</b><i>gRPC + WS mirror · auth · capability gate</i></div>
+      <div class="bx"><b>celnet-fix</b><i>acceptor + initiator · FI dialect</i></div>
+      <div class="bx"><b>celnet-integration</b><i>estate bridge · vendor feeds</i></div>
+    </div>
+    <div class="arrow">▼&nbsp; wait-free SPSC rings — no locks across the boundary &nbsp;▼</div>
+    <div class="band">
+      <span class="bl">Hot core</span>
+      <div class="bx wide"><b>celnet-engine</b><i>core-pinned, zero-alloc pricing path · arc-swap / seqlock publish · blue-green state handoff · durable book journal</i></div>
+    </div>
+    <div class="band">
+      <span class="bl">Pricing leaves</span>
+      <div class="bx"><b>celnet-rates</b><i>OIS · IRS · FRA · STIR</i></div>
+      <div class="bx"><b>celnet-bond</b><i>cash bond · YTM · DV01</i></div>
+      <div class="bx"><b>celnet-vanilla</b><i>FX options + Greeks</i></div>
+      <div class="bx"><b>celnet-surface</b><i>smile · arb gates</i></div>
+      <div class="bx"><b>celnet-exotics</b><i>PDE · MC · LSV</i></div>
+      <div class="bx"><b>cross-asset leaves</b><i>equity · commodity · crypto</i></div>
+    </div>
+    <div class="band">
+      <span class="bl">Liquidity</span>
+      <div class="bx"><b>celnet-aggregation</b><i>N venues → one BBO</i></div>
+      <div class="bx"><b>celnet-tiering</b><i>margin · skew · spread</i></div>
+      <div class="bx"><b>celnet-rfq</b><i>RFQ-to-many · last look</i></div>
+      <div class="bx"><b>refdata · refstore</b><i>golden source · corp actions</i></div>
+    </div>
+    <div class="band">
+      <span class="bl">Risk spine</span>
+      <div class="bx"><b>-risk-normalize</b><i>canonical risk</i></div>
+      <div class="bx"><b>-risk-cube</b><i>roll-up · VaR/ES</i></div>
+      <div class="bx"><b>-risk-routing</b><i>fill → portfolio</i></div>
+      <div class="bx"><b>-hedge-routing</b><i>state → exit action</i></div>
+      <div class="bx"><b>-risk-transfer</b><i>manual moves</i></div>
+      <div class="bx"><b>limits · xva</b><i>breach · barriers · CVA</i></div>
+    </div>
+    <div class="band muted">
+      <span class="bl">Platform</span>
+      <div class="bx"><b>celnet-journal</b><i>fsync'd log</i></div>
+      <div class="bx"><b>celnet-replog</b><i>quorum · failover</i></div>
+      <div class="bx"><b>celnet-fanout</b><i>SPMC broadcast</i></div>
+      <div class="bx"><b>celnet-router</b><i>shard map</i></div>
+      <div class="bx"><b>celnet-observability</b><i>HdrHistogram · audit</i></div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">55 crates, one direction of dependency</span><span>03</span></footer>
+</section>
+
+<!-- ================= 4 · THE FI LIFECYCLE ================= -->
+<section class="slide">
+  <p class="eyebrow">The path a fixed-income trade takes</p>
+  <h2>Price in → quote out → fill → risk → exit</h2>
+  <p class="sub">Every screen in this deck is a window onto one stage of this loop. Solid lines are the
+  live trade path; the dashed line is the risk that comes back round and has to leave the book again.</p>
+  <div class="body stack" style="gap:22px">
+    <div class="flow">
+      <div class="flow-row"><div class="step"><div class="t">LP feeds</div><div class="d">FIX · API feeds</div><div class="d dim">bonds · swaps</div></div><div class="link">→</div><div class="step"><div class="t">Aggregated book</div><div class="d">consensus BBO</div><div class="d dim">staleness decay</div></div><div class="link">→</div><div class="step"><div class="t">Curves</div><div class="d">SOFR bootstrap</div><div class="d dim">DF · zero · fwd</div></div><div class="link coral">→</div><div class="step accent"><div class="t">Client pricing</div><div class="d">feature pipeline</div><div class="d dim">session tiering</div></div><div class="link coral">→</div><div class="step"><div class="t">Quote out</div><div class="d">RFQ · RFS · ESP</div><div class="d dim">last look</div></div><div class="link">→</div><div class="step"><div class="t">Client lifts</div><div class="d">counterparty</div><div class="d dim">hits the price</div></div></div>
+      <div class="turn">↓</div>
+      <div class="flow-row"><div class="step"><div class="t">Hedge leg</div><div class="d">LP panel / book</div><div class="d dim">a real booked trade</div></div><div class="link coral">←</div><div class="step accent"><div class="t">Exit policy</div><div class="d">warehouse cap</div><div class="d dim">cross or hedge</div></div><div class="link coral">←</div><div class="step"><div class="t">Risk cube</div><div class="d">DV01 · key-rate</div><div class="d dim">limits · VaR/ES</div></div><div class="link coral">←</div><div class="step accent"><div class="t">Risk routing</div><div class="d">decision graph</div><div class="d dim">fill → portfolio</div></div><div class="link coral">←</div><div class="step"><div class="t">Booking</div><div class="d">deal · position</div><div class="d dim">journalled</div></div><div class="link">←</div><div class="step"><div class="t">Acceptance</div><div class="d">first-match rules</div><div class="d dim">accept / reject</div></div></div>
+      <div class="loopback"><span>residual risk goes back out to the street — a hedge is a real booked trade, not a report</span></div>
+      <div class="obs"><b>Observability spans every stage</b><span>per-stage p50/p99 · per-LP win rate · per-lift trace id · audit trail · limit breaches</span></div>
+    </div>
+    <div class="legend">
+      <span><i></i>trade path</span>
+      <span><i class="coral"></i>trader-configured decision point</span>
+      <span><i class="coral dash"></i>risk leaving the book</span>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">One loop, eleven screens</span><span>04</span></footer>
+</section>
+
+<!-- ================= 5 · NAVIGATION MODEL ================= -->
+<section class="slide">
+  <p class="eyebrow">How a user gets around</p>
+  <h2>Domains on top, one rail underneath</h2>
+  <div class="body">
+    <div class="wf">
+      <div class="wf-chrome">
+        <span class="brand">CELNET</span>
+        <div class="wf-tabs">
+          <span class="tab">FX Options</span><span class="tab on">Fixed Income</span><span class="tab">Risk</span>
+          <span class="tab">Hedging Rules</span><span class="tab">Analytics</span><span class="tab">Administration</span>
+        </div>
+        <div class="right"><span class="chip good">connected</span><span class="chip">desk: RATES-LDN</span><span class="chip">j.trader</span></div>
+      </div>
+      <div class="wf-body">
+        <div class="wf-rail" style="flex:0 0 190px">
+          <div class="rail-sec">Markets &amp; Liquidity</div>
+          <div class="rail-row on"><span class="g">⇉</span>Streaming</div>
+          <div class="rail-row"><span class="g">◫</span>Agg Book</div>
+          <div class="rail-row"><span class="g">◷</span>Curves</div>
+          <div class="rail-row"><span class="g">⇌</span>Quoting</div>
+          <div class="rail-sec">Pricing</div>
+          <div class="rail-row"><span class="g">⚙</span>Pricing</div>
+          <div class="rail-sec">Risk</div>
+          <div class="rail-row"><span class="g">◉</span>Risk</div>
+          <div class="rail-row"><span class="g">≣</span>Book</div>
+          <div class="rail-sec">Transfers</div>
+          <div class="rail-row"><span class="g">⇆</span>Risk Transfer</div>
+          <div class="rail-sec">Reference Data</div>
+          <div class="rail-row"><span class="g">❖</span>Corporate Actions</div>
+        </div>
+        <div class="wf-main">
+          <div class="wf-pane" style="flex:0 0 auto">
+            <h4>Rules of the road</h4>
+            <div class="pad" style="gap:9px">
+              <div class="row"><span class="chip on">Domain tab</span><span style="font-size:11.5px;color:var(--ink-2)">selects the <b>lens</b>, not a separate app. A cross-asset screen appears under both trading tabs and renders its FI form here.</span></div>
+              <div class="row"><span class="chip on">Rail section</span><span style="font-size:11.5px;color:var(--ink-2)">groups rows by the question they answer: where is the market, how do we price it, what do we hold, how does risk leave.</span></div>
+              <div class="row"><span class="chip on">Capability</span><span style="font-size:11.5px;color:var(--ink-2)">every row is gated on an action × asset-class grant. A row you cannot use is hidden, not greyed — the rail shows your job, not the product catalogue.</span></div>
+            </div>
+          </div>
+          <div class="wf-pane">
+            <h4>The same screen, two lenses <span class="tag">example: Market Data</span></h4>
+            <div class="pad" style="flex-direction:row;gap:9px">
+              <div class="wf-pane" style="flex:1">
+                <h4>Under FX Options</h4>
+                <div class="pad"><div class="hatch ph">volatility surface · smile · arb gates</div></div>
+              </div>
+              <div class="wf-pane" style="flex:1;border-color:var(--coral)">
+                <h4 style="color:var(--coral)">Under Fixed Income</h4>
+                <div class="pad"><div class="hatch ph">multi-curve manager · pillars · marks</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="kicker">Six domains</div>
+      <div class="note"><span class="n">1</span><p><b>FX Options</b> and <b>Fixed Income</b> are the two trading lenses.</p></div>
+      <div class="note"><span class="n">2</span><p><b>Risk</b> is where the desk is <i>configured</i> — portfolios, routing, acceptance.</p></div>
+      <div class="note"><span class="n">3</span><p><b>Hedging Rules</b> is the firm-wide risk-exit policy, hoisted out of the FI rail because it is not a trading screen.</p></div>
+      <div class="note"><span class="n">4</span><p><b>Analytics</b> holds the four read-only observability boards.</p></div>
+      <div class="note"><span class="n">5</span><p><b>Administration</b> holds connections, the LP panel, reference data and permissions.</p></div>
+      <div class="kicker" style="margin-top:6px">The next eleven slides</div>
+      <div class="note"><span class="n">→</span><p>walk the FI rail top to bottom, one plate per screen, each annotated with what backs it.</p></div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">Information architecture</span><span>05</span></footer>
+</section>
+
+<!-- ================= 6 · STREAMING ================= -->
+<section class="slide">
+  <p class="eyebrow">Markets &amp; Liquidity · rail row “Streaming”</p>
+  <h2>Live bond &amp; swap prices</h2>
+  <div class="body">
+    <div class="wf">
+      <div class="wf-chrome"><span class="brand">CELNET</span>
+        <div class="wf-tabs"><span class="tab">FX Options</span><span class="tab on">Fixed Income</span><span class="tab">Risk</span><span class="tab">Hedging Rules</span><span class="tab">Analytics</span><span class="tab">Administration</span></div>
+        <div class="right"><span class="chip good">stream live</span><span class="chip">RATES-LDN</span></div></div>
+      <div class="wf-body">
+        <div class="wf-rail">
+          <div class="rail-sec">Markets</div>
+          <div class="rail-row hi"><span class="g">⇉</span>Streaming<span class="mkh" style="margin-left:auto;margin-right:0">1</span></div>
+          <div class="rail-row"><span class="g">◫</span>Agg Book</div>
+          <div class="rail-row"><span class="g">◷</span>Curves</div>
+          <div class="rail-row"><span class="g">⇌</span>Quoting</div>
+          <div class="rail-sec">Pricing</div><div class="rail-row"><span class="g">⚙</span>Pricing</div>
+          <div class="rail-sec">Risk</div><div class="rail-row"><span class="g">◉</span>Risk</div><div class="rail-row"><span class="g">≣</span>Book</div>
+        </div>
+        <div class="wf-main">
+          <div class="row">
+            <span class="chip on">RFS subscribed · 5 lines</span><span class="chip">curve: USD-SOFR</span>
+            <span class="chip">notional 25mm</span><span class="spacer"></span>
+            <span class="btn ghost">unsubscribe</span><span class="btn">add line</span>
+          </div>
+          <div class="wf-pane" style="flex:1">
+            <h4><span class="mkh">2</span>Streaming lines <span class="tag">two-way, tick-driven</span></h4>
+            <table class="grid">
+              <tr><th>Line</th><th>Instrument</th><th class="n">Bid</th><th class="n">Offer</th><th class="n">Mid</th><th class="n">DV01</th><th class="n">Age</th><th><span class="mkh">3</span>Source</th></tr>
+              <tr><td><b>OIS 2Y rec</b></td><td>USD-SOFR OIS 2Y</td><td class="n bid">3.9125</td><td class="n ask">3.9185</td><td class="n">3.9155</td><td class="n">4,780</td><td class="n">0.2s</td><td>composite</td></tr>
+              <tr class="sel"><td><b>OIS 10Y pay</b></td><td>USD-SOFR OIS 10Y</td><td class="n bid">3.7420</td><td class="n ask">3.7495</td><td class="n">3.7458</td><td class="n">21,340</td><td class="n">0.1s</td><td>composite</td></tr>
+              <tr><td><b>IRS 5Y pay</b></td><td>USD IRS 5Y (SOFR)</td><td class="n bid">3.8010</td><td class="n ask">3.8080</td><td class="n">3.8045</td><td class="n">11,905</td><td class="n">0.3s</td><td>composite</td></tr>
+              <tr><td><b>FRA 2Y×3M pay</b></td><td>USD FRA 2Y×3M</td><td class="n bid">3.9640</td><td class="n ask">3.9740</td><td class="n">3.9690</td><td class="n">612</td><td class="n">0.4s</td><td>curve</td></tr>
+              <tr><td><b>Bond 10Y long</b></td><td>US912810TZ00</td><td class="n bid">98-14+</td><td class="n ask">98-15</td><td class="n">98-14¾</td><td class="n">8,120</td><td class="n">0.2s</td><td>LP · 4 in book</td></tr>
+            </table>
+          </div>
+          <div class="wf-cols" style="flex:0 0 214px">
+            <div class="wf-pane" style="flex:1.15">
+              <h4>Selected line — OIS 10Y pay</h4>
+              <div class="pad">
+                <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
+                  <div class="tile"><div class="k">PV</div><div class="v">−124,880</div><div class="d">USD</div></div>
+                  <div class="tile"><div class="k">Par rate</div><div class="v">3.7458</div><div class="d">%</div></div>
+                  <div class="tile hi"><div class="k">DV01</div><div class="v">21,340</div><div class="d">$/bp</div></div>
+                </div>
+                <div class="hatch ph" style="min-height:56px">key-rate ladder · 1Y 2Y 3Y 5Y 7Y 10Y 20Y 30Y</div>
+              </div>
+            </div>
+            <div class="wf-pane" style="flex:0.85">
+              <h4><span class="mkh">4</span>Act on the price</h4>
+              <div class="pad">
+                <div class="fgrid c2">
+                  <div class="field"><span class="lab">Side</span><div class="box">Pay fixed</div></div>
+                  <div class="field"><span class="lab">Notional</span><div class="box">25,000,000<span class="cursor"></span></div></div>
+                </div>
+                <div class="row"><span class="btn solid">Lift offer 3.7495</span><span class="btn">Hit bid</span><span class="btn ghost">Send to ticket</span></div>
+                <div class="row"><span class="chip warn">last look: 120ms sync</span><span class="chip">pre-trade limit check</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="kicker">What this screen is</div>
+      <div class="note"><span class="n">1</span><p>The FI desk's default landing screen: a <b>continuous two-way stream</b> the desk subscribes to, not a snapshot you refresh.</p></div>
+      <div class="note"><span class="n">2</span><p>Lines mix products freely — OIS, IRS, FRA, cash bond — because they all price through the <b>same dispatch</b> and land in the same ladder.</p></div>
+      <div class="note"><span class="n">3</span><p>Swap prices come from the bootstrapped curve; bond prices from the <b>aggregated LP book</b>. The column tells you which, so a stale source is visible.</p></div>
+      <div class="note"><span class="n">4</span><p>Lifting here runs the <b>real</b> path: pre-trade limit check, last look, fill, booking — the same one an external FIX counterparty gets.</p></div>
+      <div class="kicker" style="margin-top:4px">Backed by</div>
+      <div class="note"><span class="n">·</span><p><code>celnet-rates</code> · <code>celnet-bond</code> · <code>celnet-aggregation</code> · WS mirror of the one contract</p></div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">Screen 1 of 11</span><span>06</span></footer>
+</section>
+
+<!-- ================= 7 · AGG BOOK ================= -->
+<section class="slide">
+  <p class="eyebrow">Markets &amp; Liquidity · rail row “Agg Book”</p>
+  <h2>Many liquidity providers, one book</h2>
+  <div class="body">
+    <div class="wf">
+      <div class="wf-chrome"><span class="brand">CELNET</span>
+        <div class="wf-tabs"><span class="tab">FX Options</span><span class="tab on">Fixed Income</span><span class="tab">Risk</span><span class="tab">Hedging Rules</span><span class="tab">Analytics</span><span class="tab">Administration</span></div>
+        <div class="right"><span class="chip good">5 members · 5 live</span></div></div>
+      <div class="wf-body">
+        <div class="wf-rail">
+          <div class="rail-sec">Markets</div>
+          <div class="rail-row"><span class="g">⇉</span>Streaming</div>
+          <div class="rail-row hi"><span class="g">◫</span>Agg Book</div>
+          <div class="rail-row"><span class="g">◷</span>Curves</div>
+          <div class="rail-row"><span class="g">⇌</span>Quoting</div>
+          <div class="rail-sec">Pricing</div><div class="rail-row"><span class="g">⚙</span>Pricing</div>
+          <div class="rail-sec">Risk</div><div class="rail-row"><span class="g">◉</span>Risk</div><div class="rail-row"><span class="g">≣</span>Book</div>
+        </div>
+        <div class="wf-main">
+          <div class="row">
+            <span class="mkh">1</span><span class="chip on">Book: GOVT-USD-CORE</span><span class="chip">GOVT-EUR</span><span class="chip">GOVT-GBP</span>
+            <span class="spacer"></span><span class="chip">scope: display + quote + book</span><span class="btn ghost">edit members</span>
+          </div>
+          <div class="wf-cols">
+            <div class="wf-pane" style="flex:1.6">
+              <h4><span class="mkh">2</span>Consolidated book <span class="tag">best bid / offer per instrument</span></h4>
+              <table class="grid">
+                <tr><th>Instrument</th><th>Tenor</th><th class="n">Bid</th><th class="n">Size</th><th class="n">Offer</th><th class="n">Size</th><th class="n">Spread</th><th>Conf.</th></tr>
+                <tr><td>US912828YY0</td><td>2Y</td><td class="n bid">99-24¼</td><td class="n">50mm</td><td class="n ask">99-24¾</td><td class="n">45mm</td><td class="n">0.5/32</td><td><span class="chip good">high</span></td></tr>
+                <tr class="sel"><td><b>US912810TZ0</b></td><td>10Y</td><td class="n bid">98-14+</td><td class="n">75mm</td><td class="n ask">98-15</td><td class="n">60mm</td><td class="n">0.5/32</td><td><span class="chip good">high</span></td></tr>
+                <tr><td>US912810TJ7</td><td>30Y</td><td class="n bid">92-02</td><td class="n">25mm</td><td class="n ask">92-03+</td><td class="n">20mm</td><td class="n">1.5/32</td><td><span class="chip warn">thin</span></td></tr>
+                <tr><td>DE0001102606</td><td>10Y</td><td class="n bid">101.42</td><td class="n">30mm</td><td class="n ask">101.45</td><td class="n">30mm</td><td class="n">0.03</td><td><span class="chip good">high</span></td></tr>
+                <tr><td>GB00BMBL1D50</td><td>10Y</td><td class="n bid">96.18</td><td class="n">20mm</td><td class="n ask">96.24</td><td class="n">15mm</td><td class="n">0.06</td><td><span class="chip bad">stale 4s</span></td></tr>
+              </table>
+            </div>
+            <div class="wf-pane" style="flex:1">
+              <h4><span class="mkh">3</span>Who is making this price</h4>
+              <table class="grid">
+                <tr><th>LP</th><th class="n">Bid</th><th class="n">Offer</th><th class="n">Age</th><th class="n">Wgt</th></tr>
+                <tr class="sel"><td><b>LP-ALPHA</b></td><td class="n bid">98-14+</td><td class="n ask">98-15+</td><td class="n">0.1s</td><td class="n">1.00</td></tr>
+                <tr><td>LP-BRAVO</td><td class="n">98-14</td><td class="n ask">98-15</td><td class="n">0.2s</td><td class="n">1.00</td></tr>
+                <tr><td>LP-CHARLIE</td><td class="n">98-13+</td><td class="n">98-15+</td><td class="n">0.9s</td><td class="n">0.62</td></tr>
+                <tr><td>LP-DELTA</td><td class="n">98-14</td><td class="n">98-16</td><td class="n">0.3s</td><td class="n">1.00</td></tr>
+                <tr><td>LP-ECHO</td><td class="n" style="text-decoration:line-through">98-09</td><td class="n" style="text-decoration:line-through">98-20</td><td class="n">0.4s</td><td class="n">—</td></tr>
+              </table>
+              <div class="pad" style="flex:0 0 auto;gap:5px">
+                <div class="row"><span class="chip bad">LP-ECHO excluded</span><span style="font-size:10.5px;color:var(--ink-2)">outlier beyond the deviation band</span></div>
+                <div class="row"><span class="chip warn">LP-CHARLIE decayed</span><span style="font-size:10.5px;color:var(--ink-2)">weight falls with quote age</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="wf-pane" style="flex:0 0 auto">
+            <h4><span class="mkh">4</span>Bond terms for the selected line <span class="tag">joined from reference data</span></h4>
+            <div class="pad" style="flex-direction:row;gap:14px;font-family:var(--mono);font-size:10px;color:var(--ink-2)">
+              <span>coupon <b>4.250%</b></span><span>maturity <b>2035-11-15</b></span><span>semi-annual</span>
+              <span>ACT/ACT</span><span>US Treasury</span><span>settle T+1</span><span>accrued 0.6284</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="kicker">What this screen is</div>
+      <div class="note"><span class="n">1</span><p>An <b>admin-defined book</b>: which inbound liquidity connections compose a tradeable price, and what that price is allowed to be used for — display, quoting, or booking.</p></div>
+      <div class="note"><span class="n">2</span><p>Consolidation is <b>median consensus with outlier rejection</b> and staleness decay, not a naive best-of. Depth and confidence travel with the price.</p></div>
+      <div class="note"><span class="n">3</span><p>The contributor panel makes the composite auditable: you can always see <b>which LP moved the book</b>, and which one was thrown out and why.</p></div>
+      <div class="note"><span class="n">4</span><p>Static terms are joined in from the golden-source instrument store, so the trader reads a bond, not an ISIN.</p></div>
+      <div class="kicker" style="margin-top:4px">Backed by</div>
+      <div class="note"><span class="n">·</span><p><code>celnet-aggregation</code> · <code>celnet-refdata</code> · LP feeds over FIX / API</p></div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">Screen 2 of 11</span><span>07</span></footer>
+</section>
+
+<!-- ================= 8 · CURVES ================= -->
+<section class="slide">
+  <p class="eyebrow">Markets &amp; Liquidity · rail row “Curves” (the FI lens of Market Data)</p>
+  <h2>The curve is a first-class, editable object</h2>
+  <div class="body">
+    <div class="wf">
+      <div class="wf-chrome"><span class="brand">CELNET</span>
+        <div class="wf-tabs"><span class="tab">FX Options</span><span class="tab on">Fixed Income</span><span class="tab">Risk</span><span class="tab">Hedging Rules</span><span class="tab">Analytics</span><span class="tab">Administration</span></div>
+        <div class="right"><span class="chip">built 09:41:22</span><span class="chip good">bootstrap ok</span></div></div>
+      <div class="wf-body">
+        <div class="wf-rail">
+          <div class="rail-sec">Markets</div>
+          <div class="rail-row"><span class="g">⇉</span>Streaming</div><div class="rail-row"><span class="g">◫</span>Agg Book</div>
+          <div class="rail-row hi"><span class="g">◷</span>Curves</div><div class="rail-row"><span class="g">⇌</span>Quoting</div>
+          <div class="rail-sec">Pricing</div><div class="rail-row"><span class="g">⚙</span>Pricing</div>
+          <div class="rail-sec">Risk</div><div class="rail-row"><span class="g">◉</span>Risk</div><div class="rail-row"><span class="g">≣</span>Book</div>
+        </div>
+        <div class="wf-main">
+          <div class="row">
+            <span class="mkh">1</span><span class="chip on">USD-SOFR</span><span class="chip">EUR-ESTR</span><span class="chip">GBP-SONIA</span><span class="chip">USD-GOVT</span>
+            <span class="spacer"></span><span class="btn ghost">+ new curve</span>
+          </div>
+          <div class="row tight">
+            <span class="mkh">2</span><span class="tab on">Dashboard</span><span class="tab">Definition</span><span class="tab">Pillars</span>
+            <span class="tab">By instrument reference</span><span class="tab hi">Query · mark · scenario</span>
+          </div>
+          <div class="wf-cols">
+            <div class="wf-pane" style="flex:1.15">
+              <h4>Term structure <span class="tag">log-linear on log-DF</span></h4>
+              <div class="pad">
+                <svg viewBox="0 0 400 150" preserveAspectRatio="none" style="width:100%;height:200px;flex:0 0 auto">
+                  <g stroke="#E2E0D9"><line x1="30" y1="20" x2="30" y2="128"/><line x1="30" y1="128" x2="390" y2="128"/>
+                    <line x1="30" y1="46" x2="390" y2="46"/><line x1="30" y1="74" x2="390" y2="74"/><line x1="30" y1="101" x2="390" y2="101"/></g>
+                  <polyline fill="none" stroke="#191C22" stroke-width="1.8" points="30,104 70,90 110,80 150,74 195,68 240,63 290,58 340,55 388,54"/>
+                  <polyline fill="none" stroke="#E2542F" stroke-width="1.4" stroke-dasharray="4 3" points="30,110 70,94 110,82 150,74 195,66 240,60 290,53 340,49 388,47"/>
+                  <g fill="#191C22">
+                    <circle cx="70" cy="90" r="2.6"/><circle cx="110" cy="80" r="2.6"/><circle cx="150" cy="74" r="2.6"/>
+                    <circle cx="195" cy="68" r="2.6"/><circle cx="240" cy="63" r="2.6"/><circle cx="290" cy="58" r="2.6"/><circle cx="340" cy="55" r="2.6"/></g>
+                  <g font-family="ui-monospace, monospace" font-size="8" fill="#878C99">
+                    <text x="60" y="140">1Y</text><text x="140" y="140">5Y</text><text x="232" y="140">10Y</text><text x="330" y="140">30Y</text>
+                    <text x="4" y="50">4.2</text><text x="4" y="105">3.6</text>
+                    <text x="300" y="30" fill="#E2542F">scenario +25bp 10Y</text></g>
+                </svg>
+              </div>
+            </div>
+            <div class="wf-pane" style="flex:1.3">
+              <h4><span class="mkh">3</span>Pillars <span class="tag">the instruments that built it</span></h4>
+              <table class="grid">
+                <tr><th>Pillar</th><th>Instrument</th><th class="n">Quote</th><th>Mark</th></tr>
+                <tr><td>1M</td><td>OIS 1M</td><td class="n">4.3100</td><td>live</td></tr>
+                <tr><td>1Y</td><td>OIS 1Y</td><td class="n">4.0850</td><td>live</td></tr>
+                <tr><td>2Y</td><td>OIS 2Y</td><td class="n">3.9155</td><td>live</td></tr>
+                <tr><td>5Y</td><td>OIS 5Y</td><td class="n">3.8045</td><td>live</td></tr>
+                <tr class="sel"><td><b>10Y</b></td><td>OIS 10Y</td><td class="n"><b>3.7458</b></td><td><span class="chip warn">manual</span></td></tr>
+                <tr><td>30Y</td><td>OIS 30Y</td><td class="n">3.6120</td><td>live</td></tr>
+              </table>
+            </div>
+            <div class="wf-pane" style="flex:0.95">
+              <h4><span class="mkh">4</span>Query the curve</h4>
+              <div class="pad">
+                <div class="field"><span class="lab">Date / tenor</span><div class="box sel">2035-11-15<span class="cursor"></span></div></div>
+                <div class="fgrid c1" style="gap:5px">
+                  <div class="tile"><div class="k">DF(t)</div><div class="v">0.68801</div></div>
+                  <div class="tile"><div class="k">zero z(t)</div><div class="v">3.7412</div><div class="d">% cont · ACT/365F</div></div>
+                  <div class="tile"><div class="k">inst. fwd</div><div class="v">3.6980</div><div class="d">%</div></div>
+                </div>
+                <div class="row"><span class="btn">Mark pillar</span><span class="btn accent">Run scenario</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="kicker">What this screen is</div>
+      <div class="note"><span class="n">1</span><p>A <b>registry of curves</b>, not one hard-coded discounting curve — each with its own definition, conventions and pillar set, created and edited in the UI.</p></div>
+      <div class="note"><span class="n">2</span><p>Five tabs cover a curve's whole life: read it, define it, mark its pillars, inspect the instruments behind it, and query or shock it.</p></div>
+      <div class="note"><span class="n">3</span><p>Every pillar shows the instrument that produced it and whether it is a <b>live mark or a manual one</b> — a hand-marked pillar is never silent.</p></div>
+      <div class="note"><span class="n">4</span><p>The same curve object prices the streams, the RFQs and the risk. Shock it here and the scenario runs against the real engine, not a copy.</p></div>
+      <div class="kicker" style="margin-top:4px">Backed by</div>
+      <div class="note"><span class="n">·</span><p><code>celnet-rates</code> — sequential OIS bootstrap, Brent solver, key-rate Jacobian</p></div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">Screen 3 of 11</span><span>08</span></footer>
+</section>
+
+<!-- ================= 9 · QUOTING ================= -->
+<section class="slide">
+  <p class="eyebrow">Markets &amp; Liquidity · rail row “Quoting”</p>
+  <h2>The dealer inbox — RFQ and IOI</h2>
+  <div class="body">
+    <div class="wf">
+      <div class="wf-chrome"><span class="brand">CELNET</span>
+        <div class="wf-tabs"><span class="tab">FX Options</span><span class="tab on">Fixed Income</span><span class="tab">Risk</span><span class="tab">Hedging Rules</span><span class="tab">Analytics</span><span class="tab">Administration</span></div>
+        <div class="right"><span class="chip bad">3 awaiting</span><span class="mkh">3</span><span class="chip">auto-quote on</span></div></div>
+      <div class="wf-body">
+        <div class="wf-rail">
+          <div class="rail-sec">Markets</div>
+          <div class="rail-row"><span class="g">⇉</span>Streaming</div><div class="rail-row"><span class="g">◫</span>Agg Book</div>
+          <div class="rail-row"><span class="g">◷</span>Curves</div><div class="rail-row hi"><span class="g">⇌</span>Quoting</div>
+          <div class="rail-sec">Pricing</div><div class="rail-row"><span class="g">⚙</span>Pricing</div>
+          <div class="rail-sec">Risk</div><div class="rail-row"><span class="g">◉</span>Risk</div><div class="rail-row"><span class="g">≣</span>Book</div>
+        </div>
+        <div class="wf-main">
+          <div class="wf-cols">
+            <div class="wf-pane" style="flex:1.55">
+              <h4><span class="mkh">1</span>Inbound requests <span class="tag">FIX sessions + API + GUI</span></h4>
+              <table class="grid">
+                <tr><th>t</th><th>Client</th><th>Instrument</th><th class="n">Size</th><th>Side</th><th>State</th></tr>
+                <tr class="sel"><td>09:42:07</td><td><b>CLIENT-NORTH</b></td><td>USD IRS 5Y</td><td class="n">50mm</td><td>two-way</td><td><span class="chip bad">24s left</span></td></tr>
+                <tr><td>09:42:02</td><td>CLIENT-EAST</td><td>US912810TZ0</td><td class="n">15mm</td><td>buy</td><td><span class="chip bad">11s left</span></td></tr>
+                <tr><td>09:41:58</td><td>CLIENT-WEST</td><td>USD OIS 2Y</td><td class="n">100mm</td><td>receive</td><td><span class="chip warn">quoted</span></td></tr>
+                <tr><td>09:41:31</td><td>CLIENT-NORTH</td><td>DE0001102606</td><td class="n">25mm</td><td>sell</td><td><span class="chip good">done</span></td></tr>
+                <tr><td>09:40:55</td><td>CLIENT-SOUTH</td><td>USD IRS 10Y</td><td class="n">40mm</td><td>pay</td><td><span class="chip">passed</span></td></tr>
+                <tr><td>09:40:12</td><td>CLIENT-EAST</td><td>IOI · 30Y axe</td><td class="n">20mm</td><td>offer</td><td><span class="chip">ioi</span></td></tr>
+              </table>
+            </div>
+            <div class="wf-pane" style="flex:1">
+              <h4><span class="mkh">2</span>Respond <span class="tag">CLIENT-NORTH · USD IRS 5Y · 50mm</span></h4>
+              <div class="pad">
+                <div class="fgrid c2">
+                  <div class="field"><span class="lab">Engine mid</span><div class="box">3.8045</div></div>
+                  <div class="field"><span class="lab">Applied pipeline</span><div class="box">TIER-A · +0.35bp</div></div>
+                  <div class="field"><span class="lab">Your bid</span><div class="box sel">3.8010<span class="cursor"></span></div></div>
+                  <div class="field"><span class="lab">Your offer</span><div class="box sel">3.8080</div></div>
+                </div>
+                <div class="row"><span class="chip">skew: long 5Y risk → shade bid</span></div>
+                <div class="row"><span class="btn accent">Send quote</span><span class="btn">Pass</span><span class="btn ghost">Refresh mid</span></div>
+                <div class="hatch ph" style="min-height:44px">provenance waterfall: composite mid → mid shift → inventory skew → tier spread</div>
+              </div>
+            </div>
+          </div>
+          <div class="wf-pane" style="flex:0 0 auto">
+            <h4><span class="mkh">4</span>Why this price <span class="tag">every quote carries its own audit</span></h4>
+            <div class="pad" style="flex-direction:row;gap:8px;flex-wrap:wrap;align-items:center">
+              <span class="chip">composite 3.8045</span><span style="color:var(--ink-3)">→</span>
+              <span class="chip">mid shift −0.10bp</span><span style="color:var(--ink-3)">→</span>
+              <span class="chip">position skew −0.15bp</span><span style="color:var(--ink-3)">→</span>
+              <span class="chip">tier A spread ±0.35bp</span><span style="color:var(--ink-3)">→</span>
+              <span class="chip on">3.8010 / 3.8080</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="kicker">What this screen is</div>
+      <div class="note"><span class="n">1</span><p>One inbox for every inbound channel. An RFQ from a <b>FIX counterparty</b> and one from the GUI are the same object with the same lifecycle.</p></div>
+      <div class="note"><span class="n">2</span><p>The response panel opens pre-filled with the <b>engine mid and the client's pricing pipeline already applied</b> — the trader adjusts, they do not assemble.</p></div>
+      <div class="note"><span class="n">3</span><p>Auto-quote can answer within policy; anything outside it lands here for a human. Time-to-live is visible because it is real.</p></div>
+      <div class="note"><span class="n">4</span><p>The waterfall records how the number was built. This is what makes a quote defensible after the fact.</p></div>
+      <div class="kicker" style="margin-top:4px">Backed by</div>
+      <div class="note"><span class="n">·</span><p><code>celnet-rfq</code> · <code>celnet-tiering</code> · <code>celnet-fix</code> · pricing groups</p></div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">Screen 4 of 11</span><span>09</span></footer>
+</section>
+
+<!-- ================= 10 · PRICING ================= -->
+<section class="slide">
+  <p class="eyebrow">Pricing · rail row “Pricing”</p>
+  <h2>Client pricing is a pipeline you build, not code you ship</h2>
+  <div class="body">
+    <div class="wf">
+      <div class="wf-chrome"><span class="brand">CELNET</span>
+        <div class="wf-tabs"><span class="tab">FX Options</span><span class="tab on">Fixed Income</span><span class="tab">Risk</span><span class="tab">Hedging Rules</span><span class="tab">Analytics</span><span class="tab">Administration</span></div>
+        <div class="right"><span class="chip">manage_pricing · FI</span></div></div>
+      <div class="wf-body">
+        <div class="wf-rail">
+          <div class="rail-sec">Markets</div>
+          <div class="rail-row"><span class="g">⇉</span>Streaming</div><div class="rail-row"><span class="g">◫</span>Agg Book</div>
+          <div class="rail-row"><span class="g">◷</span>Curves</div><div class="rail-row"><span class="g">⇌</span>Quoting</div>
+          <div class="rail-sec">Pricing</div><div class="rail-row hi"><span class="g">⚙</span>Pricing</div>
+          <div class="rail-sec">Risk</div><div class="rail-row"><span class="g">◉</span>Risk</div><div class="rail-row"><span class="g">≣</span>Book</div>
+        </div>
+        <div class="wf-main">
+          <div class="row tight"><span class="tab on">Pricing Groups</span><span class="tab">Tiering</span>
+            <span class="spacer"></span><span class="chip">group: TIER-A · 6 sessions</span><span class="btn ghost">duplicate</span><span class="btn accent">publish</span></div>
+          <div class="wf-cols">
+            <div class="wf-pane" style="flex:0 0 152px">
+              <h4><span class="mkh">1</span>Feature library</h4>
+              <div class="pad" style="gap:5px">
+                <div class="node" style="position:static;box-shadow:none"><div class="t">spread</div>Mid shift</div>
+                <div class="node" style="position:static;box-shadow:none"><div class="t">spread</div>Tiering</div>
+                <div class="node" style="position:static;box-shadow:none"><div class="t">inventory</div>Axe</div>
+                <div class="node" style="position:static;box-shadow:none"><div class="t">inventory</div>Position skew</div>
+                <div class="node" style="position:static;box-shadow:none"><div class="t">defensive</div>Panic skew</div>
+                <div class="row" style="margin-top:4px"><span style="font-family:var(--mono);font-size:9px;color:var(--ink-3)">drag into the pipeline →</span></div>
+              </div>
+            </div>
+            <div class="wf-pane" style="flex:0 0 254px">
+              <h4><span class="mkh">2</span>Pipeline for TIER-A <span class="tag">order matters — each stage sees the previous output</span></h4>
+              <div class="pad">
+                <div class="canvas" style="flex:0 0 292px">
+                  <svg><g stroke="#191C22" stroke-width="1.4" fill="none">
+                    <path d="M44,50 L44,62"/><path d="M44,108 L44,120"/><path d="M44,166 L44,178"/><path d="M44,224 L44,236"/>
+                  </g></svg>
+                  <div class="node" style="left:8px;top:6px;min-width:130px"><div class="t">input</div>Composite mid</div>
+                  <div class="node accent" style="left:8px;top:64px;min-width:130px"><div class="t">stage 1 · spread</div>Mid shift −0.10bp</div>
+                  <div class="node accent" style="left:8px;top:122px;min-width:130px"><div class="t">stage 2 · inventory</div>Position skew</div>
+                  <div class="node accent" style="left:8px;top:180px;min-width:130px"><div class="t">stage 3 · spread</div>Tier spread ±0.35bp</div>
+                  <div class="node" style="left:8px;top:238px;min-width:130px"><div class="t">output</div>Client two-way</div>
+                </div>
+              </div>
+            </div>
+            <div class="wf-pane" style="flex:1">
+              <h4><span class="mkh">3</span>Live preview</h4>
+              <div class="pad">
+                <div class="tiles" style="grid-template-columns:1fr 1fr">
+                  <div class="tile"><div class="k">in · mid</div><div class="v">3.8045</div></div>
+                  <div class="tile hi"><div class="k">out · spread</div><div class="v">0.70</div><div class="d">bp two-way</div></div>
+                </div>
+                <table class="grid">
+                  <tr><th>Stage</th><th class="n">Δ bid</th><th class="n">Δ offer</th></tr>
+                  <tr><td>mid shift</td><td class="n">−0.10</td><td class="n">−0.10</td></tr>
+                  <tr><td>position skew</td><td class="n">−0.15</td><td class="n">+0.00</td></tr>
+                  <tr><td>tier spread</td><td class="n">−0.35</td><td class="n">+0.35</td></tr>
+                  <tr class="sel"><td><b>result</b></td><td class="n"><b>3.8010</b></td><td class="n"><b>3.8080</b></td></tr>
+                </table>
+                <div class="row"><span class="chip warn">affects 6 live sessions</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="wf-pane" style="flex:0 0 auto">
+            <h4><span class="mkh">4</span>Tiering tab <span class="tag">which session gets which group</span></h4>
+            <div class="pad" style="flex-direction:row;gap:8px;align-items:center">
+              <span class="chip on">FIX · CLIENT-NORTH → TIER-A</span><span class="chip on">FIX · CLIENT-EAST → TIER-A</span>
+              <span class="chip">FIX · CLIENT-WEST → TIER-B</span><span class="chip">API · CLIENT-SOUTH → TIER-C</span>
+              <span class="spacer"></span><span class="btn ghost">assign group</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="kicker">What this screen is</div>
+      <div class="note"><span class="n">1</span><p>A library of pricing <b>features</b> — mid shift, tiering, axe, position skew, panic skew — that a pricing desk composes by dragging.</p></div>
+      <div class="note"><span class="n">2</span><p>A group is an <b>ordered pipeline</b>: the composite mid goes in, a client two-way comes out, and each stage is inspectable.</p></div>
+      <div class="note"><span class="n">3</span><p>The preview prices the change before it is published, and tells you how many live sessions it will move.</p></div>
+      <div class="note"><span class="n">4</span><p>Tiering is a roster: every FIX or API session is bound to exactly one group. That binding is what makes a client's price <i>theirs</i>.</p></div>
+      <div class="kicker" style="margin-top:4px">Backed by</div>
+      <div class="note"><span class="n">·</span><p><code>celnet-tiering</code> · pricing-group registry on the server · applied identically to ESP, RFS and RFQ</p></div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">Screen 5 of 11</span><span>10</span></footer>
+</section>
+
+<!-- ================= 11 · RISK ================= -->
+<section class="slide">
+  <p class="eyebrow">Risk domain · “Risk” — dashboard · portfolios · routing · acceptance</p>
+  <h2>Where a fill goes, and what it does to the book</h2>
+  <div class="body">
+    <div class="wf">
+      <div class="wf-chrome"><span class="brand">CELNET</span>
+        <div class="wf-tabs"><span class="tab">FX Options</span><span class="tab">Fixed Income</span><span class="tab on">Risk</span><span class="tab">Hedging Rules</span><span class="tab">Analytics</span><span class="tab">Administration</span></div>
+        <div class="right"><span class="chip bad">1 limit amber</span><span class="chip">risk_manage</span></div></div>
+      <div class="wf-body">
+        <div class="wf-main" style="padding:9px">
+          <div class="row tight"><span class="mkh">1</span><span class="tab on">Dashboard</span><span class="tab hi">Portfolios</span><span class="tab hi">Routing</span><span class="tab">Acceptance</span>
+            <span class="spacer"></span><span class="chip">as of 09:42:11</span></div>
+          <div class="wf-cols">
+            <div class="wf-pane" style="flex:1.2">
+              <h4><span class="mkh">2</span>Portfolio tree <span class="tag">firm → desk → book</span></h4>
+              <table class="grid">
+                <tr><th>Portfolio</th><th class="n">Net DV01</th><th class="n">Util</th><th>Limits</th></tr>
+                <tr><td><b>FIRM</b></td><td class="n">+184,200</td><td class="n">—</td><td><span class="chip good">ok</span></td></tr>
+                <tr><td>&nbsp;&nbsp;▾ RATES-LDN</td><td class="n">+126,900</td><td class="n">61%</td><td><span class="chip good">ok</span></td></tr>
+                <tr class="sel"><td>&nbsp;&nbsp;&nbsp;&nbsp;GOVT-USD</td><td class="n"><b>+88,410</b></td><td class="n"><b>78%</b></td><td><span class="chip warn">amber</span></td></tr>
+                <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;SWAPS-USD</td><td class="n">+38,490</td><td class="n">31%</td><td><span class="chip good">ok</span></td></tr>
+                <tr><td>&nbsp;&nbsp;▾ CREDIT-LDN</td><td class="n">+57,300</td><td class="n">44%</td><td><span class="chip good">ok</span></td></tr>
+                <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;CORP-USD</td><td class="n">+57,300</td><td class="n">44%</td><td><span class="chip good">ok</span></td></tr>
+              </table>
+              <div class="pad" style="flex:0 0 auto"><div class="hatch ph" style="min-height:52px">key-rate ladder for GOVT-USD · 1Y → 30Y</div></div>
+            </div>
+            <div class="wf-pane" style="flex:0 0 300px">
+              <h4><span class="mkh">3</span>Routing graph <span class="tag">accepted fill → risk portfolio</span></h4>
+              <div class="pad">
+                <div class="canvas" style="flex:0 0 214px">
+                  <svg><g stroke="#191C22" stroke-width="1.3" fill="none">
+                    <path d="M40,40 L40,52"/><path d="M40,92 L40,104"/><path d="M40,144 L40,156"/>
+                    <path d="M116,22 L166,22"/><path d="M116,74 L166,74"/><path d="M116,126 L166,126"/></g></svg>
+                  <div class="node" style="left:8px;top:4px;min-width:96px"><div class="t">input</div>Accepted fill</div>
+                  <div class="node accent" style="left:8px;top:56px;min-width:96px"><div class="t">field</div>product ∈ bond ?</div>
+                  <div class="node accent" style="left:8px;top:108px;min-width:96px"><div class="t">field</div>issuer = govt ?</div>
+                  <div class="node accent" style="left:8px;top:160px;min-width:96px"><div class="t">field</div>desk = CREDIT ?</div>
+                  <div class="node leaf" style="left:170px;top:56px;min-width:88px"><div class="t">leaf</div>GOVT-USD</div>
+                  <div class="node leaf" style="left:170px;top:108px;min-width:88px"><div class="t">leaf</div>SWAPS-USD</div>
+                  <div class="node leaf" style="left:170px;top:160px;min-width:88px"><div class="t">leaf</div>CORP-USD</div>
+                </div>
+                <div class="row"><span class="chip on">first match wins</span><span class="chip">cycle-checked</span></div>
+                <table class="grid">
+                  <tr><th>Last fills</th><th>Matched</th><th>Routed to</th></tr>
+                  <tr class="sel"><td>deal 88214 · US912810TZ0</td><td>rule 2</td><td><b>GOVT-USD</b></td></tr>
+                  <tr><td>deal 88213 · USD IRS 5Y</td><td>otherwise</td><td>SWAPS-USD</td></tr>
+                  <tr><td>deal 88211 · XS2344567890</td><td>rule 4</td><td>CORP-USD</td></tr>
+                </table>
+              </div>
+            </div>
+            <div class="wf-pane" style="flex:0.8">
+              <h4><span class="mkh">4</span>Acceptance <span class="tag">before it ever books</span></h4>
+              <div class="pad">
+                <table class="grid">
+                  <tr><th>#</th><th>Rule</th><th>Then</th></tr>
+                  <tr><td>1</td><td>size &gt; 100mm</td><td><span class="chip bad">reject</span></td></tr>
+                  <tr><td>2</td><td>client on hold</td><td><span class="chip bad">reject</span></td></tr>
+                  <tr><td>3</td><td>cover &lt; 0.1bp</td><td><span class="chip warn">refer</span></td></tr>
+                  <tr class="sel"><td>4</td><td><b>otherwise</b></td><td><span class="chip good">accept</span></td></tr>
+                </table>
+                <div class="tiles" style="grid-template-columns:1fr 1fr">
+                  <div class="tile"><div class="k">today</div><div class="v">312</div><div class="d">accepted</div></div>
+                  <div class="tile"><div class="k">today</div><div class="v">7</div><div class="d">rejected</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="kicker">What this screen is</div>
+      <div class="note"><span class="n">1</span><p>Four tabs, one host: the <b>configuration</b> of the desk's risk — how it is bucketed, where fills go, and what is allowed in.</p></div>
+      <div class="note"><span class="n">2</span><p>Risk portfolios are a <b>hierarchy</b>. Roll-up is additive where it can be and bump-and-revalue where it must be (VaR, ES, curvature).</p></div>
+      <div class="note"><span class="n">3</span><p>Routing is a firm-wide decision graph a risk manager draws. First match wins, cycles are rejected at edit time, and a live trace shows where the last fill actually landed.</p></div>
+      <div class="note"><span class="n">4</span><p>Acceptance rules run <b>before</b> booking — the desk decides what it is willing to take, not just what it does afterwards.</p></div>
+      <div class="kicker" style="margin-top:4px">Backed by</div>
+      <div class="note"><span class="n">·</span><p><code>celnet-risk-routing</code> · <code>celnet-risk-cube</code> · <code>celnet-limits</code> · <code>celnet-acceptance</code></p></div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">Screen 6 of 11</span><span>11</span></footer>
+</section>
+
+<!-- ================= 12 · BOOK / LEDGERS ================= -->
+<section class="slide">
+  <p class="eyebrow">Risk section · rail row “Book”</p>
+  <h2>What actually happened — the ledgers</h2>
+  <div class="body">
+    <div class="wf">
+      <div class="wf-chrome"><span class="brand">CELNET</span>
+        <div class="wf-tabs"><span class="tab">FX Options</span><span class="tab on">Fixed Income</span><span class="tab">Risk</span><span class="tab">Hedging Rules</span><span class="tab">Analytics</span><span class="tab">Administration</span></div>
+        <div class="right"><span class="chip">view · FI</span><span class="chip good">journalled</span></div></div>
+      <div class="wf-body">
+        <div class="wf-rail">
+          <div class="rail-sec">Markets</div>
+          <div class="rail-row"><span class="g">⇉</span>Streaming</div><div class="rail-row"><span class="g">◫</span>Agg Book</div>
+          <div class="rail-row"><span class="g">◷</span>Curves</div><div class="rail-row"><span class="g">⇌</span>Quoting</div>
+          <div class="rail-sec">Pricing</div><div class="rail-row"><span class="g">⚙</span>Pricing</div>
+          <div class="rail-sec">Risk</div><div class="rail-row"><span class="g">◉</span>Risk</div><div class="rail-row hi"><span class="g">≣</span>Book</div>
+        </div>
+        <div class="wf-main">
+          <div class="row tight"><span class="mkh">1</span><span class="tab on">Positions</span><span class="tab">Quotes</span><span class="tab">Client blotter</span><span class="tab">Hedge blotter</span><span class="tab">Hedge flows</span>
+            <span class="spacer"></span><span class="chip">book: GOVT-USD</span><span class="chip">search ⌘F</span></div>
+          <div class="wf-pane">
+            <h4>Positions <span class="tag">one row per booked instrument</span></h4>
+            <table class="grid">
+              <tr><th>Instrument</th><th>Product</th><th class="n">Net notional</th><th class="n">Avg px</th><th class="n">Mark</th><th class="n">DV01</th><th class="n">Unrealised</th><th><span class="mkh">2</span>Risk portfolio</th></tr>
+              <tr class="sel"><td><b>US912810TZ0</b></td><td>bond</td><td class="n">+75,000,000</td><td class="n">98-13</td><td class="n">98-14+</td><td class="n">+61,240</td><td class="n pos">+352,600</td><td>GOVT-USD</td></tr>
+              <tr><td>US912828YY0</td><td>bond</td><td class="n">−40,000,000</td><td class="n">99-25</td><td class="n">99-24½</td><td class="n">−15,880</td><td class="n pos">+62,500</td><td>GOVT-USD</td></tr>
+              <tr><td>USD IRS 5Y</td><td>swap</td><td class="n">+50,000,000</td><td class="n">3.8020</td><td class="n">3.8045</td><td class="n">+23,810</td><td class="n neg">−118,400</td><td>SWAPS-USD</td></tr>
+              <tr><td>USD OIS 2Y</td><td>swap</td><td class="n">−100,000,000</td><td class="n">3.9140</td><td class="n">3.9155</td><td class="n">−19,120</td><td class="n pos">+28,900</td><td>SWAPS-USD</td></tr>
+              <tr><td>TU · Mar-27</td><td>future</td><td class="n">−250 lots</td><td class="n">102-08¼</td><td class="n">102-08</td><td class="n">−8,600</td><td class="n pos">+15,625</td><td>GOVT-USD</td></tr>
+            </table>
+          </div>
+          <div class="wf-cols" style="flex:0 0 168px">
+            <div class="wf-pane" style="flex:1.2">
+              <h4><span class="mkh">3</span>Client blotter <span class="tag">every deal, with its quote</span></h4>
+              <table class="grid">
+                <tr><th>Client</th><th>Instrument</th><th class="n">Size</th><th class="n">Px</th><th class="n">$/mm</th><th>Via</th></tr>
+                <tr><td>CLIENT-NORTH</td><td>DE0001102606</td><td class="n">25mm</td><td class="n">101.44</td><td class="n pos">+128</td><td>FIX</td></tr>
+                <tr><td>CLIENT-EAST</td><td>US912810TZ0</td><td class="n">15mm</td><td class="n">98-15</td><td class="n pos">+94</td><td>FIX</td></tr>
+                <tr><td>CLIENT-WEST</td><td>USD OIS 2Y</td><td class="n">100mm</td><td class="n">3.9148</td><td class="n neg">−22</td><td>API</td></tr>
+              </table>
+            </div>
+            <div class="wf-pane" style="flex:1">
+              <h4><span class="mkh">4</span>Hedge blotter <span class="tag">the offsetting side</span></h4>
+              <table class="grid">
+                <tr><th>Trigger</th><th>Vehicle</th><th class="n">Size</th><th>Outcome</th></tr>
+                <tr><td>GOVT-USD 78%</td><td>US912810TZ0</td><td class="n">20mm</td><td><span class="chip good">LP-ALPHA</span></td></tr>
+                <tr><td>SWAPS-USD 52%</td><td>—</td><td class="n">40mm</td><td><span class="chip">crossed</span></td></tr>
+                <tr><td>GOVT-USD 41%</td><td>—</td><td class="n">12mm</td><td><span class="chip warn">warehoused</span></td></tr>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="kicker">What this screen is</div>
+      <div class="note"><span class="n">1</span><p>Split deliberately from the Risk screen: <b>Risk is how the desk is configured, Book is what happened.</b> A booking trader reaches these without a risk-management grant.</p></div>
+      <div class="note"><span class="n">2</span><p>Every position carries the <b>risk portfolio it was routed into</b>, so the ledger and the risk roll-up can always be reconciled.</p></div>
+      <div class="note"><span class="n">3</span><p>The client blotter keeps per-deal <b>$/mm attribution</b> — the number the desk is actually judged on.</p></div>
+      <div class="note"><span class="n">4</span><p>The hedge blotter shows the other half of the story: what the policy did with the risk, and where it went.</p></div>
+      <div class="kicker" style="margin-top:4px">Backed by</div>
+      <div class="note"><span class="n">·</span><p><code>celnet-journal</code>-backed position store · <code>celnet-analytics</code> attribution</p></div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">Screen 7 of 11</span><span>12</span></footer>
+</section>
+
+<!-- ================= 13 · HEDGING ================= -->
+<section class="slide">
+  <p class="eyebrow">Hedging domain · “Hedging” — flow · monitor · blotter · rules</p>
+  <h2>How risk leaves the book</h2>
+  <div class="body">
+    <div class="wf">
+      <div class="wf-chrome"><span class="brand">CELNET</span>
+        <div class="wf-tabs"><span class="tab">FX Options</span><span class="tab">Fixed Income</span><span class="tab">Risk</span><span class="tab on">Hedging Rules</span><span class="tab">Analytics</span><span class="tab">Administration</span></div>
+        <div class="right"><span class="chip warn">1 bucket 78%</span><span class="chip">mode: LP → composite</span></div></div>
+      <div class="wf-body">
+        <div class="wf-main" style="padding:9px">
+          <div class="row tight"><span class="tab on">Flow</span><span class="tab">Monitor</span><span class="tab">Blotter</span><span class="tab hi">Rules</span>
+            <span class="spacer"></span><span class="chip">dispatch: asynchronous</span><span class="btn ghost">dry run</span></div>
+          <div class="wf-cols">
+            <div class="wf-pane" style="flex:1">
+              <h4><span class="mkh">1</span>Buckets filling toward their limit</h4>
+              <div class="pad" style="gap:9px">
+                <div>
+                  <div class="row"><span style="font-family:var(--mono);font-size:10px"><b>GOVT-USD · 10Y</b></span><span class="spacer"></span><span class="chip warn">78% · overflow 20mm</span></div>
+                  <div class="meter" style="margin-top:4px"><i class="warn" style="width:78%"></i></div>
+                </div>
+                <div>
+                  <div class="row"><span style="font-family:var(--mono);font-size:10px"><b>SWAPS-USD · 5Y</b></span><span class="spacer"></span><span class="chip">52%</span></div>
+                  <div class="meter" style="margin-top:4px"><i style="width:52%"></i></div>
+                </div>
+                <div>
+                  <div class="row"><span style="font-family:var(--mono);font-size:10px"><b>GOVT-USD · 30Y</b></span><span class="spacer"></span><span class="chip">31%</span></div>
+                  <div class="meter" style="margin-top:4px"><i style="width:31%"></i></div>
+                </div>
+                <div>
+                  <div class="row"><span style="font-family:var(--mono);font-size:10px"><b>CORP-USD · 5Y</b></span><span class="spacer"></span><span class="chip bad">96% · breach</span></div>
+                  <div class="meter" style="margin-top:4px"><i class="bad" style="width:96%"></i></div>
+                </div>
+                <div class="tiles" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+                  <div class="tile"><div class="k">crossed</div><div class="v">40mm</div><div class="d">internally</div></div>
+                  <div class="tile hi"><div class="k">hedged</div><div class="v">20mm</div><div class="d">externally</div></div>
+                  <div class="tile"><div class="k">warehoused</div><div class="v">12mm</div><div class="d">within cap</div></div>
+                </div>
+              </div>
+            </div>
+            <div class="wf-pane" style="flex:0 0 306px">
+              <h4><span class="mkh">2</span>Exit policy <span class="tag">the trader draws it; the engine runs it</span></h4>
+              <div class="pad">
+                <div class="canvas" style="flex:0 0 214px">
+                  <svg><g stroke="#191C22" stroke-width="1.3" fill="none">
+                    <path d="M40,40 L40,52"/><path d="M40,92 L40,104"/>
+                    <path d="M116,22 L162,22"/><path d="M116,74 L162,74"/><path d="M116,126 L162,126"/></g></svg>
+                  <div class="node" style="left:8px;top:4px;min-width:96px"><div class="t">state</div>Bucket risk</div>
+                  <div class="node accent" style="left:8px;top:56px;min-width:96px"><div class="t">field</div>internal offset ?</div>
+                  <div class="node accent" style="left:8px;top:108px;min-width:96px"><div class="t">field</div>utilisation &gt; cap ?</div>
+                  <div class="node leaf" style="left:166px;top:4px;min-width:92px"><div class="t">action</div>Cross internally</div>
+                  <div class="node leaf" style="left:166px;top:56px;min-width:92px"><div class="t">action</div>Hedge overflow</div>
+                  <div class="node leaf" style="left:166px;top:108px;min-width:92px"><div class="t">action</div>Warehouse</div>
+                </div>
+                <div class="row"><span class="mkh">3</span><span class="chip on">Advisory</span><span class="chip">LP panel</span><span class="chip">Composite</span><span class="chip on">LP panel → Composite</span>
+                  <span class="spacer"></span><span class="chip">sync / async</span></div>
+                <table class="grid">
+                  <tr><th>Recent decisions</th><th class="n">Size</th><th>Action</th></tr>
+                  <tr class="sel"><td>GOVT-USD · 10Y</td><td class="n">20mm</td><td><b>hedge</b></td></tr>
+                  <tr><td>SWAPS-USD · 5Y</td><td class="n">40mm</td><td>cross</td></tr>
+                  <tr><td>GOVT-USD · 30Y</td><td class="n">12mm</td><td>warehouse</td></tr>
+                </table>
+              </div>
+            </div>
+            <div class="wf-pane" style="flex:1">
+              <h4><span class="mkh">4</span>Hedge lifecycle <span class="tag">end to end</span></h4>
+              <div class="pad">
+                <table class="grid">
+                  <tr><th>Stage</th><th>Detail</th></tr>
+                  <tr><td>breach</td><td>GOVT-USD 10Y 78%</td></tr>
+                  <tr><td>sizing</td><td>overflow 20mm</td></tr>
+                  <tr><td>vehicle</td><td>same bond 1.00×</td></tr>
+                  <tr><td>route</td><td>LP panel (4)</td></tr>
+                  <tr class="sel"><td><b>fill</b></td><td><b>LP-ALPHA @ 98-14+</b></td></tr>
+                  <tr><td>book</td><td>offsetting leg</td></tr>
+                  <tr><td>after</td><td>78% → 41%</td></tr>
+                </table>
+                <div class="row"><span class="chip good">residual within target</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="kicker">What this screen is</div>
+      <div class="note"><span class="n">1</span><p>Risk is bucketed and measured against a <b>warehouse threshold</b>. Below it the desk keeps the risk on purpose; above it, the overflow has to go.</p></div>
+      <div class="note"><span class="n">2</span><p>The exit policy is a decision graph over live state — utilisation, available internal offset, counterparty toxicity — resolving to <b>cross, hedge, or warehouse</b>.</p></div>
+      <div class="note"><span class="n">3</span><p>Execution modes escalate: advisory dry-run, the standing LP panel, or crossing the live composite — with synchronous or asynchronous dispatch.</p></div>
+      <div class="note"><span class="n">4</span><p>A hedge is a <b>real booked offsetting trade</b> sized in the vehicle's own units, not a report. You can watch utilisation actually fall.</p></div>
+      <div class="kicker" style="margin-top:4px">Backed by</div>
+      <div class="note"><span class="n">·</span><p><code>celnet-hedge-routing</code> · LP panel execution seam · the same booking path as client flow</p></div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">Screen 8 of 11</span><span>13</span></footer>
+</section>
+
+<!-- ================= 14 · RISK TRANSFER ================= -->
+<section class="slide">
+  <p class="eyebrow">Transfers · rail row “Risk Transfer”</p>
+  <h2>Moving risk between books, on the record</h2>
+  <div class="body">
+    <div class="wf">
+      <div class="wf-chrome"><span class="brand">CELNET</span>
+        <div class="wf-tabs"><span class="tab">FX Options</span><span class="tab on">Fixed Income</span><span class="tab">Risk</span><span class="tab">Hedging Rules</span><span class="tab">Analytics</span><span class="tab">Administration</span></div>
+        <div class="right"><span class="chip warn">2 awaiting approval</span></div></div>
+      <div class="wf-body">
+        <div class="wf-rail">
+          <div class="rail-sec">Markets</div>
+          <div class="rail-row"><span class="g">⇉</span>Streaming</div><div class="rail-row"><span class="g">◫</span>Agg Book</div>
+          <div class="rail-row"><span class="g">◷</span>Curves</div><div class="rail-row"><span class="g">⇌</span>Quoting</div>
+          <div class="rail-sec">Risk</div><div class="rail-row"><span class="g">◉</span>Risk</div><div class="rail-row"><span class="g">≣</span>Book</div>
+          <div class="rail-sec">Transfers</div><div class="rail-row hi"><span class="g">⇆</span>Risk Transfer</div>
+        </div>
+        <div class="wf-main">
+          <div class="row tight"><span class="tab on">Ticket</span><span class="tab">Inbox</span><span class="tab">Audit</span>
+            <span class="spacer"></span><span class="chip">four-eyes required</span></div>
+          <div class="wf-cols">
+            <div class="wf-pane" style="flex:1.75">
+              <h4><span class="mkh">1</span>Positions in the source book <span class="tag">real booked lots, listed by the server</span></h4>
+              <div class="pad" style="flex:0 0 auto;padding-bottom:0">
+                <div class="fgrid c2">
+                  <div class="field"><span class="lab">From book</span><div class="box sel">GOVT-USD</div></div>
+                  <div class="field"><span class="lab">To book</span><div class="box sel">SWAPS-USD</div></div>
+                </div>
+              </div>
+              <table class="grid">
+                <tr><th>&nbsp;</th><th>Position</th><th>Type</th><th class="n">Notional</th><th class="n">DV01</th><th class="n"><span class="mkh">2</span>Vega</th></tr>
+                <tr class="sel"><td>☑</td><td><b>US912810TZ0</b></td><td>bond</td><td class="n">+40,000,000</td><td class="n">+32,660</td><td class="n">—</td></tr>
+                <tr><td>☐</td><td>US912828YY0</td><td>bond</td><td class="n">−40,000,000</td><td class="n">−15,880</td><td class="n">—</td></tr>
+                <tr><td>☑</td><td><b>TU · Mar-27</b></td><td>future</td><td class="n">−250 lots</td><td class="n">−8,600</td><td class="n">—</td></tr>
+                <tr><td>☐</td><td>EURUSD 1M 25d RR</td><td>fx option</td><td class="n">+25,000,000</td><td class="n">—</td><td class="n">+41,200</td></tr>
+              </table>
+            </div>
+            <div class="wf-pane" style="flex:1">
+              <h4><span class="mkh">3</span>What the transfer does</h4>
+              <div class="pad">
+                <div class="tiles" style="grid-template-columns:1fr 1fr">
+                  <div class="tile"><div class="k">transferred DV01</div><div class="v">+24,060</div><div class="d">$/bp</div></div>
+                  <div class="tile hi"><div class="k">realised P&amp;L</div><div class="v">+128,400</div><div class="d">on the source book</div></div>
+                </div>
+                <table class="grid">
+                  <tr><th>Book</th><th class="n">DV01 before</th><th class="n">after</th></tr>
+                  <tr><td>GOVT-USD</td><td class="n">+88,410</td><td class="n">+64,350</td></tr>
+                  <tr class="sel"><td><b>SWAPS-USD</b></td><td class="n">+38,490</td><td class="n"><b>+62,550</b></td></tr>
+                </table>
+                <div class="row"><span class="chip">offsetting leg written in both books</span></div>
+                <div class="row"><span class="btn accent">Submit for approval</span><span class="btn ghost">Reset</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="wf-pane" style="flex:0 0 auto">
+            <h4><span class="mkh">4</span>Audit trail <span class="tag">who moved what, when, and why</span></h4>
+            <table class="grid">
+              <tr><th>t</th><th>By</th><th>From → To</th><th class="n">DV01</th><th>Reason</th><th>Approver</th><th>State</th></tr>
+              <tr><td>09:12:44</td><td>j.trader</td><td>GOVT-USD → SWAPS-USD</td><td class="n">+18,200</td><td>desk realignment</td><td>r.head</td><td><span class="chip good">applied</span></td></tr>
+              <tr><td>08:58:02</td><td>k.dealer</td><td>CORP-USD → CREDIT-LDN</td><td class="n">+6,410</td><td>issuer reclass</td><td>—</td><td><span class="chip warn">awaiting</span></td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="kicker">What this screen is</div>
+      <div class="note"><span class="n">1</span><p>The ticket lists the <b>real positions booked in the source book</b> — every asset class, one code path. Nothing is synthesised, so nothing is rejected at submit.</p></div>
+      <div class="note"><span class="n">2</span><p>Each position carries the same <b>risk vector</b> shape whatever it is — a bond's DV01 and an option's greeks travel in one structure.</p></div>
+      <div class="note"><span class="n">3</span><p>A transfer is not a relabel: it writes an <b>offsetting leg in both books</b> and realises P&amp;L on the source, so the books stay true.</p></div>
+      <div class="note"><span class="n">4</span><p>Four-eyes approval and a permanent audit trail — this is the screen a regulator asks about.</p></div>
+      <div class="kicker" style="margin-top:4px">Backed by</div>
+      <div class="note"><span class="n">·</span><p><code>celnet-risk-transfer</code> — validation, offsetting-leg and realised-P&amp;L computation</p></div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">Screen 9 of 11</span><span>14</span></footer>
+</section>
+
+<!-- ================= 15 · OPS & REFERENCE DATA ================= -->
+<section class="slide">
+  <p class="eyebrow">Administration &amp; Reference Data</p>
+  <h2>The plumbing a desk depends on</h2>
+  <p class="sub">Four supporting screens. They are not glamorous, but a fixed-income desk stops trading
+  without any one of them — so they are first-class product surfaces, delegable to the people who own them
+  rather than locked behind a super-user account.</p>
+  <div class="body">
+    <div class="wf">
+      <div class="wf-chrome"><span class="brand">CELNET</span>
+        <div class="wf-tabs"><span class="tab">FX Options</span><span class="tab">Fixed Income</span><span class="tab">Risk</span><span class="tab">Hedging Rules</span><span class="tab">Analytics</span><span class="tab on">Administration</span></div>
+        <div class="right"><span class="chip">manage_liquidity · refdata</span></div></div>
+      <div class="wf-body">
+        <div class="wf-main" style="padding:9px">
+          <div class="wf-cols">
+            <div class="wf-pane" style="flex:1">
+              <h4>Connections <span class="tag">FIX sessions in and out</span></h4>
+              <table class="grid">
+                <tr><th>Session</th><th>Role</th><th>State</th></tr>
+                <tr><td>CLIENT-NORTH</td><td>acceptor</td><td><span class="chip good">on</span></td></tr>
+                <tr><td>CLIENT-EAST</td><td>acceptor</td><td><span class="chip good">on</span></td></tr>
+                <tr><td>LP-ALPHA</td><td>initiator</td><td><span class="chip good">on</span></td></tr>
+                <tr><td>LP-ECHO</td><td>initiator</td><td><span class="chip warn">seq gap</span></td></tr>
+                <tr><td>CLIENT-SOUTH</td><td>acceptor</td><td><span class="chip">disabled</span></td></tr>
+              </table>
+              <div class="pad" style="flex:0 0 auto"><div class="row"><span class="chip">owned by a desk — you see only your desk</span></div></div>
+            </div>
+            <div class="wf-pane" style="flex:1">
+              <h4>LP Panel <span class="tag">who is feeding us, how fast, how fresh</span></h4>
+              <table class="grid">
+                <tr><th>LP</th><th>Status</th><th class="n">Ticks/s</th><th class="n">Age</th></tr>
+                <tr><td>LP-ALPHA</td><td><span class="chip good">live</span></td><td class="n">412</td><td class="n">0.1s</td></tr>
+                <tr><td>LP-BRAVO</td><td><span class="chip good">live</span></td><td class="n">388</td><td class="n">0.2s</td></tr>
+                <tr><td>LP-CHARLIE</td><td><span class="chip warn">stale</span></td><td class="n">31</td><td class="n">4.4s</td></tr>
+                <tr><td>LP-DELTA</td><td><span class="chip good">live</span></td><td class="n">204</td><td class="n">0.3s</td></tr>
+                <tr><td>LP-FOXTROT</td><td><span class="chip bad">no book</span></td><td class="n">96</td><td class="n">0.5s</td></tr>
+              </table>
+              <div class="pad" style="flex:0 0 auto"><div class="row"><span class="chip bad">“no book” is an alert, not a footnote</span></div></div>
+            </div>
+            <div class="wf-pane" style="flex:1">
+              <h4>Corporate Actions <span class="tag">announce → confirm → apply</span></h4>
+              <table class="grid">
+                <tr><th>Event</th><th>Instrument</th><th class="n">Cash</th><th>Status</th></tr>
+                <tr class="sel"><td><b>Coupon</b></td><td>US912810TZ0</td><td class="n">2.1250</td><td><span class="chip warn">confirm</span></td></tr>
+                <tr><td>Coupon</td><td>DE0001102606</td><td class="n">1.3000</td><td><span class="chip good">applied</span></td></tr>
+                <tr><td>Partial call</td><td>XS2344567890</td><td class="n">—</td><td><span class="chip">announced</span></td></tr>
+                <tr><td>Redemption</td><td>US912828YY0</td><td class="n">100.00</td><td><span class="chip">scheduled</span></td></tr>
+              </table>
+              <div class="pad" style="flex:0 0 auto"><div class="hatch ph" style="min-height:38px">effective post-event schedule preview</div></div>
+            </div>
+            <div class="wf-pane" style="flex:1">
+              <h4>Reference Data <span class="tag">the golden source</span></h4>
+              <div class="pad">
+                <div class="tiles" style="grid-template-columns:1fr 1fr">
+                  <div class="tile"><div class="k">instruments</div><div class="v">4,812</div><div class="d">ISIN-validated</div></div>
+                  <div class="tile"><div class="k">curves</div><div class="v">7</div><div class="d">defined</div></div>
+                  <div class="tile"><div class="k">calendars</div><div class="v">12</div><div class="d">holiday sets</div></div>
+                  <div class="tile"><div class="k">conventions</div><div class="v">31</div><div class="d">per product</div></div>
+                </div>
+                <table class="grid">
+                  <tr><th>Registry</th><th>Effective</th></tr>
+                  <tr><td>Govt bonds · US/UK/EUR</td><td>dated</td></tr>
+                  <tr><td>CBOT Treasury &amp; STIR</td><td>rolling</td></tr>
+                  <tr><td>Day-count &amp; settlement</td><td>per product</td></tr>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">Screen 10 of 11</span><span>15</span></footer>
+</section>
+
+<!-- ================= 16 · ANALYTICS ================= -->
+<section class="slide">
+  <p class="eyebrow">Analytics domain · client flow · latency &amp; ops · street liquidity · event trace</p>
+  <h2>Four boards that answer “is the desk actually working?”</h2>
+  <div class="body">
+    <div class="wf">
+      <div class="wf-chrome"><span class="brand">CELNET</span>
+        <div class="wf-tabs"><span class="tab">FX Options</span><span class="tab">Fixed Income</span><span class="tab">Risk</span><span class="tab">Hedging Rules</span><span class="tab on">Analytics</span><span class="tab">Administration</span></div>
+        <div class="right"><span class="chip">view_analytics</span><span class="chip">read-only</span></div></div>
+      <div class="wf-body">
+        <div class="wf-main" style="padding:9px">
+          <div class="wf-cols">
+            <div class="wf-pane" style="flex:1">
+              <h4><span class="mkh">1</span>Client Flow <span class="tag">per-client $/mm</span></h4>
+              <table class="grid">
+                <tr><th>Client</th><th class="n">Deals</th><th class="n">$/mm</th></tr>
+                <tr><td>CLIENT-NORTH</td><td class="n">48</td><td class="n pos">+141</td></tr>
+                <tr><td>CLIENT-EAST</td><td class="n">31</td><td class="n pos">+96</td></tr>
+                <tr class="sel"><td><b>CLIENT-WEST</b></td><td class="n">62</td><td class="n neg">−18</td></tr>
+                <tr><td>CLIENT-SOUTH</td><td class="n">12</td><td class="n pos">+64</td></tr>
+              </table>
+              <div class="pad" style="flex:0 0 auto"><div class="row"><span class="chip bad">fishing</span><span style="font-size:10px;color:var(--ink-2)">most deals, negative $/mm</span></div></div>
+            </div>
+            <div class="wf-pane" style="flex:1">
+              <h4><span class="mkh">2</span>Latency / Ops <span class="tag">tick → quote, per stage</span></h4>
+              <table class="grid">
+                <tr><th>Stage</th><th class="n">p50</th><th class="n">p99</th></tr>
+                <tr><td>feed decode</td><td class="n">1.2µs</td><td class="n">4.1µs</td></tr>
+                <tr><td>aggregate</td><td class="n">0.9µs</td><td class="n">3.4µs</td></tr>
+                <tr><td>price</td><td class="n">1.8µs</td><td class="n">8.6µs</td></tr>
+                <tr><td>pricing pipeline</td><td class="n">0.6µs</td><td class="n">2.2µs</td></tr>
+                <tr class="sel"><td><b>tick → quote out</b></td><td class="n"><b>5.1µs</b></td><td class="n"><b>19µs</b></td></tr>
+              </table>
+            </div>
+            <div class="wf-pane" style="flex:1">
+              <h4><span class="mkh">3</span>Street Liquidity <span class="tag">per-LP league table</span></h4>
+              <table class="grid">
+                <tr><th>LP</th><th class="n">Win%</th><th class="n">Rejects</th></tr>
+                <tr><td>LP-ALPHA</td><td class="n">26%</td><td class="n">4</td></tr>
+                <tr><td>LP-BRAVO</td><td class="n">24%</td><td class="n">2</td></tr>
+                <tr class="sel"><td><b>LP-CHARLIE</b></td><td class="n">6%</td><td class="n"><b>37</b></td></tr>
+                <tr><td>LP-DELTA</td><td class="n">22%</td><td class="n">6</td></tr>
+              </table>
+            </div>
+            <div class="wf-pane" style="flex:1.05">
+              <h4><span class="mkh">4</span>Event Trace <span class="tag">one lift, one trace id</span></h4>
+              <div class="pad" style="gap:5px">
+                <div class="row"><span class="chip on">trace 9f2a…c71</span><span class="chip">CLIENT-EAST · 15mm</span></div>
+                <table class="grid">
+                  <tr><th>Stage</th><th class="n">+Δt</th><th>Detail</th></tr>
+                  <tr><td>quote out</td><td class="n">0µs</td><td>98-15</td></tr>
+                  <tr><td>lift in</td><td class="n">+412ms</td><td>full size</td></tr>
+                  <tr><td>last look</td><td class="n">+8µs</td><td>pass</td></tr>
+                  <tr><td>acceptance</td><td class="n">+3µs</td><td>rule 4</td></tr>
+                  <tr><td>booked</td><td class="n">+11µs</td><td>88214</td></tr>
+                  <tr><td>routed</td><td class="n">+2µs</td><td>GOVT-USD</td></tr>
+                  <tr class="sel"><td><b>hedge fired</b></td><td class="n">+1.4ms</td><td>20mm</td></tr>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="wf-pane" style="flex:0 0 auto">
+            <h4>Why these four, together</h4>
+            <div class="pad" style="flex-direction:row;gap:16px;font-size:11.5px;color:var(--ink-2)">
+              <span><b>Client Flow</b> says who is worth pricing tightly.</span>
+              <span><b>Latency</b> says whether we are fast enough to be hit fairly.</span>
+              <span><b>Street Liquidity</b> says which LP is real and which is quoting to be seen.</span>
+              <span><b>Event Trace</b> ties one client's complaint to one timeline.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="kicker">What these screens are</div>
+      <div class="note"><span class="n">1</span><p>Attribution per client and per deal, so “fishing” flow is visible rather than suspected.</p></div>
+      <div class="note"><span class="n">2</span><p>Latency is <b>measured, not asserted</b> — histograms are recorded on the live path, and the hot core stays allocation- and log-free while it happens.</p></div>
+      <div class="note"><span class="n">3</span><p>Per-LP win rate, cover and last-look rejects — the evidence behind an LP conversation.</p></div>
+      <div class="note"><span class="n">4</span><p>One lift, stitched end to end under a single trace id: price → order → acceptance → risk → hedge.</p></div>
+      <div class="kicker" style="margin-top:4px">Backed by</div>
+      <div class="note"><span class="n">·</span><p><code>celnet-analytics</code> · <code>celnet-observability</code> — telemetry rings drained off the hot path</p></div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">Screen 11 of 11</span><span>16</span></footer>
+</section>
+
+<!-- ================= 17 · FIVE CLIENTS ================= -->
+<section class="slide">
+  <p class="eyebrow">The same capability, five ways in</p>
+  <h2>A feature is not done until every client has it</h2>
+  <p class="sub">There is exactly one wire contract and no versioning, because there is one deployed
+  version at a time. The consequence is a hard rule: a fixed-income capability ships to <b>all five
+  surfaces</b> or it is not shipped.</p>
+  <div class="body stack" style="gap:14px">
+    <div class="cards" style="grid-template-columns:repeat(5,1fr)">
+      <div class="card"><div class="num">GUI</div><h5>Trading front end</h5><p>The screens in this deck, over a WebSocket mirror of the contract.</p></div>
+      <div class="card"><div class="num">FIX 4.4</div><h5>Counterparties</h5><p>RFQ, RFS subscribe, streaming market data, last look, fills — with an FI dialect.</p></div>
+      <div class="card"><div class="num">SDK</div><h5>Rust client</h5><p>Typed async builders for curves, swaps and bonds. Programmatic market makers.</p></div>
+      <div class="card"><div class="num">Excel</div><h5>Add-in</h5><p>Live cells for prices, curves and risk, for the analysts who live in a grid.</p></div>
+      <div class="card"><div class="num">CLI</div><h5>Operators</h5><p>Price, curve, risk and stream from a terminal or a script.</p></div>
+    </div>
+    <div class="wf" style="flex:0 0 auto">
+      <div class="wf-pane" style="border:none">
+        <h4>Parity, by example — the same 10Y OIS priced five ways</h4>
+        <table class="grid">
+          <tr><th>Surface</th><th>How it is asked</th><th class="n">Par rate</th><th class="n">PV</th><th class="n">DV01</th><th>Result</th></tr>
+          <tr><td>GUI</td><td>Streaming line “OIS 10Y pay”</td><td class="n">3.7458</td><td class="n">−124,880</td><td class="n">21,340</td><td><span class="chip good">identical</span></td></tr>
+          <tr><td>FIX</td><td>QuoteRequest · SecurityType=OIS</td><td class="n">3.7458</td><td class="n">−124,880</td><td class="n">21,340</td><td><span class="chip good">identical</span></td></tr>
+          <tr><td>SDK</td><td>client.price_rates(ois)</td><td class="n">3.7458</td><td class="n">−124,880</td><td class="n">21,340</td><td><span class="chip good">identical</span></td></tr>
+          <tr><td>Excel</td><td>=CELNET.RATES(…)</td><td class="n">3.7458</td><td class="n">−124,880</td><td class="n">21,340</td><td><span class="chip good">identical</span></td></tr>
+          <tr><td>CLI</td><td>celnet price --ois 10y</td><td class="n">3.7458</td><td class="n">−124,880</td><td class="n">21,340</td><td><span class="chip good">identical</span></td></tr>
+        </table>
+      </div>
+    </div>
+    <p class="sub" style="margin:0">Bit-identical is a design constraint, not a coincidence: a fixed maths library, no
+    contraction on the reproducible path, and a conformance test that fails the build when two clients disagree.</p>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">One contract, five surfaces</span><span>17</span></footer>
+</section>
+
+<!-- ================= 18 · NON-FUNCTIONALS ================= -->
+<section class="slide">
+  <p class="eyebrow">What it is engineered to survive</p>
+  <h2>Built for the size of book a bank actually runs</h2>
+  <div class="body stack" style="gap:16px">
+    <div class="tiles" style="grid-template-columns:repeat(4,1fr)">
+      <div class="tile"><div class="k">price + full risk</div><div class="v">≤ 10µs</div><div class="d">p99, hot path, cached curve</div></div>
+      <div class="tile"><div class="k">curve rebuild</div><div class="v">≤ 150µs</div><div class="d">p99, all tenors</div></div>
+      <div class="tile"><div class="k">streaming throughput</div><div class="v">1M/s</div><div class="d">updates per core, sustained</div></div>
+      <div class="tile hi"><div class="k">availability</div><div class="v">99.99%</div><div class="d">including upgrades</div></div>
+    </div>
+    <div class="cards">
+      <div class="card"><div class="num">Latency discipline</div><h5>Tail latency is the product</h5>
+        <p>A pinned, busy-polling hot core with no allocation, no locks and no logging on the path, joined
+        to the async edge only by wait-free rings. Telemetry offloads over a bounded queue so measuring
+        does not cost you the thing you are measuring.</p></div>
+      <div class="card"><div class="num">Correctness</div><h5>Conventions before cleverness</h5>
+        <p>FI pricing errors are convention errors — day count, settlement, schedule roll. Those are
+        first-class configuration, and numerical results are validated against an independent reference,
+        never merely asserted plausible.</p></div>
+      <div class="card"><div class="num">Continuity</div><h5>Upgrades without dropping a client</h5>
+        <p>Blue-green handoff with live-state transfer: no dropped connections, no in-flight order loss.
+        The book is journalled with deterministic crash recovery and can be replicated with quorum commit
+        and hot-standby failover.</p></div>
+    </div>
+    <div class="cards">
+      <div class="card"><div class="num">Scale-out</div><h5>Sharded, not scaled-up</h5>
+        <p>Risk fans out across shards over a partition map, and the fan-out result is designed to equal
+        the single-node answer exactly.</p></div>
+      <div class="card"><div class="num">Control</div><h5>Deny by default</h5>
+        <p>Capabilities are granted per action × asset class; information barriers prune data before it is
+        ever aggregated, and admin surfaces are delegable without handing over the keys.</p></div>
+      <div class="card"><div class="num">Openness</div><h5>Your models, our engine</h5>
+        <p>Desks run their own pricing models inside the engine through a sandboxed, fuel-metered plugin
+        surface — deterministic, replayable, and bounded in runtime.</p></div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">Non-functional requirements</span><span>18</span></footer>
+</section>
+
+<!-- ================= 19 · CLOSE ================= -->
+<section class="slide">
+  <p class="eyebrow">In one picture</p>
+  <h2>The whole thing, said briefly</h2>
+  <div class="body stack" style="gap:18px">
+    <p class="lede">Prices arrive from many providers and become <b>one book</b>. That book, plus a curve
+    the desk owns, becomes <b>a client's price</b> through a pipeline the desk composed. When a client
+    lifts it, the fill is <b>accepted by rule, booked, and routed into a risk portfolio</b>. What the desk
+    does not want to keep <b>leaves through a policy it drew itself</b> — as a real trade. Every step of
+    that is measured, attributable, and reachable from all five clients.</p>
+    <div class="cards">
+      <div class="card"><div class="num">Read next</div><h5>Architecture</h5>
+        <p><code>docs/ARCHITECTURE.md</code> — as-built system architecture, latency model, data flow.<br/>
+        <code>docs/fixed-income/</code> — FI architecture, conventions, curve spec, status.</p></div>
+      <div class="card"><div class="num">Read next</div><h5>How the desk is run</h5>
+        <p><code>docs/HEDGING-AND-RISK-EXIT.md</code> — how risk lands, is measured, and exits.<br/>
+        <code>docs/FI-BOOK-CONCEPTS.md</code> — what a book, a position and a portfolio each mean.</p></div>
+      <div class="card"><div class="num">Read next</div><h5>Interfaces</h5>
+        <p><code>docs/INTERFACES.md</code> — the current contracts.<br/>
+        <code>docs/API-CLIENTS.md</code> and <code>docs/FIX-API.md</code> — how the five clients connect.</p></div>
+    </div>
+  </div>
+  <footer><span>Celnet · Fixed Income overview</span><span class="where">Thank you</span><span>19</span></footer>
+</section>
+
+</div><!-- /#deck -->
+<div id="hud">
+  <button id="prev" aria-label="Previous slide">◀</button>
+  <span class="count"><b id="cur">1</b> / <span id="tot">19</span></span>
+  <button id="next" aria-label="Next slide">▶</button>
+</div>
+<script>
+/* Fixed 1280x720 slide canvas, scaled to fit the viewport. Keyboard: ← → space
+   Home/End. Deep-linkable via #3. Print bypasses the transform entirely. */
+(function () {
+  var slides = Array.prototype.slice.call(document.querySelectorAll(".slide"));
+  var cur = document.getElementById("cur"), tot = document.getElementById("tot");
+  var i = 0;
+  tot.textContent = String(slides.length);
+  function fit() {
+    var k = Math.min(window.innerWidth / 1280, window.innerHeight / 720) * 0.96;
+    slides.forEach(function (s) { s.style.transform = "scale(" + k + ")"; });
+  }
+  function show(n) {
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach(function (s, x) { s.classList.toggle("on", x === i); });
+    cur.textContent = String(i + 1);
+    if (history.replaceState) history.replaceState(null, "", "#" + (i + 1));
+  }
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") { show(i + 1); e.preventDefault(); }
+    else if (e.key === "ArrowLeft" || e.key === "PageUp") { show(i - 1); e.preventDefault(); }
+    else if (e.key === "Home") { show(0); } else if (e.key === "End") { show(slides.length - 1); }
+  });
+  document.getElementById("next").addEventListener("click", function () { show(i + 1); });
+  document.getElementById("prev").addEventListener("click", function () { show(i - 1); });
+  window.addEventListener("hashchange", function () {
+    var n = parseInt((location.hash || "#1").slice(1), 10);
+    if (!isNaN(n) && n - 1 !== i) show(n - 1);
+  });
+  window.addEventListener("resize", fit);
+  fit();
+  var start = parseInt((location.hash || "#1").slice(1), 10);
+  show(isNaN(start) ? 0 : start - 1);
+})();
+</script>
+</body>
+</html>
