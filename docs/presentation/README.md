@@ -29,9 +29,18 @@ Administration & reference data · Analytics.
 
 ## House rules for these decks
 
-- **Wireframe register, not a screenshot.** Hairlines, mono micro-labels and hatched
-  placeholders, so the audience reads structure and flow rather than a colour scheme. One
-  accent colour (coral) carries the annotation numbers and the "this is the point" highlight.
+- **The product's own design language, mirrored — not a deck theme.** Every colour, face
+  and radius in the deck comes from [`gui/src/design/tokens.css`](../../gui/src/design/tokens.css):
+  the dark surface stack (inset 0.185 / base 0.215 / raised 0.285, OKLCH hue ~264), Celer
+  coral for identity and the annotation numbers, Celer indigo for selection and primary
+  actions, bid-green / offer-red / warn-amber for semantics — never the brand hue for a
+  quantitative one — Anaheim for the wordmark, Space Grotesk for headings and labels, and
+  JetBrains Mono for **every** numeric, which is the app's own rule. It is synced by hand:
+  when the app's tokens move, move these. The one external fetch is the Google Fonts link
+  the app itself uses; the fallback stacks are real, so the deck degrades to system faces
+  offline rather than breaking.
+- **Still a wireframe.** Hairlines, hatched placeholders and flat panes, so the audience
+  reads structure and flow. It wears the product's clothes; it is not a screenshot of it.
 - **Every plate mirrors a screen that exists.** Rail rows, tab strips and column sets are
   taken from `gui/src/lib/commands.ts` and `gui/src/workspaces/*`; the numbers are
   illustrative, the structure is not. When the GUI's information architecture changes, the
