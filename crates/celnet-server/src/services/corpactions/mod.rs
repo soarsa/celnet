@@ -365,6 +365,7 @@ impl CorporateActionsEdge {
             instrument: Some(RatesInstrument {
                 instrument: Some(rates_instrument::Instrument::Bond(bond)),
             }),
+            ..Default::default()
         };
         self.rates.book(pos).map(|_| ())
     }

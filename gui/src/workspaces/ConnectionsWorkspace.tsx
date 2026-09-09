@@ -12,16 +12,20 @@
  * shows it disabled), but the table is already kind-agnostic.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../app/AppContext";
 import { FixConnectionWizard } from "../components/FixConnectionWizard";
 import { FixSessionMonitor } from "../components/FixSessionMonitor";
 import { FixSpecModal } from "../components/FixSpecModal";
 import { Button } from "../components/Button";
+import { DataTable } from "../components/DataTable";
 import { Panel } from "../components/Panel";
+import { TableSearch } from "../components/TableSearch";
 import type { DeskDesc, FixConnection, FixConnectionSpec } from "../data/contract";
+import { useGridState } from "../hooks/useGridState";
 import { useFixConnections } from "../hooks/useFixConnections";
+import type { ColumnDef } from "../lib/grid";
 import {
   buildFixClientConfig,
   downloadText,
@@ -160,6 +164,216 @@ export function ConnectionsWorkspace(): React.ReactElement {
     downloadText(fixClientConfigFilename(c), buildFixClientConfig(c), "text/plain");
   };
 
+  // A FIX roster is a lookup surface — "is CELER_RATES_ESP up, and where does it bind" —
+  // so it carries the same search + per-column filters as every other roster. Status,
+  // dialect and desk are select filters because they are small closed vocabularies; the
+  // identifiers are free text.
+  const columns = useMemo<ColumnDef<FixConnection>[]>(
+    () => [
+      {
+        key: "status",
+        header: "Status",
+        width: 120,
+        align: "left",
+        accessor: (c) => (c.running ? "running" : "stopped"),
+        sortKey: "status",
+        filter: { kind: "select" },
+        cell: (c) => (
+          <span
+            className={[styles.badge, c.running ? styles.badgeOn : styles.badgeOff].join(" ")}
+            role="img"
+            aria-label={c.running ? "running" : "stopped"}
+            title={c.running ? `running on ${c.boundAddr}` : "stopped"}
+          >
+            {c.running ? "◉ running" : "○ stopped"}
+          </span>
+        ),
+      },
+      {
+        key: "name",
+        header: "Name",
+        width: 200,
+        align: "left",
+        accessor: (c) => c.name,
+        sortKey: "name",
+        filter: { kind: "text" },
+        cell: (c) => <span className={styles.nameCell}>{c.name}</span>,
+      },
+      {
+        key: "dialect",
+        header: "Dialect",
+        width: 150,
+        align: "left",
+        accessor: (c) => kindLabel(c),
+        sortKey: "dialect",
+        filter: { kind: "select" },
+      },
+      {
+        key: "bindAddr",
+        header: "Bind address",
+        width: 170,
+        align: "left",
+        accessor: (c) => (c.running && c.boundAddr ? c.boundAddr : c.bindAddr),
+        sortKey: "bindAddr",
+        filter: { kind: "text" },
+        cell: (c) => (
+          <span className={styles.mono}>{c.running && c.boundAddr ? c.boundAddr : c.bindAddr}</span>
+        ),
+      },
+      {
+        key: "desk",
+        header: "Desk",
+        width: 160,
+        align: "left",
+        // An unrouted connection reads as "unrouted" rather than empty, so the select
+        // filter offers it as a first-class value — finding them is the point.
+        accessor: (c) => (c.desk ? deskName(desks, c.desk) : "unrouted"),
+        sortKey: "desk",
+        filter: { kind: "select" },
+        cell: (c) =>
+          c.desk ? (
+            <span className={styles.nameCell}>{deskName(desks, c.desk)}</span>
+          ) : (
+            <span
+              className={styles.unrouted}
+              title="Unrouted — no desk's users receive this connection's RFQs or deals."
+            >
+              ⚠ unrouted
+            </span>
+          ),
+      },
+      {
+        key: "senderCompId",
+        header: "SenderCompID",
+        width: 180,
+        align: "left",
+        accessor: (c) => c.senderCompId,
+        sortKey: "senderCompId",
+        filter: { kind: "text" },
+        cell: (c) => <span className={styles.mono}>{c.senderCompId}</span>,
+      },
+      {
+        key: "orderEndpoint",
+        header: "Order route",
+        width: 260,
+        align: "left",
+        description:
+          "Where WE dial to send this counterparty a hedge order (NewOrderSingle). Without it the counterparty can quote us but we cannot trade with it.",
+        // Same reasoning as the desk column: a missing route is the thing an operator
+        // hunts for, so it is a filterable value rather than a blank.
+        accessor: (c) => c.orderEndpoint || "no order route",
+        sortKey: "orderEndpoint",
+        filter: { kind: "text" },
+        cell: (c) =>
+          routeEditId === c.id ? (
+            <form
+              className={styles.routeEdit}
+              onSubmit={(e) => {
+                e.preventDefault();
+                const next = routeDraft.trim();
+                void runAction(c.id, async () => {
+                  await fix.update(c.id, specOf(c, { orderEndpoint: next }));
+                  setRouteEditId(null);
+                });
+              }}
+            >
+              <input
+                className={styles.routeInput}
+                value={routeDraft}
+                autoFocus
+                placeholder="host:port"
+                aria-label={`Order route for ${c.name}`}
+                onChange={(e) => setRouteDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setRouteEditId(null);
+                }}
+              />
+              <Button variant="primary" type="submit" disabled={busyId === c.id}>
+                Save
+              </Button>
+              <Button variant="ghost" onClick={() => setRouteEditId(null)}>
+                Cancel
+              </Button>
+            </form>
+          ) : (
+            <button
+              type="button"
+              className={styles.routeCell}
+              aria-label={`Edit order route for ${c.name}`}
+              title={
+                c.orderEndpoint
+                  ? `Hedge orders are sent to ${c.orderEndpoint}`
+                  : "No order route — this counterparty can quote us, but a hedge order to it is answered no_order_endpoint and is never filled from its quote."
+              }
+              onClick={() => {
+                setRouteEditId(c.id);
+                setRouteDraft(c.orderEndpoint);
+              }}
+            >
+              {c.orderEndpoint || <span className={styles.unrouted}>⚠ no order route</span>}
+            </button>
+          ),
+      },
+      {
+        key: "actions",
+        header: "Actions",
+        width: 330,
+        align: "left",
+        accessor: () => "",
+        cell: (c) => (
+          <div className={styles.rowActions}>
+            <Button
+              variant={monitorId === c.id ? "primary" : "secondary"}
+              onClick={() => setMonitorId((id) => (id === c.id ? null : c.id))}
+              aria-pressed={monitorId === c.id}
+            >
+              Monitor
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => downloadClientConfig(c)}
+              title="Download a QuickFIX client config to connect to this acceptor"
+            >
+              Client config
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => void runAction(c.id, () => fix.setEnabled(c.id, !c.enabled))}
+              disabled={busyId === c.id}
+            >
+              {c.enabled ? "Disable" : "Enable"}
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => void runAction(c.id, () => fix.remove(c.id))}
+              disabled={busyId === c.id}
+            >
+              Delete
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    [desks, routeEditId, routeDraft, busyId, monitorId, fix, runAction],
+  );
+
+  const [query, setQuery] = useState("");
+  const searched = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (needle === "") return fix.connections;
+    return fix.connections.filter((c) =>
+      columns.some((col) => col.accessor(c).toLowerCase().includes(needle)),
+    );
+  }, [fix.connections, query, columns]);
+
+  const grid = useGridState<FixConnection>({
+    tableId: "fix-connections",
+    columns,
+    rows: searched,
+    allRows: fix.connections,
+    initialSort: { key: "name", dir: "asc" },
+  });
+
   return (
     <div className={styles.root}>
       <Panel title="Inbound FIX connections" glyph="⇄" actions={actions}>
@@ -178,143 +392,25 @@ export function ConnectionsWorkspace(): React.ReactElement {
             </Button>
           </div>
         ) : (
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Name</th>
-                <th>Dialect</th>
-                <th>Bind address</th>
-                <th>Desk</th>
-                <th>SenderCompID</th>
-                <th>TargetCompID</th>
-                <th
-                  title="Where WE dial to send this counterparty a hedge order (NewOrderSingle). Without it the counterparty can quote us but we cannot trade with it."
-                >
-                  Order route
-                </th>
-                <th className={styles.actionsCol}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {fix.connections.map((c) => (
-                <tr key={c.id}>
-                  <td>
-                    <span
-                      className={[styles.badge, c.running ? styles.badgeOn : styles.badgeOff].join(
-                        " ",
-                      )}
-                      role="img"
-                      aria-label={c.running ? "running" : "stopped"}
-                      title={c.running ? `running on ${c.boundAddr}` : "stopped"}
-                    >
-                      {c.running ? "◉ running" : "○ stopped"}
-                    </span>
-                  </td>
-                  <td className={styles.nameCell}>{c.name}</td>
-                  <td>{kindLabel(c)}</td>
-                  <td className={styles.mono}>{c.running && c.boundAddr ? c.boundAddr : c.bindAddr}</td>
-                  <td>
-                    {c.desk ? (
-                      <span className={styles.nameCell}>{deskName(desks, c.desk)}</span>
-                    ) : (
-                      <span
-                        className={styles.unrouted}
-                        title="Unrouted — no desk's users receive this connection's RFQs or deals."
-                      >
-                        ⚠ unrouted
-                      </span>
-                    )}
-                  </td>
-                  <td className={styles.mono}>{c.senderCompId}</td>
-                  <td className={styles.mono}>
-                    {routeEditId === c.id ? (
-                      <form
-                        className={styles.routeEdit}
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          const next = routeDraft.trim();
-                          void runAction(c.id, async () => {
-                            await fix.update(c.id, specOf(c, { orderEndpoint: next }));
-                            setRouteEditId(null);
-                          });
-                        }}
-                      >
-                        <input
-                          className={styles.routeInput}
-                          value={routeDraft}
-                          autoFocus
-                          placeholder="host:port"
-                          aria-label={`Order route for ${c.name}`}
-                          onChange={(e) => setRouteDraft(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Escape") setRouteEditId(null);
-                          }}
-                        />
-                        <Button variant="primary" type="submit" disabled={busyId === c.id}>
-                          Save
-                        </Button>
-                        <Button variant="ghost" onClick={() => setRouteEditId(null)}>
-                          Cancel
-                        </Button>
-                      </form>
-                    ) : (
-                      <button
-                        type="button"
-                        className={styles.routeCell}
-                        aria-label={`Edit order route for ${c.name}`}
-                        title={
-                          c.orderEndpoint
-                            ? `Hedge orders are sent to ${c.orderEndpoint}`
-                            : "No order route — this counterparty can quote us, but a hedge order to it is answered no_order_endpoint and is never filled from its quote."
-                        }
-                        onClick={() => {
-                          setRouteEditId(c.id);
-                          setRouteDraft(c.orderEndpoint);
-                        }}
-                      >
-                        {c.orderEndpoint || <span className={styles.unrouted}>⚠ no order route</span>}
-                      </button>
-                    )}
-                  </td>
-                  <td className={styles.actionsCol}>
-                    <div className={styles.rowActions}>
-                      <Button
-                        variant={monitorId === c.id ? "primary" : "secondary"}
-                        onClick={() => setMonitorId((id) => (id === c.id ? null : c.id))}
-                        aria-pressed={monitorId === c.id}
-                      >
-                        Monitor
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() => downloadClientConfig(c)}
-                        title="Download a QuickFIX client config to connect to this acceptor"
-                      >
-                        Client config
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() =>
-                          void runAction(c.id, () => fix.setEnabled(c.id, !c.enabled))
-                        }
-                        disabled={busyId === c.id}
-                      >
-                        {c.enabled ? "Disable" : "Enable"}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        onClick={() => void runAction(c.id, () => fix.remove(c.id))}
-                        disabled={busyId === c.id}
-                      >
-                        Delete
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <>
+            <TableSearch
+              query={query}
+              onQueryChange={setQuery}
+              shown={grid.shown}
+              total={grid.total}
+              label="Search connections"
+              placeholder="Filter by name, CompID, desk or address…"
+            />
+            <DataTable
+              label="FIX connections"
+              columns={columns}
+              grid={grid}
+              rowKey={(c) => c.id}
+              rowProps={(c) => ({ "data-testid": `fix-connection-row-${c.id}` })}
+              hideRowCount
+              emptyState="No connection matches this search."
+            />
+          </>
         )}
       </Panel>
 

@@ -76,8 +76,6 @@ import { AcceptanceWorkspace } from "./acceptance/AcceptanceWorkspace";
 import { RatesBookWorkspace } from "./RatesBookWorkspace";
 import { QuotesBlotterWorkspace } from "./QuotesBlotterWorkspace";
 import { DealsBlotterWorkspace } from "./DealsBlotterWorkspace";
-import { HedgeDealsView } from "./HedgeDealsView";
-import { HedgeMonitor } from "./hedging/HedgeMonitor";
 import { RiskSetupWizard } from "./risksetup/RiskSetupWizard";
 import { DecisionAuditWorkspace } from "./audit/DecisionAuditWorkspace";
 import styles from "./RiskDashboardWorkspace.module.css";
@@ -141,8 +139,11 @@ const LEDGER_TABS: readonly { tab: RiskDashboardTab; label: string; cap: Capabil
   { tab: "positions", label: "Positions", cap: "view" },
   { tab: "quotes", label: "Quotes", cap: "view" },
   { tab: "clientblotter", label: "Client blotter", cap: "view" },
-  { tab: "hedgeblotter", label: "Hedge blotter", cap: "view" },
-  { tab: "hedgeflows", label: "Hedge flows", cap: "hedge" },
+  // "Hedge blotter" and "Hedge flows" were REMOVED 2026-08-27. Both moved to the
+  // consolidated Hedging host, which presents them in lifecycle order beside the flow
+  // board. Keeping them here would have left the same hedge ledger rendering on three
+  // separate screens, and a Book tab called "Hedge flows" sitting next to a rail row
+  // called "Hedge Flow" that showed something else entirely.
 ];
 
 /** Which tab set a mounted instance presents (see {@link LEDGER_TABS}). */
@@ -917,20 +918,12 @@ export function RiskDashboardWorkspace({
         ) : activeTab === "quotes" ? (
           // The shown-quotes blotter — what was quoted (non-redundant with Deals).
           <QuotesBlotterWorkspace />
-        ) : activeTab === "clientblotter" ? (
-          // The executed CLIENT-deals blotter incl. the routed Risk-Portfolio column and
-          // the per-row BUY/SELL indicator. Forced to the client lens (its own dedicated
-          // tab), so the redundant client/hedge toggle is hidden — the hedge ledger is
-          // the sibling "Hedge blotter" tab.
-          <DealsBlotterWorkspace lens="client" />
-        ) : activeTab === "hedgeblotter" ? (
-          // The executed-HEDGE ledger (who we hedged with, at what price, for how much) —
-          // its own Risk tab, distinct from the client blotter.
-          <HedgeDealsView />
         ) : (
-          // The live hedge-engine flow monitor (engine status, per-book RAG, live hedges,
-          // needs-attention) — self-fetching, moved here from the Hedging Rules surface.
-          <HedgeMonitor />
+          // The executed CLIENT-deals blotter incl. the routed Risk-Portfolio column and
+          // the per-row BUY/SELL indicator. Forced to the client lens, so the redundant
+          // client/hedge toggle is hidden — the hedge ledger is the Hedging host's
+          // Blotter tab, which is now its ONLY home.
+          <DealsBlotterWorkspace lens="client" />
         )}
       </div>
     </div>

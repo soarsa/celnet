@@ -160,11 +160,34 @@
 
 /* --- list table ----------------------------------------------------------- */
 
+/*
+ * The BOUNDED scrollport the sticky header pins against.
+ *
+ * `thead th` below is already `position: sticky; top: 0` — but sticky resolves against
+ * the nearest SCROLLING ancestor, and this box only ever declared `overflow-x`. With no
+ * bounded height and no vertical overflow of its own, the nearest scroller was the page,
+ * so the header scrolled away with the rows and the "sticky" declaration did nothing on
+ * every one of these blotters.
+ *
+ * Capping the height gives the header something to stick to and puts the scroll in the
+ * BODY where it belongs. `min()` keeps it responsive: a short viewport gets a proportional
+ * table rather than one taller than the screen, and a tall monitor stops at a length that
+ * still reads as a table rather than a page.
+ */
 .tableScroll {
-  overflow-x: auto;
+  overflow: auto;
+  max-height: min(62vh, 720px);
+  overscroll-behavior: contain;
   border: 1px solid var(--hairline);
   border-radius: var(--r-md);
   background: var(--bg-raised);
+}
+
+/* The header sits above the horizontally-sticky first column (z-index 2 below), so it
+   needs to outrank it — otherwise the row label paints over the header on a diagonal
+   scroll, which is only visible once the body actually scrolls. */
+.tableScroll thead th {
+  z-index: 3;
 }
 
 .table {
@@ -543,5 +566,50 @@
 }
 
 .detailAbsent {
+  color: var(--text-tertiary);
+}
+
+/* Client-side search + outcome filter above the trace list. Deliberately separate from
+   the symbol / counterparty boxes in the header, which are SERVER filters that re-query:
+   these narrow what is already on screen, with no round trip. */
+.tableTools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2, 8px);
+}
+
+.outcomeFilter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.outcomeFilterLabel {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.outcomeFilterSelect {
+  font: inherit;
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm, 4px);
+  padding: 4px 8px;
+}
+
+.outcomeFilterSelect:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.emptyRow {
+  text-align: center;
+  padding: var(--space-4, 16px);
   color: var(--text-tertiary);
 }

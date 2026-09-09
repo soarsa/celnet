@@ -278,8 +278,14 @@ export const RAIL: readonly {
   // (crossed / hedged / warehoused). Placed BEFORE the rule builder because the
   // question "what needs hedging right now" precedes "how should it be hedged", and
   // because it is the surface a trader opens on a phone.
-  { id: "hedgeflow", glyph: "◍", label: "Hedge Flow", subtitle: "Buckets at limit · where the risk went", section: "risk", assets: ["fixed_income"], viewCap: { action: "hedge", asset: "fixed_income" } },
-  { id: "hedging", glyph: "◈", label: "Hedging Rules", subtitle: "Exit policy · thresholds · execution", section: "risk", assets: ["fixed_income"], viewCap: { action: "hedge", asset: "fixed_income" } },
+  //
+  // CONSOLIDATED 2026-08-27 into ONE row. There used to be two rail rows here plus two
+  // more hedge tabs on the Book host, and three of those five screens rendered the
+  // SAME hedge ledger. Worse, the rail row "Hedge Flow" and the Book tab "Hedge flows"
+  // were different screens with near-identical names. The host now presents the
+  // lifecycle — Flow · Monitor · Blotter · Rules — and the retired `hedging` id stays a
+  // valid deep-link resolving to its Rules tab (see CONSOLIDATED_WORKSPACE_ALIAS).
+  { id: "hedgeflow", glyph: "◍", label: "Hedging", subtitle: "Flow · monitor · blotter · rules", section: "risk", assets: ["fixed_income"], viewCap: { action: "hedge", asset: "fixed_income" } },
   // Incoming-quote Acceptance (docs — celnet-acceptance): the trader-composed
   // first-match ACCEPTANCE rule graph is CONSOLIDATED into the "Risk" host as its
   // "Acceptance" tab (no standalone rail row). The `acceptance` id stays a valid
@@ -433,6 +439,7 @@ export const CONSOLIDATED_WORKSPACE_ALIAS: Partial<Record<WorkspaceId, Workspace
   transferaudit: "risktransfer",
   riskrouting: "riskdashboard",
   acceptance: "riskdashboard",
+  hedging: "hedgeflow",
 };
 
 /**

@@ -255,6 +255,182 @@ describe("StreetExecution (the order-level half of the workspace)", () => {
     expect(screen.queryByText("0 ns")).toBeNull();
   });
 
+  it("calls an unroutable order a SETUP fault, not a market one, and says which LP", async () => {
+    // `no_order_endpoint` means the order never left the building: the LP is quoting,
+    // but no order route is configured, so nobody was asked. On the wire it arrives as
+    // the same `no_liquidity` outcome a genuinely quiet market produces — and the two
+    // demand opposite responses (fix a setting vs widen the panel / accept the risk),
+    // so the UI must not render them identically.
+    const { app } = makeApp([], {
+      orders: [
+        streetOrder({
+          orderId: "SO-CFG",
+          lpId: "citigroup-sim",
+          outcome: "no_liquidity",
+          reason: "no_order_endpoint",
+          filledQty: 0,
+          filledPrice: undefined,
+          slippageBp: undefined,
+        }),
+      ],
+      breakdown: [breakdownRow()],
+      totalMatching: 1,
+    });
+    await renderWorkspace(app);
+
+    // The chip does NOT borrow the market-shaped label. Asserted on the CHIP itself —
+    // the outcome FILTER also lists "No liquidity" as an <option>, and matching that
+    // would make this pass for the wrong reason.
+    const chip = screen.getByTestId("street-outcome-chip");
+    expect(chip.textContent).toBe("Not sent · setup");
+    expect(chip.getAttribute("data-config-fault")).toBe("true");
+
+    // A standing banner states it without needing a hover, names the provider, and
+    // points at where the setting lives.
+    const banner = screen.getByTestId("street-config-fault");
+    expect(banner.textContent).toContain("could not");
+    expect(banner.textContent).toContain("citigroup-sim");
+    expect(banner.textContent).toContain("Administration");
+  });
+
+  it("leaves a GENUINE no-price alone — no setup banner, no borrowed label", async () => {
+    // The counter-case that stops the banner becoming noise: `no_firm_lp_price` IS a
+    // market fact (nobody showed an executable price), so it keeps the market label and
+    // raises no configuration alarm.
+    const { app } = makeApp([], {
+      orders: [
+        streetOrder({
+          orderId: "SO-MKT",
+          lpId: undefined,
+          outcome: "no_liquidity",
+          reason: "no_firm_lp_price",
+          filledQty: 0,
+          filledPrice: undefined,
+          slippageBp: undefined,
+          competitors: [],
+        }),
+      ],
+      breakdown: [breakdownRow()],
+      totalMatching: 1,
+    });
+    await renderWorkspace(app);
+
+    const chip = screen.getByTestId("street-outcome-chip");
+    expect(chip.textContent).toBe("No liquidity");
+    expect(chip.getAttribute("data-config-fault")).toBeNull();
+    expect(screen.queryByTestId("street-config-fault")).toBeNull();
+  });
+
+  it("PRINTS a venue reject reason on the row instead of hiding it in a hover", async () => {
+    // The UAT report of 2026-08-20: five futures sheds came back "Rejected" with no
+    // stated reason. The reason was on the wire the whole time (`NOT_A_WHOLE_LOT`) and
+    // only ever reachable by hovering — which is the same mistake as the config-fault
+    // tooltip, and nobody hovers a blotter.
+    const { app } = makeApp([], {
+      orders: [
+        streetOrder({
+          orderId: "SO-24",
+          lpId: "cme-sim",
+          instrument: "ZTU26",
+          outcome: "rejected",
+          reason: "NOT_A_WHOLE_LOT",
+          filledQty: 0,
+          filledPrice: undefined,
+          slippageBp: undefined,
+        }),
+      ],
+      breakdown: [breakdownRow()],
+      totalMatching: 1,
+    });
+    await renderWorkspace(app);
+
+    // The chip still says what happened…
+    expect(screen.getByTestId("street-outcome-chip").textContent).toBe("Rejected");
+    // …and the row now also says WHY, visibly.
+    const reason = screen.getByTestId("street-outcome-reason");
+    expect(reason.textContent).toBe("not a whole lot");
+    // A venue refusal is the counterparty's answer, not our configuration — it must not
+    // be relabelled as a setup fault or raise the setup banner.
+    expect(
+      screen.getByTestId("street-outcome-chip").getAttribute("data-config-fault"),
+    ).toBeNull();
+    expect(screen.queryByTestId("street-config-fault")).toBeNull();
+  });
+
+  it("prints an UNKNOWN venue code rather than swallowing it", async () => {
+    // A code we have no gloss for is still the most useful text on the row; show it
+    // de-underscored rather than dropping it because it is not in the vocabulary.
+    const { app } = makeApp([], {
+      orders: [
+        streetOrder({
+          orderId: "SO-X",
+          lpId: "cme-sim",
+          outcome: "rejected",
+          reason: "SOME_NEW_VENUE_CODE",
+          filledQty: 0,
+          filledPrice: undefined,
+          slippageBp: undefined,
+        }),
+      ],
+      breakdown: [breakdownRow()],
+      totalMatching: 1,
+    });
+    await renderWorkspace(app);
+    expect(screen.getByTestId("street-outcome-reason").textContent).toBe(
+      "SOME NEW VENUE CODE",
+    );
+  });
+
+  it("searches the blotter by id, instrument, provider AND reason", async () => {
+    const { app } = makeApp([], {
+      orders: [
+        streetOrder({
+          orderId: "SO-24",
+          lpId: "cme-sim",
+          instrument: "ZTU26",
+          outcome: "rejected",
+          reason: "NOT_A_WHOLE_LOT",
+          filledQty: 0,
+          filledPrice: undefined,
+          slippageBp: undefined,
+        }),
+        streetOrder({
+          orderId: "SO-99",
+          lpId: "jpm-sim",
+          instrument: "912797UJ4",
+          outcome: "no_liquidity",
+          reason: "no_firm_lp_price",
+          filledQty: 0,
+          filledPrice: undefined,
+          slippageBp: undefined,
+        }),
+      ],
+      breakdown: [breakdownRow()],
+      totalMatching: 2,
+    });
+    await renderWorkspace(app);
+
+    const search = screen.getByLabelText("Search street orders");
+    expect(screen.getAllByTestId("street-outcome-chip")).toHaveLength(2);
+
+
+    // The selects above can only narrow on the server's closed vocabularies. Searching
+    // the REASON is the case they cannot express — and it is the one that matters, since
+    // "show me everything rejected as mis-sized" is a real question.
+    act(() => {
+      fireEvent.change(search, { target: { value: "whole lot" } });
+    });
+    expect(screen.getAllByTestId("street-outcome-chip")).toHaveLength(1);
+    expect(screen.getByTestId("street-outcome-reason").textContent).toBe("not a whole lot");
+
+    act(() => {
+      fireEvent.change(search, { target: { value: "912797UJ4" } });
+    });
+    const rows = screen.getAllByTestId("street-outcome-chip");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toBe("No liquidity");
+  });
+
   it("labels a composite backstop explicitly and never as an LP", async () => {
     const { app } = makeApp([], {
       orders: [

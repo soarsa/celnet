@@ -43,7 +43,8 @@ use celnet_proto::{
     AggregateRiskResponse, BookRatesPositionRequest, BookRatesPositionResponse,
     CombinedTailRiskRequest, CombinedTailRiskResponse, DrillRiskRequest, DrillRiskResponse,
     LimitStatusRequest, LimitStatusResponse, LimitUtilization, ListPositionsRequest,
-    ListPositionsResponse, ListRatesPositionsRequest, ListRatesPositionsResponse, RiskScope,
+    ListPositionsResponse, ListRatesPositionsRequest, ListRatesPositionsResponse, RatesPosition,
+    RiskScope, RiskVectorDesc,
 };
 use celnet_risk_cube::{
     BookId, DeskId, DimensionId, EntityId, LocationId, NetGreeks, NodeAggregate, TraderId,
@@ -444,6 +445,7 @@ impl RiskEdge {
                     f,
                     snapshot.wire_id_of(f.position_id.0),
                     snapshot.attribution_of(f.position_id.0).cloned(),
+                    snapshot.risk_book_of(f.position_id.0),
                 )
             })
             .collect();
@@ -557,6 +559,7 @@ impl RiskEdge {
                         f,
                         snapshot.wire_id_of(f.position_id.0),
                         snapshot.attribution_of(f.position_id.0).cloned(),
+                        snapshot.risk_book_of(f.position_id.0),
                     )
                 })
                 .collect()
@@ -720,6 +723,35 @@ impl RiskEdge {
                     p.entity,
                     p.book,
                 )
+            })
+            // Stamp each position with the facts only the server can answer: the RISK BOOK
+            // the routing graph put it in, and its own DV01 by the same measure the
+            // pre-trade gate and the hedge sizer use.
+            //
+            // Without these a client cannot list "the positions in RATES USD" at all, which
+            // is why the risk-transfer ticket synthesised lots from the book's aggregate and
+            // minted ids for them — ids the server then correctly refused. A per-position
+            // risk number cannot be derived client-side either: the bond arm needs a
+            // cashflow schedule and a memoised analytic derivative.
+            .map(|p: RatesPosition| {
+                let risk_book = self.rates.risk_book_of(p.position_id).unwrap_or_default();
+                let dv01 = crate::services::rates_book::rates_linear_exposure(&p);
+                let net_notional = crate::services::rates_book::rates_signed_notional(&p);
+                RatesPosition {
+                    risk_book,
+                    net_notional,
+                    // The SAME per-position risk shape the FX arm publishes: only `dv01`
+                    // is meaningful for a linear-rates position, and the option greeks
+                    // are left at 0 rather than invented.
+                    risk: Some(RiskVectorDesc {
+                        dv01,
+                        delta: 0.0,
+                        gamma: 0.0,
+                        vega: 0.0,
+                        theta: 0.0,
+                    }),
+                    ..p
+                }
             })
             .collect();
         Ok(ListRatesPositionsResponse { positions })
@@ -1638,6 +1670,7 @@ mod tests {
                     side: Side::Buy as i32,
                 })),
             }),
+            ..Default::default()
         };
 
         // Authenticated trader holds Book·FixedIncome ⇒ the line is booked and the
@@ -1722,6 +1755,7 @@ mod tests {
                     side: Side::Buy as i32,
                 })),
             }),
+            ..Default::default()
         };
 
         let err = edge

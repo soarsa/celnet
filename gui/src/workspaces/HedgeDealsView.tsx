@@ -15,7 +15,7 @@
  * hedge ledger, not a per-deal join. Numbers are right-aligned + tabular so they line
  * up; DV01-family amounts read in the shared compact units. Theme-aware via tokens.
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useApp } from "../app/AppContext";
 import { DataTable } from "../components/DataTable";
@@ -31,6 +31,9 @@ import { fmtCompact, fmtRate } from "../lib/format";
 import { describeExitAction, isExternalExitAction } from "../lib/hedgeExit";
 import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import type { HedgeProvenance } from "../data/contract";
+import type { StreetOrder, StreetOrdersView } from "../data/contract";
+import { TradeDetailsModal } from "../components/TradeDetailsModal";
+import { hedgeTradeDetails } from "../lib/tradeDetails";
 import styles from "./HedgeDealsView.module.css";
 
 /** A hedge band label → RAG class key (mirrors the Hedging monitor). */
@@ -42,7 +45,13 @@ function ragKey(band: string): "green" | "amber" | "red" | "breach" {
 }
 
 /** A hedge `firedAt` (epoch MILLIS, UTC) as a 24h clock. */
-function timeOf(ms: number): string {
+function timeOf(nanos: number): string {
+  // `HedgeProvenance.fired_at` is epoch NANOSECONDS (proto field 13, "epoch nanos, UTC"),
+  // and the engine stamps it from `now_nanos`. Feeding that straight to `new Date(ms)`
+  // lands ~57,000 years out of range, so every row rendered "Invalid Date" — verified
+  // against a real wire value (1787173452008410400 → Invalid Date before, 21:04:12 after).
+  const ms = nanos / 1e6;
+  if (!Number.isFinite(ms) || ms <= 0) return "—";
   return new Date(ms).toLocaleTimeString("en-GB", { hour12: false });
 }
 
@@ -113,6 +122,7 @@ export function contributesTo(p: HedgeProvenance, leg: HedgeLeg): boolean {
   }
 }
 
+
 export function HedgeDealsView({
   legFilter = null,
 }: {
@@ -155,6 +165,45 @@ export function HedgeDealsView({
       : fetchError instanceof Error
         ? fetchError.message
         : "failed to load hedge provenance";
+
+  /**
+   * The street orders EVERY fired hedge produced, indexed by the hedge that produced
+   * them.
+   *
+   * The ledger above records the hedge DECISION — the band, the action, what was
+   * internalised, what was externalised, the residual. It has never shown the orders
+   * that decision actually put on the wire: which provider was asked, for how much, and
+   * what came back. That is the half a desk needs when a hedge does not reduce the book,
+   * because "external 0" is a symptom and the reject reason is the cause.
+   *
+   * Fetched unfiltered and indexed here rather than per-row on demand: the join key is
+   * already on the order (`parentHedgeId`), one request serves every row, and a
+   * per-row fetch would issue one round trip per expand on a ledger that streams.
+   */
+  const { data: streetData } = useCachedResource<StreetOrdersView>(
+    "hedgeStreetOrders",
+    () => app.transport.listStreetOrders(),
+    { enabled: canView },
+  );
+  const ordersByHedge = useMemo(() => {
+    const index = new Map<string, StreetOrder[]>();
+    for (const o of streetData?.orders ?? []) {
+      const parent = o.parentHedgeId;
+      if (parent === undefined || parent === "") continue;
+      const bucket = index.get(parent);
+      if (bucket === undefined) index.set(parent, [o]);
+      else bucket.push(o);
+    }
+    // Oldest first WITHIN a hedge: a shed walks its panel in rank order, and reading the
+    // refusals in the order they happened is what shows how far down it got.
+    for (const bucket of index.values()) {
+      bucket.sort((a, b) => Number(a.tsNanos - b.tsNanos));
+    }
+    return index;
+  }, [streetData]);
+
+  /** The hedge whose orders are expanded, or `null`. */
+  const [openHedgeId, setOpenHedgeId] = useState<string | null>(null);
 
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
@@ -388,8 +437,69 @@ export function HedgeDealsView({
         sortKey: "mode",
         filter: { kind: "select" },
       },
+      {
+        key: "orders",
+        header: "Orders sent",
+        description:
+          "The street orders this hedge decision actually put on the wire — how many were sent, and how many came back filled. Open a row to see each one: the provider, the size asked for, and the reason any of them declined.",
+        width: 150,
+        align: "left",
+        // The canonical text carries the reject reasons too, so searching the ledger for
+        // "whole lot" surfaces the HEDGES whose orders were refused for it — not just the
+        // orders themselves on a different screen.
+        accessor: (p) => {
+          const orders = ordersByHedge.get(p.hedgeId) ?? [];
+          if (orders.length === 0) return "";
+          const filled = orders.filter((o) => o.filledQty > 0).length;
+          const reasons = orders.map((o) => o.reason ?? "").filter((r) => r !== "");
+          return `${orders.length} sent ${filled} filled ${reasons.join(" ")}`;
+        },
+        sortValue: (p) => (ordersByHedge.get(p.hedgeId) ?? []).length,
+        sortKey: "orders",
+        cell: (p) => {
+          const orders = ordersByHedge.get(p.hedgeId) ?? [];
+          if (orders.length === 0) {
+            // An internalised decision never asks the street, so it has no orders BY
+            // CONSTRUCTION — that is a fact, not missing data, and must not read as a
+            // failed load.
+            return (
+              <button
+                type="button"
+                className={styles.ordersNone}
+                data-testid={`hedge-orders-toggle-${p.hedgeId}`}
+                title={
+                  isExternalHedge(p)
+                    ? "This hedge externalised, but no street order was recorded against it."
+                    : "Internalised — nothing was sent to the street."
+                }
+                // Still openable: a hedge with no orders STILL has a decision worth
+                // reading, and that is exactly the case a desk needs to inspect.
+                onClick={() => setOpenHedgeId(p.hedgeId)}
+              >
+                {isExternalHedge(p) ? "none recorded" : "—"}
+              </button>
+            );
+          }
+          const filled = orders.filter((o) => o.filledQty > 0).length;
+          return (
+            <button
+              type="button"
+              className={styles.ordersToggle}
+              // Opens the SHARED trade-details modal — the same surface, and the same
+              // affordance, the client blotter opens for a client fill.
+              data-testid={`hedge-orders-toggle-${p.hedgeId}`}
+              onClick={() => setOpenHedgeId(p.hedgeId)}
+            >
+              {orders.length} sent
+              <span className={filled > 0 ? styles.ordersFilled : styles.ordersUnfilled}>
+                {filled} filled
+              </span>
+            </button>
+          );
+        },
+      },
     ],
-    [],
+    [ordersByHedge, openHedgeId],
   );
 
   const grid = useGridState<HedgeProvenance>({
@@ -398,6 +508,11 @@ export function HedgeDealsView({
     rows: filtered,
     allRows: visible,
   });
+
+  const openHedge = useMemo(
+    () => (openHedgeId === null ? undefined : rows.find((p) => p.hedgeId === openHedgeId)),
+    [rows, openHedgeId],
+  );
 
   const isOffline = !app.transport.label.startsWith("live");
   // The "external" total reflects the CURRENTLY-VISIBLE set (the filtered desk view).
@@ -477,9 +592,16 @@ export function HedgeDealsView({
                   : `No hedges match “${query}”.`
               }
             />
+
           </>
         )}
       </Panel>
+      <TradeDetailsModal
+        details={
+          openHedge === undefined ? null : hedgeTradeDetails(openHedge, ordersByHedge.get(openHedge.hedgeId) ?? [])
+        }
+        onClose={() => setOpenHedgeId(null)}
+      />
     </div>
   );
 }

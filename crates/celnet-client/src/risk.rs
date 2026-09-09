@@ -414,6 +414,39 @@ impl OrgKey {
     }
 }
 
+/// A position's own risk — the ONE per-position risk shape across asset classes
+/// (the typed form of the wire `RiskVectorDesc`).
+///
+/// Deliberately one type rather than an FX shape and a rates shape: a client that lists
+/// positions across asset classes reads one vector and fills what its asset populates —
+/// `dv01` for linear rates, the option greeks for FX vanilla, the unfilled fields left at
+/// `0.0` rather than invented. Server-computed in every case; a client never derives it.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct RiskVector {
+    /// Sensitivity to a 1bp parallel rate move (linear-rates / bond risk).
+    pub dv01: f64,
+    /// Sensitivity to spot (FX-vanilla delta), notional-scaled.
+    pub delta: f64,
+    /// Sensitivity of delta to spot (FX-vanilla gamma).
+    pub gamma: f64,
+    /// Sensitivity to volatility (FX-vanilla vega).
+    pub vega: f64,
+    /// Sensitivity to the passage of time (FX-vanilla theta).
+    pub theta: f64,
+}
+
+impl RiskVector {
+    pub(crate) fn from_wire(w: &celnet_proto::RiskVectorDesc) -> Self {
+        Self {
+            dv01: w.dv01,
+            delta: w.delta,
+            gamma: w.gamma,
+            vega: w.vega,
+            theta: w.theta,
+        }
+    }
+}
+
 /// One open position the cube aggregates: its identity, org placement, raw
 /// economics, pricing inputs, quoted conventions, and attribution. The convention-
 /// free canonical leaf the cube sums is re-derived server-side from `inputs`, so
@@ -439,6 +472,16 @@ pub struct RiskPosition {
     pub surface_version: u64,
     /// The who's-trading attribution chain, if the line was attributed.
     pub attribution: Option<Attribution>,
+    /// The RISK BOOK the routing graph stamped this position into, or empty when it
+    /// routed nowhere — the portfolio a trader sees and moves risk between (distinct
+    /// from `org.book`, the netting book).
+    pub risk_book: String,
+    /// The position's OWN risk: the canonical, notional-scaled sensitivities off the
+    /// marked leaf — the same numbers the cube aggregates. `dv01` is 0 for FX vanilla.
+    ///
+    /// This does NOT contradict the "never a convention-baked Greek" note above: the
+    /// canonical leaf is convention-free, and `inputs` still carries the raw position.
+    pub risk: Option<RiskVector>,
 }
 
 impl RiskPosition {
@@ -486,6 +529,8 @@ impl RiskPosition {
             premium_style,
             surface_version: w.surface_version,
             attribution,
+            risk_book: w.risk_book.clone(),
+            risk: w.risk.as_ref().map(RiskVector::from_wire),
         })
     }
 }

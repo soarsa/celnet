@@ -12,8 +12,8 @@ These 15 canonical documents define the system's architecture, contracts, quanti
 
 | Document | Topic & Scope | Currency |
 |---|---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | **System Architecture (As-Built)**: 64-crate Cargo workspace, hot-core / async-edge split, lock-free fan-out, Wasm plugin sandbox, zero-downtime upgrades. | `REFERENCE` (64 crates) |
-| [INTERFACES.md](INTERFACES.md) | **Frozen Interface Registry**: The single, current unversioned contracts across the 64 crates, wire protocols, and core traits. | `LIVE` |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | **System Architecture (As-Built)**: 65+ crate Cargo workspace, hot-core / async-edge split, lock-free fan-out, Wasm plugin sandbox, zero-downtime upgrades. | `REFERENCE` (65+ crates) |
+| [INTERFACES.md](INTERFACES.md) | **Frozen Interface Registry**: The single, current unversioned contracts across the crates, wire protocols, and core traits. | `LIVE` |
 | [ROADMAP.md](ROADMAP.md) | **Implementation Roadmap**: Phased evolution, crate workstream ownership, and parallel session lanes. | `LIVE` |
 | [PARALLEL-SESSIONS.md](PARALLEL-SESSIONS.md) | **Parallel Development Mesh**: Live lane board, lock-free worktree rules, and the Tiered-Gate Law (§4.2). | `LIVE` |
 | [IMPLEMENTATION-LEDGER.md](IMPLEMENTATION-LEDGER.md) | **Implementation Ledger**: Append-only chronological history of landed milestones, gates, and oracle verifications. | `LIVE` |
@@ -28,6 +28,7 @@ These 15 canonical documents define the system's architecture, contracts, quanti
 | [CELNET-CAPABILITIES.md](CELNET-CAPABILITIES.md) | **Master Capabilities Overview**: Comprehensive capability map, brochure index, and cross-surface proofs. | `LIVE` |
 | [celnet-capabilities.html](celnet-capabilities.html) | **Visual Capability Showcase**: Single-page standalone interactive brochure with vector figures. | `BROCHURE` |
 | [architecture/API-TARGET-ARCHITECTURE.html](architecture/API-TARGET-ARCHITECTURE.html) | **Target API Architecture**: Comprehensive API review, structural critique, 8 target bounded services, universal protobuf contracts, and integration blueprint. | `TARGET SPEC` |
+| [presentation/README.md](presentation/README.md) | **Presentation Decks**: Self-contained HTML decks for showing the product — FI screen wireframes + architecture. | `LIVE` |
 
 ---
 

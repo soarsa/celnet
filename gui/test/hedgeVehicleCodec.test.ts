@@ -204,6 +204,7 @@ describe("config carries the registry + the exit-mode bindings", () => {
       deskEnabled: [],
       maxClip: 1_000,
       maxHedgesPerInterval: 5,
+      dispatch: "async",
       dailyExternalNotionalCap: 0,
       lpPanels: [],
       compositeSpreadBp: 0.5,

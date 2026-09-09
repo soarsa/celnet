@@ -8,13 +8,13 @@ import { describe, expect, it } from "vitest";
 
 import type { RiskBook, RiskBookRisk } from "../src/data/contract";
 import {
+  type PositionLine,
   aggregateLines,
   computePreview,
   effectiveDeskId,
   inferKind,
   movedNotionalOf,
   PAR_MARK,
-  synthesizePositions,
 } from "../src/workspaces/risktransfer/transferModel";
 
 const row = (over: Partial<RiskBookRisk>): RiskBookRisk => ({
@@ -38,32 +38,6 @@ const books: RiskBook[] = [
   { id: "fx-emea-vanilla", name: "Vanilla", parentId: "fx-emea", deskId: null, description: "", limits: null, enabled: true , assetClass: "fx_options"},
   { id: "fx-apac", name: "FX APAC", parentId: null, deskId: "apac", description: "", limits: null, enabled: true , assetClass: "fx_options"},
 ];
-
-describe("synthesizePositions", () => {
-  it("splits a row into lots whose notional + risk SUM to the row totals", () => {
-    const r = row({ positionCount: 4 });
-    const lots = synthesizePositions(r);
-    expect(lots).toHaveLength(4);
-    const agg = aggregateLines(lots);
-    expect(agg.notionalBase).toBeCloseTo(r.netNotional, 3);
-    expect(agg.risk.dv01).toBeCloseTo(r.dv01 ?? 0, 3);
-    expect(agg.risk.delta).toBeCloseTo(r.delta, 3);
-    expect(agg.risk.vega).toBeCloseTo(r.vega, 3);
-  });
-
-  it("is deterministic (stable ids + notionals across calls) and caps the lot count", () => {
-    const a = synthesizePositions(row({ positionCount: 99 }));
-    const b = synthesizePositions(row({ positionCount: 99 }));
-    expect(a).toHaveLength(4); // capped
-    expect(a.map((l) => l.id.toString())).toEqual(b.map((l) => l.id.toString()));
-    expect(a.every((l) => l.id > 0n)).toBe(true);
-  });
-
-  it("handles a dv01-absent (FX) row by treating dv01 as 0", () => {
-    const lots = synthesizePositions(row({ dv01: null, positionCount: 2 }));
-    expect(aggregateLines(lots).risk.dv01).toBe(0);
-  });
-});
 
 describe("effectiveDeskId", () => {
   it("returns a book's own desk", () => {
@@ -106,7 +80,21 @@ describe("movedNotionalOf", () => {
 });
 
 describe("computePreview", () => {
-  const lots = synthesizePositions(row({ netNotional: 300_000_000, positionCount: 3 }));
+  // An EXPLICIT fixture. These lots were previously produced by `synthesizePositions`,
+  // which split a book's aggregate risk into fabricated lots — the same routine the
+  // risk-transfer ticket used, and which made every transfer unbookable. Stating the
+  // three positions here says what the preview arithmetic is actually being fed.
+  const lot = (id: bigint, notional: number, dv01: number): PositionLine => ({
+    id,
+    label: `#${id}`,
+    notionalBase: notional,
+    risk: { dv01, delta: 0, gamma: 0, vega: 0, theta: 0 },
+  });
+  const lots: PositionLine[] = [
+    lot(1n, 100_000_000, -1000),
+    lot(2n, 100_000_000, -1000),
+    lot(3n, 100_000_000, -1000),
+  ];
 
   it("Full at the mark moves the whole selection with zero realised P&L", () => {
     const p = computePreview({
@@ -151,6 +139,9 @@ describe("computePreview", () => {
       targetNet: 0,
     });
     expect(p.movedNotional).toBeCloseTo(90_000_000, 2);
-    expect(p.movedRisk.dv01).toBeCloseTo((25_000 * 90_000_000) / 300_000_000, 2);
+    // Derived from the FIXTURE, not a constant the old generator happened to emit:
+    // a partial slice carries the same fraction of risk as it does of notional.
+    const totalDv01 = lots.reduce((a, l) => a + l.risk.dv01, 0);
+    expect(p.movedRisk.dv01).toBeCloseTo((totalDv01 * 90_000_000) / 300_000_000, 2);
   });
 });

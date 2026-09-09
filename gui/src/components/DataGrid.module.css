@@ -11,11 +11,20 @@
   outline: none;
 }
 
-/* The vertical scroll container the row virtualiser windows. */
+/* The vertical scroll container the row virtualiser windows.
+ *
+ * Self-bounding for the same reason as `DataTable.scroll`: `flex: 1` only bounds this box
+ * while every ancestor keeps the height chain intact, and one workspace embedded in
+ * another's tab is enough to break it. A virtualised grid whose viewport grows unbounded
+ * is worse than a plain table's — it windows against a height that is never smaller than
+ * the content, so it renders every row and the virtualisation quietly stops doing
+ * anything at all. */
 .body {
   flex: 1;
   min-height: 0;
+  max-height: min(72vh, 860px);
   overflow: auto;
+  overscroll-behavior: contain;
   position: relative;
 }
 

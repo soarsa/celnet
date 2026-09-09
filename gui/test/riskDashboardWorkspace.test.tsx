@@ -306,7 +306,7 @@ describe("RiskDashboardWorkspace — the consolidated 9-way Risk host", () => {
   it("splits management tabs (Risk) from ledger tabs (Fixed Income → Book)", async () => {
     state.app = makeApp(emptyBooks); // admin can() => true ⇒ every tab its host presents
     const MGMT = ["dashboard", "portfolios", "routing", "acceptance"] as const;
-    const LEDGER = ["positions", "quotes", "clientblotter", "hedgeblotter", "hedgeflows"] as const;
+    const LEDGER = ["positions", "quotes", "clientblotter"] as const;
 
     // The Risk host presents the four MANAGEMENT tabs and NONE of the ledgers — the
     // ledgers moved to the Fixed-Income "Book" host. An admin sees everything each host
@@ -334,7 +334,7 @@ describe("RiskDashboardWorkspace — the consolidated 9-way Risk host", () => {
     expect(screen.getByTestId("risk-tab-positions")).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("mounts the split blotters + the self-fetching monitor on their tabs", async () => {
+  it("mounts the split blotters on their tabs", async () => {
     state.app = makeApp(emptyBooks);
     await act(async () => {
       render(<RiskDashboardWorkspace variant="ledgers" />);
@@ -350,17 +350,12 @@ describe("RiskDashboardWorkspace — the consolidated 9-way Risk host", () => {
     expect(screen.queryByTestId("deals-lens-hedge")).toBeNull();
     expect(screen.queryByTestId("deals-lens-client")).toBeNull();
 
-    // Hedge blotter → the executed-hedge ledger.
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("risk-tab-hedgeblotter"));
-    });
-    expect(await screen.findByText("Hedge deals")).toBeInTheDocument();
-
-    // Hedge flows → the self-fetching live monitor (no props from a parent).
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("risk-tab-hedgeflows"));
-    });
-    expect(await screen.findByTestId("hedge-monitor")).toBeInTheDocument();
+    // The two hedge tabs are GONE from this host (consolidated 2026-08-27). They live on
+    // the Hedging host now, in lifecycle order beside the flow board — keeping them here
+    // left the same hedge ledger rendering on three separate screens, and put a Book tab
+    // called "Hedge flows" next to a rail row called "Hedge Flow" showing something else.
+    expect(screen.queryByTestId("risk-tab-hedgeblotter")).toBeNull();
+    expect(screen.queryByTestId("risk-tab-hedgeflows")).toBeNull();
   });
 
   it("switches to Routing then Acceptance — only the active tab's body mounts", async () => {
@@ -429,7 +424,7 @@ describe("RiskDashboardWorkspace — the consolidated 9-way Risk host", () => {
     expect(screen.getByTestId("risk-tab-dashboard")).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("shows a view-only FI trader ONLY the ledger tabs (Positions/Quotes/Client blotter/Hedge blotter — the view floor)", async () => {
+  it("shows a view-only FI trader ONLY the ledger tabs (Positions/Quotes/Client blotter — the view floor)", async () => {
     // A booking-only FI trader (view·FI, no risk_manage / manage_acceptance / hedge)
     // reaches the LEDGER host and sees the four view-floor tabs. This identity holds no
     // `risk_manage`, so under the old combined host the whole surface was out of reach —
@@ -445,13 +440,14 @@ describe("RiskDashboardWorkspace — the consolidated 9-way Risk host", () => {
     await act(async () => {
       render(<RiskDashboardWorkspace variant="ledgers" />);
     });
-    for (const tab of ["positions", "quotes", "clientblotter", "hedgeblotter"] as const) {
+    for (const tab of ["positions", "quotes", "clientblotter"] as const) {
       expect(screen.getByTestId(`risk-tab-${tab}`)).toBeInTheDocument();
     }
     // Clamps onto the first visible tab (Positions), never an empty pane.
     expect(screen.getByTestId("risk-tab-positions")).toHaveAttribute("aria-pressed", "true");
-    // Hedge flows needs `hedge` (hidden here); the management tabs are on the other host.
-    for (const tab of ["dashboard", "portfolios", "routing", "acceptance", "hedgeflows"] as const) {
+    // The management tabs are on the other host; both hedge tabs moved to the Hedging
+    // host entirely.
+    for (const tab of ["dashboard", "portfolios", "routing", "acceptance", "hedgeflows", "hedgeblotter"] as const) {
       expect(screen.queryByTestId(`risk-tab-${tab}`)).not.toBeInTheDocument();
     }
   });

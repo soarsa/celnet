@@ -54,11 +54,13 @@ mod bond;
 pub mod price;
 pub mod risk;
 mod schedule;
+pub mod spread;
 pub mod yield_solve;
 
 pub use bond::{Bond, BondError};
 pub use price::{accrued_interest, clean_price, dirty_price, price_from_curve};
 pub use risk::{BondRisk, bond_risk, convexity, dv01, macaulay_duration, modified_duration};
+pub use spread::{cs01, spread_duration, z_spread};
 pub use yield_solve::yield_to_maturity;
 
 // Re-export the shared convention types a caller needs to build a [`Bond`], so the crate is usable

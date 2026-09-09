@@ -43,11 +43,18 @@
   color: var(--bg-base);
 }
 
-/* Scan wrapper — scrolls the cube when the universe outgrows the canvas. */
+/* Scan wrapper — scrolls the cube when the universe outgrows the canvas.
+ *
+ * Self-bounding, like every other table scrollport: `flex: 1` only bounds this box while
+ * the whole ancestor chain stays intact, and the cube's sticky header row (`position:
+ * sticky` below) does nothing at all when it does not — the header scrolls away with the
+ * page instead of pinning over the rows. */
 .scanWrap {
   flex: 1;
   min-height: 0;
+  max-height: min(72vh, 860px);
   overflow: auto;
+  overscroll-behavior: contain;
   padding: var(--space-4) var(--space-5);
 }
 

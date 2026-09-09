@@ -424,10 +424,13 @@ describe("domain layer — DOMAINS / workspaceDomains / domainAccessible / railF
       expect(workspaceDomains("hedgeflow")).toEqual(["hedging"]);
     });
 
-    it("the Hedging rail leads with the flow board, then the rule builder", () => {
-      // Order is the point: "what needs hedging right now" precedes "how should it be
-      // hedged", and the board is the surface a trader opens on a phone.
-      expect(railForDomain("hedging").map((r) => r.id)).toEqual(["hedgeflow", "hedging"]);
+    it("the Hedging rail is ONE row hosting the whole lifecycle", () => {
+      // Consolidated 2026-08-27. There were two rows here — the flow board and the rule
+      // builder — plus two more hedge tabs on the Book host, and three of those five
+      // screens rendered the SAME hedge ledger. One row now hosts Flow · Monitor ·
+      // Blotter · Rules, and `hedging` survives only as a deep-link alias to its Rules
+      // tab (asserted in the alias test below).
+      expect(railForDomain("hedging").map((r) => r.id)).toEqual(["hedgeflow"]);
     });
 
     it("hedging appears under NO trading/analytics/admin domain (fully hoisted)", () => {
@@ -742,6 +745,8 @@ describe("navigation gating — workspaceAccessible (slice 5c / #6 per-workspace
         transferinbox: "risktransfer",
         transferaudit: "risktransfer",
         riskrouting: "riskdashboard",
+        // Hedging Rules folded into the Hedging host as its Rules tab.
+        hedging: "hedgeflow",
         acceptance: "riskdashboard",
       });
     });

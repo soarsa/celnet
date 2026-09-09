@@ -22,11 +22,13 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../app/AppContext";
-import type { HedgeProvenance, RiskBookRisk } from "../data/contract";
+import type { HedgeProvenance, RiskBookRisk, StreetOrder } from "../data/contract";
 import type { HedgeBucket } from "../lib/hedgeBuckets";
-import { bucketsFromRiskBooks, flowShares, flowTotals } from "../lib/hedgeBuckets";
+import { bucketsFromRiskBooks, flowShares, flowTotals, displayPercent } from "../lib/hedgeBuckets";
+import { hedgeLifecycle } from "../lib/hedgeLifecycle";
 import { formatDv01 } from "../lib/hedgeVehicle";
-import { HedgeDealsView, type HedgeLeg } from "./HedgeDealsView";
+import type { HedgeLeg } from "./HedgeDealsView";
+import { HedgeLifecycleRibbon, type LifecycleStageKey } from "./HedgeLifecycleRibbon";
 import styles from "./HedgeFlowWorkspace.module.css";
 
 /**
@@ -71,7 +73,7 @@ function Vessel({ bucket }: { bucket: HedgeBucket }): React.ReactElement {
       className={styles.vessel}
       viewBox="0 0 100 112"
       role="img"
-      aria-label={`${bucket.book}: ${(bucket.utilization * 100).toFixed(0)}% of limit, ${bucket.band}`}
+      aria-label={`${bucket.book}: ${displayPercent(bucket.utilization)}% of limit, ${bucket.band}`}
     >
       <defs>
         <clipPath id={clipId}>
@@ -120,12 +122,46 @@ function Vessel({ bucket }: { bucket: HedgeBucket }): React.ReactElement {
   );
 }
 
-export function HedgeFlowWorkspace(): React.ReactElement {
+/**
+ * Which ledger lens each lifecycle stage drills into.
+ *
+ * `exposure` maps to `null` deliberately: exposure is what the desk CARRIES, and no
+ * row of the fired-hedge ledger explains it — filtering to some arbitrary subset
+ * would answer a question the trader did not ask. `decided` and `street` both land on
+ * the externally-shed rows because those are the ones that reached a venue.
+ */
+const LEDGER_LENS_FOR_STAGE: Record<LifecycleStageKey, HedgeLeg | null> = {
+  exposure: null,
+  decided: "hedged",
+  street: "hedged",
+  residual: "warehoused",
+};
+
+interface HedgeFlowWorkspaceProps {
+  /**
+   * Open the hedge ledger filtered to `leg`.
+   *
+   * The board USED to embed the ledger directly, which is how the same table came to
+   * render on three different screens. It now hands off to the host's Blotter tab —
+   * one ledger, reached from wherever the question was asked. Optional so the board
+   * still renders standalone (tests, a future embed) with the drill simply inert.
+   */
+  onDrill?: (leg: HedgeLeg) => void;
+}
+
+export function HedgeFlowWorkspace({ onDrill }: HedgeFlowWorkspaceProps = {}): React.ReactElement {
   const app = useApp();
   const [books, setBooks] = useState<RiskBookRisk[]>([]);
   const [provenance, setProvenance] = useState<HedgeProvenance[]>([]);
+  // The street orders those fires raised — the "sent / filled / refused" stage. Kept
+  // beside the provenance because the two are joined by `parentHedgeId`.
+  const [orders, setOrders] = useState<StreetOrder[]>([]);
   // Which total the ledger below is drilled into; `null` shows the ledger's own view.
   const [selectedLeg, setSelectedLeg] = useState<HedgeLeg | null>(null);
+  // Which lifecycle stage is selected. Tracked separately from `selectedLeg` because
+  // several stages map to the SAME ledger filter (both "street" and "decided" show
+  // externally-shed rows) — collapsing them would light the wrong stage on click.
+  const [selectedStage, setSelectedStage] = useState<LifecycleStageKey | null>(null);
 
   /*
    * The board polls CURRENT risk and treats the intent stream as a refresh signal.
@@ -148,6 +184,13 @@ export function HedgeFlowWorkspace(): React.ReactElement {
         .listHedgeProvenance()
         .then((p) => !cancelled && setProvenance(p))
         .catch(() => undefined);
+      // The street leg of the walk. A failure here must NOT blank the board: the
+      // buckets and the fired ledger are still true without it, and the ribbon says
+      // "no orders sent" rather than pretending the desk sent none.
+      void app.transport
+        .listStreetOrders()
+        .then((v) => !cancelled && setOrders(v.orders))
+        .catch(() => undefined);
     };
     refresh();
     const timer = setInterval(refresh, 15_000);
@@ -162,6 +205,10 @@ export function HedgeFlowWorkspace(): React.ReactElement {
   }, [app.transport]);
 
   const buckets = useMemo(() => bucketsFromRiskBooks(books), [books]);
+  const lifecycle = useMemo(
+    () => hedgeLifecycle(buckets, provenance, orders),
+    [buckets, provenance, orders],
+  );
   const flow = useMemo(() => flowTotals(provenance), [provenance]);
   const shares = useMemo(() => flowShares(flow), [flow]);
   const needing = buckets.filter((b) => b.needsHedge).length;
@@ -231,7 +278,7 @@ export function HedgeFlowWorkspace(): React.ReactElement {
               data-testid={`hedge-bucket-${b.book}`}
             >
               <Vessel bucket={b} />
-              <span className={styles.pct}>{(b.utilization * 100).toFixed(0)}%</span>
+              <span className={styles.pct}>{displayPercent(b.utilization)}%</span>
               <span className={styles.bookName} title={b.book}>
                 {b.book}
               </span>
@@ -241,6 +288,26 @@ export function HedgeFlowWorkspace(): React.ReactElement {
           ))}
         </ul>
       )}
+
+      {/*
+       * The lifecycle ribbon sits BETWEEN the board and the leg strip, because that is
+       * where it belongs in the reading order: the board says what is filling up, the
+       * ribbon says how far the exit actually got, and the legs below break the exit
+       * down. Selecting a stage drills the same ledger the legs drill.
+       */}
+      <HedgeLifecycleRibbon
+        lifecycle={lifecycle}
+        selected={selectedStage}
+        onSelect={(stage) => {
+          setSelectedStage(stage);
+          const lens = stage === null ? null : LEDGER_LENS_FOR_STAGE[stage];
+          setSelectedLeg(lens);
+          // Exposure has no explaining rows (see LEDGER_LENS_FOR_STAGE), so selecting
+          // it highlights the stage but does NOT throw the trader at a blotter that
+          // cannot answer for the number they just clicked.
+          if (lens !== null) onDrill?.(lens);
+        }}
+      />
 
       {/*
        * The three totals ARE the blotter's INTERNAL / EXTERNAL / RESIDUAL columns
@@ -258,7 +325,15 @@ export function HedgeFlowWorkspace(): React.ReactElement {
               type="button"
               aria-pressed={active}
               className={`${styles.leg} ${active ? styles.legActive : ""}`}
-              onClick={() => setSelectedLeg(active ? null : leg.key)}
+              onClick={() => {
+                const next = active ? null : leg.key;
+                setSelectedLeg(next);
+                // The leg strip and the ribbon drill the SAME ledger, so picking a leg
+                // clears the ribbon's highlight rather than leaving two things lit that
+                // claim to own one filter.
+                setSelectedStage(null);
+                if (next !== null) onDrill?.(next);
+              }}
               data-testid={`hedge-flow-${leg.key}`}
             >
               <span className={styles.legLabel}>{leg.label}</span>
@@ -280,26 +355,6 @@ export function HedgeFlowWorkspace(): React.ReactElement {
           : `From ${flow.fires} fired hedge${flow.fires === 1 ? "" : "s"} · advisory fires excluded.`}
       </p>
 
-      <section className={styles.ledger} data-testid="hedge-flow-ledger">
-        <header className={styles.ledgerHead}>
-          <h3 className={styles.ledgerTitle}>
-            {selectedLeg === null
-              ? "Hedge ledger"
-              : `Hedge ledger · ${legs.find((l) => l.key === selectedLeg)?.label}`}
-          </h3>
-          {selectedLeg !== null && (
-            <button
-              type="button"
-              className={styles.clearLeg}
-              onClick={() => setSelectedLeg(null)}
-              data-testid="hedge-flow-clear-leg"
-            >
-              Clear filter
-            </button>
-          )}
-        </header>
-        <HedgeDealsView legFilter={selectedLeg} />
-      </section>
     </div>
   );
 }

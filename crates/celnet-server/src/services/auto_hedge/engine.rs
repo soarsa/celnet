@@ -97,6 +97,23 @@ pub struct DecisionMeta {
     pub symbol: Option<String>,
 }
 
+/// The width of one **rate-limit interval** — the window `max_hedges_per_interval` counts
+/// against.
+///
+/// The cap exists so "a misconfigured policy or a market gap can't machine-gun the LP
+/// panel" (`docs/HEDGING-CONFIGURATION-GUIDE.md` §Guardrails), i.e. it is a **burst**
+/// guard. One minute is the window that reading implies: it bounds the panel to
+/// `max_hedges_per_interval` clips a minute while leaving a normally-active desk (a few
+/// hedges a minute) entirely untouched.
+///
+/// This is a constant rather than a config field because the tunable the trader was given
+/// is the *count*; a desk changes how many hedges it tolerates per burst, not what a burst
+/// means. Widening it to a config field is a wire change with no requested use.
+const RATE_LIMIT_INTERVAL_NANOS: i64 = 60 * 1_000_000_000;
+
+/// Nanoseconds in a UTC day — the width of the `daily_external_notional_cap` window.
+const NANOS_PER_DAY: i64 = 24 * 60 * 60 * 1_000_000_000;
+
 /// The [`DecisionMeta::scope`] value meaning "the firm authored no hedge policy at any
 /// scope governing this book; the built-in default graph stood in".
 ///
@@ -112,8 +129,15 @@ struct Inner {
     next_hedge: u64,
     /// Hedges fired live (non-advisory external) in the current rate-limit interval.
     hedges_in_interval: u32,
+    /// When the current rate-limit interval opened (the injected fire clock, not wall
+    /// time). [`AutoHedgeEngine::roll_windows`] advances this; `0` means "no interval has
+    /// opened yet", which the first evaluation rolls.
+    interval_opened_at_nanos: i64,
     /// Externalised notional booked live in the current daily window.
     daily_external: f64,
+    /// The UTC day index (`now_nanos / NANOS_PER_DAY`) the `daily_external` running total
+    /// belongs to. A fire on a later day rolls the total back to zero.
+    daily_window_day: i64,
 }
 
 /// The off-core auto-hedge decision + provenance engine. Shared behind an `Arc` between
@@ -155,7 +179,9 @@ impl AutoHedgeEngine {
                 ring: VecDeque::new(),
                 next_hedge: 1,
                 hedges_in_interval: 0,
+                interval_opened_at_nanos: 0,
                 daily_external: 0.0,
+                daily_window_day: 0,
             }),
             capacity: capacity.max(1),
             intent_tx: broadcast::channel(INTENT_CHANNEL_DEPTH).0,
@@ -201,14 +227,19 @@ impl AutoHedgeEngine {
         let _ = self.intent_tx.send(intent.clone());
     }
 
-    /// Reset the per-interval rate counter (the control loop calls this each interval
-    /// boundary) — max-hedges-per-interval is a *rate*, not a lifetime cap.
+    /// Reset the per-interval rate counter — max-hedges-per-interval is a *rate*, not a
+    /// lifetime cap.
+    ///
+    /// Correctness no longer depends on anyone calling this: [`Self::roll_windows`] rolls
+    /// the window from the fire clock inside the guard itself. It stays public as the
+    /// explicit "clear the burst counter now" operator/test lever.
     pub fn roll_rate_interval(&self) {
         let mut g = self.lock();
         g.hedges_in_interval = 0;
     }
 
-    /// Reset the daily externalised-notional counter (called at the day boundary).
+    /// Reset the daily externalised-notional counter. As with [`Self::roll_rate_interval`],
+    /// the day boundary is now rolled from the fire clock; this is the explicit lever.
     pub fn roll_daily_window(&self) {
         let mut g = self.lock();
         g.daily_external = 0.0;
@@ -492,6 +523,15 @@ impl AutoHedgeEngine {
         // Rate / size guards apply only to a live (non-advisory) external fire.
         if is_external && !advisory {
             let mut g = self.lock();
+            // Roll the burst / daily windows FIRST, off the same injected fire clock the
+            // record is stamped with. Without this the counters only ever climb, so both
+            // caps degrade from a rate into a LIFETIME cap and every hedge past the
+            // `max_hedges_per_interval`-th is silently downgraded to advisory until the
+            // process restarts — the desk goes on stamping intents while nothing reaches
+            // the street. Observed live on UAT 2026-08-19: `max_hedges_per_interval = 30`,
+            // and hedges HDG-31 onward were all advisory with `external_hedged = 0` while
+            // book utilisation climbed to 1.000 and stayed there.
+            Self::roll_windows(&mut g, now_nanos);
             if config.max_hedges_per_interval > 0
                 && g.hedges_in_interval >= config.max_hedges_per_interval
             {
@@ -644,6 +684,27 @@ impl AutoHedgeEngine {
 
     fn lock(&self) -> std::sync::RwLockWriteGuard<'_, Inner> {
         self.inner.write().expect("auto-hedge engine lock poisoned")
+    }
+
+    /// Advance the burst / daily guard windows to the interval `now_nanos` falls in,
+    /// zeroing whichever counters belong to a window that has since closed.
+    ///
+    /// Driven by the **injected** fire clock rather than wall time, so the guards need no
+    /// background task to stay honest and a test can walk a desk across a boundary by
+    /// advancing the timestamp it already passes to [`Self::evaluate`].
+    ///
+    /// A first-ever fire (`interval_opened_at_nanos == 0`) simply opens the first window;
+    /// the counters are already zero, so opening is the whole effect.
+    fn roll_windows(g: &mut Inner, now_nanos: i64) {
+        if now_nanos.saturating_sub(g.interval_opened_at_nanos) >= RATE_LIMIT_INTERVAL_NANOS {
+            g.hedges_in_interval = 0;
+            g.interval_opened_at_nanos = now_nanos;
+        }
+        let day = now_nanos.div_euclid(NANOS_PER_DAY);
+        if day != g.daily_window_day {
+            g.daily_external = 0.0;
+            g.daily_window_day = day;
+        }
     }
 }
 
@@ -1131,6 +1192,114 @@ mod tests {
             !third.intent.advisory,
             "interval roll re-arms the live fire"
         );
+    }
+
+    /// The rate cap is a **rate**, not a lifetime cap: once the interval it counts against
+    /// has elapsed, the desk fires live again with nobody having called anything.
+    ///
+    /// Regression for the UAT report of 2026-08-19. `hedges_in_interval` only ever
+    /// incremented — `roll_rate_interval` existed but had **no production caller** — so a
+    /// desk configured `max_hedges_per_interval: 30` fired 30 live hedges and then
+    /// downgraded every subsequent one to advisory *for the life of the process*. The
+    /// symptom is silent and looks like a market problem: intents keep being stamped,
+    /// `external_hedged` is 0 on every one of them, and book utilisation climbs to 1.000
+    /// and stays pinned there while nothing reaches the street.
+    #[test]
+    fn the_rate_cap_is_a_rate_not_a_lifetime_cap() {
+        let e = AutoHedgeEngine::default();
+        let g = graph(ExitAction::SubmitMarketOrder {
+            size: HedgeSize::Full,
+            style: ExecStyle::Immediate,
+        });
+        let cfg = HedgeConfigDef {
+            max_hedges_per_interval: 1,
+            ..HedgeConfigDef::default()
+        };
+        // A realistic fire clock — the bug is invisible at t≈0, where every timestamp
+        // lands in the first window anyway.
+        let t0: i64 = 1_787_000_000_000_000_000;
+        let fire = |at: i64| {
+            e.evaluate(
+                &g,
+                &thr(),
+                &cfg,
+                &ctx(95_000.0, true, 0.0, "RATES"),
+                &known(),
+                at,
+            )
+        };
+
+        assert!(!fire(t0).intent.advisory, "first live external fire");
+        assert!(
+            fire(t0 + 1_000_000_000).intent.advisory,
+            "a second fire one second later is inside the same interval — capped"
+        );
+
+        // One interval later the window has closed. NOTHING calls roll_rate_interval here:
+        // that is the whole point — correctness must not depend on an external control
+        // loop that does not exist.
+        let next = fire(t0 + RATE_LIMIT_INTERVAL_NANOS);
+        assert!(
+            !next.intent.advisory,
+            "the interval elapsed, so the desk fires live again — a cap that never rolls \
+             is a lifetime cap and silently retires the desk"
+        );
+        assert!(
+            !next.intent.reason.contains("rate cap"),
+            "a rolled window must not still blame the rate cap"
+        );
+    }
+
+    /// The daily externalised-notional cap rolls at the UTC day boundary, for the same
+    /// reason and by the same clock.
+    #[test]
+    fn the_daily_notional_cap_rolls_at_the_day_boundary() {
+        let e = AutoHedgeEngine::default();
+        let g = graph(ExitAction::SubmitMarketOrder {
+            size: HedgeSize::Full,
+            style: ExecStyle::Immediate,
+        });
+        let cfg = HedgeConfigDef {
+            daily_external_notional_cap: 150_000.0,
+            ..HedgeConfigDef::default()
+        };
+        // Day boundary in the middle of the walk: 95k fits, a second 95k would breach.
+        let day = 20_680_i64;
+        let late = day * NANOS_PER_DAY + 23 * 60 * 60 * 1_000_000_000;
+
+        assert!(
+            !fire_at(&e, &g, &cfg, late).intent.advisory,
+            "first fire fits"
+        );
+        assert!(
+            fire_at(&e, &g, &cfg, late + 60 * 1_000_000_000)
+                .intent
+                .advisory,
+            "the second 95k breaches the 150k daily cap on the same day"
+        );
+        assert!(
+            !fire_at(&e, &g, &cfg, (day + 1) * NANOS_PER_DAY)
+                .intent
+                .advisory,
+            "the next UTC day starts a fresh notional budget"
+        );
+    }
+
+    /// Shared driver for the day-boundary walk above — one live external fire at `at`.
+    fn fire_at(
+        e: &AutoHedgeEngine,
+        g: &HedgeGraph,
+        cfg: &HedgeConfigDef,
+        at: i64,
+    ) -> crate::services::auto_hedge::engine::HedgeOutcome {
+        e.evaluate(
+            g,
+            &thr(),
+            cfg,
+            &ctx(95_000.0, true, 0.0, "RATES"),
+            &known(),
+            at,
+        )
     }
 
     #[test]

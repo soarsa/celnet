@@ -44,6 +44,13 @@ pub enum BondError {
     YieldDidNotConverge,
     /// The pool factor is not finite or not in `(0, 1]`.
     InvalidPoolFactor,
+    /// A z-spread solve was asked for a non-positive or non-finite target price.
+    NonPositiveSpreadPrice,
+    /// The target price lies outside the solvable z-spread range (no bracketing spread
+    /// exists) — typically a price above the bond's undiscounted cashflow sum.
+    SpreadOutOfRange,
+    /// The z-spread solve did not converge within the iteration cap.
+    SpreadDidNotConverge,
 }
 
 impl core::fmt::Display for BondError {
@@ -63,6 +70,15 @@ impl core::fmt::Display for BondError {
                 "the yield solve did not converge within the iteration cap"
             }
             Self::InvalidPoolFactor => "the pool factor must be finite and in (0, 1]",
+            Self::NonPositiveSpreadPrice => {
+                "a z-spread solve requires a strictly positive target price"
+            }
+            Self::SpreadOutOfRange => {
+                "no z-spread in the solvable range reprices the bond to that price"
+            }
+            Self::SpreadDidNotConverge => {
+                "the z-spread solve did not converge within the iteration cap"
+            }
         };
         f.write_str(msg)
     }

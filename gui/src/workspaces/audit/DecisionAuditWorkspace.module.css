@@ -215,6 +215,15 @@
 .rowOn {
   background: color-mix(in srgb, var(--accent, #4c8dff) 16%, transparent);
 }
+/* Scoped PAST the base `.table thead th { text-align: left }`, which out-specifies a bare
+   `.num` (0,1,2 vs 0,1,0) and would otherwise keep the header left while its column reads
+   right. The header follows its own column, or it is labelling something else. */
+.table thead th.num,
+.table thead th.num button {
+  text-align: right;
+  justify-content: flex-end;
+}
+
 .num {
   text-align: right;
   font-variant-numeric: tabular-nums;

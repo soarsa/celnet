@@ -2691,6 +2691,14 @@ fn full_risk_position() -> RiskPosition {
             won: Some(true),
             lp_count: Some(3),
         }),
+        risk_book: "fx-emea".to_owned(),
+        risk: Some(RiskVectorDesc {
+            dv01: 0.0,
+            delta: 420_000.0,
+            gamma: 12.5,
+            vega: 8_100.0,
+            theta: -640.0,
+        }),
     }
 }
 
@@ -2706,6 +2714,8 @@ fn sparse_risk_position() -> RiskPosition {
         premium_style: 0,
         surface_version: 0,
         attribution: None,
+        risk_book: String::new(),
+        risk: None,
     }
 }
 
@@ -2966,6 +2976,15 @@ fn ois_rates_position() -> RatesPosition {
                 notional: 1_000_000.0,
                 side: 1,
             })),
+        }),
+        risk_book: "fi-rates-emea".to_owned(),
+        net_notional: -1_000_000.0,
+        risk: Some(RiskVectorDesc {
+            dv01: -480.5,
+            delta: 0.0,
+            gamma: 0.0,
+            vega: 0.0,
+            theta: 0.0,
         }),
     }
 }
@@ -7012,6 +7031,9 @@ fn hedge_config_full() -> HedgeConfigDesc {
         ],
         max_clip: 50_000_000.0,
         max_hedges_per_interval: 10,
+        // The NON-default, so the differential proves the field survives BOTH codecs
+        // rather than passing on a shared zero.
+        dispatch: 1,
         daily_external_notional_cap: 1_000_000_000.0,
         // The standing hedging LP panels: a book-scoped include+exclude and a desk-scoped
         // exclude-only (the repeated-nested-message edge, each with repeated-string fields).
@@ -7044,6 +7066,7 @@ fn hedge_config_body() -> Value {
         ],
         "max_clip": 50_000_000.0,
         "max_hedges_per_interval": 10,
+        "dispatch": 1,
         "daily_external_notional_cap": 1_000_000_000.0,
         "lp_panels": [
             { "scope_kind": HedgeScopeKindEnum::HedgeScopeBook as i32, "scope_id": "gm",

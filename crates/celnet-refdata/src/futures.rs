@@ -706,6 +706,27 @@ pub fn front_contract_id(symbol: &str, as_of: CivilYmd) -> Option<String> {
     front_contract(electronic, as_of).map(|s| s.instrument_id)
 }
 
+/// The **face value of one contract** for a listed contract code (`"UBU26"`), which is the
+/// unit an order quantity is denominated in on this platform's listed venue.
+///
+/// The venue quotes and trades in FACE, not in contract counts, so one whole lot is one
+/// contract's face value (`celnet_cme_sim::contract_lot_size`) and an `OrderQty` that is
+/// not a whole multiple of it is refused `NOT_A_WHOLE_LOT`. Keeping the whole aggregated
+/// book in one denomination is what lets a bond and a future sit on the same panel.
+///
+/// Matched on the contract's own product prefix rather than the full code, so it resolves
+/// for any delivery month — including one outside the currently listed cycle, which a
+/// historical order still needs to size.
+///
+/// `None` when the code names no known product.
+#[must_use]
+pub fn contract_face_value(instrument_id: &str) -> Option<f64> {
+    TREASURY_FUTURES_TERMS
+        .iter()
+        .find(|t| instrument_id.starts_with(t.symbol))
+        .map(|t| t.face_value)
+}
+
 /// Every product's contract for one delivery month (`month` must be a quarterly
 /// cycle month — March, June, September or December; any other month yields an
 /// empty vector, since no such contract is listed).

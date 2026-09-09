@@ -150,7 +150,7 @@ pub use risk::{
     AdditiveRisk, AggregateQuery, CcyExposure, DrillQuery, Enforcement, EntitlementScope,
     Entitlements, LimitMetric, LimitQuery, LimitStatus, LimitUtilization, NonAdditiveRisk,
     Numeraire, OrgDimension, OrgKey, PositionList, PositionQuery, Rag, RiskAggregate, RiskDrill,
-    RiskNode, RiskPillar, RiskPosition, Scope, VegaLadderBucket,
+    RiskNode, RiskPillar, RiskPosition, RiskVector, Scope, VegaLadderBucket,
 };
 pub use series::{MarketSeries, Observable, SeriesEvent, SeriesPoint};
 pub use surface_vocab::{

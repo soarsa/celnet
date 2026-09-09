@@ -77,11 +77,34 @@
   text-align: center;
 }
 
+/*
+ * The BOUNDED scrollport the sticky header pins against.
+ *
+ * `thead th` below is already `position: sticky; top: 0` — but sticky resolves against
+ * the nearest SCROLLING ancestor, and this box only ever declared `overflow-x`. With no
+ * bounded height and no vertical overflow of its own, the nearest scroller was the page,
+ * so the header scrolled away with the rows and the "sticky" declaration did nothing on
+ * every one of these blotters.
+ *
+ * Capping the height gives the header something to stick to and puts the scroll in the
+ * BODY where it belongs. `min()` keeps it responsive: a short viewport gets a proportional
+ * table rather than one taller than the screen, and a tall monitor stops at a length that
+ * still reads as a table rather than a page.
+ */
 .tableScroll {
-  overflow-x: auto;
+  overflow: auto;
+  max-height: min(62vh, 720px);
+  overscroll-behavior: contain;
   border: 1px solid var(--hairline);
   border-radius: var(--r-md);
   background: var(--bg-raised);
+}
+
+/* The header sits above the horizontally-sticky first column (z-index 2 below), so it
+   needs to outrank it — otherwise the row label paints over the header on a diagonal
+   scroll, which is only visible once the body actually scrolls. */
+.tableScroll thead th {
+  z-index: 3;
 }
 
 .table {
@@ -357,4 +380,44 @@
 .backstop {
   color: var(--warning, #b26a00);
   font-weight: var(--weight-emphasis);
+}
+
+/*
+ * A configuration fault is not a market outcome, so it does not borrow the outcome
+ * chip palette. It reads as an operational warning — the desk cannot hedge until
+ * someone changes a setting — rather than as another shade of "the street was quiet".
+ */
+/*
+ * The venue's own reject text, printed under the outcome chip.
+ *
+ * Secondary in weight but genuinely present: an operator scanning the blotter should be
+ * able to see WHY a row was rejected without hovering it. Sized down and de-emphasised so
+ * it reads as a qualifier on the chip rather than competing with it.
+ */
+.outcomeReason {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  color: var(--text-muted, #8b93a7);
+  white-space: nowrap;
+}
+
+.chipConfigFault {
+  background: color-mix(in oklab, var(--warn, #d9822b) 18%, transparent);
+  border-color: color-mix(in oklab, var(--warn, #d9822b) 55%, transparent);
+  color: var(--warn, #d9822b);
+  font-weight: var(--weight-emphasis, 600);
+}
+
+.configFaultBanner {
+  margin: 0 0 var(--space-3, 0.75rem);
+  padding: 0.6rem 0.85rem;
+  border: 1px solid color-mix(in oklab, var(--warn, #d9822b) 45%, transparent);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm, 4px);
+  background: color-mix(in oklab, var(--warn, #d9822b) 10%, transparent);
+  color: var(--text-primary, #e8eaf0);
+  font-size: var(--type-small, 0.85rem);
+  line-height: 1.45;
 }

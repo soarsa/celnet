@@ -949,7 +949,7 @@ impl RfqDeskEdge {
     /// ACTUAL fill price — see [`Self::book_fix_lift_priced`].
     #[must_use]
     pub fn book_fix_lift(&self, request_id: &str) -> Option<Deal> {
-        self.book_fix_lift_inner(request_id, None)
+        self.book_fix_lift_inner(request_id, None, None)
     }
 
     /// Book a FIX-venue lift at an explicit **dealt price** — the actual fill price the
@@ -960,14 +960,30 @@ impl RfqDeskEdge {
     /// (notional, direction, limit/risk-book gating, notifications) is identical to
     /// [`Self::book_fix_lift`].
     #[must_use]
-    pub fn book_fix_lift_priced(&self, request_id: &str, dealt_price: f64) -> Option<Deal> {
-        self.book_fix_lift_inner(request_id, Some(dealt_price))
+    ///
+    /// `lift_side` is the direction the counterparty actually traded, read from the
+    /// lift's own `Side(54)`. It matters because a STREAMING request (RFS / ESP) is
+    /// subscribed TWO-WAY: the stored instrument carries no firm direction, so the booked
+    /// side cannot be recovered from the request alone — only the lift says whether the
+    /// client took the offer or hit the bid.
+    pub fn book_fix_lift_priced(
+        &self,
+        request_id: &str,
+        dealt_price: f64,
+        lift_side: Option<Side>,
+    ) -> Option<Deal> {
+        self.book_fix_lift_inner(request_id, Some(dealt_price), lift_side)
     }
 
     /// Shared FIX-lift booking body. `dealt_override` replaces the auto-quote's own price
     /// with the last-look fill price when the caller carries one; otherwise the request's
     /// quoted level is used.
-    fn book_fix_lift_inner(&self, request_id: &str, dealt_override: Option<f64>) -> Option<Deal> {
+    fn book_fix_lift_inner(
+        &self,
+        request_id: &str,
+        dealt_override: Option<f64>,
+        lift_side: Option<Side>,
+    ) -> Option<Deal> {
         let mut current = self.requests.get(request_id)?;
         if current.state != DeskRequestState::Quoted as i32 {
             return None;
@@ -981,10 +997,27 @@ impl RfqDeskEdge {
             _ => quote.price,
         };
 
-        // The desk's traded direction is the opposite of the counterparty's firm
-        // instrument side (validated priceable at ingest, so always Buy/Sell) — read
-        // from whichever FI family (OIS / IRS / FRA / bond) the request carries.
-        let traded_side = traded_side_of(current.instrument.as_ref())?;
+        // The counterparty's traded direction.
+        //
+        // The LIFT is authoritative when it states a firm side: `Side(54)` on the
+        // `NewOrderSingle` is what the client actually did. The stored request side is the
+        // fallback for the paths that carry one (a firm RFQ names its direction up front).
+        //
+        // This distinction is the whole bug on a streaming venue. An RFS / ESP
+        // subscription is TWO-WAY — the request stores no firm direction — so booking off
+        // the request alone gave every streamed deal the SAME side, and the client blotter
+        // showed 100% BUY however the simulator alternated. The sim was right the whole
+        // way down (`esp_lift_side_for` rotates 3:2 and the wire carried `SIDE_SELL`); the
+        // direction was discarded here, at the last step.
+        let traded_side = match lift_side {
+            Some(s @ (Side::Buy | Side::Sell)) => s,
+            _ => match traded_side_of(current.instrument.as_ref())? {
+                s @ (Side::Buy | Side::Sell) => s,
+                // Neither the lift nor the request states a firm direction: booking a
+                // guess would put a fabricated position on the desk's book.
+                _ => return None,
+            },
+        };
         let desk_side = opposite_side(traded_side);
 
         // Best-order timer O2 (quote→lift handling, `OpKind::QuoteAccept`): bracket the
@@ -1016,6 +1049,7 @@ impl RfqDeskEdge {
                     entity: 0,
                     book: 0,
                     instrument: Some(booked_instrument.clone()),
+                    ..Default::default()
                 },
                 RatesRoutingAttribution {
                     counterparty: current.counterparty.clone(),
@@ -1398,6 +1432,7 @@ impl RfqDeskService for RfqDeskEdge {
                 entity: 0,
                 book: 0,
                 instrument: Some(booked_instrument.clone()),
+                ..Default::default()
             },
             RatesRoutingAttribution {
                 counterparty: current.counterparty.clone(),
@@ -2395,6 +2430,74 @@ pub(crate) mod tests {
         let n = sub.rx.try_recv().expect("a notification was published");
         assert_eq!(n.kind, NotificationKind::RfqReceived as i32);
         assert_eq!(n.desk, "g10");
+    }
+
+    /// Ingest a TWO-WAY streaming subscription, auto-quoted and therefore liftable —
+    /// exactly the shape an RFS / ESP venue creates. `submit_desk_request` cannot express
+    /// this: it refuses a two-way side, so only the FIX ingest path produces one.
+    fn two_way_stream(edge: &RfqDeskEdge) -> String {
+        edge.ingest_fix_rfq(
+            "g10-rates",
+            "CELER_RATES_ESP",
+            ois_instrument(Side::TwoWay),
+            curve(),
+            Side::TwoWay,
+            10_000_000.0,
+            DeskRequestKind::Rfs,
+            RfqIngestOutcome::AutoQuoted(DeskQuote {
+                price: 0.0405,
+                notional: 10_000_000.0,
+                valid_for_ms: 30_000,
+                trader: "auto".to_owned(),
+            }),
+        )
+        .request_id
+    }
+
+    /// **A two-way STREAM books the side the client actually lifted.**
+    ///
+    /// Regression for the UAT report of 2026-08-21: every deal on the client blotter read
+    /// BUY, however the simulator alternated. The sim was right the whole way down —
+    /// `esp_lift_side_for` rotates 3 lifts : 2 hits, and the wire genuinely carried
+    /// `SIDE_SELL` — but an RFS / ESP subscription is submitted TWO-WAY, so the stored
+    /// request holds no firm direction and booking off it alone gave every streamed deal
+    /// the same side. The direction was thrown away at the last step.
+    #[tokio::test]
+    async fn a_two_way_stream_books_the_side_the_lift_states() {
+        let edge = edge();
+        let id = two_way_stream(&edge);
+        let deal = edge
+            .book_fix_lift_priced(&id, 0.0406, Some(Side::Sell))
+            .expect("a two-way stream lift books");
+        // `Deal.side` is the DESK's side — the opposite of what the counterparty did — so a
+        // client that hit the bid leaves the desk long.
+        assert_eq!(
+            deal.side,
+            Side::Buy as i32,
+            "a client SELL must book the desk on the other side of it",
+        );
+    }
+
+    /// …and the counter-case, so the fix is a real distinction rather than a new constant.
+    #[tokio::test]
+    async fn the_same_stream_books_a_buy_when_the_lift_takes_the_offer() {
+        let edge = edge();
+        let id = two_way_stream(&edge);
+        let deal = edge
+            .book_fix_lift_priced(&id, 0.0406, Some(Side::Buy))
+            .expect("books");
+        // The counter-case must land on the OTHER side: before the fix both lifts booked
+        // the same direction, which is exactly what made the blotter read 100% one way.
+        assert_eq!(deal.side, Side::Sell as i32);
+    }
+
+    /// A two-way request lifted with NO stated side books NOTHING. Guessing a direction
+    /// would put a fabricated position on the desk's book.
+    #[tokio::test]
+    async fn a_two_way_stream_with_no_lift_side_refuses_to_guess() {
+        let edge = edge();
+        let id = two_way_stream(&edge);
+        assert!(edge.book_fix_lift_priced(&id, 0.0406, None).is_none());
     }
 
     /// A FIX-venue lift (a taker's firm NewOrderSingle that fills atomically) publishes

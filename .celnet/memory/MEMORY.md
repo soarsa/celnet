@@ -1,5 +1,12 @@
 # Memory index
 
+- [Risk transfer moves REAL positions now](risk-transfer-lists-real-positions.md) — the ticket synthesised its lots so every submit was refused; fixed by publishing the risk-book stamp + ONE shared risk vector for both asset classes (the FX half was nearly missed).
+- [Hedge orders were denominated in DV01, not contracts](hedge-orders-denominated-in-dv01.md) — why the books pinned at 100%: every futures shed was rejected NOT_A_WHOLE_LOT. Three-pass fix; also the 100% rounding artifact + the wash-book limit/threshold split.
+- [Hedge rate cap was a LIFETIME cap — desk deadlock](hedge-rate-cap-lifetime-deadlock.md) — root cause of "portfolios don't offset"; wedged the pre-trade gate too. Fixed ce38b59e; lists THREE prior diagnoses that were wrong.
+- [CS01 = z-spread solved off the live price](cs01-z-spread-from-live-price.md) — design decided + analytics built/validated (0237e614); wire + 5-client integration still to do.
+- [UAT sim was 100% OIS — RFS/ESP wedged](uat-sim-all-ois-rfs-esp-wedged.md) — spin bug in collect_md_stream FIXED (a4f85332, +regression); the agg-book legs still stream registry-order instruments the book cannot price.
+- [UAT reset → DV01 hedging + acceptance](uat-reset-dv01-hedging-acceptance.md) — DONE 2026-08-14: 19a5d3fe live, state wiped, hedging/acceptance rebuilt over the WS admin API, real DV01 breach fired and residual fell to target. Carries the admin-client recipe + the vehicle-before-policy ordering trap.
+
 - [Dropdowns · ESP→RFS · futures roll — ALL DONE](open-items-dropdowns-esp-tag-futures-roll.md) — shipped on local main (not pushed/deployed); two of the three prior diagnoses were wrong — read it before trusting a recorded hypothesis.
 - [run_dev.sh is THE local bring-up](run-dev-single-entry-point.md) — one entry point (server + sims + GUI); auto-discovers the FIX port, provisions the book, sweeps a stale stack on entry.
 - [Bond hedge offsetting leg — FIXED + LIVE](bond-hedge-books-no-offsetting-leg.md) — ✅ UAT f5c3b37e: a bond hedge now books the SAME security sold back (DV01 ratio ≡ 1, no duration input needed — the earlier "needs real quant work" diagnosis was wrong), so bond risk actually reduces. Also: `celnetctl restart` AddrInUse race FIXED+deployed; orphaned-on-box-build hazard; deploy.yml does NOT re-provision control scripts.
@@ -37,3 +44,5 @@
 - [Arch program status](arch-program-status.md) — main-line items A–L mostly LANDED on origin/main (7878048); only G/D/J + orchestration tail remain; CLAUDE.md resume anchor is STALE.
 - [FIX-sim + GUI keepalive](fix-sim-and-gui-keepalive.md) — GUI reconnect-flicker fixed via client WS heartbeat (20s); FIX quote-sim deploy needs CELNET_FIX_ADDR acceptor + logs to deploy/fix-sim-run/log; credit designs (celnet-credit) written; SecurityListRequest delegated.
 - [Server tracing subscriber](server-tracing-subscriber.md) — celnet-server had NO tracing subscriber (all tracing dropped); fixed in main.rs + added detailed login/quote logging (ships next release).
+
+- [UAT persisted state predates schema](uat-persisted-state-predates-schema.md) — identity.json keeps RETIRED ids and misses NEWLY-ADDED fields; check it before debugging code.

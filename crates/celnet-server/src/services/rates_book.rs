@@ -357,6 +357,18 @@ pub struct RatesPositionStore {
     /// and `ListStreetOrders` serves the blotter + breakdowns off it. `None` (the unit-test
     /// default) means the recording call is a no-op.
     street_orders: OnceLock<Arc<crate::services::analytics::street_orders::StreetOrderLog>>,
+    /// The detached-hedge work queue, drained by ONE long-lived worker.
+    ///
+    /// The first cut spawned an OS thread per booking. That is not cheap at booking rates:
+    /// the phase breakdown on UAT put 0.9-2.4ms in the dispatch bucket, dwarfing the
+    /// pre-trade gate (25-100us) and the write commit (19-118us) it was meant to get out
+    /// of the way of — async moved the venue round trip off the path and put a thread
+    /// spawn there instead.
+    ///
+    /// Bounded, deliberately: a full queue means the hedge worker is not keeping up, and
+    /// the honest response is to run that hedge INLINE (slower, still correct) rather than
+    /// grow an unbounded backlog of risk nobody is working.
+    hedge_queue: OnceLock<std::sync::mpsc::SyncSender<HedgeJob>>,
     /// The **standing hedge suggestions** raised under a `Suggest`-mode scope (§6.5) — the
     /// manual half of suggest-then-exit. A breach in such a scope computes the whole hedge
     /// (band, action, vehicle, DV01 ratio, whole-lot rounding) and publishes it here
@@ -441,6 +453,7 @@ impl RatesPositionStore {
         Self {
             inner: RwLock::new(Vec::new()),
             next_id: AtomicU64::new(1),
+            hedge_queue: OnceLock::new(),
             limits: RwLock::new(LimitTree::new()),
             consensus: OnceLock::new(),
             routing: RwLock::new(None),
@@ -484,6 +497,33 @@ impl RatesPositionStore {
     /// records an honest miss — never a fabricated LP fill.
     pub fn set_lp_hedge_source(&self, src: Arc<dyn crate::services::auto_hedge::LpHedgeSource>) {
         let _ = self.lp_hedge_source.set(src);
+    }
+
+    /// Start the detached-hedge dispatcher (once, at wiring time). Required for
+    /// [`HedgeDispatch`](crate::config::hedge_policy::HedgeDispatch)`::Async`; without it
+    /// there is no queue to hand work to and a hedge configured async runs inline.
+    pub fn set_self_handle(&self, me: &Arc<RatesPositionStore>) {
+        // One worker, started once, draining the queue for the life of the process — in
+        // place of a thread per booking. The worker holds a WEAK handle and exits when the
+        // store goes away, so it never keeps a dropped store alive.
+        let (tx, rx) = std::sync::mpsc::sync_channel::<HedgeJob>(HEDGE_QUEUE_DEPTH);
+        if self.hedge_queue.set(tx).is_err() {
+            return; // already started
+        }
+        let weak = Arc::downgrade(me);
+        let _ = std::thread::Builder::new()
+            .name("celnet-hedge-dispatch".to_owned())
+            .spawn(move || {
+                while let Ok(job) = rx.recv() {
+                    let Some(store) = weak.upgrade() else { return };
+                    store.stamp_internalise(
+                        &job.fill,
+                        job.book.as_deref(),
+                        &job.attribution,
+                        job.trace_id,
+                    );
+                }
+            });
     }
 
     /// Attach the live **street-order router** — the outbound FIX seam that actually
@@ -1181,6 +1221,13 @@ impl RatesPositionStore {
         // snapshot→write window is the standard pre-trade TOCTOU: a hard breach still
         // rejects here and leaves the book unmutated, the post-trade limit monitor
         // backstopping any concurrent joint breach.
+        // Phase timers. The `Book` stage is a composite — pre-trade gate, then the write
+        // commit, then the trace emission — and a p99 five times its own p50 says one of
+        // them tails while the others do not. Reading the code cannot say which: the gate
+        // is O(positions) but memoised, the commit takes the store's only write lock, and
+        // the trace emit is off-core. So the booking measures itself and NAMES the phase
+        // when it runs long, rather than anyone guessing from an aggregate.
+        let gate_t0 = std::time::Instant::now();
         {
             let limits = self.limits.read().expect("rates limit tree lock poisoned");
             if !limits.is_empty() {
@@ -1259,6 +1306,12 @@ impl RatesPositionStore {
             }
         }
 
+        let gate_ns = gate_t0.elapsed();
+        // Measured OUTSIDE the guard's scope below so it includes the wait to ACQUIRE the
+        // write lock, not just the work done under it — a booking blocked behind a reader
+        // is exactly the tail this is looking for, and timing only the critical section
+        // would hide it.
+        let commit_t0 = std::time::Instant::now();
         let mut g = self
             .inner
             .write()
@@ -1286,6 +1339,9 @@ impl RatesPositionStore {
         } else {
             g.push(position.clone());
         }
+        // Captured before the guard drops: the gate's cost is O(this), so an outlier is
+        // only interpretable next to the book size that produced it.
+        let g_len = g.len();
         drop(g);
 
         // Risk routing (§4): stamp the risk book resolved above (before the per-book gate),
@@ -1330,6 +1386,8 @@ impl RatesPositionStore {
         // stage events at their TRUE instants (before the hedge decision below, so the timeline
         // orders correctly). A no-op when no hub / no request_id / an unknown request_id — the
         // manual-booking + gRPC-accept paths never bound a trace. Off the pinned core (guardrail 11).
+        let commit_ns = commit_t0.elapsed();
+        let trace_t0 = std::time::Instant::now();
         let booking_trace_id = self
             .trace
             .get()
@@ -1379,12 +1437,74 @@ impl RatesPositionStore {
         // price-tolerance verdict and stamp it onto the fill for the deal blotter. A no-op
         // otherwise (the manual `BookRatesPosition` path, or no policy) — byte-identical.
         // `booking_trace_id` threads the lift's trace so the hedge decision/fire emit stages.
-        self.stamp_internalise(
-            &position,
-            resolved_book.as_deref(),
-            &attribution,
-            booking_trace_id,
-        );
+        // The trace phase ends HERE, before dispatch. Conflating the two hid the real cost
+        // once already: the first breakdown blamed "trace" for 1-2ms when `TraceHub::record`
+        // is a non-blocking `try_send` and cannot cost that — what the bucket actually
+        // contained was the hedge dispatch below.
+        let trace_ns = trace_t0.elapsed();
+        let dispatch_t0 = std::time::Instant::now();
+
+        // Auto-hedge dispatch (`HedgeDispatch`): the hedge is the DESK's risk management,
+        // not part of confirming the client's trade — but running it here, inline, puts a
+        // blocking venue round trip on the client's booking commit (measured ~6ms p99 on
+        // UAT against a hedge decision of ~26us).
+        //
+        // `Async` detaches the whole hedge — decision and execution together, so the
+        // ordering between them is unchanged and only its relationship to the FILL moves.
+        // What is given up is simultaneity: the offsetting leg and the provenance record
+        // land a moment after the fill returns rather than with it.
+        //
+        // Falls back to inline whenever the async path is unavailable (no self-handle
+        // installed, or the store is being dropped). Degrading to synchronous is always
+        // safe; silently skipping the hedge never is.
+        let dispatch = self
+            .hedge_policy
+            .read()
+            .expect("rates hedge-policy lock poisoned")
+            .as_ref()
+            .map_or(crate::config::hedge_policy::HedgeDispatch::Sync, |p| {
+                p.config.dispatch
+            });
+        let queued = dispatch.is_async()
+            && self.hedge_queue.get().is_some_and(|tx| {
+                // `try_send`, never `send`: blocking here would put the queue's depth back
+                // on the client's booking commit, which is the whole thing async exists to
+                // avoid. A refusal falls through to inline below.
+                tx.try_send(HedgeJob {
+                    fill: position.clone(),
+                    book: resolved_book.clone(),
+                    attribution: attribution.clone(),
+                    trace_id: booking_trace_id,
+                })
+                .is_ok()
+            });
+        if !queued {
+            self.stamp_internalise(
+                &position,
+                resolved_book.as_deref(),
+                &attribution,
+                booking_trace_id,
+            );
+        }
+        // Name the phase when the booking runs long. WARN rather than a metric because the
+        // aggregate ALREADY exists (`OpKind::Book`) and is not the thing that is missing:
+        // what is missing is which of its three parts produced a given outlier, and that
+        // is a per-occurrence fact, not a distribution.
+        let total = book_t0.elapsed();
+        if total >= SLOW_BOOKING_THRESHOLD {
+            let dispatch_ns = dispatch_t0.elapsed();
+            tracing::warn!(
+                class = celnet_observability::LogClass::Risk.label(),
+                position_id = position.position_id,
+                total_us = total.as_micros(),
+                pre_trade_gate_us = gate_ns.as_micros(),
+                write_commit_us = commit_ns.as_micros(),
+                trace_emit_us = trace_ns.as_micros(),
+                hedge_dispatch_us = dispatch_ns.as_micros(),
+                positions = g_len,
+                "booking commit exceeded its budget — phase breakdown",
+            );
+        }
         // O3: record the ack→fill→book commit latency into the per-`OpKind` store (mirrors the
         // FX sink). Off the pinned pricing core; a no-op when no hub is installed.
         self.record_latency(
@@ -2181,6 +2301,8 @@ impl RatesPositionStore {
                 return;
             }
 
+            let (venue_quantity, risk_per_venue_unit) =
+                venue_denomination(plan.as_ref(), effective_external);
             let req = crate::services::auto_hedge::ExternalHedgeRequest {
                 // The LP panel is asked for the TRADEABLE security, falling back to the family
                 // label only when the cell resolves none. Asking for a family ("BOND") can
@@ -2191,6 +2313,8 @@ impl RatesPositionStore {
                 instrument: &execution_instrument,
                 net_risk: book_risk,
                 size: effective_external,
+                venue_quantity,
+                risk_per_venue_unit,
                 mid,
                 bp_scale: kind.bp_scale(),
                 mode: policy.config.execution,
@@ -2204,6 +2328,13 @@ impl RatesPositionStore {
             // `LpPanelThenComposite` reaches the composite backstop and pure `LpPanel` records an
             // honest miss (never a fabricated fill, guardrail 2).
             let router = self.street_router();
+            // Best-order timer O4 (`OpKind::HedgeExecute`): bracket the EXECUTION — a real
+            // order on a real venue, with a real round trip. It is deliberately separate
+            // from `HedgeFire` (the pure decision, microseconds): folding the two together
+            // is what made the booking commit look like it cost milliseconds when almost
+            // all of it was an outbound network wait, and the two call for opposite
+            // responses — "our hedge logic is slow" vs "the street took 6ms to answer".
+            let hedge_exec_t0 = std::time::Instant::now();
             let exec = match self.lp_hedge_source.get() {
                 Some(src) => {
                     crate::services::auto_hedge::execute_external(&req, src.as_ref(), router)
@@ -2214,6 +2345,10 @@ impl RatesPositionStore {
                     router,
                 ),
             };
+            self.record_latency(
+                celnet_observability::OpKind::HedgeExecute,
+                u64::try_from(hedge_exec_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            );
             // Book the offsetting leg into the same book so the warehoused net reduces by the
             // filled amount. `book_into_risk_book` re-runs the hard-cap gate (a reducing leg
             // never breaches, §8.3) and does NOT recurse into `stamp_internalise`. Every rates
@@ -2253,7 +2388,8 @@ impl RatesPositionStore {
                 &ctx.product,
                 hedge_maturity_years(fill),
                 book_risk,
-                effective_external,
+                venue_quantity,
+                risk_per_venue_unit,
                 outcome
                     .provenance
                     .as_ref()
@@ -2519,16 +2655,20 @@ impl RatesPositionStore {
             return Err("no hedge policy is primed — the engine cannot execute".to_owned());
         };
         let e = &row.exec;
+        let (venue_quantity, risk_per_venue_unit) = venue_denomination(e.plan.as_ref(), e.size);
         let req = crate::services::auto_hedge::ExternalHedgeRequest {
             instrument: &e.execution_instrument,
             net_risk: e.net_risk,
             size: e.size,
+            venue_quantity,
+            risk_per_venue_unit,
             mid: e.mid,
             bp_scale: e.bp_scale,
             mode: policy.config.execution,
             composite_spread_bp: policy.config.composite_spread_bp,
         };
         let router = self.street_router();
+        let hedge_exec_t0 = std::time::Instant::now();
         let exec = match self.lp_hedge_source.get() {
             Some(src) => crate::services::auto_hedge::execute_external(&req, src.as_ref(), router),
             None => crate::services::auto_hedge::execute_external(
@@ -2537,6 +2677,10 @@ impl RatesPositionStore {
                 router,
             ),
         };
+        self.record_latency(
+            celnet_observability::OpKind::HedgeExecute,
+            u64::try_from(hedge_exec_t0.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
@@ -2613,7 +2757,8 @@ impl RatesPositionStore {
             &e.instrument,
             hedge_maturity_years(&e.fill),
             e.net_risk,
-            e.size,
+            venue_quantity,
+            risk_per_venue_unit,
             Some(prov.hedge_id.clone()).filter(|id| !id.is_empty()),
             e.fill.position_id,
             now,
@@ -2982,6 +3127,40 @@ fn genuine_position_dv01(fill: &RatesPosition, dealt_clean_price: Option<f64>) -
     }
 }
 
+/// Split a shed into **what the venue is asked to trade** and **what one venue unit removes**.
+///
+/// A vehicle hedge sheds DV01 by trading a *lot-denominated* instrument, so the two are in
+/// different denominations: the book accounts in DV01, while the venue trades contracts and
+/// rejects anything that is not a whole lot. Asking the venue in DV01 got every futures shed
+/// rejected `NOT_A_WHOLE_LOT` on UAT — a plan for 14 `ZTU26` went to the wire as 484.5648 —
+/// so no external hedge ever filled and the book pinned at its cap.
+///
+/// Without a plan the self-hedge sells the same security back, where the two denominations
+/// coincide, so the pair is `(size, 1.0)` and behaviour is unchanged.
+fn venue_denomination(plan: Option<&HedgeRatioPlan>, size: f64) -> (f64, f64) {
+    match plan {
+        // A resolved plan is ALWAYS authoritative for the venue quantity — including when it
+        // rounds to ZERO contracts. Falling back to `size` on a zero-unit plan puts the DV01
+        // figure back on the wire for the one case the rounding exists to prevent (a target
+        // below one whole lot); `execute_external` refuses a non-positive venue quantity,
+        // which is the honest "too small to hedge with this vehicle".
+        //
+        // The listed venue denominates order quantity in FACE, not in contract counts: one
+        // whole lot IS one contract's face value, which is what keeps a bond and a future in
+        // the same units on one aggregated book. So a contract count goes on the wire
+        // multiplied by the contract's face; the DV01 per wire-unit divides by the same
+        // factor, leaving the risk conversion exact.
+        Some(p) if p.dv01_per_unit > 0.0 => {
+            match celnet_refdata::contract_face_value(&p.hedge_instrument_id) {
+                Some(face) if face > 0.0 => (p.units.abs() * face, p.dv01_per_unit / face),
+                // A vehicle that is not a listed contract trades in its own units already.
+                _ => (p.units.abs(), p.dv01_per_unit),
+            }
+        }
+        _ => (size, 1.0),
+    }
+}
+
 /// The fill's **maturity in years** — the axis the hedge-vehicle registry buckets on (a
 /// 9-year corp resolving into the 10Y-future bucket).
 ///
@@ -3045,6 +3224,13 @@ fn hedge_maturity_years(fill: &RatesPosition) -> Option<f64> {
 /// is absent only where there was no round trip to measure (an unroutable member, a
 /// backstop).
 #[allow(clippy::too_many_arguments)]
+/// Record what the street was asked for, **in the venue's own units**.
+///
+/// `requested` is the quantity that actually went on the wire (contracts for a listed
+/// future), NOT the budget-metric size — the blotter is a record of orders, so a row
+/// reading "484.5648" against a plan for 14 contracts describes an order nobody sent.
+/// `risk_per_venue_unit` converts the composite row's fill (which is carried in the budget
+/// metric) back into the same units, so every quantity on one row is denominated alike.
 fn record_street_order(
     log: Option<&Arc<crate::services::analytics::street_orders::StreetOrderLog>>,
     exec: &crate::services::auto_hedge::ExternalHedgeFill,
@@ -3054,6 +3240,7 @@ fn record_street_order(
     tenor_years: Option<f64>,
     net_risk: f64,
     requested: f64,
+    risk_per_venue_unit: f64,
     parent_hedge_id: Option<String>,
     parent_position_id: u64,
     ts_nanos: i64,
@@ -3184,7 +3371,13 @@ fn record_street_order(
         venue,
         family,
         tenor_years,
-        filled_qty: exec.filled,
+        // `exec.filled` is in the budget metric; this row's `requested` is in venue units,
+        // so convert rather than print two denominations side by side on one row.
+        filled_qty: if risk_per_venue_unit > 0.0 {
+            exec.filled / risk_per_venue_unit
+        } else {
+            exec.filled
+        },
         filled_price: outcome.is_fill().then_some(exec.hedge_price),
         slippage_bp: outcome.is_fill().then_some(exec.slippage_bp),
         outcome,
@@ -3471,6 +3664,28 @@ struct BondDv01Memo {
     /// constructed (memoized too, so a malformed bond is not re-attempted per position).
     per_unit: HashMap<BondDv01Key, Option<f64>>,
 }
+
+/// One detached auto-hedge, carried to the worker. Owned throughout — the worker outlives
+/// the booking that queued it.
+struct HedgeJob {
+    fill: RatesPosition,
+    book: Option<String>,
+    attribution: RatesRoutingAttribution,
+    trace_id: Option<u64>,
+}
+
+/// How many detached hedges may be queued before dispatch degrades to inline.
+///
+/// Small on purpose. This is a work queue for risk management, not a buffer: a deep
+/// backlog would mean the book's real hedge state lags its position state by however long
+/// the queue is, which is exactly the divergence the ledger exists to rule out.
+const HEDGE_QUEUE_DEPTH: usize = 64;
+
+/// A booking slower than this names its phase breakdown in the log.
+///
+/// 1ms is the stated budget for the whole tick→book path, so a single booking commit at
+/// or above it has consumed the entire budget on its own.
+const SLOW_BOOKING_THRESHOLD: std::time::Duration = std::time::Duration::from_millis(1);
 
 static BOND_DV01_MEMO: OnceLock<RwLock<BondDv01Memo>> = OnceLock::new();
 
@@ -4191,14 +4406,35 @@ fn rates_pre_trade(
         vega: 0.0,
     };
     let exclude = position.position_id;
+
+    // Build each standing position's fact ONCE, here, and reuse it for every scope.
+    //
+    // The three closures below are called per scope (`book → entity → firm`), and each
+    // previously re-walked the whole book and recomputed `rates_linear_exposure` from
+    // scratch — four full passes over every position per booking, with the bond arm taking
+    // the DV01 memo's read lock on each one. That is O(positions) work multiplied by a
+    // constant nobody was counting, and it is why the pre-trade gate grew from 25us at 14
+    // positions to ~1.1ms at 1,320 on UAT while the write commit stayed under 120us.
+    //
+    // One pass, one exposure per position. The facts are then FILTERED per scope, so every
+    // scope still sees exactly the positions it saw before, in the same order, and
+    // `firm_aggregate_rates` folds an identical sequence — the exact-fold contract the
+    // sharded roll-up depends on is untouched. This is a constant-factor fix, not an
+    // asymptotic one: the gate is still O(positions), just once instead of four times.
+    let standing: Vec<(&RatesPosition, RatesRiskFact)> = positions
+        .iter()
+        .filter(|p| exclude == 0 || p.position_id != exclude)
+        .map(|p| (p, rates_risk_fact_of(p)))
+        .collect();
     let others = |scope: LimitScope| {
-        positions
+        standing
             .iter()
-            .filter(move |p| exclude == 0 || p.position_id != exclude)
-            .filter(move |p| rates_scope_matches(scope, p))
+            .filter(move |(p, _)| rates_scope_matches(scope, p))
     };
     let node_at = |scope: LimitScope| -> NodeAggregate {
-        let sum: f64 = others(scope).map(rates_linear_exposure).sum();
+        // `RatesRiskFact::dv01` IS `rates_linear_exposure` (see `rates_risk_fact_of`), so
+        // the sum reads the value already computed rather than recomputing it.
+        let sum: f64 = others(scope).map(|(_, f)| f.dv01).sum();
         let mut node = NodeAggregate::empty(scope.group_value().unwrap_or(0));
         node.net_greeks.delta_base = sum;
         node
@@ -4212,8 +4448,8 @@ fn rates_pre_trade(
     // contains the proposed position by construction, so it belongs in every projection.
     let rates_at = |scope: LimitScope| -> RatesNodeAggregate {
         let facts: Vec<RatesRiskFact> = others(scope)
-            .chain(std::iter::once(position))
-            .map(rates_risk_fact_of)
+            .map(|(_, f)| f.clone())
+            .chain(std::iter::once(rates_risk_fact_of(position)))
             .collect();
         firm_aggregate_rates(&facts)
             .book(GATE_CCY)
@@ -4385,7 +4621,53 @@ pub(crate) mod tests {
                     side: Side::Buy as i32,
                 })),
             }),
+            ..Default::default()
         }
+    }
+
+    /// **The pre-trade gate isolates scopes** — a book's own limit sees only that book.
+    ///
+    /// Guards the single-pass refactor. The gate used to re-walk `positions` per scope;
+    /// it now walks once and FILTERS the built facts, so the predicate that decides which
+    /// positions a scope sees moved. If that filter were wrong the gate would silently
+    /// aggregate the whole firm into every book limit — which fails safe (it over-counts,
+    /// so it rejects) and would therefore never show up as a missing rejection, only as
+    /// spurious ones. Asserted from both sides for that reason.
+    #[test]
+    fn the_pre_trade_gate_sees_only_the_scope_it_is_checking() {
+        use celnet_limits::{LimitMetric, LimitSpec};
+
+        // Two books under one entity, each already carrying one 5y 10mm OIS.
+        let standing = vec![position(1, 1, 10), position(2, 1, 20)];
+        let one_dv01 = rates_linear_exposure(&standing[0]).abs();
+        assert!(one_dv01 > 0.0, "the fixture must carry real exposure");
+
+        // A BOOK-scoped cap that one position fits inside but two would not.
+        let mut limits = LimitTree::new();
+        limits.set(
+            LimitScope::Book(BookId(10)),
+            LimitSpec::hard(LimitMetric::Dv01, one_dv01 * 2.5),
+        );
+
+        // Booking a THIRD position into book 10 projects book 10 to 2 x one_dv01 — inside
+        // its own cap. It only breaches if the gate wrongly folds book 20 in as well.
+        let incoming = position(0, 1, 10);
+        let result = rates_pre_trade(&standing, &limits, &incoming);
+        assert_eq!(
+            result.decision,
+            PreTradeDecision::Accept,
+            "book 10's cap must not see book 20's position",
+        );
+
+        // …and the cap still binds on its OWN book: a third position into book 10 takes it
+        // past 2.5x. Without this the test would pass on a gate that sees nothing at all.
+        let crowded = vec![position(1, 1, 10), position(2, 1, 10)];
+        let result = rates_pre_trade(&crowded, &limits, &position(0, 1, 10));
+        assert_eq!(
+            result.decision,
+            PreTradeDecision::Reject,
+            "three positions in book 10 must breach book 10's own cap",
+        );
     }
 
     /// The `Bucket`-scope subtree roll-up (§5): a bucket's net DV01 is its root book's
@@ -4432,6 +4714,7 @@ pub(crate) mod tests {
                     side: side as i32,
                 })),
             }),
+            ..Default::default()
         }
     }
 
@@ -4862,6 +5145,7 @@ pub(crate) mod tests {
                     ..Default::default()
                 })),
             }),
+            ..Default::default()
         }
     }
 
@@ -4898,6 +5182,7 @@ pub(crate) mod tests {
             entity: 1,
             book: 7,
             instrument: None,
+            ..Default::default()
         };
         assert_eq!(hedge_execution_instrument(&bare), None);
     }
@@ -4958,6 +5243,7 @@ pub(crate) mod tests {
             entity: 1,
             book: 7,
             instrument: None,
+            ..Default::default()
         };
         assert!(offsetting_rates_leg(&bare, 0.5).is_none());
     }
@@ -5639,6 +5925,7 @@ pub(crate) mod tests {
                     side: side as i32,
                 })),
             }),
+            ..Default::default()
         }
     }
 
@@ -6275,6 +6562,142 @@ pub(crate) mod tests {
         );
     }
 
+    /// **`Sync` keeps the hedge on the booking path; `Async` takes it off.**
+    ///
+    /// The synchronous case is the historical contract and several callers depend on it:
+    /// the offsetting leg and the provenance record are BOTH in place the instant
+    /// `book_with_routing` returns. Asserting that immediately after booking is exactly
+    /// the guarantee `Sync` makes.
+    #[test]
+    fn sync_dispatch_completes_the_hedge_before_the_fill_returns() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let mut policy = external_hedge_policy("wh", 100_000.0, 0.5);
+        policy.config.dispatch = crate::config::hedge_policy::HedgeDispatch::Sync;
+        store.set_hedge_policy(Some(policy));
+        store.set_lp_hedge_source(Arc::new(StubLp {
+            lp: "LP-SIM-01",
+            bid: 0.0404,
+            offer: 0.0406,
+        }));
+        store.set_street_router(Arc::new(TradesAtQuote));
+
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
+            .expect("books");
+        assert!(
+            store.internalise_of(booked.position_id).is_some(),
+            "under Sync the hedge is complete by the time the fill returns",
+        );
+    }
+
+    /// Under `Async` the fill returns without waiting — and the hedge still happens.
+    ///
+    /// Both halves matter. A fill that returns early has bought nothing if the hedge was
+    /// dropped, so this waits (bounded) for the detached work to land rather than
+    /// asserting its absence, which would pass just as well for a hedge that never ran.
+    #[test]
+    fn async_dispatch_detaches_the_hedge_but_still_runs_it() {
+        let store = Arc::new(RatesPositionStore::new());
+        store.set_self_handle(&store);
+        store.set_routing(Some(single_book_graph("wh")));
+        let mut policy = external_hedge_policy("wh", 100_000.0, 0.5);
+        policy.config.dispatch = crate::config::hedge_policy::HedgeDispatch::Async;
+        store.set_hedge_policy(Some(policy));
+        store.set_lp_hedge_source(Arc::new(StubLp {
+            lp: "LP-SIM-01",
+            bid: 0.0404,
+            offer: 0.0406,
+        }));
+        store.set_street_router(Arc::new(TradesAtQuote));
+
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
+            .expect("books");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while store.internalise_of(booked.position_id).is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the detached hedge must still run — async moves it off the path, it does \
+                 not drop it",
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    /// Async configured but NO self-handle installed ⇒ the hedge runs inline.
+    ///
+    /// Degrading to synchronous is always safe; silently skipping the hedge never is, so
+    /// the missing handle must not become a missing hedge.
+    #[test]
+    fn async_without_a_self_handle_falls_back_to_running_inline() {
+        let store = RatesPositionStore::new();
+        store.set_routing(Some(single_book_graph("wh")));
+        let mut policy = external_hedge_policy("wh", 100_000.0, 0.5);
+        policy.config.dispatch = crate::config::hedge_policy::HedgeDispatch::Async;
+        store.set_hedge_policy(Some(policy));
+        store.set_lp_hedge_source(Arc::new(StubLp {
+            lp: "LP-SIM-01",
+            bid: 0.0404,
+            offer: 0.0406,
+        }));
+        store.set_street_router(Arc::new(TradesAtQuote));
+
+        let booked = store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
+            .expect("books");
+        assert!(
+            store.internalise_of(booked.position_id).is_some(),
+            "no handle ⇒ inline, never skipped",
+        );
+    }
+
+    /// **The venue round trip is its own stage, not part of the booking commit.**
+    ///
+    /// The auto-hedge EXECUTION puts a real order on a real venue and blocks on the
+    /// answer. That wait used to be unmeasured, so it was folded into `Book` — which is
+    /// why a live desk read 5-6ms for "Ack→fill→book" while the hedge DECISION read 26us.
+    /// A stage that silently contains someone else's network call cannot be optimised,
+    /// because the number never points at the thing that is slow.
+    #[test]
+    fn the_hedge_venue_round_trip_is_measured_apart_from_the_booking_commit() {
+        use celnet_observability::OpKind;
+        let store = RatesPositionStore::new();
+        let hub = Arc::new(crate::services::telemetry::TelemetryHub::new(1_000_000_000));
+        store.set_telemetry(Arc::clone(&hub));
+        store.set_routing(Some(single_book_graph("wh")));
+        // An EXTERNAL policy, an LP that quotes, and a router that trades — so the shed
+        // genuinely reaches the street seam rather than warehousing.
+        store.set_hedge_policy(Some(external_hedge_policy("wh", 100_000.0, 0.5)));
+        store.set_lp_hedge_source(Arc::new(StubLp {
+            lp: "LP-SIM-01",
+            bid: 0.0404,
+            offer: 0.0406,
+        }));
+        store.set_street_router(Arc::new(TradesAtQuote));
+
+        store
+            .book_with_routing(position(0, 1, 10), priced_attribution(0.0405, 0.0405))
+            .expect("books");
+
+        let stats = hub.stage_stats();
+        let count_of = |k: OpKind| -> u64 {
+            stats
+                .iter()
+                .find(|s| s.kind == k)
+                .map_or(0, |s| s.snapshot.count)
+        };
+        assert!(
+            count_of(OpKind::HedgeExecute) > 0,
+            "the external hedge execution records its own stage, got {stats:?}"
+        );
+        assert!(
+            count_of(OpKind::HedgeFire) > 0,
+            "the decision still records its own stage, got {stats:?}"
+        );
+    }
+
     /// With no hub installed the same booking is a silent no-op for telemetry — booking still
     /// succeeds, byte-identical to the pre-instrumentation path (the record calls short-circuit).
     #[test]
@@ -6556,6 +6979,134 @@ pub(crate) mod tests {
         assert!(!exec.advisory, "a live composite shed is not advisory");
     }
 
+    /// **A listed vehicle goes to the wire in FACE, and the risk conversion stays exact.**
+    ///
+    /// The last unit in the 2026-08-20 chain. Sending whole CONTRACTS still came back
+    /// `NOT_A_WHOLE_LOT` for `UBU26 qty=2`, because this venue denominates order quantity in
+    /// face — `contract_lot_size` IS the contract's face value, and its quoted clips are
+    /// `contracts × face`. That is a deliberate design: one denomination across the whole
+    /// aggregated book is what lets a cash bond and a future sit on the same panel.
+    ///
+    /// So the wire gets `units × face`, and `risk_per_venue_unit` divides by the same
+    /// factor — the product is invariant, so the book still reduces by exactly the DV01 the
+    /// contracts removed.
+    #[test]
+    fn a_listed_vehicle_is_sent_in_face_with_an_exact_risk_conversion() {
+        use celnet_hedge_routing::Dv01Basis;
+        let dv01_per_contract = 133.8721;
+        let plan = HedgeRatioPlan {
+            hedge_instrument_id: "UBU26".to_owned(),
+            unit_label: "contracts".to_owned(),
+            whole_units: true,
+            basis: Dv01Basis::Analytic,
+            target_dv01: 290.32,
+            dv01_per_unit: dv01_per_contract,
+            exact_units: 2.168_663,
+            units: 2.0,
+            hedged_dv01: 2.0 * dv01_per_contract,
+            residual_dv01: 22.58,
+        };
+        let (venue_quantity, risk_per_venue_unit) = venue_denomination(Some(&plan), 267.74);
+
+        // UB's contract face is 100,000, so two contracts is 200,000 of face — a whole
+        // multiple of the lot, which is precisely what the venue was refusing before.
+        assert!(
+            (venue_quantity - 200_000.0).abs() < 1e-6,
+            "expected 200000 face, got {venue_quantity}"
+        );
+        assert!(
+            (venue_quantity % 100_000.0).abs() < 1e-6,
+            "the wire quantity must be a whole multiple of the contract face"
+        );
+        // The invariant that matters: quantity × risk-per-unit is still the DV01 the two
+        // contracts actually remove, so nothing about the book's accounting moved.
+        assert!(
+            (venue_quantity * risk_per_venue_unit - 2.0 * dv01_per_contract).abs() < 1e-9,
+            "risk conversion must be exact"
+        );
+    }
+
+    /// A vehicle that is NOT a listed contract keeps its own units — the face lookup must
+    /// not silently rescale something it does not recognise.
+    #[test]
+    fn an_unlisted_vehicle_keeps_its_own_units() {
+        use celnet_hedge_routing::Dv01Basis;
+        let plan = HedgeRatioPlan {
+            hedge_instrument_id: "SOME-OTC-BENCHMARK".to_owned(),
+            unit_label: "1mm face".to_owned(),
+            whole_units: false,
+            basis: Dv01Basis::Analytic,
+            target_dv01: 500.0,
+            dv01_per_unit: 100.0,
+            exact_units: 5.0,
+            units: 5.0,
+            hedged_dv01: 500.0,
+            residual_dv01: 0.0,
+        };
+        let (q, r) = venue_denomination(Some(&plan), 500.0);
+        assert!((q - 5.0).abs() < 1e-9, "unlisted vehicle keeps its units");
+        assert!((r - 100.0).abs() < 1e-9);
+    }
+
+    /// **The blotter records what was SENT, in the venue's own units.**
+    ///
+    /// Second-order regression from the 2026-08-20 UAT report. Once the wire was fixed to
+    /// ask for whole contracts, the blotter still logged the budget-metric size — so a plan
+    /// for 1 `ZFU26` showed as "Requested 38.3347" next to a fill of 0, and the row looked
+    /// like the bug was still there. A blotter row that names a quantity nobody sent is
+    /// worse than no row: it sends the desk chasing a fix that has already shipped.
+    #[test]
+    fn the_street_blotter_records_the_venue_quantity_not_the_dv01() {
+        use crate::services::analytics::street_orders::{StreetOrderFilter, StreetOrderLog};
+        use crate::services::auto_hedge::{ExternalHedgeFill, HedgeVenue};
+
+        let log = Arc::new(StreetOrderLog::new());
+        let dv01_per_contract = 40.1992;
+        let contracts = 1.0;
+        // A composite backstop fill, carried (as always) in the budget metric.
+        let exec = ExternalHedgeFill {
+            filled: contracts * dv01_per_contract,
+            residual: 0.0,
+            hedge_price: 107.39,
+            mid_at_fire: 107.39,
+            slippage_bp: 0.5,
+            lp_won: Some(HedgeVenue::COMPOSITE_LABEL.to_owned()),
+            venue: Some(HedgeVenue::Composite),
+            panel: Vec::new(),
+            attempts: Vec::new(),
+        };
+        record_street_order(
+            Some(&log),
+            &exec,
+            crate::config::hedge_policy::HedgeExecutionMode::Composite,
+            "ZFU26",
+            "bond_future",
+            Some(4.6),
+            -500.0,
+            contracts,
+            dv01_per_contract,
+            Some("HDG-1".to_owned()),
+            7,
+            1_787_000_000_000_000_000,
+        );
+
+        let orders = log.orders(None, None, &StreetOrderFilter::default(), 10);
+        assert_eq!(orders.len(), 1);
+        let o = &orders[0];
+        assert!(
+            (o.requested_qty - contracts).abs() < 1e-9,
+            "requested must be CONTRACTS, got {}",
+            o.requested_qty
+        );
+        // …and the fill is converted back to the same denomination, so one row never
+        // carries two different units.
+        assert!(
+            (o.filled_qty - contracts).abs() < 1e-9,
+            "filled must be CONTRACTS, got {}",
+            o.filled_qty
+        );
+    }
+
     /// PART C: a hedge that fills on a NAMED LP is attributed to that LP in the street-side LP
     /// flow rollup (a WON deal + won notional), so the LP league table shows the win.
     #[tokio::test]
@@ -6775,6 +7326,7 @@ pub(crate) mod tests {
                     ..Default::default()
                 })),
             }),
+            ..Default::default()
         }
     }
 
@@ -6944,6 +7496,7 @@ pub(crate) mod tests {
                 entity: 1,
                 book: 7,
                 instrument: None,
+                ..Default::default()
             }),
             None
         );

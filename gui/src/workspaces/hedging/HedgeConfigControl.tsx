@@ -6,7 +6,7 @@
  * rate/size guards. Reads/writes `get_hedge_config` / `set_hedge_config`. Edits gate on
  * the `hedge` capability; everyone else sees the state read-only.
  */
-import type { HedgeConfig, HedgeExecutionMode } from "../../data/contract";
+import type { HedgeDispatch, HedgeConfig, HedgeExecutionMode } from "../../data/contract";
 import { HelpButton } from "../../components/HelpButton";
 import styles from "./HedgingWorkspace.module.css";
 
@@ -29,6 +29,28 @@ const EXEC_MODES: readonly { mode: HedgeExecutionMode; label: string; hint: stri
     mode: "lp_panel_then_composite",
     label: "LP panel → Composite",
     hint: "Route to LPs, fall back to composite mid",
+  },
+];
+
+/**
+ * The two dispatches, in wire-ordinal order.
+ *
+ * Deliberately worded as a trade-off rather than a speed setting. `route()` blocks on a
+ * real venue round trip, so synchronous dispatch puts that wait on the client's booking
+ * commit — measured ~6ms p99 against a hedge DECISION of ~26us. What async costs is
+ * simultaneity, not safety: the hedge still runs, its offsetting leg and provenance just
+ * land a moment after the fill returns.
+ */
+const DISPATCHES: readonly { dispatch: HedgeDispatch; label: string; hint: string }[] = [
+  {
+    dispatch: "sync",
+    label: "Synchronous",
+    hint: "The fill waits for the venue — offsetting leg and provenance land with it",
+  },
+  {
+    dispatch: "async",
+    label: "Asynchronous",
+    hint: "The fill is acknowledged first; the hedge follows off the critical path",
   },
 ];
 
@@ -97,6 +119,35 @@ export function HedgeConfigControl({
                   checked={selected}
                   disabled={disabled}
                   onChange={() => patch({ execution: mode })}
+                />
+                <span className={styles.switchMain}>
+                  <span className={styles.switchLabel}>{label}</span>
+                  <span className={styles.switchHint}>{hint}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
+
+      <fieldset className={styles.execFieldset} data-testid="hedge-dispatch">
+        <legend className={styles.execLegend}>Hedge dispatch</legend>
+        <div className={styles.execModes} role="radiogroup" aria-label="Hedge dispatch">
+          {DISPATCHES.map(({ dispatch, label, hint }) => {
+            const selected = config.dispatch === dispatch;
+            return (
+              <label
+                key={dispatch}
+                className={`${styles.execOption} ${selected ? styles.execOptionActive : ""}`}
+                data-testid={`hedge-dispatch-${dispatch}`}
+              >
+                <input
+                  type="radio"
+                  name="hedge-dispatch"
+                  value={dispatch}
+                  checked={selected}
+                  disabled={disabled}
+                  onChange={() => patch({ dispatch })}
                 />
                 <span className={styles.switchMain}>
                   <span className={styles.switchLabel}>{label}</span>

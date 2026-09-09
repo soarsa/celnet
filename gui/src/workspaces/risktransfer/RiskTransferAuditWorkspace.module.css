@@ -114,6 +114,12 @@
   white-space: nowrap;
 }
 
+/* Scoped past `.table thead th` for the header half: a bare `.numCol` (0,1,0) loses to
+   `.table thead th` (0,1,2), so the labels stayed left while their values went right. */
+.table thead th.numCol {
+  text-align: right;
+}
+
 .numCol {
   text-align: right;
 }

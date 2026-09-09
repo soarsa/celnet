@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
-import type { HedgeProvenance } from "../src/data/contract";
+import type { HedgeProvenance, StreetOrder } from "../src/data/contract";
 
 const state: { app: unknown } = { app: null };
 vi.mock("../src/app/AppContext", () => ({ useApp: () => state.app }));
@@ -46,18 +46,55 @@ function provenance(over: Partial<HedgeProvenance> = {}): HedgeProvenance {
   };
 }
 
-function makeApp(opts: { can?: boolean; rows?: HedgeProvenance[] } = {}) {
+/** A street order as the analytics seam reports it, joined to its parent hedge. */
+function order(over: Partial<StreetOrder> = {}): StreetOrder {
+  return {
+    orderId: "SO-1",
+    tsNanos: 1_700_000_000_000_000_000n,
+    lpId: "cme-sim",
+    venue: "named_lp",
+    instrument: "ZTU26",
+    family: "bond_future",
+    tenorYears: 2,
+    side: "sell",
+    requestedQty: 1_800_000,
+    filledQty: 1_800_000,
+    requestedPrice: 103.5,
+    filledPrice: 103.5,
+    slippageBp: 0,
+    outcome: "filled",
+    reason: undefined,
+    competitors: [],
+    parentHedgeId: "HDG-1",
+    parentPositionId: 7n,
+    orderType: undefined,
+    timeInForce: undefined,
+    responseLatencyNanos: undefined,
+    ...over,
+  };
+}
+
+function makeApp(
+  opts: { can?: boolean; rows?: HedgeProvenance[]; orders?: StreetOrder[] } = {},
+) {
   const listHedgeProvenance = vi.fn(async () => opts.rows ?? []);
+  const listStreetOrders = vi.fn(async () => ({
+    orders: opts.orders ?? [],
+    breakdown: [],
+    totalMatching: (opts.orders ?? []).length,
+  }));
   return {
     app: {
       transport: {
         label: "in-app",
         listHedgeProvenance,
+        listStreetOrders,
         streamHedgeIntents: vi.fn(() => () => {}),
       },
       auth: { can: () => opts.can ?? true },
     },
     listHedgeProvenance,
+    listStreetOrders,
   };
 }
 
@@ -130,6 +167,91 @@ describe("HedgeDealsView", () => {
     // Turn on "Show internalised" — the warehouse row now appears.
     fireEvent.click(screen.getByTestId("hedge-show-internalised"));
     expect(await screen.findByTestId("hedge-deal-row-WH-1")).toBeInTheDocument();
+  });
+
+  it("renders the fired time from epoch NANOS, not as an out-of-range date", async () => {
+    // `HedgeProvenance.fired_at` is epoch nanoseconds. Passing it straight to `new Date`
+    // is ~57,000 years out of range, so the whole column rendered "Invalid Date" — the
+    // kind of break that survives because nobody reads a timestamp they already know.
+    const built = makeApp({
+      rows: [provenance({ hedgeId: "HDG-T", firedAt: 1_787_173_452_008_410_400 })],
+    });
+    state.app = built.app;
+    render(<HedgeDealsView />);
+    const row = await screen.findByTestId("hedge-deal-row-HDG-T");
+    expect(row.textContent).not.toContain("Invalid Date");
+    // Asserted as a SHAPE, not a literal clock: the rendered time is local, so pinning
+    // "21:04:12" only passes in UTC and fails everywhere else — a test that breaks on the
+    // reader's timezone tells you nothing about the bug it was written for.
+    expect(row.textContent).toMatch(/^\d{2}:\d{2}:\d{2}/);
+  });
+
+  it("shows the ORDERS a hedge put on the wire — the half the ledger never carried", async () => {
+    // The ledger records the DECISION. Until now nothing on this screen said which
+    // provider was asked, for how much, or what came back — so a hedge that did not
+    // reduce the book looked identical to one that did.
+    const built = makeApp({
+      rows: [provenance({ hedgeId: "HDG-1", externalHedged: 308.4 })],
+      orders: [
+        order({ orderId: "SO-4", filledQty: 1_800_000, outcome: "filled" }),
+        order({
+          orderId: "SO-3",
+          filledQty: 0,
+          filledPrice: undefined,
+          outcome: "rejected",
+          reason: "NOT_A_WHOLE_LOT",
+        }),
+      ],
+    });
+    state.app = built.app;
+    render(<HedgeDealsView />);
+
+    // The count is visible on the row without opening anything.
+    const toggle = await screen.findByTestId("hedge-orders-toggle-HDG-1");
+    expect(toggle.textContent).toContain("2 sent");
+    expect(toggle.textContent).toContain("1 filled");
+    expect(screen.queryByTestId("trade-details-modal")).toBeNull();
+
+    fireEvent.click(toggle);
+    // The SHARED modal — the same surface the client blotter opens for a client fill.
+    const modal = screen.getByTestId("trade-details-modal");
+    expect(within(modal).getByTestId("trade-details-kind").textContent).toBe("Hedge");
+    expect(within(modal).getByTestId("trade-details-order-SO-4")).toBeTruthy();
+
+    // …and the REASON is printed, not tooltipped: it is the whole diagnosis when a
+    // hedge fires and the book does not move.
+    expect(within(modal).getByTestId("trade-details-order-reason").textContent).toBe(
+      "NOT A WHOLE LOT",
+    );
+  });
+
+  it("distinguishes an INTERNALISED decision from one whose orders are missing", async () => {
+    // An internalised hedge never asks the street, so having no orders is a fact about
+    // what it did — not missing data. It stays OPENABLE, because the decision itself is
+    // still worth reading; what changes is what the modal says about the absence.
+    const built = makeApp({
+      rows: [
+        provenance({
+          hedgeId: "HDG-9",
+          action: defaultExitAction("warehouse"),
+          vehiclePlan: null,
+          lpWon: null,
+          externalHedged: 0,
+        }),
+      ],
+      orders: [],
+    });
+    state.app = built.app;
+    render(<HedgeDealsView />);
+    // Internalised rows are hidden by default — reveal them, then read the cell.
+    fireEvent.click(await screen.findByTestId("hedge-show-internalised"));
+    const toggle = await screen.findByTestId("hedge-orders-toggle-HDG-9");
+    expect(toggle.textContent).toBe("—");
+
+    fireEvent.click(toggle);
+    expect(screen.getByTestId("trade-details-no-orders").textContent).toContain(
+      "never asks the street",
+    );
   });
 
   it("shows the honest empty note when no hedges have fired", async () => {

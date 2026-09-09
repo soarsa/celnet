@@ -491,6 +491,10 @@ impl Edge {
         // stream edge for the per-book risk roster. Its risk router is primed below beside the
         // FX store's, so a routed rates fill buckets into its risk book from first boot.
         let rates_store = Arc::new(services::rates_book::RatesPositionStore::new());
+        // Hand the store its own weak handle so an ASYNC-dispatched hedge can own a
+        // reference for the life of its work. Without this the store still runs, and a
+        // hedge configured async simply runs inline — the safe degradation.
+        rates_store.set_self_handle(&rates_store);
         // Wire the SAME shared latency/ops telemetry hub (owned by the `CoreLink`) into the
         // rates book so the FI booking seams record their per-stage latency (best-order booking
         // commit → Book, risk-routing decision → RiskRoute, auto-hedge fire → HedgeFire), and

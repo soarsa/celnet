@@ -2373,6 +2373,8 @@ fn risk_position_to_json(p: &RiskPosition) -> Value {
         "premium_style": p.premium_style,
         "surface_version": p.surface_version,
         "attribution": p.attribution.as_ref().map(attribution_to_json),
+        "risk_book": p.risk_book,
+        "risk": p.risk.as_ref().map(risk_vector_desc_to_json),
     })
 }
 
@@ -2598,6 +2600,9 @@ fn rates_position_from_json(v: &Value) -> Result<RatesPosition> {
         entity: opt_u32(o, "entity").unwrap_or(0),
         book: opt_u32(o, "book").unwrap_or(0),
         instrument: Some(nested(o, "instrument", rates_instrument_from_json)?),
+        risk_book: string_or_empty(o, "risk_book"),
+        net_notional: f64_or_zero(o, "net_notional"),
+        risk: opt_nested(o, "risk", risk_vector_desc_from_json)?,
     })
 }
 
@@ -2765,6 +2770,9 @@ fn rates_position_to_json(p: &RatesPosition) -> Value {
         "entity": p.entity,
         "book": p.book,
         "instrument": p.instrument.as_ref().map(rates_instrument_to_json),
+        "risk_book": p.risk_book,
+        "net_notional": p.net_notional,
+        "risk": p.risk.as_ref().map(risk_vector_desc_to_json),
     })
 }
 
@@ -5031,6 +5039,7 @@ fn hedge_config_desc_to_json(c: &HedgeConfigDesc) -> Value {
         ),
         "max_clip": c.max_clip,
         "max_hedges_per_interval": c.max_hedges_per_interval,
+        "dispatch": c.dispatch,
         "daily_external_notional_cap": c.daily_external_notional_cap,
         "lp_panels": Value::Array(
             c.lp_panels.iter().map(hedge_lp_panel_desc_to_json).collect(),
@@ -5107,6 +5116,7 @@ fn hedge_config_desc_from_json(v: &Value) -> Result<HedgeConfigDesc> {
         desk_enabled,
         max_clip: f64_or_zero(o, "max_clip"),
         max_hedges_per_interval: u32_or_zero(o, "max_hedges_per_interval"),
+        dispatch: enum_or_zero(o, "dispatch"),
         daily_external_notional_cap: f64_or_zero(o, "daily_external_notional_cap"),
         lp_panels,
         composite_spread_bp: f64_or_zero(o, "composite_spread_bp"),
@@ -5890,6 +5900,21 @@ fn transfer_leg_from_json(v: &Value) -> Result<TransferLeg> {
 }
 
 /// A pass-through risk vector → JSON (all required scalars).
+/// JSON → the shared per-position / moved risk vector. The decode side of
+/// [`risk_vector_desc_to_json`], needed since `RatesPosition` (a booking REQUEST) now
+/// carries one. Every field is optional-with-zero: the vector is a server OUTPUT, so a
+/// booking that omits it is stating no risk, not a malformed request.
+fn risk_vector_desc_from_json(v: &Value) -> Result<RiskVectorDesc> {
+    let o = obj(v, "risk")?;
+    Ok(RiskVectorDesc {
+        dv01: f64_or_zero(o, "dv01"),
+        delta: f64_or_zero(o, "delta"),
+        gamma: f64_or_zero(o, "gamma"),
+        vega: f64_or_zero(o, "vega"),
+        theta: f64_or_zero(o, "theta"),
+    })
+}
+
 fn risk_vector_desc_to_json(r: &RiskVectorDesc) -> Value {
     json!({
         "dv01": r.dv01,
@@ -9393,6 +9418,7 @@ mod tests {
                 entity: 1,
                 book: 10,
                 instrument: None,
+                ..Default::default()
             }],
         });
         assert_eq!(v["positions"].as_array().unwrap().len(), 1);

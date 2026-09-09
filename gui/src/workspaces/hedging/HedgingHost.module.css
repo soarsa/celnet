@@ -1,0 +1,80 @@
+/*
+ * HedgingHost — the tab shell for Flow · Monitor · Blotter · Rules.
+ *
+ * Deliberately thin: the shell owns the strip and nothing else, so each hosted
+ * workspace keeps its own padding and layout rather than being re-boxed here. The
+ * strip mirrors the Risk host's so the two consolidated hosts read as one pattern
+ * instead of two dialects.
+ */
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.tabBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.5rem clamp(0.5rem, 2vw, 1rem) 0;
+  border-bottom: 1px solid var(--border-subtle, #262b36);
+}
+
+.tabBtn {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  padding: 0.4rem 0.85rem;
+  border-radius: var(--radius-md, 8px) var(--radius-md, 8px) 0 0;
+  font-family: var(--font-ui, system-ui, sans-serif);
+  font-size: clamp(0.72rem, 2.4vw, 0.82rem);
+  letter-spacing: 0.02em;
+  color: var(--text-tertiary, #9aa0ad);
+  /* Reserve the active weight up front so the strip does not reflow on selection. */
+  border-bottom: 2px solid transparent;
+  transition: color var(--duration-fast, 150ms) var(--ease-out, ease);
+}
+
+.tabBtn:hover {
+  color: var(--text-secondary, #c2c7d0);
+}
+
+.tabBtn:focus-visible {
+  outline: 2px solid var(--accent, var(--color-accent, #60a5fa));
+  outline-offset: -2px;
+}
+
+.tabBtnActive {
+  color: var(--text-primary, #e8eaf0);
+  border-bottom-color: var(--accent, var(--color-accent, #60a5fa));
+}
+
+.tabPanel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabBtn {
+    transition: none;
+  }
+}
+
+/*
+ * The deep-link denial. Reachable only by URL — the rail row carries the same gate —
+ * so it explains WHY the surface is empty rather than leaving a blank pane.
+ */
+.denied {
+  margin: clamp(0.75rem, 3vw, 1.5rem);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-inset, #101319);
+  border: 1px solid var(--border-subtle, #262b36);
+  color: var(--text-secondary, #c2c7d0);
+  font-family: var(--font-ui, system-ui, sans-serif);
+  font-size: clamp(0.75rem, 2.4vw, 0.85rem);
+  line-height: 1.5;
+}

@@ -2354,6 +2354,21 @@ message RiskPosition {
   // Who quoted/holds this position (presence-tracked): the attribution chain that
   // keys the who's-trading roll-up. Absent ⇒ unattributed.
   optional AttributionRecord attribution = 9;
+  // The RISK BOOK the routing graph stamped this position into (`"fx-emea"`), or empty
+  // when it routed nowhere. Distinct from `org.book`, the netting book: a risk book is
+  // the portfolio a trader actually sees and moves risk between.
+  //
+  // The SAME field `RatesPosition` carries. The server already held this stamp (the
+  // transfer applier reads it to validate membership) but never published it, so no
+  // client could list "the positions in FX EMEA" — which is why the risk-transfer ticket
+  // fabricated lots instead of listing them.
+  string risk_book = 10;
+  // The position's OWN risk: the canonical, notional-scaled sensitivities off the marked
+  // leaf — the same per-position numbers the risk cube aggregates. `dv01` is absent (0)
+  // for FX vanilla, mirroring the per-book gate skipping `max_dv01`.
+  //
+  // Same shape, same meaning, same server-authority as `RatesPosition.risk`.
+  RiskVectorDesc risk = 11;
 }
 
 // A scope filter pinning the position listing / drill to one dimension subtree
@@ -4233,7 +4248,9 @@ message ResetPasswordResponse {
 
 // List all desks (admin only).
 message ListDesksRequest {
-  // The caller's bearer token (must resolve to an admin).
+  // The caller's bearer token. Reading the roster needs only the `View` read floor on
+  // either asset class — a desk is not an asset class, and desk names already appear on
+  // every blotter. CHANGING a desk (create/update/delete) still requires an admin.
   string session_token = 1;
   // Echoed request correlation id.
   optional uint64 correlation_id = 2;
@@ -5725,6 +5742,22 @@ enum HedgeExecutionModeEnum {
   HEDGE_EXEC_LP_PANEL_THEN_COMPOSITE = 3;
 }
 
+// WHEN a live external hedge runs relative to the fill that triggered it.
+//
+// Distinct from `HedgeExecutionModeEnum`, which says WHERE it executes. This says
+// whether the client's booking commit waits for it.
+enum HedgeDispatchEnum {
+  // Run the external hedge INSIDE the booking commit, and wait for the venue's answer
+  // before the fill is acknowledged. The offsetting leg and the provenance record are
+  // both in place the instant the fill returns, at the cost of putting a venue round
+  // trip on the client's critical path.
+  HEDGE_DISPATCH_SYNC = 0;
+  // Book the fill first and run the external hedge immediately after, off the booking
+  // path. The client is acknowledged without waiting for our own risk management to
+  // round-trip a venue; the offsetting leg and provenance land a moment later.
+  HEDGE_DISPATCH_ASYNC = 1;
+}
+
 // What a hedge POLICY GRAPH binds to — the scope of an exit-policy decision graph
 // (mirrors `crate::config::hedge_policy::HedgePolicyScope`). A fill in book B is
 // governed by the most-specific applicable policy: B's own BOOK policy, else the
@@ -6101,6 +6134,10 @@ message HedgeConfigDesc {
   // warehouse-to-a-DV01-budget). Empty ⇒ CUSTOM everywhere, i.e. every scope resolves
   // its authored exit-policy graph exactly as it always did.
   repeated HedgingModelBinding hedging_models = 11;
+  // WHEN a live external hedge runs relative to the fill (sync = inside the booking
+  // commit; async = immediately after it, off the client's critical path). Defaults to
+  // SYNC, which is the historical behaviour.
+  HedgeDispatchEnum dispatch = 12;
 }
 
 // Read a scoped hedge policy graph (gated `hedge` × asset). Absent until defined.
@@ -9014,6 +9051,30 @@ message RatesPosition {
   // The linear-rates instrument to price (the USD-SOFR OIS P0 arm; the oneof grows
   // additively exactly as in `RatesPriceRequest`).
   RatesInstrument instrument = 4;
+  // The RISK BOOK the routing graph stamped this position into (`"rates-usd"`), or
+  // empty when it routed nowhere.
+  //
+  // Distinct from `book` above, which is the numeric NETTING book. A risk book is the
+  // portfolio a trader actually sees and moves risk between, and it was previously
+  // knowable only inside the server: the stamp lives in the position store's own map, so
+  // no client could ask "which positions are in RATES USD". The risk-transfer ticket
+  // filled that gap by SYNTHESISING lots from the book's aggregate risk and minting ids
+  // for them — ids that matched nothing, so every transfer was rejected
+  // `position <id> is not booked in either book`.
+  string risk_book = 5;
+  // The position's signed notional in the instrument's own currency.
+  double net_notional = 6;
+  // The position's OWN risk, computed server-side by the same measure the pre-trade gate
+  // and the hedge sizer use. For a linear-rates position only `dv01` is populated.
+  //
+  // Carried because a client cannot honestly derive it: the bond arm needs a cashflow
+  // schedule and a memoised analytic derivative. A per-position risk number invented in
+  // the GUI is exactly the illustration this field exists to retire.
+  //
+  // It is `RiskVectorDesc` — the SAME per-position risk shape `RiskPosition` carries —
+  // so a client that lists positions across asset classes reads one shape, not one per
+  // asset class.
+  RiskVectorDesc risk = 7;
 }
 
 // A scope filter narrowing a rates risk aggregate to one `(entity, book, ccy)`

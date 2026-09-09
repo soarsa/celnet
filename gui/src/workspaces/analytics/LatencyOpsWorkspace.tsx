@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../../app/AppContext";
+import { TableSearch } from "../../components/TableSearch";
 import type { LatencyHealth, LatencyMetrics, LatencyStage } from "../../data/contract";
 import styles from "./LatencyOpsWorkspace.module.css";
 
@@ -194,6 +195,13 @@ export function LatencyOpsWorkspace(): React.ReactElement {
   // is the tick→quote→book flow, the natural way an ops reader scans the pipeline).
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  // Search matches the stage's display label AND its raw op tag — the label is what the
+  // eye reads, the op is what a trace or a log line carries, and an operator arriving
+  // from either should find the row.
+  const [query, setQuery] = useState("");
+  // The one filter this table genuinely wants: "show me only what is slow". A stage's
+  // band is derived from p99, so it is not a column you could filter as text.
+  const [toneFilter, setToneFilter] = useState<LatencyTone | "">("");
 
   const load = useCallback((): void => {
     if (!signedIn) {
@@ -264,9 +272,19 @@ export function LatencyOpsWorkspace(): React.ReactElement {
   const stages = metrics?.stages ?? [];
   const dom = useMemo(() => spectrumDomain(stages), [stages]);
 
+  /** Stages surviving the search + band filter, before sorting. */
+  const matchedRows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return stages.filter((s) => {
+      if (toneFilter !== "" && latencyTone(s.p99Ns) !== toneFilter) return false;
+      if (needle === "") return true;
+      return `${s.stageLabel} ${s.op}`.toLowerCase().includes(needle);
+    });
+  }, [stages, query, toneFilter]);
+
   const visibleRows = useMemo(() => {
-    if (sortKey === null) return stages;
-    const rows = [...stages];
+    if (sortKey === null) return matchedRows;
+    const rows = [...matchedRows];
     if (sortKey === "stage") {
       rows.sort((a, b) => compareSort(a.stageLabel, b.stageLabel, sortDir));
       return rows;
@@ -275,7 +293,7 @@ export function LatencyOpsWorkspace(): React.ReactElement {
     if (!col) return rows;
     rows.sort((a, b) => compareSort(col.sortValue(a), col.sortValue(b), sortDir));
     return rows;
-  }, [stages, sortKey, sortDir]);
+  }, [matchedRows, sortKey, sortDir]);
 
   const ariaSort = (key: string): "ascending" | "descending" | "none" =>
     sortKey === key ? (sortDir === "asc" ? "ascending" : "descending") : "none";
@@ -319,6 +337,31 @@ export function LatencyOpsWorkspace(): React.ReactElement {
       ) : (
         <>
           <ToneLegend />
+          <div className={styles.tableTools}>
+            <TableSearch
+              query={query}
+              onQueryChange={setQuery}
+              shown={visibleRows.length}
+              total={stages.length}
+              label="Search stages"
+              placeholder="Filter by stage or op…"
+            />
+            <label className={styles.toneFilter}>
+              <span className={styles.toneFilterLabel}>Band</span>
+              <select
+                className={styles.toneFilterSelect}
+                value={toneFilter}
+                aria-label="Filter by latency band"
+                data-testid="latency-tone-filter"
+                onChange={(e) => setToneFilter(e.target.value as LatencyTone | "")}
+              >
+                <option value="">Any band</option>
+                <option value="green">Green — within budget</option>
+                <option value="amber">Amber — approaching budget</option>
+                <option value="red">Red — over budget</option>
+              </select>
+            </label>
+          </div>
           <div className={styles.tableScroll}>
           <table className={styles.table}>
             <caption className={styles.caption}>
@@ -353,6 +396,13 @@ export function LatencyOpsWorkspace(): React.ReactElement {
               </tr>
             </thead>
             <tbody>
+              {visibleRows.length === 0 && (
+                <tr>
+                  <td className={styles.emptyRow} colSpan={COLUMNS.length + 2}>
+                    No stage matches this search or band.
+                  </td>
+                </tr>
+              )}
               {visibleRows.map((s) => {
                 const tone = latencyTone(s.p99Ns);
                 const rowClass = tone ? `${styles.latRow} ${TONE_CLASS[tone]}` : undefined;

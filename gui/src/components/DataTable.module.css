@@ -127,7 +127,24 @@
 .scroll {
   flex: 1;
   min-height: 0;
+  /*
+   * SELF-BOUNDING, deliberately.
+   *
+   * `flex: 1; min-height: 0` alone only bounds this box when EVERY ancestor up to the
+   * shell keeps the height chain intact. One workspace nested inside another's tab (the
+   * deals blotter is embedded as a Risk tab) is enough to break it: the chain resolves to
+   * `auto`, the table grows to its full content height, this `overflow: auto` never
+   * engages, and the sticky header scrolls away with the page — the table "moves" instead
+   * of scrolling in its body.
+   *
+   * A max-height makes the guarantee local. Where the chain IS intact and shorter than
+   * this cap, `flex: 1` still governs and nothing changes; where it is broken, the body
+   * scrolls and the header pins anyway. Correctness stops depending on every ancestor of
+   * every future embedding.
+   */
+  max-height: min(72vh, 860px);
   overflow: auto;
+  overscroll-behavior: contain;
   border: var(--hairline);
   border-radius: var(--r-md);
 }

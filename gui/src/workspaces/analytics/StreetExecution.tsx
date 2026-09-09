@@ -32,6 +32,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useApp } from "../../app/AppContext";
+import { TableSearch } from "../../components/TableSearch";
 import type {
   StreetBreakdownRow,
   StreetDimension,
@@ -173,10 +174,115 @@ const ROUTING_REASONS: Readonly<Record<string, string>> = {
     "Composite by configuration — this desk's execution mode is composite-only, so the street was never asked.",
 };
 
+/**
+ * The VENUE's own reject codes — the `Text(58)` an LP sim (and any real FIX counterparty)
+ * puts on an execution report, mirrored from `celnet_lp_sim::RejectReason::detail`.
+ *
+ * These are a counterparty's ANSWER, not our configuration, so they are not config faults.
+ * But they are the most actionable text on the row — `NOT_A_WHOLE_LOT` says the order was
+ * mis-sized, which no amount of staring at "Rejected" will tell you — so they are rendered
+ * INLINE beside the chip rather than hidden in a hover.
+ */
+const VENUE_REASONS: Readonly<Record<string, { short: string; full: string }>> = {
+  NOT_A_WHOLE_LOT: {
+    short: "not a whole lot",
+    full: "This instrument trades in whole lots only, and OrderQty(38) was not a whole multiple of the lot size. The order was mis-sized before it was sent — nothing about the market refused it.",
+  },
+  NO_MARKET: {
+    short: "no live two-way",
+    full: "The counterparty had no live two-way price for that instrument at the moment the order arrived.",
+  },
+  NO_LIQUIDITY: {
+    short: "no eligible liquidity",
+    full: "No eligible quoted liquidity to fill against on the side we needed.",
+  },
+  INSTRUMENT_NOT_QUOTED: {
+    short: "instrument not quoted",
+    full: "This counterparty does not quote that Symbol(55) at all.",
+  },
+  INVALID_QUANTITY: {
+    short: "invalid quantity",
+    full: "OrderQty(38) must be a positive, finite quantity.",
+  },
+  INVALID_LIMIT_PRICE: {
+    short: "invalid limit price",
+    full: "Price(44) must be a positive, finite price.",
+  },
+  NOT_MARKETABLE: {
+    short: "not marketable",
+    full: "The limit price was away from the counterparty's quoted market.",
+  },
+  FOK_UNFILLABLE: {
+    short: "fill-or-kill unfillable",
+    full: "The full quantity was not available at an eligible price, so the order was killed in full.",
+  },
+  RESTING_TIF_UNSUPPORTED: {
+    short: "resting TIF unsupported",
+    full: "Quote-driven venue: only IOC(3) and FOK(4) are accepted; a resting TimeInForce(59) cannot be honoured.",
+  },
+  ORDER_TYPE_UNSUPPORTED: {
+    short: "order type unsupported",
+    full: "OrdType(40) must be market(1), limit(2) or previously-quoted(D).",
+  },
+};
+
+/**
+ * The short reason to print UNDER the outcome chip, or `undefined` when the chip already
+ * says everything (a config fault relabels the chip itself; a plain fill has no reason).
+ *
+ * Deliberately shown rather than tooltipped: a reject that does not say why is a dead end
+ * for whoever is on the desk, and "Rejected" on its own is exactly that.
+ */
+function inlineReason(o: StreetOrder): string | undefined {
+  if (o.reason === undefined || o.reason.length === 0) return undefined;
+  if (isConfigFault(o.reason)) return undefined;
+  const venue = VENUE_REASONS[o.reason];
+  if (venue !== undefined) return venue.short;
+  const routing = ROUTING_REASONS[o.reason];
+  // A known routing reason is already spelled out on the chip's own tooltip and is often
+  // long; show the raw code so the row still says something specific.
+  return routing !== undefined ? o.reason.replace(/_/g, " ") : o.reason.replace(/_/g, " ");
+}
+
+/**
+ * The reasons that are OUR OWN CONFIGURATION rather than a market fact.
+ *
+ * The distinction matters more than it looks. Every one of these collapses into the
+ * `no_liquidity` / `cancelled` outcome on the wire, so the chip alone reads "No
+ * liquidity" — indistinguishable from a genuinely illiquid market. But an unroutable
+ * order means nobody was ever ASKED: the desk is not short of liquidity, it is short of
+ * setup, and the two call for opposite responses (fix a config vs widen the panel or
+ * accept the risk). Surfacing them apart is what stops a half-configured panel looking
+ * like a quiet market — the server already draws this line when it records the reason;
+ * this is the UI honouring it instead of flattening it back out.
+ */
+const CONFIG_FAULT_REASONS: ReadonlySet<string> = new Set([
+  "no_order_endpoint",
+  "no_order_router_configured",
+  "session_unavailable",
+  "composite_venue_configured",
+]);
+
+/** Whether this order failed because of our setup rather than the market. */
+function isConfigFault(reason: string | undefined): boolean {
+  return reason !== undefined && CONFIG_FAULT_REASONS.has(reason);
+}
+
+/**
+ * The chip label. A configuration fault says so INSTEAD of borrowing the market-shaped
+ * outcome label: "Not sent · setup" is the honest summary of an order that never left
+ * the building, where "No liquidity" would blame the street for it.
+ */
+function chipLabel(o: StreetOrder): string {
+  return isConfigFault(o.reason) ? "Not sent · setup" : outcomeLabel(o.outcome);
+}
+
 function reasonTitle(reason: string | undefined): string | undefined {
   if (reason === undefined) return undefined;
   const routing = ROUTING_REASONS[reason];
   if (routing !== undefined) return routing;
+  const venue = VENUE_REASONS[reason];
+  if (venue !== undefined) return `${reason} — ${venue.full}`;
   // Anything else is the VENUE's own Text(58) code, verbatim.
   return `Venue reason: ${reason}`;
 }
@@ -336,6 +442,11 @@ export function StreetExecution(): React.ReactElement {
   const [lpFilter, setLpFilter] = useState("");
   const [familyFilter, setFamilyFilter] = useState("");
   const [outcomeFilter, setOutcomeFilter] = useState<StreetOutcome | "">("");
+  // Free-text search across the LOADED page. The selects above narrow on the server's own
+  // closed vocabularies (LP, family, outcome); this answers the other question a desk
+  // actually asks — "where did SO-24 / CUSIP 912797UJ4 go" — which no closed vocabulary
+  // can express.
+  const [orderQuery, setOrderQuery] = useState("");
   const [view, setView] = useState<StreetOrdersView>(EMPTY_VIEW);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -385,6 +496,50 @@ export function StreetExecution(): React.ReactElement {
       return key;
     });
   }, []);
+
+  // The orders on screen that failed on OUR setup rather than the market, and the
+  // providers involved. Derived from the rendered rows so it always agrees with what
+  // the blotter shows under the active filters — never a separate count that can drift.
+  const configFaults = useMemo(
+    () => view.orders.filter((o) => isConfigFault(o.reason)),
+    [view.orders],
+  );
+
+  /**
+   * The blotter rows after the free-text search.
+   *
+   * Matches what an operator actually types: the order and parent-hedge ids, the
+   * instrument, the provider, and the outcome/reason vocabulary — the reason included, so
+   * searching "whole lot" pulls up every mis-sized order at once.
+   */
+  const searchedOrders = useMemo(() => {
+    const needle = orderQuery.trim().toLowerCase();
+    if (needle === "") return view.orders;
+    return view.orders.filter((o) =>
+      [
+        o.orderId,
+        o.parentHedgeId ?? "",
+        o.instrument,
+        o.lpId ?? "",
+        o.family,
+        o.side,
+        outcomeLabel(o.outcome),
+        // BOTH spellings of the reason: the raw wire code (`NOT_A_WHOLE_LOT`, which an
+        // operator may paste from a log) and the de-underscored text the row actually
+        // PRINTS. Searching only the raw code means typing what you can see on screen
+        // finds nothing, which is the fastest way to make a search box feel broken.
+        o.reason ?? "",
+        inlineReason(o) ?? "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(needle),
+    );
+  }, [view.orders, orderQuery]);
+  const configFaultLps = useMemo(
+    () => [...new Set(configFaults.map((o) => o.lpId).filter((id): id is string => !!id))].sort(),
+    [configFaults],
+  );
 
   const sortedBreakdown = useMemo(() => {
     const col = BREAKDOWN_COLUMNS.find((c) => c.key === sortKey);
@@ -559,10 +714,45 @@ export function StreetExecution(): React.ReactElement {
           Showing {fmtCount(view.orders.length)} of {fmtCount(view.totalMatching)} matching
           orders, newest first.
         </p>
+        {/*
+          A STANDING banner whenever any shown order failed on our own setup. The
+          per-row chip already says "Not sent · setup", but a desk that cannot hedge
+          should not have to hover a row to find that out — an order that never left
+          the building is an operational fault, and it is named here with the exact
+          providers involved and where to fix them.
+        */}
+        {configFaults.length > 0 && (
+          <p className={styles.configFaultBanner} role="status" data-testid="street-config-fault">
+            <strong>
+              {fmtCount(configFaults.length)} order{configFaults.length === 1 ? "" : "s"} could not
+              be sent — configuration, not market.
+            </strong>{" "}
+            {configFaultLps.length > 0 ? (
+              <>
+                No order route is configured for {configFaultLps.join(", ")}. These providers may be
+                quoting, but an order cannot reach them, so the risk stays with the desk. Set the
+                order route on each connection in <strong>Administration → Connections</strong>.
+              </>
+            ) : (
+              <>
+                The outbound order seam is not wired for this desk, so no provider could be asked.
+              </>
+            )}
+          </p>
+        )}
         {view.orders.length === 0 ? (
           <p className={styles.empty}>No street orders match these filters.</p>
         ) : (
-          <div className={styles.tableScroll}>
+          <>
+            <TableSearch
+              query={orderQuery}
+              onQueryChange={setOrderQuery}
+              shown={searchedOrders.length}
+              total={view.orders.length}
+              label="Search street orders"
+              placeholder="Search id, instrument, provider or reason…"
+            />
+            <div className={styles.tableScroll}>
             <table className={styles.table}>
               <caption className={styles.caption}>
                 Outbound street orders — one row per order sent
@@ -629,12 +819,13 @@ export function StreetExecution(): React.ReactElement {
                 </tr>
               </thead>
               <tbody>
-                {view.orders.map((o) => (
+                {searchedOrders.map((o) => (
                   <OrderRow key={o.orderId} order={o} />
                 ))}
               </tbody>
             </table>
           </div>
+          </>
         )}
       </section>
     </>
@@ -679,11 +870,18 @@ function OrderRow({ order: o }: { order: StreetOrder }): React.ReactElement {
       </td>
       <td className={styles.rowLabel}>
         <span
-          className={`${styles.chip} ${styles[`chip-${o.outcome}`] ?? ""}`}
+          className={`${styles.chip} ${isConfigFault(o.reason) ? styles.chipConfigFault : (styles[`chip-${o.outcome}`] ?? "")}`}
           title={reasonTitle(o.reason)}
+          data-testid="street-outcome-chip"
+          data-config-fault={isConfigFault(o.reason) ? "true" : undefined}
         >
-          {outcomeLabel(o.outcome)}
+          {chipLabel(o)}
         </span>
+        {inlineReason(o) !== undefined && (
+          <span className={styles.outcomeReason} data-testid="street-outcome-reason">
+            {inlineReason(o)}
+          </span>
+        )}
       </td>
       <td
         className={styles.num}

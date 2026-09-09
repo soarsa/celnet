@@ -1413,6 +1413,7 @@ impl PositionStore {
             wire_ids: g.wire_ids.clone(),
             limits: g.limits.clone(),
             reverse: g.interner.reverse.clone(),
+            risk_book: g.risk_book.clone(),
         }
     }
 
@@ -1450,6 +1451,13 @@ pub struct StoreSnapshot {
     /// The interner reverse map (handle `h` ↔ `reverse[h-1]`), so a fact's org
     /// handles can be reported back as names if needed.
     pub reverse: Vec<String>,
+    /// The routing graph's resolved `risk_book_id` per position handle — the same map
+    /// [`PositionStore::fx_transfer_view`] reads to validate transfer membership.
+    ///
+    /// Snapshotted because the position LISTING publishes it: a client that cannot ask
+    /// which positions are in a risk book cannot offer to move them, which is precisely
+    /// why the risk-transfer ticket used to fabricate its own.
+    pub risk_book: HashMap<u32, String>,
 }
 
 impl StoreSnapshot {
@@ -1457,6 +1465,14 @@ impl StoreSnapshot {
     #[must_use]
     pub fn attribution_of(&self, handle: u32) -> Option<&AttributionRecord> {
         self.attribution.get(&handle)
+    }
+
+    /// The risk book the routing graph stamped on a cube position handle, or `""` when
+    /// it routed nowhere (an unrouted position belongs to no portfolio and so is
+    /// transferable from none).
+    #[must_use]
+    pub fn risk_book_of(&self, handle: u32) -> String {
+        self.risk_book.get(&handle).cloned().unwrap_or_default()
     }
 
     /// The wire (business) `u64` id for a cube position handle (falling back to the

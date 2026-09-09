@@ -28,8 +28,12 @@ targets.
 
 ### Where to find it
 
-Open the **Hedging Rules** workspace. It has six tabs — together they answer *when* to
-hedge, *what kind* of exit, *with what*, and *whether it fires by itself*:
+Open **Hedging → Rules**. The rail row is **Hedging**, and it hosts the whole hedge
+lifecycle in four tabs — **Flow** (what is filling and how far the exit got), **Monitor**
+(the live engine), **Blotter** (the executed-hedge ledger) and **Rules** (this section).
+
+The Rules tab has six sub-tabs — together they answer *when* to hedge, *what kind* of
+exit, *with what*, and *whether it fires by itself*:
 
 | Tab | What you do there |
 |---|---|
@@ -40,9 +44,16 @@ hedge, *what kind* of exit, *with what*, and *whether it fires by itself*:
 | **LP Panels** | Maintain the standing include/exclude LP selection every external hedge inherits. |
 | **Execution mode** | The kill-switch, Advisory-vs-live execution mode, and the rate/size guards. |
 
-**Watching it run is a different surface:** the live monitor — per-book RAG, the fired-hedge
-audit trail, and the **standing suggestions** — lives under **Risk → Hedge flows**, so
-authoring the rules and watching them fire are deliberately separated.
+**Watching it run is a sibling tab:** the live monitor — per-book RAG, the fired-hedge
+audit trail, and the **standing suggestions** — is **Hedging → Monitor**. Authoring the
+rules and watching them fire stay separate views, one click apart.
+
+**Start on Flow, not here.** The Flow tab answers the question you actually have in the
+morning — which portfolios are filling, and whether the risk the engine sized for exit
+*actually left*. Its ribbon reads exposure → decided → street → residual, and the street
+stage counts orders sent against orders filled. A large gap there means hedges are firing
+and the venue is refusing them, which looks identical to healthy hedging on every other
+screen.
 
 **Who can edit:** authoring gates on the **`hedge` capability × Fixed Income**. Without it,
 every tab is visible but **read-only** (see §8). This guide assumes you hold that capability.
@@ -380,7 +391,7 @@ Everything above decides *what* the hedge is. This decides **whether it fires by
 | Mode | What happens on a breach |
 |---|---|
 | **Auto** | The policy resolves and the hedge **trades**. This is the existing behaviour and the default. |
-| **Suggest** | The engine still measures, still resolves the policy and still **sizes** the hedge in its vehicle — then trades nothing and publishes a **standing row** on **Risk → Hedge flows**. |
+| **Suggest** | The engine still measures, still resolves the policy and still **sizes** the hedge in its vehicle — then trades nothing and publishes a **standing row** on **Hedging → Monitor**. |
 
 > **Suggest is deliberately *not* a confirmation dialog.** Nothing pops up and nothing
 > interrupts you. A modal gets dismissed reflexively and takes the decision with it; a
@@ -395,7 +406,7 @@ Bind:  book fi-credit-emea → Suggest      // benchmark-future hedges get a hum
        (everything else unbound)          → Auto
 ```
 
-### Reading a standing suggestion (Risk → Hedge flows → Suggestions)
+### Reading a standing suggestion (Hedging → Monitor → Suggestions)
 
 A suggestion row leads with the **instruction**, because that is the thing you would do:
 
@@ -437,7 +448,7 @@ risk information) but carry no buttons.
 
 ---
 
-## Monitoring (Risk → Hedge flows)
+## Monitoring (Hedging → Monitor)
 
 The **Hedge monitor** shows:
 

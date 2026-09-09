@@ -29,8 +29,9 @@ use celnet_proto::{
 use tonic::Status;
 
 use crate::config::hedge_policy::{
-    HedgeConfigDef, HedgeDeskToggle, HedgeExecutionMode, HedgeMetric, HedgeScopeKind,
-    HedgeThresholdDef, ScopedExitMode, ScopedHedgingModel, ScopedLpPanel, ScopedThreshold,
+    HedgeConfigDef, HedgeDeskToggle, HedgeDispatch, HedgeExecutionMode, HedgeMetric,
+    HedgeScopeKind, HedgeThresholdDef, ScopedExitMode, ScopedHedgingModel, ScopedLpPanel,
+    ScopedThreshold,
 };
 
 // --- RagStatus label --------------------------------------------------------
@@ -677,6 +678,7 @@ pub fn config_to_wire(c: &HedgeConfigDef) -> HedgeConfigDesc {
             .collect(),
         max_clip: c.max_clip,
         max_hedges_per_interval: c.max_hedges_per_interval,
+        dispatch: c.dispatch.to_i32(),
         daily_external_notional_cap: c.daily_external_notional_cap,
         lp_panels: c.lp_panels.iter().map(lp_panel_to_wire).collect(),
         vehicles: c.vehicles.rules.iter().map(vehicle_rule_to_wire).collect(),
@@ -706,6 +708,7 @@ pub fn config_from_wire(d: &HedgeConfigDesc) -> HedgeConfigDef {
             .collect(),
         max_clip: d.max_clip,
         max_hedges_per_interval: d.max_hedges_per_interval,
+        dispatch: HedgeDispatch::from_i32(d.dispatch),
         daily_external_notional_cap: d.daily_external_notional_cap,
         lp_panels: d.lp_panels.iter().map(lp_panel_from_wire).collect(),
         vehicles: HedgeVehicleRegistry::new(
@@ -832,6 +835,7 @@ mod tests {
     #[test]
     fn config_round_trips() {
         let c = HedgeConfigDef {
+            dispatch: HedgeDispatch::Async,
             kill_switch: true,
             execution: HedgeExecutionMode::Composite,
             composite_spread_bp: 1.25,

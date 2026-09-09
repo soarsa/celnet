@@ -245,6 +245,38 @@ impl CashflowSchedule {
             .sum()
     }
 
+    /// Dirty price off a discount curve with a **continuously-compounded z-spread** `z` added
+    /// to every zero rate: `Σ CFₖ · DF(tₖ) · e^(−z·tₖ)`.
+    ///
+    /// The spread is applied on the curve's own continuous zero-rate convention, so
+    /// `z = 0` reproduces [`Self::price_on_curve`] exactly.
+    #[must_use]
+    pub(crate) fn price_on_curve_with_spread(&self, curve: &Curve, z: f64) -> f64 {
+        self.flows
+            .iter()
+            .map(|c| {
+                c.amount * curve.discount_factor(Time(c.curve_time)).0 * (-z * c.curve_time).exp()
+            })
+            .sum()
+    }
+
+    /// `∂P/∂z` of [`Self::price_on_curve_with_spread`] — the **analytic** first derivative
+    /// `−Σ CFₖ · tₖ · DF(tₖ) · e^(−z·tₖ)` (strictly negative for a positive-cashflow bond,
+    /// which is what makes the z-spread solve single-rooted and Newton-safe).
+    #[must_use]
+    pub(crate) fn curve_price_spread_derivative(&self, curve: &Curve, z: f64) -> f64 {
+        -self
+            .flows
+            .iter()
+            .map(|c| {
+                c.amount
+                    * c.curve_time
+                    * curve.discount_factor(Time(c.curve_time)).0
+                    * (-z * c.curve_time).exp()
+            })
+            .sum::<f64>()
+    }
+
     /// The number of future cashflows (coupons, the last carrying the redemption).
     #[cfg(test)]
     pub(crate) fn flow_count(&self) -> usize {

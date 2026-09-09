@@ -99,6 +99,34 @@ afterEach(() => {
 });
 
 describe("ClientFlowWorkspace", () => {
+  it("searches by the row LABEL, which follows the grouping axis", async () => {
+    // The label is a client here, a desk or a product under another grouping — so the
+    // search deliberately matches the label rather than a fixed field, and stays correct
+    // as the axis changes underneath it.
+    const { app } = makeApp([metric(), FISHER, LOSER]);
+    await renderWorkspace(app);
+    expect(screen.getAllByRole("row").length).toBeGreaterThan(3);
+
+    fireEvent.change(screen.getByLabelText(/Search by/), { target: { value: "balyasny" } });
+    const rows = screen.getAllByRole("row");
+    expect(rows).toHaveLength(2); // header + Balyasny
+    expect(rows[1]?.textContent).toContain("Balyasny");
+  });
+
+  it("filters to a FISHING band, which no text filter could reach", async () => {
+    // The band is derived from the score, so it is not a printed value: IMC is 0.98
+    // (high), the default metric 0.02 (low).
+    const { app } = makeApp([metric(), FISHER, LOSER]);
+    await renderWorkspace(app);
+
+    fireEvent.change(screen.getByTestId("client-flow-band-filter"), {
+      target: { value: "high" },
+    });
+    const rows = screen.getAllByRole("row");
+    expect(rows).toHaveLength(2);
+    expect(rows[1]?.textContent).toContain("IMC");
+  });
+
   it("renders a client-flow row with formatted $/mm and counts", async () => {
     const { app } = makeApp([metric()]);
     await renderWorkspace(app);

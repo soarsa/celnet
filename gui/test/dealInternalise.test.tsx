@@ -21,7 +21,7 @@
 
 import { act } from "react";
 import { afterEach, describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 
 import { AppProvider } from "../src/app/AppContext";
 import { DealsBlotterWorkspace } from "../src/workspaces/DealsBlotterWorkspace";
@@ -62,7 +62,10 @@ async function settle(): Promise<void> {
 
 afterEach(() => {
   window.history.replaceState(null, "", "/");
-  document.body.innerHTML = "";
+  // UNMOUNT rather than wiping innerHTML. Blanking the body tears the DOM out from under
+  // React, so the next unmount of anything portalled (the ticket is a modal) throws "the
+  // node to be removed is not a child of this node".
+  cleanup();
 });
 
 describe("dealFromWire — optional internalise provenance", () => {
