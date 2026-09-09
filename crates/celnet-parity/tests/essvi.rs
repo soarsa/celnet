@@ -84,14 +84,17 @@ proptest! {
     #[test]
     fn calendar_total_variance_monotone(
         rho1 in -0.6f64..0.6,
-        psi1 in 0.05f64..0.6,
-        psi_ramp in 0.0f64..0.5,
+        psi_scale in 0.02f64..0.14f64,
+        psi_fraction in 0.0f64..1.0f64,
         skew_shift in -0.4f64..0.4,
         theta1 in 0.01f64..0.05,
         theta_ramp in 0.005f64..0.05,
     ) {
+        let psi1 = psi_scale;
         let theta2 = theta1 + theta_ramp;
-        let psi2 = psi1 + psi_ramp;
+        // Non-increasing curvature phi = psi/theta requires psi2 <= psi1 * (theta2 / theta1).
+        let max_psi_ramp = psi1 * (theta_ramp / theta1);
+        let psi2 = psi1 + psi_fraction * max_psi_ramp;
         // Choose ρ₂ so the ATM-skew gap stays inside the ψ-gap (the calendar
         // condition |ρ₂ψ₂ − ρ₁ψ₁| ≤ ψ₂ − ψ₁): pick the target skew ρ₂ψ₂ within
         // [ρ₁ψ₁ − Δψ, ρ₁ψ₁ + Δψ] then back out ρ₂.

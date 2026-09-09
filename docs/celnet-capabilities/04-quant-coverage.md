@@ -7,7 +7,7 @@ Celnet is not a thin challenger closing gaps — it is a functionally complete, 
 ![Quant coverage map — vanilla, Greeks, conventions, smile/surface, the full exotic & structured catalogue, and the SDK extension seam](../assets/celnet-capabilities/fig-03-quant-coverage.png)
 *Figure 3 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The Celnet quant coverage map: a single in-core library spanning vanilla pricing, the full FX desk Greek set, the four delta conventions, the five-model smile/surface engine, and the full exotic & structured catalogue (vanilla-family · path-dependent · structured/MC · American–Bermudan · correlated basket · LSV booking), validated by ~26 parity rows against independent oracles plus frozen QuantLib golden tables, with the Open Quant SDK as the extension seam to bespoke products.*
 
-### 4.1 Vanilla pricing and the full FX desk Greek set in one pass
+## 4.1 Vanilla pricing and the full FX desk Greek set in one pass
 
 Vanilla European options are priced with the Garman–Kohlhagen model, struck off the outright forward and discounted with **separate domestic and foreign discount factors** — the correct FX construction, not an equity model bent into shape. From that single valuation Celnet returns **price plus the full FX desk Greek set in one pass**: spot-delta and forward-delta, gamma, vega, theta, both rhos (domestic `rho_dom` and foreign `rho_for`), and the full second- and third-order book — vanna, volga, charm, speed, zomma and color. A desk gets every sensitivity it risks against from a single call, with no second pricing round-trip to chase a cross-Greek.
 
@@ -20,11 +20,11 @@ Every one of these sensitivities is **cross-validated by finite differences** ag
 | Second order | Gamma, vanna, volga, charm |
 | Third order | Speed, zomma, color |
 
-### 4.2 Delta conventions and the branch-aware strike↔delta solver
+## 4.2 Delta conventions and the branch-aware strike↔delta solver
 
 FX desks quote in delta, not strike, and the mapping between them depends on convention. Celnet implements all **four delta conventions** — spot and forward, each in unadjusted and premium-adjusted form — and a **branch-aware strike↔delta solver** that inverts the relationship robustly. Crucially, the solver is aware of the **premium-adjusted call-delta maximum**: where the premium-adjusted delta function turns over and a naive root-finder would pick the wrong branch, Celnet selects the correct one. Both at-the-money rules are built in and applied **sign-correctly per convention**: at-the-money-forward (ATMF) and the delta-neutral straddle (DNS). A trader can pin a wing by 25-delta or 10-delta, anchor the smile at ATMF or DNS, and trust that the strike Celnet returns is the strike the market means.
 
-### 4.3 The smile and surface engine — five smile families
+## 4.3 The smile and surface engine — five smile families
 
 Celnet marks volatility with a full smile-and-surface engine rather than a single fixed parameterisation. **Five smile models** are available — **Vanna-Volga, SABR, raw-SVI, SSVI and eSSVI** (the extended, maturity-dependent-ρ surface in `celnet-surface/src/extended_surface.rs`) — and a **smile-model selector** lets a desk mark or recalibrate a smile under any of them and compare. SSVI is byte-recovered as the constant-ρ special case of eSSVI, so the extension is additive, not a fork. Market quotes enter the engine the way they are actually traded: a **broker-strangle → smile-strangle fixed-point calibration** resolves the market (broker) strangle into a consistent smile strangle, so the calibrated smile reproduces the prices a desk was shown.
 
@@ -47,7 +47,7 @@ The marking workflow is exercised live from the GUI's Surface workspace — a sm
 ![Surface marking workspace — smile chart, ATM/25RR/25BF/10RR/10BF grid, arb-free gate, broker calibration, surface version](../assets/celnet-capabilities/shot-03-surface-marking.png)
 *Screenshot 3 — The Surface workspace in the live GUI: smile chart, the ATM / 25RR / 25BF / 10RR / 10BF marking grid, the arbitrage-free gate, broker-calibrated smile, surface version, the five model chips (VV / SABR / SVI / SSVI / eSSVI), and Reset / Publish.*
 
-### 4.4 The full exotic & structured catalogue
+## 4.4 The full exotic & structured catalogue
 
 On top of vanilla and the smile engine, Celnet ships the **full FX exotic and structured catalogue** — not a first-generation subset. Every product below is a real, shipped engine in `celnet-exotics` (and `celnet-heston`), exposed on the one wire as a oneof arm of the unified `Instrument`, and gated by an independent parity row in `celnet-parity`. The catalogue is organised by the numerical regime each product class genuinely lives in — which is exactly what determines its validation bar in §4.5.
 
@@ -91,11 +91,11 @@ For this band, **PDE ≈ MC ≈ analytic** is a continuously enforced invariant,
 - **Local-Stochastic-Volatility booking model** (`lsv.rs`, with `stochvol.rs`, `leverage.rs`, `particle.rs`, `adi.rs`) — a Heston variance backbone with a Dupire **leverage** surface calibrated by the **interacting-particle method** (the McKean–Vlasov leverage identity, calibrated forward-in-time, non-parametrically via a Nadaraya–Watson kernel estimate of `E[v|S]`). It prices on **two independent engines** — a 2-D Hundsdorfer–Verwer **ADI PDE** on the (spot, variance) grid and the antithetic QE-stepper Monte-Carlo — and is anchored by three asserted guarantees: it reprices the arbitrage-free vanilla surface (PDE), ADI-PDE ≈ MC on a window-barrier payoff, and the pure-local-vol limit (`ξ=0, v₀=θ`) recovers the Dupire price. Selectable on the wire via the `PricingModel` directive (`DEFAULT` analytic vs `LOCAL_STOCH_VOL`).
 - **Standalone Heston** (`celnet-heston`) — European vanilla via **two genuinely independent Fourier transforms** of the same branch-cut-free (Cui–del Baño Rollin–Germano) characteristic function: **Carr–Madan** damped-integral Gauss–Legendre quadrature and the **Fang–Oosterlee COS** method, agreeing to `|cm − cos| ≤ 1e-8 + 1e-7·price` over the ≤3y FX grid, and gated against a frozen **QuantLib golden table** (`celnet-golden/data/heston_fo.csv`). No external FFT dependency — single-strike pricing controls accuracy directly.
 
-### 4.4.1 Sobol quasi-Monte-Carlo variance reduction
+## 4.4.1 Sobol quasi-Monte-Carlo variance reduction
 
 The Monte-Carlo path-dependents above ride a complete **randomized quasi-Monte-Carlo (RQMC)** stack (`celnet-qmc`): a gray-code **Joe–Kuo Sobol'** generator with an embedded BSD-licensed direction-number table, an **Owen-style nested digital scramble** for unbiased replications, principal-bisection **Brownian-bridge** path construction loading the dominant variance onto the best-distributed dimensions, and a full-precision inverse-normal CDF. The variance reduction is **measured, not asserted** (`celnet-parity/tests/qmc.rs`, gated ≥ 3×): on exact-value targets the QMC RMSE is roughly **38× smaller for a geometric-average Asian and ~88× smaller for a European** than a fair plain pseudo-random estimator at the same path budget. The Sobol direction numbers are exposed verbatim for GPU reuse; any GPU throughput claim is correctness/ratio-only (see chapters 7–8).
 
-### 4.5 Validation regime — the right oracle for each product class
+## 4.5 Validation regime — the right oracle for each product class
 
 Pricing is only as good as the dates, conventions and oracles underneath it. Celnet runs a **dual-calendar date engine** (`celnet-calendar`) — resolving spot, expiry, delivery and roll across the two settlement calendars an FX pair actually depends on, including ON/TN/SN, IMM and broken dates — and a **per-(currency-pair, tenor) convention registry** (`celnet-conventions`) carrying the right delta convention, ATM rule, day-count and premium treatment per instrument, validated against published EMTA/ISDA tables across a 19-pair universe.
 
@@ -113,7 +113,7 @@ Pricing is only as good as the dates, conventions and oracles underneath it. Cel
 
 The whole library is re-checked on every build by **~26 parity rows against genuinely independent oracles** (`celnet-parity/tests/*`) plus the frozen golden tables — never plausibility, always agreement with an independent computation. **MC-priced products carry an honest `price_std_error`; "machine precision" is reserved for the analytic/PDE/golden-gated set.** (The validation discipline is sharpened by a real defense: a circular self-oracle bug in the FRTB low-correlation floor was caught and the constant re-derived against the published BCBS source — see chapter 14.)
 
-### 4.6 Extensible to bespoke products via the Open Quant SDK
+## 4.6 Extensible to bespoke products via the Open Quant SDK
 
 The catalogue above is the **shipped core**, already matching the structured/path-dependent breadth the deep-catalogue platforms charge for — not the ceiling, and not the only route beyond first-generation. The **Open Quant SDK** exposes the same `PricingModel`, `SmileModel` and `Calibration` seams the core uses, so a desk can extend Celnet to **house and bespoke payoffs** and run them **inside the same engine** — sandboxed (Tier-0 native or the Tier-2 wasmi deterministic sandbox), bit-reproducible by replay, and hot-loadable, without forking Celnet. Coverage grows with the desk's book; structures like TARFs, quantos and baskets are **already shipped core**, so the SDK is for genuinely novel IP rather than filling catalogue gaps.
 

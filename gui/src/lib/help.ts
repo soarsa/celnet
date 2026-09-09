@@ -1,8 +1,8 @@
 /**
  * The in-app Help & guided-tutorials CONTENT REGISTRY — the single source of truth
  * for every pricing-feature / tiering-strategy / concept explanation the trader
- * sees. Authored from `docs/FI-TIERING-RESEARCH.md` (§5 strategies, §9 how-to +
- * worked oracles) and `docs/FI-PRICING-GROUPS-DESIGN.md` (the feature pipeline),
+ * sees. Authored from `docs/fixed-income/FI-TIERING-RESEARCH.md` (§5 strategies, §9 how-to +
+ * worked oracles) and `docs/fixed-income/FI-PRICING-GROUPS-DESIGN.md` (the feature pipeline),
  * so the GUI no longer deep-links OUT to the docs — the registry IS the in-app
  * corpus. Every worked example uses the docs' real numbers (Flat ±25bp → 99.30 /
  * 99.80; the SCALE_SMOOTH divergence oracle; the inventory-skew two-way).

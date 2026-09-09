@@ -7,20 +7,24 @@ updating this file, and announcing it in the `CLAUDE.md` ledger. Within a parall
 window the interface crates are treated as **stable** so streams don't churn; a deliberate
 interface change coordinates all affected crates at once (see `docs/ROADMAP.md` §3).
 
-## The 40-crate workspace
+## The 64-crate workspace
 
-The implemented flat workspace is **40 crates** (`ls crates`):
+The implemented flat workspace is **64 crates** (`cargo metadata`):
 
 ```
-celnet-types  celnet-core  celnet-conventions  celnet-calendar  celnet-vanilla
-celnet-surface  celnet-exotics  celnet-heston  celnet-qmc  celnet-gpu
-celnet-engine  celnet-journal  celnet-replog  celnet-fanout  celnet-integration
-celnet-server  celnet-cli  celnet-client  celnet-proto  celnet-plugin-api
-celnet-plugin-host  celnet-observability  celnet-golden  celnet-testkit  celnet-bench
-celnet-router  celnet-fix  celnet-parity  celnet-risk-normalize  celnet-risk-cube
-celnet-risk-fleet  celnet-limits  celnet-entitlements  celnet-xva  celnet-linear
-celnet-equity-vanilla  celnet-commodity-vanilla  celnet-crypto-vanilla  celnet-rfq
-celnet-rates
+celnet-types           celnet-core            celnet-conventions     celnet-calendar        celnet-vanilla
+celnet-equity-vanilla  celnet-commodity-vanilla celnet-crypto-vanilla celnet-linear        celnet-surface
+celnet-exotics         celnet-heston          celnet-qmc             celnet-gpu             celnet-risk-accel
+celnet-engine          celnet-journal         celnet-replog          celnet-fanout          celnet-shm
+celnet-sbe             celnet-exchange-codecs celnet-fix             celnet-risk-normalize  celnet-risk-cube
+celnet-risk-fleet      celnet-router          celnet-limits          celnet-entitlements    celnet-xva
+celnet-risk-routing    celnet-risk-transfer   celnet-hedge-routing   celnet-acceptance      celnet-plugin-api
+celnet-plugin-host     celnet-license         celnet-upgrade         celnet-rates           celnet-bond
+celnet-rates-risk      celnet-rates-exotics   celnet-refdata         celnet-refstore        celnet-corpactions
+celnet-margin          celnet-algo            celnet-integration     celnet-aggregation     celnet-tiering
+celnet-rfq             celnet-server          celnet-cli             celnet-client          celnet-c-api
+celnet-proto           celnet-observability   celnet-golden          celnet-parity          celnet-analytics
+celnet-lp-sim          celnet-cme-sim         celnet-testkit         celnet-bench
 ```
 
 Several domains the early design split across many crates were **consolidated**:
@@ -34,71 +38,65 @@ Sobol' + Owen scramble + Brownian-bridge), `celnet-replog` (leader-replicated de
 replay log over loopback sockets + full Raft) and `celnet-fanout` (lock-free SPMC broadcast
 ring) under the engine, `celnet-risk-fleet` (cross-shard risk fan-out algebra over the
 `celnet-router` HRW map), and `celnet-xva` (internal-only EPE/ENE + CVA/DVA/FVA over synthetic
-netting sets — no wire surface). The cross-asset/linear/RFQ wave (W2–W5) added five more leaf
-crates: `celnet-linear` (outright forward / FX swap / NDF over the asset-class-agnostic carry
-seam), `celnet-equity-vanilla` (generalized-BSM, dividend-yield carry), `celnet-commodity-vanilla`
-(futures-style undiscounted-forward pricing), `celnet-crypto-vanilla` (linear funding-carry +
-inverse coin-margined `1/S_T` payoff), and `celnet-rfq` (the multi-dealer RFQ-to-many engine:
-concurrent fan-out, ranking, deterministic tie-break, last-look). The fixed-income/rates wave
-added `celnet-rates` (OIS/SOFR multi-curve bootstrap + FRA/IRS/STIR-futures/cash-bond PV +
-curve risk, now wired into the server's `RatesService` + FI dealer desk — see §"Fixed-income /
-rates subsystem"). `celnet-plugin-host` is **built**: the tiered host (Tier-0
-native registry + Tier-2 **wasmi** fuel-metered sandbox + replay harness) behind the frozen
-`celnet-plugin-api` contract — wasmtime was rejected for open RustSec advisories (see
-`docs/PLUGIN-HOST-ALT.md`).
+netting sets — no wire surface). The cross-asset/linear/RFQ waves added: `celnet-linear`
+(outright forward / FX swap / NDF over the carry seam), `celnet-equity-vanilla` (generalized-BSM),
+`celnet-commodity-vanilla` (Black-76), `celnet-crypto-vanilla` (linear funding + inverse coin payoff),
+and `celnet-rfq` (multi-dealer RFQ engine). The fixed-income/rates and reference-data waves added:
+`celnet-rates` (OIS/SOFR multi-curve bootstrap + FRA/IRS/STIR PV + curve risk), `celnet-bond`
+(cash bond pricing + YTM + DV01 + duration/convexity), `celnet-rates-risk` (key-rate ladders +
+FRTB GIRR), `celnet-refdata` (curated bond/futures universe), `celnet-refstore` (effective-dated
+instrument/corporate action store), `celnet-corpactions` (deterministic CA effects),
+`celnet-aggregation` (multi-venue BBO aggregation), `celnet-tiering` (client price tiering & skew),
+`celnet-hedge-routing` (risk exit engine), `celnet-risk-routing` (fill-to-book router),
+`celnet-risk-transfer` (inter-book risk movement), `celnet-acceptance` (quote acceptance rules),
+`celnet-analytics` (trade performance / TCA metrics), and the synthetic venues `celnet-lp-sim`
+and `celnet-cme-sim`. `celnet-plugin-host` is **built**: the tiered host (Tier-0 native registry +
+Tier-2 **wasmi** fuel-metered sandbox) behind the frozen `celnet-plugin-api` contract.
 
 ## Dependency direction (must never invert)
 
 ```
 celnet-types  ←  celnet-core  ←  { celnet-conventions, celnet-calendar, celnet-vanilla,
-                                   celnet-surface, celnet-exotics, celnet-heston, celnet-qmc,
-                                   celnet-gpu }  ←  celnet-engine  ←  { celnet-server, celnet-cli }
-celnet-proto      →  depends only on celnet-types
-celnet-plugin-api →  depends only on celnet-types (+ celnet-core traits)
-celnet-client     →  depends on celnet-proto (typed SDK over tonic)
-celnet-observability →  telemetry seam; celnet-engine stays free of its deps
-celnet-heston     →  standalone Heston European vanilla over celnet-core/-types/libm (no IO)
-celnet-qmc        →  Sobol'/scramble/Brownian-bridge variate source over celnet-core (no IO);
-                     consumed by celnet-exotics/-xva and the celnet-gpu path/greeks kernels
-celnet-journal    →  dependency-free fsync'd append-only log + crash recovery; under celnet-engine
-celnet-replog     →  leader-replicated deterministic-replay log over loopback sockets (→ celnet-journal)
-celnet-fanout     →  lock-free SPMC broadcast ring (reuses crossbeam-utils CachePadded only)
-celnet-integration   →  Celer estate + vendor MD adapters, over celnet-surface/-types
-celnet-risk-normalize →  pure leaf transform (no IO) over celnet-core/-types + the vanilla
-                         tier — celnet-{vanilla,equity-vanilla,commodity-vanilla,crypto-vanilla}
-                         (grew cross-asset reach to canonicalize mixed-asset risk);
+                                   celnet-equity-vanilla, celnet-commodity-vanilla, celnet-crypto-vanilla,
+                                   celnet-linear, celnet-surface, celnet-exotics, celnet-heston,
+                                   celnet-qmc, celnet-gpu, celnet-rates, celnet-bond }
+                               ←  celnet-engine  ←  { celnet-server, celnet-cli }
+celnet-proto          →  depends only on celnet-types
+celnet-plugin-api     →  depends only on celnet-types (+ celnet-core traits)
+celnet-client         →  depends on celnet-proto (typed SDK over tonic)
+celnet-observability  →  telemetry seam; celnet-engine stays free of its deps
+celnet-heston         →  standalone Heston European vanilla over celnet-core/-types/libm (no IO)
+celnet-qmc            →  Sobol'/scramble/Brownian-bridge variate source over celnet-core (no IO);
+                         consumed by celnet-exotics/-xva and the celnet-gpu path/greeks kernels
+celnet-journal        →  dependency-free fsync'd append-only log + crash recovery; under celnet-engine
+celnet-replog         →  leader-replicated deterministic-replay log over loopback sockets (→ celnet-journal)
+celnet-fanout         →  lock-free SPMC broadcast ring (reuses crossbeam-utils CachePadded only)
+celnet-integration    →  Celer estate + vendor MD adapters, over celnet-surface/-types
+celnet-risk-normalize →  pure leaf transform (no IO) over celnet-core/-types + vanilla tier;
                          the convention/numeraire boundary the risk cube sits on
-celnet-rates          →  WIRED fixed-income/rates leaf: OIS/SOFR multi-curve bootstrap (log-linear-DF
-                         `Curve`) + FRA / IRS (`vanilla_swap`) / STIR-futures / cash-bond PV +
-                         par-rate / PV01 / DV01 + a key-rate-DV01 ladder + Brent solver, over
-                         celnet-types/-calendar only (no IO). **Now consumed by `celnet-server`**
-                         (`rates_pricing.rs` → `price_ois`/`par_rate_for`/`build_quotes` call
-                         `bootstrap_ois`/`ois_par_rate`/`ois_risk`), exposed via the `RatesService`
-                         RPCs (`PriceRates`/`AggregateRatesRisk`/`BookRatesPosition`/`ListRatesPositions`)
-                         and the FI dealer-quoting desk (`RfqDeskEdge` + `NotificationService`). See
-                         §"Fixed-income / rates subsystem"; convergence direction = ADR-0010.
-celnet-risk-cube      →  single-node OLAP cube over celnet-risk-normalize (+ -vanilla
-                         for bump-and-revalue, -core, -types); no IO/market-data
-celnet-risk-fleet     →  cross-shard risk fan-out ALGEBRA over celnet-risk-cube + celnet-router
-                         (HRW map) + -types; fan-out == single-node (transport designed-only)
+celnet-rates          →  fixed-income/rates leaf: OIS/SOFR multi-curve bootstrap (log-linear-DF Curve)
+                         + FRA/IRS/STIR-futures PV + par-rate/PV01/DV01, over celnet-types/-calendar
+celnet-bond           →  cash bond analytics leaf: dirty/clean price, accrued interest, YTM, DV01, convexity
+celnet-rates-risk     →  rate VaR/ES, key-rate ladders, and FRTB GIRR curvature over celnet-rates/-bond
+celnet-refdata        →  curated bond + Treasury/STIR futures universe (JSON snapshots)
+celnet-refstore       →  effective-dated instrument and corporate action store (delegates to celnet-journal)
+celnet-corpactions    →  pure corporate-action calculation engine (no IO, clock, or rng)
+celnet-risk-cube      →  single-node OLAP cube over celnet-risk-normalize (+ -vanilla, -core, -types)
+celnet-risk-fleet     →  cross-shard risk fan-out algebra over celnet-risk-cube + celnet-router
 celnet-router         →  shard-by-pair/tenant HRW partition map over celnet-types; no IO
-celnet-entitlements   →  pure pre-aggregation pruning predicate over celnet-risk-cube
-                         (FactKey/Hierarchy/DimensionId) + -types; no IO; sits beside the
-                         cube, upstream of its group-by
-celnet-limits         →  pure limit framework over celnet-risk-cube (NodeAggregate /
-                         dimension keys / Hierarchy) + celnet-risk-normalize (CanonicalLeaf)
-                         + -types; no IO; sits above the cube, downstream of its group-by
-celnet-xva            →  internal-only XVA engine (EPE/ENE + CVA/DVA/FVA) over a hazard-rate
-                         survival curve + the celnet-qmc Sobol/bridge variates; synthetic
-                         netting sets, no wire surface
-celnet-linear         →  linear (non-option) FX book leaf: outright forward / FX swap / NDF
-                         over celnet-core/-types (no IO); consumed by celnet-server/-cli
-celnet-equity-vanilla / celnet-commodity-vanilla / celnet-crypto-vanilla
-                      →  cross-asset vanilla leaves on the generalized carry seam, each over
-                         celnet-core/-types only (no IO); consumed by the server pricer
-celnet-rfq            →  multi-dealer RFQ-to-many engine (fan-out, ranking, tie-break,
-                         last-look) over celnet-proto + celnet-fix + celnet-types
-celnet-golden, celnet-testkit, celnet-bench  →  test/validation/bench only
+celnet-entitlements   →  pure pre-aggregation pruning predicate over celnet-risk-cube + -types
+celnet-limits         →  hierarchical limit framework over celnet-risk-cube + celnet-risk-normalize + -types
+celnet-xva            →  internal-only XVA engine (EPE/ENE + CVA/DVA/FVA) over hazard-rate survival curve
+celnet-rfq            →  multi-dealer RFQ engine over celnet-proto + celnet-fix + celnet-types
+celnet-aggregation    →  multi-venue top-of-book consensus aggregation over celnet-types
+celnet-tiering        →  outbound price tiering and inventory skew over celnet-types
+celnet-hedge-routing  →  decision graph resolving book risk to exit actions over celnet-types
+celnet-risk-routing   →  fill-to-book risk routing rules engine
+celnet-risk-transfer  →  manual risk transfer and offsetting leg generator between books
+celnet-acceptance     →  incoming quote acceptance rule engine consumed by celnet-server
+celnet-analytics      →  deterministic client-flow / TCA metrics fold
+celnet-lp-sim, celnet-cme-sim → synthetic liquidity provider and venue simulation
+celnet-golden, celnet-testkit, celnet-bench → test/validation/bench only
 ```
 
 ## Status

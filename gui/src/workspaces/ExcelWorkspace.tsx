@@ -7,7 +7,7 @@
  * the add-in manifest to sideload. The downloadable artifacts are served from the
  * GUI's public dir under `/excel/` (copied from the add-in project `excel/`:
  * `manifest.xml` and the example `contribution.xlsx`). The deep reference is the
- * add-in `excel/README.md` and `docs/EXCEL-INTEGRATION.md`.
+ * add-in `excel/README.md` and `docs/clients/EXCEL-INTEGRATION.md`.
  */
 
 import styles from "./ExcelWorkspace.module.css";

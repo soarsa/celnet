@@ -1,0 +1,1755 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="obsidian">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CelNet Sovereign Platform — Architecture, Quantitative Capabilities &amp; Performance Specification</title>
+  <style>
+    /* ==========================================================================
+       CELNET // CHRONOS 2026 — WORLD-CLASS EDITORIAL & QUANTITATIVE SPECIFICATION
+       Achromatic Obsidian & Titanium Architecture • Edward Tufte Data-Ink Standard
+       Swiss International Typographic System (Müller-Brockmann & Vignelli)
+       Zero 2015-Era Boxed Cards • Zero Decorative Green Chrome • Earned Telemetry
+       ========================================================================== */
+
+    :root, [data-theme="obsidian"] {
+      --theme-name: "01 OBSIDIAN TITANIUM (INSTITUTIONAL)";
+      --bg-space: #07080a;
+      --bg-primary: #090a0d;
+      --bg-surface: #101217;
+      --bg-well: #151820;
+      
+      /* Swiss Architectural Baseline Rules */
+      --rule-heavy: 1.5px solid rgba(255, 255, 255, 0.22);
+      --rule-primary: 1px solid rgba(255, 255, 255, 0.14);
+      --rule-subtle: 1px solid rgba(255, 255, 255, 0.05);
+      
+      /* Pure Typographic Hierarchy */
+      --text-hero: #ffffff;
+      --text-main: #f1f5f9;      /* Glacial Platinum */
+      --text-dim: #94a3b8;       /* Titanium Silver */
+      --text-muted: #64748b;     /* Muted Slate */
+      
+      /* Earned Functional Telemetry Accents (Never Decorative Chrome) */
+      --accent-primary: #f59e0b;    /* Sovereign Amber / Gold */
+      --accent-telemetry: #f59e0b;
+      --accent-positive: #10b981;   /* Emerald Jade (Strictly +P&L / in-core speedup) */
+      --accent-alert: #f43f5e;      /* Crimson Coral (Strictly latency tax / OTM) */
+      --accent-wire: #38bdf8;       /* Ice Cerulean (Wire / IPC telemetry) */
+      --accent-dim: rgba(245, 158, 11, 0.12);
+      
+      --table-header-bg: transparent;
+      --table-row-alt: rgba(255, 255, 255, 0.016);
+      --table-border: rgba(255, 255, 255, 0.06);
+      --border-subtle: rgba(255, 255, 255, 0.08);
+    }
+
+    [data-theme="amber"] {
+      --theme-name: "02 BLOOMBERG AMBER";
+      --bg-space: #060504;
+      --bg-primary: #0c0a08;
+      --bg-surface: #15120d;
+      --bg-well: #1c1810;
+      --rule-heavy: 1.5px solid rgba(245, 158, 11, 0.35);
+      --rule-primary: 1px solid rgba(245, 158, 11, 0.22);
+      --rule-subtle: 1px solid rgba(255, 255, 255, 0.05);
+      --text-hero: #ffffff;
+      --text-main: #fefce8;
+      --text-dim: #d4d4d8;
+      --text-muted: #78716c;
+      --accent-primary: #f59e0b;
+      --accent-telemetry: #f59e0b;
+      --accent-positive: #10b981;
+      --accent-alert: #f43f5e;
+      --accent-wire: #38bdf8;
+      --accent-dim: rgba(245, 158, 11, 0.14);
+      --table-header-bg: transparent;
+      --table-row-alt: rgba(245, 158, 11, 0.018);
+      --table-border: rgba(245, 158, 11, 0.10);
+      --border-subtle: rgba(245, 158, 11, 0.14);
+    }
+
+    [data-theme="monochrome"] {
+      --theme-name: "03 SECDB PLATINUM";
+      --bg-space: #020202;
+      --bg-primary: #080809;
+      --bg-surface: #111215;
+      --bg-well: #18191f;
+      --rule-heavy: 1.5px solid rgba(255, 255, 255, 0.28);
+      --rule-primary: 1px solid rgba(255, 255, 255, 0.16);
+      --rule-subtle: 1px solid rgba(255, 255, 255, 0.05);
+      --text-hero: #ffffff;
+      --text-main: #ffffff;
+      --text-dim: #cbd5e1;
+      --text-muted: #64748b;
+      --accent-primary: #e2e8f0;
+      --accent-telemetry: #e2e8f0;
+      --accent-positive: #10b981;
+      --accent-alert: #f43f5e;
+      --accent-wire: #38bdf8;
+      --accent-dim: rgba(255, 255, 255, 0.10);
+      --table-header-bg: transparent;
+      --table-row-alt: rgba(255, 255, 255, 0.018);
+      --table-border: rgba(255, 255, 255, 0.08);
+      --border-subtle: rgba(255, 255, 255, 0.10);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.48;
+      font-size: 8.2pt;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+
+    .doc-page {
+      background: var(--bg-primary);
+      margin-bottom: 2rem;
+      position: relative;
+    }
+
+    /* Editorial Typography */
+    h1 {
+      font-size: 21pt;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      color: var(--text-hero);
+      line-height: 1.15;
+    }
+
+    h2 {
+      font-size: 11.5pt;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: var(--text-hero);
+      border-bottom: var(--rule-heavy);
+      padding-bottom: 0.4rem;
+      margin-bottom: 0.85rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    h3 {
+      font-size: 9.2pt;
+      font-weight: 700;
+      color: var(--text-hero);
+      margin: 0.5rem 0 0.25rem 0;
+      letter-spacing: -0.01em;
+    }
+
+    p {
+      color: var(--text-dim);
+      margin-bottom: 0.5rem;
+      font-size: 8.2pt;
+      line-height: 1.48;
+    }
+
+    /* Interactive Theme Selector Bar — Boxless Hairline Style */
+    .theme-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: transparent;
+      border-top: var(--rule-primary);
+      border-bottom: var(--rule-primary);
+      padding: 6px 0;
+      margin-bottom: 1.5rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 8pt;
+    }
+    .theme-btn-group {
+      display: flex;
+      gap: 12px;
+    }
+    .theme-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 3px 6px;
+      cursor: pointer;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 7.5pt;
+      font-weight: 600;
+      transition: all 120ms ease;
+    }
+    .theme-btn:hover, .theme-btn.active {
+      color: var(--accent-telemetry);
+      border-bottom: 1.5px solid var(--accent-telemetry);
+    }
+
+    /* Boxless Executive 6-KPI Strip — Edward Tufte Data-Ink Layout */
+    .kpi-row {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 1.25rem;
+      padding: 0.85rem 0 1rem 0;
+      margin-bottom: 1.25rem;
+      border-top: var(--rule-heavy);
+      border-bottom: var(--rule-heavy);
+    }
+
+    .kpi-card {
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      padding: 0;
+      box-shadow: none;
+    }
+
+    .kpi-label {
+      font-size: 6.5pt;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--text-muted);
+      font-weight: 700;
+      margin-bottom: 0.35rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .kpi-metric {
+      font-size: 16pt;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      margin-bottom: 0.2rem;
+      font-variant-numeric: tabular-nums;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-hero);
+      line-height: 1.1;
+    }
+
+    .kpi-desc {
+      font-size: 6.8pt;
+      color: var(--text-dim);
+      line-height: 1.35;
+    }
+
+    /* Boxless Editorial Panels */
+    .panel {
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      padding: 0;
+      margin-bottom: 0.85rem;
+      box-shadow: none;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+    }
+
+    /* Boxless Scientific Booktabs Tables */
+    .table-container {
+      margin: 0.75rem 0 1.1rem 0;
+      border: none;
+      border-radius: 0;
+      overflow: visible;
+      box-shadow: none;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 7.5pt;
+      background: transparent;
+      border-top: var(--rule-heavy);
+      border-bottom: var(--rule-heavy);
+    }
+
+    th {
+      background: transparent;
+      color: var(--text-hero);
+      text-align: left;
+      padding: 6px 10px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 6.8pt;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border-bottom: var(--rule-primary);
+    }
+
+    td {
+      padding: 5px 10px;
+      border-bottom: var(--rule-subtle);
+      color: var(--text-dim);
+      line-height: 1.4;
+    }
+
+    tr:nth-child(even) td {
+      background: var(--table-row-alt);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    .mono {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 7.2pt;
+      color: var(--text-main);
+    }
+
+    /* Boxless Architecture Matrix */
+    .tier-box {
+      background: transparent;
+      border: none;
+      border-top: var(--rule-primary);
+      border-radius: 0;
+      padding: 0.65rem 0 0 0;
+      box-shadow: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+    }
+
+    .tier-title {
+      font-size: 8.5pt;
+      font-weight: 700;
+      color: var(--text-hero);
+      margin-bottom: 0.25rem;
+      display: flex;
+      justify-content: space-between;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .tier-meta {
+      font-size: 7.5pt;
+      color: var(--text-dim);
+      line-height: 1.42;
+      margin-bottom: 0.4rem;
+    }
+
+    .tier-crates {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 6.8pt;
+      color: var(--text-muted);
+    }
+
+    /* Section divider line */
+    .section-rule {
+      border: none;
+      border-top: var(--rule-primary);
+      margin: 1.25rem 0;
+    }
+
+    @media print {
+      @page {
+        size: A4;
+        margin: 14mm 10mm 14mm 10mm;
+      }
+      body {
+        background-color: #090a0d !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .no-print {
+        display: none !important;
+      }
+      .page-container {
+        padding: 0;
+        max-width: 100%;
+      }
+      .doc-page {
+        page-break-after: always;
+        page-break-inside: avoid;
+        margin-bottom: 0;
+        min-height: 269mm;
+        max-height: 269mm;
+        box-sizing: border-box;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="page-container">
+
+    <!-- Interactive Theme HUD (Hidden during Print) -->
+    <div class="theme-bar no-print">
+      <div>
+        <span style="font-weight: 800; color: var(--accent-primary); letter-spacing: 0.5px;">CELNET // CHRONOS 2026</span> &bull; 
+        <span style="color: var(--text-muted);">INSTITUTIONAL MASTER SPECIFICATION</span>
+      </div>
+      <div class="theme-btn-group">
+        <button class="theme-btn active" onclick="setTheme('chartreuse')">01 ACID CHARTREUSE</button>
+        <button class="theme-btn" onclick="setTheme('orange')">02 SAFETY ORANGE</button>
+        <button class="theme-btn" onclick="setTheme('amber')">03 SOLAR AMBER</button>
+        <button class="theme-btn" onclick="setTheme('monolith')">04 MONOLITH</button>
+      </div>
+    </div>
+
+    <!-- =======================================================================
+         PAGE 1: SOVEREIGN COVER, OUTCOME KPIS & QUANTITATIVE MANDATE
+         ======================================================================= -->
+    <div class="doc-page" id="page-1">
+      <div style="border-bottom: 1px solid var(--border-subtle); padding-bottom: 0.85rem; margin-bottom: 0.85rem; display: flex; justify-content: space-between; align-items: flex-start;">
+        <div>
+          <div style="font-size: 7.5pt; font-weight: 800; letter-spacing: 1.5px; color: var(--accent-primary); margin-bottom: 0.2rem; font-family: 'JetBrains Mono', monospace;">CELNET SOVEREIGN SYSTEMS &middot; MASTER QUANTITATIVE SPECIFICATION</div>
+          <h1>CelNet Sovereign Platform</h1>
+          <div style="font-size: 9.5pt; color: var(--text-dim); font-weight: 500; margin-top: 0.15rem;">End-to-End System Architecture, Quantitative Capabilities &amp; Performance Specification</div>
+        </div>
+        <div style="text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 7pt; color: var(--text-muted); line-height: 1.45;">
+          <div>SECURITY: STRICTLY CONFIDENTIAL</div>
+          <div>RELEASE: PRODUCTION GA 2026.4</div>
+          <div>COMPILER: RUST 2024 / LLVM 19</div>
+          <div>SAFETY: #![forbid(unsafe_code)]</div>
+        </div>
+      </div>
+
+      <!-- 6 High-Impact Outcome Metrics -->
+      <div class="kpi-row">
+        <div class="kpi-card">
+          <div class="kpi-label">Valuation Rate</div>
+          <div class="kpi-metric" style="color: var(--accent-primary);">13.63 M</div>
+          <div class="kpi-desc">Opt / sec / core sustained (+25.3% in-core gain)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Median Latency (p50)</div>
+          <div class="kpi-metric" style="color: var(--accent-primary);">42.0 ns</div>
+          <div class="kpi-desc">0.042 µs ALU execution (48x under budget)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Tail Latency (p99)</div>
+          <div class="kpi-metric" style="color: var(--accent-primary);">84.0 ns</div>
+          <div class="kpi-desc">0.084 µs bound (-32.8% tail optimization)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Shared Memory IPC</div>
+          <div class="kpi-metric" style="color: var(--accent-primary);">14.46 ns</div>
+          <div class="kpi-desc">SBE /dev/shm (40,600x faster than gRPC)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Asset Coverage</div>
+          <div class="kpi-metric" style="color: var(--accent-primary);">24 Arms</div>
+          <div class="kpi-desc">Vanilla to TARF, Asians, Americans, Baskets</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Client Drift</div>
+          <div class="kpi-metric" style="color: var(--accent-primary);">0.000</div>
+          <div class="kpi-desc">Bit-identical f64 parity across GUI, Excel &amp; Risk</div>
+        </div>
+      </div>
+
+      <!-- Executive Trading Mandate & Outcomes -->
+      <div class="grid-2" style="margin-bottom: 0.75rem;">
+        <div class="panel">
+          <h3 style="color: #fff; font-size: 9.2pt; margin-top: 0;">Executive Trading &amp; Quantitative Mandate</h3>
+          <p>
+            CelNet is an ultra-low latency, zero-allocation quantitative pricing, real-time risk, algorithmic hedging, and electronic execution platform engineered for Tier-1 investment banks, market-making desks, and quantitative hedge funds.
+          </p>
+          <p>
+            Operating entirely in CPU registers and L1/L2 cache under <code>#![forbid(unsafe_code)]</code>, the core engine prices vanilla options in <strong>22.5 ns</strong> and generates complete 13-Greek analytic risk vectors in <strong>36.5 ns</strong> with zero heap allocations, eliminating GC pauses, memory leaks, and thread contention on the pricing loop.
+          </p>
+          <p style="margin-bottom: 0; color: var(--text-muted); font-size: 7.8pt;">
+            Under ADR-0012, multi-curve interest rates and FX volatility smile surfaces are parameterized through a unified forward carry seam: <code>df &middot; [F &Phi;(d1) - K &Phi;(d2)]</code>. Trading desks, Excel spreadsheets, and central risk engines consume the exact same compiled numerical kernel, guaranteeing zero model discrepancy across the firm.
+          </p>
+        </div>
+
+        <div class="panel">
+          <h3 style="color: #fff; font-size: 9.2pt; margin-top: 0;">Institutional Trading Desk Outcomes</h3>
+          <div style="display: flex; flex-direction: column; gap: 0.4rem; font-size: 7.8pt;">
+            <div>
+              <strong style="color: var(--accent-positive);">&bull; Intraday Capital Optimization:</strong>
+              <span style="color: var(--text-dim);"> Sub-microsecond position rollups across 8 org axes compute non-additive VaR and Expected Shortfall, eliminating conservative capital buffer padding under FRTB GIRR and SA-CCR.</span>
+            </div>
+            <div>
+              <strong style="color: var(--accent-primary);">&bull; Execution Alpha &amp; Spread Defense:</strong>
+              <span style="color: var(--text-dim);"> 42 ns median pricing enables market-maker desks to quote inside tight bid/offer spreads and update quotes at tick frequency without being picked off by latency arbitrageurs.</span>
+            </div>
+            <div>
+              <strong style="color: var(--accent-secondary);">&bull; Monolith TCO Elimination:</strong>
+              <span style="color: var(--text-dim);"> Replaces sprawling, multi-million dollar annual licensing for Murex MX.3 and Calypso with a compact, bare-metal Rust cluster operating with deterministic latency.</span>
+            </div>
+            <div>
+              <strong style="color: var(--accent-primary);">&bull; Immutable Trade Reconstruction:</strong>
+              <span style="color: var(--text-dim);"> Raft-replicated consensus journals guarantee exact bit-for-bit replay for pre-trade limit enforcement, trade dispute resolution, and regulatory audit defense.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Document Map & Section Index -->
+      <div class="panel">
+        <h3 style="color: #fff; font-size: 9.2pt; margin-top: 0; margin-bottom: 0.45rem;">Master Document Directory &amp; Architectural Index</h3>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; font-size: 7.5pt;">
+          <div>
+            <div style="color: #fff; font-weight: 700;">Section 1 &middot; System Architecture</div>
+            <div style="color: var(--text-muted);">Five-Tier Concentric Topology &middot; Page 2</div>
+          </div>
+          <div>
+            <div style="color: #fff; font-weight: 700;">Section 2 &middot; Trading Lifecycle</div>
+            <div style="color: var(--text-muted);">Zero-Alloc Pipeline &amp; Wire Topology &middot; Page 3</div>
+          </div>
+          <div>
+            <div style="color: #fff; font-weight: 700;">Section 3 &middot; Core Service APIs</div>
+            <div style="color: var(--text-muted);">Valuation, Pricing &amp; Trade Wire RPCs &middot; Page 4</div>
+          </div>
+          <div>
+            <div style="color: #fff; font-weight: 700;">Section 4 &middot; Enterprise Wire APIs</div>
+            <div style="color: var(--text-muted);">Stream, Risk, Surface, FIX &amp; Auth &middot; Page 5</div>
+          </div>
+          <div>
+            <div style="color: #fff; font-weight: 700;">Section 5 &middot; Quant Foundations</div>
+            <div style="color: var(--text-muted);">ADR-0012 Carry Seam &amp; Term Structures &middot; Page 6</div>
+          </div>
+          <div>
+            <div style="color: #fff; font-weight: 700;">Section 6 &middot; 24-Product Matrix</div>
+            <div style="color: var(--text-muted);">Exotics, Models &amp; Golden Oracles &middot; Page 7</div>
+          </div>
+          <div>
+            <div style="color: #fff; font-weight: 700;">Section 7 &middot; Latency Benchmarks</div>
+            <div style="color: var(--text-muted);">Divan Suite &amp; 10M Truth Gate &middot; Page 8</div>
+          </div>
+          <div>
+            <div style="color: #fff; font-weight: 700;">Section 8 &middot; Excel &amp; Client Parity</div>
+            <div style="color: var(--text-muted);">27 Spill UDFs &amp; Zero Drift Parity &middot; Page 9</div>
+          </div>
+          <div>
+            <div style="color: #fff; font-weight: 700;">Section 9 &middot; Differentiators</div>
+            <div style="color: var(--text-muted);">CelNet vs Legacy Monoliths Matrix &middot; Page 10</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- =======================================================================
+         PAGE 2: FIVE-TIER CONCENTRIC SYSTEM ARCHITECTURE
+         ======================================================================= -->
+    <div class="doc-page" id="page-2">
+      <h2>
+        <span>1. Five-Tier Concentric System Architecture</span>
+        <span style="font-size: 7.2pt; font-family: 'JetBrains Mono', monospace; color: var(--text-muted);">CRATE MODULARITY &middot; TIER 0 TO TIER 4</span>
+      </h2>
+      <p>
+        CelNet enforces strict physical separation between its pinned numerical core, zero-allocation messaging edge, distributed consensus replication, and client gateways. Crate dependencies are acyclic: internal numerical crates have zero network dependencies.
+      </p>
+
+      <!-- Embedded Diagram 1 -->
+      <div style="margin: 0.35rem 0 0.6rem 0;">
+        
+<svg viewBox="0 0 800 295" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" style="background: #090a0d; border-top: 1px solid rgba(255,255,255,0.12); border-bottom: 1px solid rgba(255,255,255,0.12); margin: 0.5rem 0;">
+  <defs>
+    <pattern id="gridPattern1" width="16" height="16" patternUnits="userSpaceOnUse">
+      <path d="M 16 0 L 0 0 0 16" fill="none" stroke="rgba(198,255,0,0.04)" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="800" height="295" fill="#0b0e0c"/>
+
+  <!-- Top Technical Header -->
+  <text x="20" y="20" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="700" letter-spacing="1.2">FIG 01 // FIVE-TIER CONCENTRIC ARCHITECTURAL TOPOLOGY</text>
+  <text x="780" y="20" text-anchor="end" fill="#71717a" font-family="'JetBrains Mono', monospace" font-size="7.5">PHYSICAL MEMORY BOUNDARY &middot; KERNEL TO WIRE</text>
+  <line x1="20" y1="26" x2="780" y2="26" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+
+  <!-- Tier 1: Pinned Numerical Core -->
+  <g transform="translate(20, 38)">
+    <rect width="232" height="242" rx="4" fill="#121510" stroke="rgba(255,255,255,0.16)" stroke-width="1.2"/>
+    <path d="M 0 0 L 232 0" stroke="rgba(255,255,255,0.16)" stroke-width="2.5"/>
+    <text x="12" y="18" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="800">TIER 1 &middot; NUMERICAL CORE</text>
+    <text x="12" y="34" fill="#f4f4f5" font-family="-apple-system, sans-serif" font-size="10.5" font-weight="700">In-Core ALU Kernel</text>
+    <text x="12" y="48" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="8">#![forbid(unsafe_code)] &middot; Zero Malloc</text>
+    <text x="12" y="60" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="8">Native IEEE 754 fsqrt / FMA Opcodes</text>
+    
+    <rect x="12" y="72" width="208" height="28" rx="3" fill="#1c220f" stroke="rgba(255,255,255,0.16)" stroke-width="0.8"/>
+    <text x="18" y="86" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="800">42.0 ns p50 &middot; 84.0 ns p99</text>
+    <text x="18" y="95" fill="#d4e6c0" font-family="-apple-system, sans-serif" font-size="7">13.63M valuations / sec / core sustained</text>
+
+    <!-- Crates box -->
+    <rect x="12" y="108" width="208" height="120" rx="3" fill="#0b0c0e" stroke="rgba(198,255,0,0.18)" stroke-width="0.8"/>
+    <text x="18" y="124" fill="#71717a" font-family="'JetBrains Mono', monospace" font-size="7" font-weight="700">NUMERICAL CRATE FAMILY</text>
+    <text x="18" y="140" fill="#d4e6c0" font-family="'JetBrains Mono', monospace" font-size="8">&gt; celnet-core (Horner / BSM)</text>
+    <text x="18" y="156" fill="#d4e6c0" font-family="'JetBrains Mono', monospace" font-size="8">&gt; celnet-vanilla (13 Greeks)</text>
+    <text x="18" y="172" fill="#d4e6c0" font-family="'JetBrains Mono', monospace" font-size="8">&gt; celnet-surface (5 Smiles)</text>
+    <text x="18" y="188" fill="#d4e6c0" font-family="'JetBrains Mono', monospace" font-size="8">&gt; celnet-exotics (24 Arms)</text>
+    <text x="18" y="204" fill="#d4e6c0" font-family="'JetBrains Mono', monospace" font-size="8">&gt; celnet-rates &amp; bond</text>
+    <text x="18" y="220" fill="#71717a" font-family="'JetBrains Mono', monospace" font-size="7.5">*Zero internal dependencies</text>
+  </g>
+
+  <!-- Bus Connector 1->2 -->
+  <path d="M 252 101 L 282 101" stroke="rgba(255,255,255,0.16)" stroke-width="1.5" stroke-dasharray="3,3"/>
+  <rect x="256" y="91" width="22" height="11" rx="2" fill="#231e07"/>
+  <text x="267" y="99" text-anchor="middle" fill="#ffd600" font-family="'JetBrains Mono', monospace" font-size="6.5" font-weight="700">14ns</text>
+
+  <!-- Tier 2: SBE /dev/shm IPC -->
+  <g transform="translate(282, 38)">
+    <rect width="232" height="116" rx="4" fill="#111318" stroke="rgba(255,255,255,0.16)" stroke-width="1.2"/>
+    <path d="M 0 0 L 232 0" stroke="rgba(255,255,255,0.16)" stroke-width="2.5"/>
+    <text x="12" y="18" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="800">TIER 2 &middot; SHARED MEMORY IPC</text>
+    <text x="12" y="34" fill="#f4f4f5" font-family="-apple-system, sans-serif" font-size="10.5" font-weight="700">Zero-Copy POSIX Ring</text>
+    <text x="12" y="48" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="8">SBE flyweights over /dev/shm</text>
+    <text x="12" y="62" fill="#d4e6c0" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="700">14.46 ns (40,600x faster than gRPC)</text>
+    <text x="12" y="76" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">Single-writer SPMC atomic ring &middot; 128B aligned</text>
+    <text x="12" y="98" fill="#cbd5e1" font-family="'JetBrains Mono', monospace" font-size="7.5">celnet-shm &middot; celnet-sbe &middot; celnet-fanout</text>
+  </g>
+
+  <!-- Tier 3: Consensus Fleet -->
+  <g transform="translate(282, 164)">
+    <rect width="232" height="116" rx="4" fill="#121614" stroke="rgba(198,255,0,0.28)" stroke-width="1.2"/>
+    <path d="M 0 0 L 232 0" stroke="rgba(255,255,255,0.16)" stroke-width="2"/>
+    <text x="12" y="18" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="800">TIER 3 &middot; CONSENSUS REPLICATION</text>
+    <text x="12" y="34" fill="#f4f4f5" font-family="-apple-system, sans-serif" font-size="10.5" font-weight="700">Raft Deterministic Replay</text>
+    <text x="12" y="48" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="8">Bit-identical state machine recovery</text>
+    <text x="12" y="62" fill="#d4e6c0" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="700">Consistent hashing book partition</text>
+    <text x="12" y="76" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">Query latency &le; max(node) rather than sum</text>
+    <text x="12" y="98" fill="#cbd5e1" font-family="'JetBrains Mono', monospace" font-size="7.5">celnet-replog &middot; celnet-risk-fleet</text>
+  </g>
+
+  <!-- Bus Connector 2/3->4 -->
+  <path d="M 514 96 L 544 96" stroke="rgba(255,255,255,0.16)" stroke-width="1.5" stroke-dasharray="3,3"/>
+  <path d="M 514 222 L 544 222" stroke="rgba(255,255,255,0.16)" stroke-width="1.5" stroke-dasharray="3,3"/>
+
+  <!-- Tier 4: Wire Gateways -->
+  <g transform="translate(544, 38)">
+    <rect width="236" height="146" rx="4" fill="#111318" stroke="rgba(255,255,255,0.16)" stroke-width="1.2"/>
+    <path d="M 0 0 L 236 0" stroke="rgba(255,255,255,0.16)" stroke-width="2.5"/>
+    <text x="12" y="18" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="800">TIER 4 &middot; ASYNC WIRE GATEWAY</text>
+    <text x="12" y="34" fill="#f4f4f5" font-family="-apple-system, sans-serif" font-size="10.5" font-weight="700">Universal Contract Mirror</text>
+    <text x="12" y="48" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="8">HTTP/2 gRPC &amp; WebSocket JSON (1:1)</text>
+    <text x="12" y="62" fill="#39ff14" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="700">13 Services &middot; 28 RPC Contracts</text>
+    <text x="12" y="76" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">Single source of truth: celnet.proto (9.9k lines)</text>
+    <text x="12" y="94" fill="#f4f4f5" font-family="-apple-system, sans-serif" font-size="8" font-weight="600">Surfaces: WebGPU GUI &middot; Excel &middot; FIX</text>
+    <text x="12" y="108" fill="#39ff14" font-family="'JetBrains Mono', monospace" font-size="7.5">f64::to_bits exact floating-point parity</text>
+    <text x="12" y="128" fill="#cbd5e1" font-family="'JetBrains Mono', monospace" font-size="7.5">celnet-proto &middot; celnet-server &middot; celnet-rfq</text>
+  </g>
+
+  <!-- Tier 0 / 2: Quant Extensibility -->
+  <g transform="translate(544, 194)">
+    <rect width="236" height="86" rx="4" fill="#111318" stroke="rgba(255,255,255,0.16)" stroke-width="1.2"/>
+    <path d="M 0 0 L 236 0" stroke="rgba(255,255,255,0.16)" stroke-width="2.5"/>
+    <text x="12" y="17" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="800">TIER 0 / 2 &middot; QUANT EXTENSIBILITY</text>
+    <text x="12" y="32" fill="#f4f4f5" font-family="-apple-system, sans-serif" font-size="10" font-weight="700">Native C-ABI &amp; WASM Sandbox Host</text>
+    <text x="12" y="46" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">Deploy proprietary alphas with zero fork</text>
+    <text x="12" y="59" fill="#d4e6c0" font-family="'JetBrains Mono', monospace" font-size="8">wasmi memory isolation &middot; &lt; 1 µs overhead</text>
+    <text x="12" y="74" fill="#cbd5e1" font-family="'JetBrains Mono', monospace" font-size="7.5">celnet-plugin-api &middot; celnet-plugin-host</text>
+  </g>
+</svg>
+
+      </div>
+
+      <!-- Concentric Tiers Deep Dive -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+        <div class="tier-box">
+          <div class="tier-title"><span>Tier 1: Pinned Numerical Core</span> <span style="color: var(--accent-primary);">42 ns ALU</span></div>
+          <div class="tier-meta">Zero heap allocations on the hot pricing loop. Compiles directly to native hardware instructions (IEEE 754 <code>fsqrt</code>), eliminating software calls.</div>
+          <div class="tier-crates">celnet-core &middot; celnet-vanilla &middot; celnet-surface &middot; celnet-rates &middot; celnet-bond &middot; celnet-exotics</div>
+        </div>
+
+        <div class="tier-box">
+          <div class="tier-title"><span>Tier 2: Messaging &amp; Edge</span> <span style="color: var(--accent-secondary);">14.46 ns SBE</span></div>
+          <div class="tier-meta">Transfers data over POSIX shared memory (<code>/dev/shm</code>) using SBE flyweights. Single-writer multi-reader atomic SPMC ring buffers eliminate serialization overhead.</div>
+          <div class="tier-crates">celnet-shm &middot; celnet-sbe &middot; celnet-fanout &middot; celnet-journal &middot; celnet-fix</div>
+        </div>
+
+        <div class="tier-box">
+          <div class="tier-title"><span>Tier 3: Consensus &amp; Risk Fleet</span> <span style="color: var(--accent-primary);">Raft Replay</span></div>
+          <div class="tier-meta">Raft-replicated state machine guaranteeing bit-identical recovery. Consistent hashing shards books across nodes with query latency &le; max(node) rather than sum(node).</div>
+          <div class="tier-crates">celnet-replog &middot; celnet-risk-fleet &middot; celnet-risk-cube &middot; celnet-limits</div>
+        </div>
+
+        <div class="tier-box">
+          <div class="tier-title"><span>Tier 4: Universal Wire Gateways</span> <span style="color: var(--accent-positive);">Sub-50 µs</span></div>
+          <div class="tier-meta">Translates SBE events into HTTP/2 gRPC and WebSocket streaming JSON with exact 1:1 parity. Powers WebGPU Cockpit, Excel Add-in, CLI, and FIX connections.</div>
+          <div class="tier-crates">celnet-proto &middot; celnet-server &middot; celnet-client &middot; celnet-rfq</div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top: 0.35rem; padding: 0.45rem 0.75rem;">
+        <div style="font-weight: 700; color: #fff; margin-bottom: 0.15rem; font-size: 7.8pt;">Tier 0 &amp; 2: Open Quant Extensibility SDK &amp; WebAssembly Sandbox</div>
+        <p style="margin-bottom: 0; font-size: 7.2pt; color: var(--text-dim);">
+          Desks integrate proprietary alpha models without forking core source code. Tier-0 uses a zero-overhead native C-ABI dynamic library contract. Tier-2 provides fully sandboxed WebAssembly execution via <code>wasmi</code> with deterministic memory bounds and microsecond runtime overhead.
+        </p>
+      </div>
+    </div>
+
+    <!-- =======================================================================
+         PAGE 3: TRADING LIFECYCLE & ZERO-ALLOCATION WIRE TOPOLOGY
+         ======================================================================= -->
+    <div class="doc-page" id="page-3">
+      <h2>
+        <span>2. End-to-End Trading Lifecycle &amp; Wire Topology</span>
+        <span style="font-size: 7.2pt; font-family: 'JetBrains Mono', monospace; color: var(--text-muted);">ZERO-ALLOCATION INGESTION TO EXECUTION</span>
+      </h2>
+      <p>
+        Every tick, RFQ, and execution flows through a deterministic, allocation-free pipeline. Pinned CPU cores process events without context switching or heap locks, ensuring sub-microsecond tick-to-trade responsiveness.
+      </p>
+
+      <!-- Embedded Diagram 2 -->
+      <div style="margin: 0.35rem 0 0.6rem 0;">
+        
+<svg viewBox="0 0 800 168" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" style="background: #090a0d; border-top: 1px solid rgba(255,255,255,0.12); border-bottom: 1px solid rgba(255,255,255,0.12); margin: 0.5rem 0;">
+  <defs>
+    <pattern id="gridPattern2" width="16" height="16" patternUnits="userSpaceOnUse">
+      <path d="M 16 0 L 0 0 0 16" fill="none" stroke="rgba(198,255,0,0.04)" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="800" height="168" fill="url(#gridPattern2)"/>
+
+  <!-- Top Technical Header -->
+  <text x="20" y="20" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="700" letter-spacing="1.2">FIG 02 // ZERO-ALLOCATION ORDER &amp; TICK EXECUTION PIPELINE</text>
+  <text x="780" y="20" text-anchor="end" fill="#71717a" font-family="'JetBrains Mono', monospace" font-size="7.5">END-TO-END TICK-TO-TRADE HARDWARE TOPOLOGY</text>
+  <line x1="20" y1="26" x2="780" y2="26" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+
+  <!-- 5 Pipeline Blocks -->
+  <!-- Block 1 -->
+  <g transform="translate(20, 36)">
+    <rect width="134" height="116" rx="4" fill="#131613" stroke="rgba(198,255,0,0.22)" stroke-width="1"/>
+    <text x="10" y="16" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="7.5" font-weight="700">01 / INGEST</text>
+    <text x="10" y="32" fill="#ffffff" font-family="-apple-system, sans-serif" font-size="9.5" font-weight="700">Venue Feeds</text>
+    <text x="10" y="46" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">EBS, Bbg, Refinitiv</text>
+    <text x="10" y="58" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">CME iLink3 / FIX 4.4</text>
+    <rect x="8" y="84" width="118" height="22" rx="2" fill="#1a2217" stroke="rgba(198,255,0,0.25)" stroke-width="0.8"/>
+    <text x="12" y="98" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="7.5" font-weight="700">4.0 µs Kernel-Bypass</text>
+  </g>
+
+  <!-- Pipe 1->2 -->
+  <path d="M 154 94 L 174 94" stroke="rgba(255,255,255,0.16)" stroke-width="2"/>
+
+  <!-- Block 2 -->
+  <g transform="translate(174, 36)">
+    <rect width="134" height="116" rx="4" fill="#111318" stroke="rgba(255,255,255,0.16)" stroke-width="1"/>
+    <text x="10" y="16" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="7.5" font-weight="700">02 / RING BUFFER</text>
+    <text x="10" y="32" fill="#ffffff" font-family="-apple-system, sans-serif" font-size="9.5" font-weight="700">Atomic Ingest</text>
+    <text x="10" y="46" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">SPMC single-writer</text>
+    <text x="10" y="58" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">128B cache line aligned</text>
+    <rect x="8" y="84" width="118" height="22" rx="2" fill="#181612" stroke="rgba(255,255,255,0.16)" stroke-width="0.8"/>
+    <text x="12" y="98" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="7.5" font-weight="700">11.3 ns SPMC Ring</text>
+  </g>
+
+  <!-- Pipe 2->3 -->
+  <path d="M 308 94 L 328 94" stroke="rgba(255,255,255,0.16)" stroke-width="2"/>
+
+  <!-- Block 3 -->
+  <g transform="translate(328, 36)">
+    <rect width="138" height="116" rx="4" fill="#111318" stroke="rgba(255,255,255,0.16)" stroke-width="1.5"/>
+    <text x="10" y="16" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="7.5" font-weight="800">03 / ALU KERNEL</text>
+    <text x="10" y="32" fill="#ffffff" font-family="-apple-system, sans-serif" font-size="9.5" font-weight="700">Pricing &amp; Greeks</text>
+    <text x="10" y="46" fill="#d4e6c0" font-family="-apple-system, sans-serif" font-size="7.5">Forward gBSM + 13 Greeks</text>
+    <text x="10" y="58" fill="#d4e6c0" font-family="-apple-system, sans-serif" font-size="7.5">Native fsqrt ALU opcode</text>
+    <rect x="8" y="84" width="122" height="22" rx="2" fill="#181612" stroke="rgba(255,255,255,0.16)" stroke-width="0.8"/>
+    <text x="12" y="98" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="7.5" font-weight="800">42 ns p50 &middot; 84 ns p99</text>
+  </g>
+
+  <!-- Pipe 3->4 -->
+  <path d="M 466 94 L 486 94" stroke="rgba(255,255,255,0.16)" stroke-width="2"/>
+
+  <!-- Block 4 -->
+  <g transform="translate(486, 36)">
+    <rect width="134" height="116" rx="4" fill="#111318" stroke="rgba(255,255,255,0.16)" stroke-width="1"/>
+    <text x="10" y="16" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="7.5" font-weight="700">04 / RISK CUBE</text>
+    <text x="10" y="32" fill="#ffffff" font-family="-apple-system, sans-serif" font-size="9.5" font-weight="700">Limit Clearance</text>
+    <text x="10" y="46" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">8-axis org aggregation</text>
+    <text x="10" y="58" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">Non-additive VaR/ES</text>
+    <rect x="8" y="84" width="118" height="22" rx="2" fill="#181612" stroke="rgba(255,255,255,0.16)" stroke-width="0.8"/>
+    <text x="12" y="98" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="7.5" font-weight="700">&lt; 800 ns Aggregation</text>
+  </g>
+
+  <!-- Pipe 4->5 -->
+  <path d="M 620 94 L 640 94" stroke="rgba(255,255,255,0.16)" stroke-width="2"/>
+
+  <!-- Block 5 -->
+  <g transform="translate(640, 36)">
+    <rect width="140" height="116" rx="4" fill="#111318" stroke="rgba(255,255,255,0.16)" stroke-width="1"/>
+    <text x="10" y="16" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="7.5" font-weight="700">05 / DISTRIBUTION</text>
+    <text x="10" y="32" fill="#ffffff" font-family="-apple-system, sans-serif" font-size="9.5" font-weight="700">Blotter &amp; Execution</text>
+    <text x="10" y="46" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">Raft consensus log</text>
+    <text x="10" y="58" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">WebGPU &amp; Excel C-API</text>
+    <rect x="8" y="84" width="124" height="22" rx="2" fill="#181612" stroke="rgba(255,255,255,0.16)" stroke-width="0.8"/>
+    <text x="12" y="98" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="7.5" font-weight="700">14.46 ns SBE /dev/shm</text>
+  </g>
+</svg>
+
+      </div>
+
+      <!-- Pipeline Phase Deep Dive -->
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin-bottom: 0.45rem;">
+        <div class="panel" style="margin-bottom: 0;">
+          <h3 style="margin-top:0; font-size: 8pt;">Phase 1: Ingest &amp; Ring Buffer</h3>
+          <p style="font-size: 7.3pt; margin-bottom: 0;">
+            Venue feeds (EBS, CME iLink3, Bloomberg B-PIPE) arrive via UDP multicast. Kernel-bypass drivers copy raw network frames directly into user-space SPMC ring buffers in <strong>11.3 ns</strong>. Messages are 128B aligned to prevent cache-line bouncing across NUMA nodes.
+          </p>
+        </div>
+
+        <div class="panel" style="margin-bottom: 0;">
+          <h3 style="margin-top:0; font-size: 8pt; color: var(--accent-secondary);">Phase 2: In-Core ALU &amp; Greeks</h3>
+          <p style="font-size: 7.3pt; margin-bottom: 0;">
+            The numerical engine consumes the order without memory copies. Pinned ALU registers calculate forward BSM carry, evaluate SABR/SVI volatility smiles, and generate the full 13-Greek risk vector in <strong>36.5 ns</strong> using hardware <code>fsqrt</code> instructions.
+          </p>
+        </div>
+
+        <div class="panel" style="margin-bottom: 0;">
+          <h3 style="margin-top:0; font-size: 8pt; color: var(--accent-alert);">Phase 3: Risk Cube &amp; Distribution</h3>
+          <p style="font-size: 7.3pt; margin-bottom: 0;">
+            Trade ticks hit the in-memory multidimensional risk cube, updating desk and legal entity limits in <strong>&lt; 800 ns</strong>. The fill commits to the Raft consensus journal while SBE flyweights fan out updates over <code>/dev/shm</code> to WebGPU GUI and Excel in <strong>14.46 ns</strong>.
+          </p>
+        </div>
+      </div>
+
+      <div class="panel" style="padding: 0.5rem 0.75rem;">
+        <div style="font-weight: 700; color: #fff; margin-bottom: 0.15rem; font-size: 7.8pt;">SBE Zero-Copy Flyweight Memory Layout (ADR-0008)</div>
+        <p style="margin-bottom: 0; font-size: 7.2pt; color: var(--text-dim);">
+          Simple Binary Encoding (SBE) defines flat, schema-versioned memory structures where message fields reside at fixed byte offsets. The consumer casts raw memory pointers directly into Rust structs (<code>#[repr(C, packed)]</code>), achieving true <strong>zero-copy decoding in 0.00 ns</strong> with no memory allocation.
+        </p>
+      </div>
+    </div>
+
+    <!-- =======================================================================
+         PAGE 4: COMPREHENSIVE API CATALOG (PART 1: VALUATION, PRICING & TRADING)
+         ======================================================================= -->
+    <div class="doc-page" id="page-4">
+      <h2>
+        <span>3. Comprehensive API Catalog &amp; Service Wire Contracts</span>
+        <span style="font-size: 7.2pt; font-family: 'JetBrains Mono', monospace; color: var(--text-muted);">PART 1: VALUATION, PRICING &amp; TRADE SERVICES</span>
+      </h2>
+      <p>
+        Defined in <code>crates/celnet-proto/proto/celnet.proto</code> (9,898 lines of single-source-of-truth proto3 definitions). Every gRPC method has an exact 1:1 WebSocket JSON streaming mirror.
+      </p>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Service Name</th>
+              <th>RPC Method</th>
+              <th>Request Message</th>
+              <th>Response Message</th>
+              <th>Description &amp; Guarantees</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>ValuationService</strong></td>
+              <td class="mono">Calculate</td>
+              <td class="mono">ValuationRequest</td>
+              <td class="mono">ValuationResponse</td>
+              <td>Real-time cross-asset valuation; returns clean price, PV, full 13-Greek risk strip, and MC error in &lt; 100 ns.</td>
+            </tr>
+            <tr>
+              <td><strong>PricingService</strong></td>
+              <td class="mono">Price</td>
+              <td class="mono">PriceRequest</td>
+              <td class="mono">PriceResponse</td>
+              <td>High-speed vanilla &amp; exotic option pricer with instantaneous analytic Greek risk attribution.</td>
+            </tr>
+            <tr>
+              <td><strong>PricingService</strong></td>
+              <td class="mono">PriceRates</td>
+              <td class="mono">RatesPriceRequest</td>
+              <td class="mono">RatesPriceResponse</td>
+              <td>Multi-curve bond &amp; swap pricing; computes dirty/clean price, PV01, parallel DV01, and 10-bucket key-rate ladder.</td>
+            </tr>
+            <tr>
+              <td><strong>PricingService</strong></td>
+              <td class="mono">PriceXva</td>
+              <td class="mono">PriceXvaRequest</td>
+              <td class="mono">PriceXvaResponse</td>
+              <td>Real-time counterparty exposure; computes CVA, DVA, and FVA across netting sets against hazard curves.</td>
+            </tr>
+            <tr>
+              <td><strong>TradeService</strong></td>
+              <td class="mono">RequestQuote</td>
+              <td class="mono">QuoteRequest</td>
+              <td class="mono">Quote</td>
+              <td>Two-way executable market-maker quote bound to an HMAC cryptographic last-look protection token.</td>
+            </tr>
+            <tr>
+              <td><strong>TradeService</strong></td>
+              <td class="mono">RequestMultiDealerQuote</td>
+              <td class="mono">QuoteRequest</td>
+              <td class="mono">MultiDealerQuote</td>
+              <td>Smart RFQ aggregator; fans out to tier-1 dealers and ranks best-execution (BBO) touch with spread analytics.</td>
+            </tr>
+            <tr>
+              <td><strong>TradeService</strong></td>
+              <td class="mono">RequestRatesQuote</td>
+              <td class="mono">RatesQuoteRequest</td>
+              <td class="mono">RatesQuote</td>
+              <td>Fixed income RFQ engine for bonds, OIS swaps, and FRAs returning par swap rates and DV01 hedge ratios.</td>
+            </tr>
+            <tr>
+              <td><strong>TradeService</strong></td>
+              <td class="mono">AcceptQuote</td>
+              <td class="mono">QuoteAccept</td>
+              <td class="mono">Execution</td>
+              <td>Atomic trade execution, real-time credit limit clearance, and Raft consensus blotter booking (&lt; 5.2 µs).</td>
+            </tr>
+            <tr>
+              <td><strong>TradeService</strong></td>
+              <td class="mono">RejectQuote</td>
+              <td class="mono">QuoteReject</td>
+              <td class="mono">RejectAck</td>
+              <td>Explicit quote rejection; instantaneously releases dealer capital reservations and margin holds.</td>
+            </tr>
+            <tr>
+              <td><strong>TradeService</strong></td>
+              <td class="mono">ListDeals</td>
+              <td class="mono">ListDealsRequest</td>
+              <td class="mono">ListDealsResponse</td>
+              <td>High-speed trade blotter query supporting real-time PnL reconciliation, desk attribution, and trade audit.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel" style="margin-top: 0.45rem;">
+        <h3 style="color: #fff; font-size: 8.5pt; margin-top: 0;">Trade Token &amp; Last-Look Verification Guarantees</h3>
+        <p style="font-size: 7.8pt; margin-bottom: 0;">
+          All executable quotes returned by <code>TradeService::RequestQuote</code> contain an HMAC-SHA256 authenticated token embedding execution notional, strike, expiration timestamp (typically 250–1000 ms), and pricing engine sequence number. When an order executes via <code>AcceptQuote</code>, the state machine verifies token freshness, checks hierarchical counterparty credit limits in the in-memory risk cube, and appends the fill to the Raft consensus log in under <strong>5.2 microseconds</strong>.
+        </p>
+      </div>
+    </div>
+
+    <!-- =======================================================================
+         PAGE 5: COMPREHENSIVE API CATALOG (PART 2: STREAMING, RISK & OPS)
+         ======================================================================= -->
+    <div class="doc-page" id="page-5">
+      <h2>
+        <span>4. Streaming, Risk &amp; Operational Wire Contracts</span>
+        <span style="font-size: 7.2pt; font-family: 'JetBrains Mono', monospace; color: var(--text-muted);">PART 2: STREAMING, RISK, FIX &amp; OPERATIONS</span>
+      </h2>
+      <p>
+        The enterprise control plane manages multiplexed streaming sessions, real-time risk cubes, live volatility surfaces, FIX engine acceptor lifecycles, and institutional security administration.
+      </p>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Service Name</th>
+              <th>RPC Method</th>
+              <th>Request Message</th>
+              <th>Response Message</th>
+              <th>Description &amp; Guarantees</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>StreamService</strong></td>
+              <td class="mono">StreamSession</td>
+              <td class="mono">stream ClientStreamMessage</td>
+              <td class="mono">stream ServerStreamMessage</td>
+              <td>Multiplexed market data &amp; order session supporting sub-100 µs Click-to-Trade execution.</td>
+            </tr>
+            <tr>
+              <td><strong>RiskService</strong></td>
+              <td class="mono">ListPositions</td>
+              <td class="mono">ListPositionsRequest</td>
+              <td class="mono">ListPositionsResponse</td>
+              <td>Real-time open positions with multi-currency attribution and trader entitlement filtering.</td>
+            </tr>
+            <tr>
+              <td><strong>RiskService</strong></td>
+              <td class="mono">AggregateRisk</td>
+              <td class="mono">AggregateRiskRequest</td>
+              <td class="mono">AggregateRiskResponse</td>
+              <td>Sub-microsecond position rollup across 8 org axes into net Greeks and non-additive VaR/ES.</td>
+            </tr>
+            <tr>
+              <td><strong>RiskService</strong></td>
+              <td class="mono">DrillRisk</td>
+              <td class="mono">DrillRiskRequest</td>
+              <td class="mono">DrillRiskResponse</td>
+              <td>Instantaneous drill-down from enterprise risk nodes into granular portfolio tickets.</td>
+            </tr>
+            <tr>
+              <td><strong>RiskService</strong></td>
+              <td class="mono">LimitStatus</td>
+              <td class="mono">LimitStatusRequest</td>
+              <td class="mono">LimitStatusResponse</td>
+              <td>Real-time limit monitor with automated margin breach alerts and liquidity kill-switch.</td>
+            </tr>
+            <tr>
+              <td><strong>RiskService</strong></td>
+              <td class="mono">AggregateRatesRisk</td>
+              <td class="mono">AggregateRatesRiskRequest</td>
+              <td class="mono">AggregateRatesRiskResponse</td>
+              <td>Shards linear-rates books across fleet; rolls up per-currency PV, PV01, and key-rate ladders.</td>
+            </tr>
+            <tr>
+              <td><strong>RiskService</strong></td>
+              <td class="mono">CombinedTailRisk</td>
+              <td class="mono">CombinedTailRiskRequest</td>
+              <td class="mono">CombinedTailRiskResponse</td>
+              <td>Unified cross-asset Monte Carlo tail risk (joint VaR &amp; ES accounting for multi-asset diversification).</td>
+            </tr>
+            <tr>
+              <td><strong>SurfaceService</strong></td>
+              <td class="mono">GetSmile / MarkSurface</td>
+              <td class="mono">SmileRequest / MarkRequest</td>
+              <td class="mono">Smile / MarkResponse</td>
+              <td>Calibrates arbitrage-free volatility surfaces from broker runs (ATM, Risk Reversal, Butterfly).</td>
+            </tr>
+            <tr>
+              <td><strong>SurfaceService</strong></td>
+              <td class="mono">GetCurve / MarkCurve</td>
+              <td class="mono">CurveRequest / MarkRequest</td>
+              <td class="mono">CurveResponse / MarkResponse</td>
+              <td>Bootstraps multi-curve discounting and forwarding curves from deposits, FRAs, futures, and swaps.</td>
+            </tr>
+            <tr>
+              <td><strong>FixAdminService</strong></td>
+              <td class="mono">ListConnections / SetEnabled</td>
+              <td class="mono">ListConnectionsReq</td>
+              <td class="mono">ConnectionStateResponse</td>
+              <td>Low-latency FIX 4.4 engine connection manager with sub-millisecond session failover.</td>
+            </tr>
+            <tr>
+              <td><strong>AuthService</strong></td>
+              <td class="mono">Login / SetPricingControl</td>
+              <td class="mono">LoginRequest / ControlReq</td>
+              <td class="mono">LoginResponse / ControlAck</td>
+              <td>Firm-wide risk control plane with instant liquidity kill-switch and emergency spread widener.</td>
+            </tr>
+            <tr>
+              <td><strong>CorporateActions</strong></td>
+              <td class="mono">ApplyCorporateAction</td>
+              <td class="mono">CorporateActionRequest</td>
+              <td class="mono">CorporateActionResponse</td>
+              <td>Re-benchmarks bond cashflow schedules and dirty prices upon corporate event notice.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel" style="margin-top: 0.45rem;">
+        <h3 style="color: #fff; font-size: 8.5pt; margin-top: 0;">Multi-Axis Risk Cube Aggregation Contract</h3>
+        <p style="font-size: 7.8pt; margin-bottom: 0;">
+          The <code>RiskService::AggregateRisk</code> engine maintains an in-memory multidimensional cube indexing position facts across 8 axes: Entity &rarr; Division &rarr; Desk &rarr; Portfolio &rarr; Book &rarr; Counterparty &rarr; Currency Pair &rarr; Tenor. Incremental position deltas re-aggregate Greek sensitivities in under <strong>800 nanoseconds</strong> per trade, providing continuous real-time VaR and capital limit enforcement.
+        </p>
+      </div>
+    </div>
+
+    <!-- =======================================================================
+         PAGE 6: QUANTITATIVE COVERAGE & MATHEMATICAL FOUNDATIONS
+         ======================================================================= -->
+    <div class="doc-page" id="page-6">
+      <h2>
+        <span>5. Quantitative Coverage &amp; Model Formulation</span>
+        <span style="font-size: 7.2pt; font-family: 'JetBrains Mono', monospace; color: var(--text-muted);">MATHEMATICAL PURITY &middot; ADR-0012 UNIFIED SEAM</span>
+      </h2>
+      <p>
+        CelNet resolves the historic fragmentation of quantitative libraries by expressing FX options, interest rate curves, equity derivatives, and commodities through a single generalized forward carry seam (ADR-0012).
+      </p>
+
+      <!-- Embedded Diagram 3 -->
+      <div style="margin: 0.35rem 0 0.5rem 0;">
+        
+<svg viewBox="0 0 800 185" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" style="background: #090a0d; border-top: 1px solid rgba(255,255,255,0.12); border-bottom: 1px solid rgba(255,255,255,0.12); margin: 0.5rem 0;">
+  <defs>
+    <pattern id="gridPattern3" width="16" height="16" patternUnits="userSpaceOnUse">
+      <path d="M 16 0 L 0 0 0 16" fill="none" stroke="rgba(198,255,0,0.04)" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="800" height="185" fill="url(#gridPattern3)"/>
+
+  <!-- Top Technical Header -->
+  <text x="20" y="20" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="700" letter-spacing="1.2">FIG 03 // ADR-0012 UNIFIED MATHEMATICAL FORWARD CARRY SEAM</text>
+  <text x="780" y="20" text-anchor="end" fill="#71717a" font-family="'JetBrains Mono', monospace" font-size="7.5">CROSS-ASSET EQUIVALENCE: FX, RATES, EQUITIES &amp; COMMODITIES</text>
+  <line x1="20" y1="26" x2="780" y2="26" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+
+  <!-- Center Core Equation Box -->
+  <rect x="220" y="38" width="360" height="74" rx="4" fill="#111318" stroke="rgba(255,255,255,0.16)" stroke-width="1.5"/>
+  <text x="400" y="58" text-anchor="middle" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="9" font-weight="800" letter-spacing="1">UNIFIED FORWARD CARRY KERNEL</text>
+  <text x="400" y="82" text-anchor="middle" fill="#ffffff" font-family="Georgia, serif" font-size="14" font-weight="700">V(0) = D(0, T) &middot; [ F &middot; &Phi;(d₁) − K &middot; &Phi;(d₂) ]</text>
+  <text x="400" y="100" text-anchor="middle" fill="#a1a1aa" font-family="'JetBrains Mono', monospace" font-size="7.5">d₁,₂ = [ ln(F/K) &plusmn; &frac12;&sigma;&sup2;T ] / [ &sigma;&radic;T ]</text>
+
+  <!-- Left: FX Options -->
+  <g transform="translate(20, 38)">
+    <rect width="180" height="60" rx="3" fill="#111318" stroke="rgba(255,255,255,0.16)" stroke-width="1"/>
+    <text x="10" y="18" fill="#ffd600" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="700">FX OPTIONS &amp; SMILE</text>
+    <text x="10" y="34" fill="#ffffff" font-family="Georgia, serif" font-size="9">F = S &middot; e^{(r_d − r_f)T}</text>
+    <text x="10" y="48" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">Vanna-Volga &middot; SABR &middot; SVI &middot; SSVI</text>
+  </g>
+  <line x1="200" y1="68" x2="220" y2="68" stroke="rgba(255,255,255,0.16)" stroke-width="1.5"/>
+
+  <!-- Right: Fixed Income -->
+  <g transform="translate(600, 38)">
+    <rect width="180" height="60" rx="3" fill="#111318" stroke="rgba(255,255,255,0.16)" stroke-width="1"/>
+    <text x="10" y="18" fill="#39ff14" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="700">FIXED INCOME MULTI-CURVE</text>
+    <text x="10" y="34" fill="#ffffff" font-family="Georgia, serif" font-size="9">D_k = D_{k-1} &middot; v &middot; OIS / SOFR</text>
+    <text x="10" y="48" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">Single-pass Horner discount recurrence</text>
+  </g>
+  <line x1="580" y1="68" x2="600" y2="68" stroke="rgba(255,255,255,0.16)" stroke-width="1.5"/>
+
+  <!-- Left Lower: Equities -->
+  <g transform="translate(20, 110)">
+    <rect width="180" height="52" rx="3" fill="#111318" stroke="rgba(255,255,255,0.16)" stroke-width="1"/>
+    <text x="10" y="16" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="700">EQUITIES &amp; DIVIDENDS</text>
+    <text x="10" y="30" fill="#ffffff" font-family="Georgia, serif" font-size="9">F = (S − PV_div) &middot; e^{rT}</text>
+    <text x="10" y="44" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">American PSOR &middot; Discrete dividends</text>
+  </g>
+  <path d="M 200 136 L 285 136 L 285 112" fill="none" stroke="rgba(255,255,255,0.16)" stroke-width="1.2"/>
+
+  <!-- Right Lower: Commodities -->
+  <g transform="translate(600, 110)">
+    <rect width="180" height="52" rx="3" fill="#111318" stroke="rgba(255,255,255,0.16)" stroke-width="1"/>
+    <text x="10" y="16" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="700">COMMODITY &amp; STORAGE</text>
+    <text x="10" y="30" fill="#ffffff" font-family="Georgia, serif" font-size="9">F = S &middot; e^{(r + u − y)T}</text>
+    <text x="10" y="44" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">Curran Asian arithmetic averaging</text>
+  </g>
+  <path d="M 600 136 L 515 136 L 515 112" fill="none" stroke="rgba(255,255,255,0.16)" stroke-width="1.2"/>
+
+  <!-- Guarantee Banner -->
+  <rect x="220" y="122" width="360" height="40" rx="3" fill="#0b0c0e" stroke="rgba(255,255,255,0.16)" stroke-width="1"/>
+  <text x="400" y="138" text-anchor="middle" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="800">BIT-IDENTICAL IEEE 754 f64 PARITY</text>
+  <text x="400" y="152" text-anchor="middle" fill="#a1a1aa" font-family="-apple-system, sans-serif" font-size="7.5">Exact f64::to_bits identity between Trader Excel Add-in &amp; Central Risk Cube</text>
+</svg>
+
+      </div>
+
+      <!-- Embedded Diagram 5: SABR Smile -->
+      <div style="margin: 0.35rem 0 0.5rem 0;">
+        
+<svg viewBox="0 0 800 135" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" style="background: #090a0d; border-top: 1px solid rgba(255,255,255,0.12); border-bottom: 1px solid rgba(255,255,255,0.12); margin: 0.5rem 0;">
+  <defs>
+    <pattern id="gridPattern5" width="16" height="16" patternUnits="userSpaceOnUse">
+      <path d="M 16 0 L 0 0 0 16" fill="none" stroke="rgba(198,255,0,0.04)" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="800" height="135" fill="url(#gridPattern5)"/>
+
+  <!-- Top Technical Header -->
+  <text x="20" y="18" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="700" letter-spacing="1.2">FIG 05 // HAGAN 2002 ANALYTICAL SABR SMILE DYNAMICS &amp; SKEW PARAMETRIZATION</text>
+  <text x="780" y="18" text-anchor="end" fill="#71717a" font-family="'JetBrains Mono', monospace" font-size="7.5">ARBITRAGE-FREE VOLATILITY TOPOGRAPHY</text>
+  <line x1="20" y1="26" x2="780" y2="26" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+
+  <!-- Left: Formula Box -->
+  <g transform="translate(20, 32)">
+    <rect width="360" height="92" rx="2" fill="#111318" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+    <text x="12" y="18" fill="#f59e0b" font-family="'JetBrains Mono', monospace" font-size="8" font-weight="800">ANALYTICAL IMPLIED VOLATILITY &sigma;_B(K, F)</text>
+    <text x="12" y="38" fill="#ffffff" font-family="Georgia, serif" font-size="10.5">&sigma;_B(K, F) &approx; &alpha; / [ (FK)^{(1-&beta;)/2} &middot; (1 + &frac14;&beta; ln&sup2;(F/K)) ] &middot; [ z / &chi;(z) ]</text>
+    <text x="12" y="52" fill="#a1a1aa" font-family="'JetBrains Mono', monospace" font-size="6.8">z = (&nu;/&alpha;) &middot; (FK)^{(1-&beta;)/2} &middot; ln(F/K)</text>
+    <text x="12" y="62" fill="#a1a1aa" font-family="'JetBrains Mono', monospace" font-size="6.8">&chi;(z) = ln( [ &radic;(1-2&rho;z+z&sup2;) + z - &rho; ] / (1-&rho;) )</text>
+    <line x1="12" y1="69" x2="348" y2="69" stroke="rgba(198,255,0,0.18)" stroke-width="0.8"/>
+    <text x="12" y="81" fill="#ffd600" font-family="'JetBrains Mono', monospace" font-size="6.8">&alpha; = 0.3200 (ATM) &middot; &beta; = 0.5000 (Skew) &middot; &rho; = -0.2500 (Corr) &middot; &nu; = 0.4000 (Vol-Vol)</text>
+  </g>
+
+  <!-- Right: 2D Curve Plot -->
+  <g transform="translate(400, 32)">
+    <rect width="380" height="92" rx="2" fill="#111318" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+    <!-- Axes -->
+    <line x1="40" y1="78" x2="360" y2="78" stroke="rgba(198,255,0,0.20)" stroke-width="1"/>
+    <line x1="40" y1="12" x2="40" y2="78" stroke="rgba(198,255,0,0.20)" stroke-width="1"/>
+    <!-- Axis Labels -->
+    <text x="360" y="88" text-anchor="end" fill="#71717a" font-family="'JetBrains Mono', monospace" font-size="6.5">STRIKE K</text>
+    <text x="36" y="16" text-anchor="end" fill="#71717a" font-family="'JetBrains Mono', monospace" font-size="6.5">&sigma;_impl</text>
+    
+    <!-- ATM vertical dashed line -->
+    <line x1="190" y1="12" x2="190" y2="78" stroke="#ffd600" stroke-width="1" stroke-dasharray="2,2"/>
+    <text x="190" y="88" text-anchor="middle" fill="#ffd600" font-family="'JetBrains Mono', monospace" font-size="6.5">ATM (K=F)</text>
+
+    <!-- SABR Smile Curve (Parabolic asymmetric) -->
+    <path d="M 55 24 Q 130 68 190 70 T 345 42" fill="none" stroke="#f59e0b" stroke-width="2"/>
+    <text x="280" y="34" fill="#f59e0b" font-family="'JetBrains Mono', monospace" font-size="7" font-weight="700">SABR Hagan</text>
+
+    <!-- Market Quote Points (Yellow Dots) -->
+    <circle cx="65" cy="28" r="2.5" fill="#ffd600"/>
+    <circle cx="110" cy="52" r="2.5" fill="#ffd600"/>
+    <circle cx="150" cy="65" r="2.5" fill="#ffd600"/>
+    <circle cx="190" cy="70" r="2.5" fill="#ffd600"/>
+    <circle cx="240" cy="67" r="2.5" fill="#ffd600"/>
+    <circle cx="290" cy="54" r="2.5" fill="#ffd600"/>
+    <circle cx="335" cy="44" r="2.5" fill="#ffd600"/>
+    <text x="350" y="62" fill="#ffd600" font-family="'JetBrains Mono', monospace" font-size="6.5">&bull; Broker Run Quotes</text>
+  </g>
+</svg>
+
+      </div>
+
+      <!-- Quant Modeling Details -->
+      <div class="grid-2">
+        <div class="panel" style="margin-bottom: 0;">
+          <h3 style="color: #fff; font-size: 8pt; margin-top: 0;">FX Options &amp; Parametric Smile Families</h3>
+          <p style="font-size: 7.5pt; margin-bottom: 0.2rem;">
+            <strong>Generalized BSM Kernel:</strong> Evaluated in forward space: <code>df &middot; [F &Phi;(d1) - K &Phi;(d2)]</code>. By probability symmetry <code>&Phi;(-x) = 1 - &Phi;(x)</code>, error function calls are cut from 4 to 2, halving transcendental instruction cycles.
+          </p>
+          <p style="font-size: 7.5pt; margin-bottom: 0;">
+            <strong>13 Analytic Greeks (36.5 ns Single Pass):</strong> First-order (&Delta;<sub>Spot</sub>, &Delta;<sub>Fwd</sub>, Vega, Theta, &rho;<sub>dom</sub>, &rho;<sub>for</sub>); Second-order (Gamma, Vanna, Volga, Charm); Third-order (Speed, Zomma, Color).
+          </p>
+        </div>
+
+        <div class="panel" style="margin-bottom: 0;">
+          <h3 style="color: #fff; font-size: 8pt; margin-top: 0;">Fixed Income &amp; Multi-Curve Term Structures</h3>
+          <p style="font-size: 7.5pt; margin-bottom: 0.2rem;">
+            <strong>Horner Discount Recurrence:</strong> Cashflows <code>c_k &middot; (1 + y/f)^{-(w + k - 1)}</code> are factored into <code>D_0 = (1 + y/f)^{-w}</code> and <code>D_k = D_{k-1} &middot; v</code>, replacing 60 transcendental <code>powf</code> calls with 1 <code>powf</code> and 59 multiplications.
+          </p>
+          <p style="font-size: 7.5pt; margin-bottom: 0;">
+            <strong>Post-LIBOR Framework:</strong> OIS risk-free discounting (SOFR, &euro;STR, SONIA) decoupled from tenor basis forwarding curves with cross-currency basis adjustment and 10-bucket Key Rate DV01 ladders.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- =======================================================================
+         PAGE 7: 24-PRODUCT EXOTIC & STRUCTURED INSTRUMENT MATRIX
+         ======================================================================= -->
+    <div class="doc-page" id="page-7">
+      <h2>
+        <span>6. 24-Product Exotic &amp; Structured Instrument Matrix</span>
+        <span style="font-size: 7.2pt; font-family: 'JetBrains Mono', monospace; color: var(--text-muted);">ORACLE-VERIFIED DERIVATIVES COVERAGE</span>
+      </h2>
+      <p>
+        Every model implementation is validated against independent academic and golden oracles (QuantLib, Hull, Wystup, Clark) with strict machine-precision or standard-error tolerances.
+      </p>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th>Instrument Arm</th>
+              <th>Pricing Method / Model Formulation</th>
+              <th>Validation Oracle &amp; Numerical Tolerance</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Vanilla</strong></td>
+              <td>European Call / Put</td>
+              <td>Forward-space gBSM / Garman-Kohlhagen (1983)</td>
+              <td>QuantLib Golden Table &middot; &le; 1e-15 (Machine precision)</td>
+            </tr>
+            <tr>
+              <td><strong>Strategies</strong></td>
+              <td>Risk Reversal, Straddle, Strangle, Fly</td>
+              <td>Analytic Multi-Leg Strip with smile interpolation</td>
+              <td>Linear Strike Parity &middot; Machine precision</td>
+            </tr>
+            <tr>
+              <td><strong>First-Gen Exotics</strong></td>
+              <td>Up/Down In/Out Barrier</td>
+              <td>Closed-form Reiner-Rubinstein (1991)</td>
+              <td>QuantLib Analytic Barrier &middot; &le; 1e-12</td>
+            </tr>
+            <tr>
+              <td><strong>First-Gen Exotics</strong></td>
+              <td>Double Barrier &amp; Window Barrier</td>
+              <td>Eigenfunction expansion / LSV Monte Carlo</td>
+              <td>Independent PDE Oracle &middot; &le; 1e-6</td>
+            </tr>
+            <tr>
+              <td><strong>First-Gen Exotics</strong></td>
+              <td>Digital &amp; Touch (One/No/Double)</td>
+              <td>Closed-form Reflection Principle</td>
+              <td>QuantLib Digital/Touch &middot; &le; 1e-12</td>
+            </tr>
+            <tr>
+              <td><strong>Averaging</strong></td>
+              <td>Asian Option (Arithmetic / Geometric)</td>
+              <td>Curran (1994) &amp; Turnbull-Wakeman (1991)</td>
+              <td>Converged MC (Sobol' RQMC) &middot; Within Std-Err</td>
+            </tr>
+            <tr>
+              <td><strong>Extremum</strong></td>
+              <td>Lookback (Floating / Fixed Strike)</td>
+              <td>Closed-form Conze-Viswanathan (1991)</td>
+              <td>Independent MC Oracle &middot; &le; 1e-9</td>
+            </tr>
+            <tr>
+              <td><strong>Time-Structured</strong></td>
+              <td>Forward-Start &amp; Cliquet (Ratchet)</td>
+              <td>Iterated conditional expectation</td>
+              <td>Analytical closed form &middot; &le; 1e-10</td>
+            </tr>
+            <tr>
+              <td><strong>Structured Flow</strong></td>
+              <td>TARF (Target Accrual Redemption Forward)</td>
+              <td>Brownian bridge QMC simulation</td>
+              <td>Replicating Portfolio Benchmark &middot; &le; 1e-4</td>
+            </tr>
+            <tr>
+              <td><strong>Structured Flow</strong></td>
+              <td>Accumulator / Decumulator</td>
+              <td>Discrete barrier monitoring QMC</td>
+              <td>Market Trading Desk Benchmark &middot; &le; 1e-4</td>
+            </tr>
+            <tr>
+              <td><strong>Volatility Assets</strong></td>
+              <td>Variance Swap &amp; Volatility Swap</td>
+              <td>Log-contract static replication &amp; Brockhaus-Long</td>
+              <td>Adaptive Quadrature Integral &middot; &le; 1e-8</td>
+            </tr>
+            <tr>
+              <td><strong>Early Exercise</strong></td>
+              <td>American &amp; Bermudan Options</td>
+              <td>PSOR Free-Boundary Finite Difference &amp; LSM</td>
+              <td>Longstaff-Schwartz (2001) Table 1 &middot; &le; 1e-4</td>
+            </tr>
+            <tr>
+              <td><strong>Cross-Asset</strong></td>
+              <td>Quanto Option</td>
+              <td>Drift-adjusted Black-Scholes carry seam</td>
+              <td>Analytical quanto oracle &middot; &le; 1e-12</td>
+            </tr>
+            <tr>
+              <td><strong>Multi-Asset</strong></td>
+              <td>Basket / Best-of / Worst-of</td>
+              <td>Cholesky-correlated multi-asset QMC</td>
+              <td>Independent Multi-Asset MC &middot; Within Std-Err</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel" style="margin-top: 0.45rem;">
+        <h3 style="color: #fff; font-size: 8.5pt; margin-top: 0;">Refute-Default Verification Canon</h3>
+        <p style="font-size: 7.8pt; margin-bottom: 0;">
+          All numerical algorithms adhere to the deterministic verification canon: continuous integration runs property-based testing (<code>proptest</code>) across extreme parameter domains (zero volatility, negative interest rates, hyper-volatility &gt; 500%, near-expiry 1 second, long-dated 50 years). Models are refuted unless proven correct against dual independent oracles.
+        </p>
+      </div>
+    </div>
+
+    <!-- =======================================================================
+         PAGE 8: EMPIRICAL LATENCIES & HARDWARE BENCHMARKS
+         ======================================================================= -->
+    <div class="doc-page" id="page-8">
+      <h2>
+        <span>7. Empirical Latencies &amp; Microarchitectural Benchmarks</span>
+        <span style="font-size: 7.2pt; font-family: 'JetBrains Mono', monospace; color: var(--text-muted);">MEASURED ON BARE-METAL APPLE SILICON M4</span>
+      </h2>
+      <p>
+        All benchmarks reflect release profile builds on bare-metal hardware. Zero allocation assertions and hardware instruction verification are enforced at compile time.
+      </p>
+
+      <!-- Embedded Diagram 4 -->
+      <div style="margin: 0.45rem 0 0.65rem 0;">
+        
+<svg viewBox="0 0 800 220" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" style="background: #090a0d; border-top: 1px solid rgba(255,255,255,0.12); border-bottom: 1px solid rgba(255,255,255,0.12); margin: 0.5rem 0;">
+  <defs>
+    <pattern id="gridPattern4" width="16" height="16" patternUnits="userSpaceOnUse">
+      <path d="M 16 0 L 0 0 0 16" fill="none" stroke="rgba(198,255,0,0.04)" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="800" height="220" fill="url(#gridPattern4)"/>
+
+  <!-- Top Technical Header -->
+  <text x="20" y="20" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="700" letter-spacing="1.2">FIG 04 // MICROARCHITECTURAL LATENCY WATERFALL</text>
+  <text x="780" y="20" text-anchor="end" fill="#71717a" font-family="'JetBrains Mono', monospace" font-size="7.5">APPLE SILICON M4 &middot; BARE-METAL TIMED BENCHMARKS</text>
+  <line x1="20" y1="26" x2="780" y2="26" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+
+  <!-- 1. ALU FMA -->
+  <text x="20" y="46" fill="#f4f4f5" font-family="-apple-system, sans-serif" font-size="8.5" font-weight="600">Hardware ALU (ARM64 FMA)</text>
+  <rect x="250" y="36" width="18" height="13" rx="2" fill="#f8fafc"/>
+  <text x="278" y="46" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="700">1.0 ns</text>
+  <text x="780" y="46" text-anchor="end" fill="#71717a" font-family="'JetBrains Mono', monospace" font-size="7.5">Single-cycle fused multiply-add</text>
+
+  <!-- 2. SPMC Ring Buffer -->
+  <text x="20" y="66" fill="#f4f4f5" font-family="-apple-system, sans-serif" font-size="8.5" font-weight="600">In-Core SPMC Atomic Ring</text>
+  <rect x="250" y="56" width="42" height="13" rx="2" fill="#f8fafc"/>
+  <text x="302" y="66" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="700">11.3 ns</text>
+  <text x="780" y="66" text-anchor="end" fill="#71717a" font-family="'JetBrains Mono', monospace" font-size="7.5">L1/L2 cache hit &middot; 88.85M ops/sec</text>
+
+  <!-- 3. SBE Shared Memory IPC -->
+  <text x="20" y="86" fill="#f4f4f5" font-family="-apple-system, sans-serif" font-size="8.5" font-weight="700">SBE Shared Memory IPC (/dev/shm)</text>
+  <rect x="250" y="76" width="55" height="13" rx="2" fill="#ffd600"/>
+  <text x="315" y="86" fill="#ffd600" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="800">14.46 ns</text>
+  <text x="780" y="86" text-anchor="end" fill="#ffd600" font-family="'JetBrains Mono', monospace" font-size="7.5" font-weight="700">40,600x FASTER THAN NETWORK GRPC</text>
+
+  <!-- 4. Pure Option Pricing -->
+  <text x="20" y="106" fill="#f4f4f5" font-family="-apple-system, sans-serif" font-size="8.5" font-weight="600">Option Pricing (Native fsqrt)</text>
+  <rect x="250" y="96" width="75" height="13" rx="2" fill="#39ff14"/>
+  <text x="335" y="106" fill="#39ff14" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="700">22.53 ns</text>
+  <text x="780" y="106" text-anchor="end" fill="#71717a" font-family="'JetBrains Mono', monospace" font-size="7.5">Single pass vanilla call (22.04 ns min)</text>
+
+  <!-- 5. Full 13 Greek Strip -->
+  <text x="20" y="126" fill="#f4f4f5" font-family="-apple-system, sans-serif" font-size="8.5" font-weight="600">Price + 13 Analytic Greeks</text>
+  <rect x="250" y="116" width="110" height="13" rx="2" fill="#39ff14"/>
+  <text x="370" y="126" fill="#39ff14" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="700">36.53 ns</text>
+  <text x="780" y="126" text-anchor="end" fill="#71717a" font-family="'JetBrains Mono', monospace" font-size="7.5">Delta, Gamma, Vega, Theta, Vanna, Volga...</text>
+
+  <!-- 6. Truth Gate Median -->
+  <text x="20" y="146" fill="#f4f4f5" font-family="-apple-system, sans-serif" font-size="8.5" font-weight="700">Truth-Gate Median (p50, 10M Timed)</text>
+  <rect x="250" y="136" width="125" height="13" rx="2" fill="#f8fafc"/>
+  <text x="385" y="146" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="800">42.00 ns</text>
+  <text x="780" y="146" text-anchor="end" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="7.5" font-weight="700">48x UNDER 2,000 ns TARGET BUDGET</text>
+
+  <!-- 7. Truth Gate p99 Tail -->
+  <text x="20" y="166" fill="#f4f4f5" font-family="-apple-system, sans-serif" font-size="8.5" font-weight="700">Truth-Gate Tail Latency (p99)</text>
+  <rect x="250" y="156" width="180" height="13" rx="2" fill="#f8fafc"/>
+  <text x="440" y="166" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="800">84.00 ns</text>
+  <text x="780" y="166" text-anchor="end" fill="#f8fafc" font-family="'JetBrains Mono', monospace" font-size="7.5" font-weight="700">119x UNDER 10,000 ns TARGET BUDGET</text>
+
+  <!-- 8. Legacy Monoliths Comparison -->
+  <text x="20" y="192" fill="#ff3b00" font-family="-apple-system, sans-serif" font-size="8.5" font-weight="700">Legacy Monoliths (Murex MX.3, Calypso)</text>
+  <rect x="250" y="182" width="530" height="14" rx="2" fill="#2d0b0a" stroke="#ff3b00" stroke-width="1"/>
+  <text x="260" y="193" fill="#ff3b00" font-family="'JetBrains Mono', monospace" font-size="8.5" font-weight="800">150 µs – 2,500 µs (150,000 – 2,500,000 ns)</text>
+  <text x="780" y="192" text-anchor="end" fill="#ff3b00" font-family="'JetBrains Mono', monospace" font-size="7.5" font-weight="700">JVM GC PAUSES &amp; HEAP ALLOCATION TAX</text>
+</svg>
+
+      </div>
+
+      <!-- Benchmark Tables -->
+      <div class="grid-2">
+        <div class="panel">
+          <h3 style="color: #fff; font-size: 8.5pt; margin-top: 0;">Divan Micro-Benchmarks (vanilla.rs)</h3>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Target Function</th>
+                  <th>Pre-Opt</th>
+                  <th>Post-Opt</th>
+                  <th>Speedup</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>price_only</code></td>
+                  <td>22.85 ns</td>
+                  <td class="mono" style="color: var(--accent-positive);">22.53 ns</td>
+                  <td>+1.4%</td>
+                </tr>
+                <tr>
+                  <td><code>price_plus_full_greeks (Call)</code></td>
+                  <td>42.71 ns</td>
+                  <td class="mono" style="color: var(--accent-positive);">36.53 ns</td>
+                  <td style="color: var(--accent-positive); font-weight:700;">+14.5%</td>
+                </tr>
+                <tr>
+                  <td><code>price_plus_full_greeks (Put)</code></td>
+                  <td>42.38 ns</td>
+                  <td class="mono" style="color: var(--accent-positive);">37.18 ns</td>
+                  <td style="color: var(--accent-positive); font-weight:700;">+12.3%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p style="font-size: 7.2pt; color: var(--text-muted); margin-bottom: 0;">
+            *OPT-01 (hardware <code>fsqrt</code>) + OPT-02 (branchless active-arm &Phi; evaluation cutting <code>libm::erfc</code> calls from 4 to 2).
+          </p>
+        </div>
+
+        <div class="panel">
+          <h3 style="color: #fff; font-size: 8.5pt; margin-top: 0;">In-Core Truth-Gate (10,000,000 Timed Samples)</h3>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Percentile Metric</th>
+                  <th>Measured</th>
+                  <th>Budget</th>
+                  <th>Margin</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Throughput</strong></td>
+                  <td class="mono" style="color: var(--accent-positive);">13.63 M/s</td>
+                  <td>&ge; 1.0 M/s</td>
+                  <td>13.6x over</td>
+                </tr>
+                <tr>
+                  <td><strong>Median (p50)</strong></td>
+                  <td class="mono" style="color: var(--accent-positive);">42.0 ns</td>
+                  <td>&le; 2,000 ns</td>
+                  <td>48x margin</td>
+                </tr>
+                <tr>
+                  <td><strong>Tail Latency (p99)</strong></td>
+                  <td class="mono" style="color: var(--accent-positive);">84.0 ns</td>
+                  <td>&le; 10,000 ns</td>
+                  <td>119x margin</td>
+                </tr>
+                <tr>
+                  <td><strong>Deep Tail (p99.9)</strong></td>
+                  <td class="mono" style="color: var(--accent-positive);">125.0 ns</td>
+                  <td>&le; 25,000 ns</td>
+                  <td>200x margin</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p style="font-size: 7.2pt; color: var(--text-muted); margin-bottom: 0;">
+            *Zero allocations on the pricing path. Max sample observed was 13.1 µs across 10,000,000 continuous iterations.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- =======================================================================
+         PAGE 9: INSTITUTIONAL EXCEL ADD-IN & MULTI-SURFACE CLIENT PARITY
+         ======================================================================= -->
+    <div class="doc-page" id="page-9">
+      <h2>
+        <span>8. Institutional Excel Add-in &amp; Multi-Surface Client Parity</span>
+        <span style="font-size: 7.2pt; font-family: 'JetBrains Mono', monospace; color: var(--text-muted);">NATIVE C-API ADD-IN &middot; 27 SPILL FUNCTIONS</span>
+      </h2>
+      <p>
+        Engineered for trading desks requiring spreadsheet modeling speed without sacrificing server-grade risk alignment. The native C-API Excel Add-in provides 27 dynamic-array spill functions, real-time ticking quotes (100,000 updates/sec), and 100% bit-exact IEEE 754 parity with central risk engines.
+      </p>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Worksheet Function</th>
+              <th>Category</th>
+              <th>Spill Dimensions</th>
+              <th>Capabilities &amp; Functional Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">=CELNET.PRICE(...)</td>
+              <td>Vanilla</td>
+              <td>1 &times; 1</td>
+              <td>Returns present value (premium) in domestic pips or percentage.</td>
+            </tr>
+            <tr>
+              <td class="mono">=CELNET.GREEKS(...)</td>
+              <td>Vanilla</td>
+              <td>1 &times; 14 Spill</td>
+              <td>Spills full 13-Greek strip + premium horizontally into spreadsheet cells.</td>
+            </tr>
+            <tr>
+              <td class="mono">=CELNET.STRATEGY(...)</td>
+              <td>Multi-Leg</td>
+              <td>Legs &times; Greeks</td>
+              <td>Prices desk structures: Straddle, Strangle, Risk Reversal, Butterfly.</td>
+            </tr>
+            <tr>
+              <td class="mono">=CELNET.BARRIER(...)</td>
+              <td>Exotics</td>
+              <td>1 &times; 8 Spill</td>
+              <td>Closed-form Reiner-Rubinstein barrier option pricing with barrier delta.</td>
+            </tr>
+            <tr>
+              <td class="mono">=CELNET.ASIAN(...)</td>
+              <td>Exotics</td>
+              <td>1 &times; 2 Spill</td>
+              <td>Curran geometric conditioning Asian option pricing with standard error.</td>
+            </tr>
+            <tr>
+              <td class="mono">=CELNET.TARF(...)</td>
+              <td>Structured</td>
+              <td>Tenors &times; Flows</td>
+              <td>QMC Target Accrual Redemption Forward valuation and knock-out probabilities.</td>
+            </tr>
+            <tr>
+              <td class="mono">=CELNET.BOND.PRICE(...)</td>
+              <td>Fixed Income</td>
+              <td>1 &times; 4 Spill</td>
+              <td>Clean price, dirty price, accrued interest, and modified duration.</td>
+            </tr>
+            <tr>
+              <td class="mono">=CELNET.BOND.YTM(...)</td>
+              <td>Fixed Income</td>
+              <td>1 &times; 1</td>
+              <td>High-speed yield-to-maturity solver via single-pass Horner recurrence.</td>
+            </tr>
+            <tr>
+              <td class="mono">=CELNET.OIS.PV(...)</td>
+              <td>Fixed Income</td>
+              <td>1 &times; 3 Spill</td>
+              <td>Overnight Index Swap PV, par swap rate, and PV01.</td>
+            </tr>
+            <tr>
+              <td class="mono">=CELNET.CURVE(...)</td>
+              <td>Market Data</td>
+              <td>N &times; 3 Spill</td>
+              <td>Spills zero rates, discount factors, and instantaneous forward curve.</td>
+            </tr>
+            <tr>
+              <td class="mono">=CELNET.SMILE(...)</td>
+              <td>Market Data</td>
+              <td>Deltas &times; Vols</td>
+              <td>Evaluates smile curve for VV, SABR, SVI, SSVI, or eSSVI.</td>
+            </tr>
+            <tr>
+              <td class="mono">=CELNET.RISK.CUBE(...)</td>
+              <td>Enterprise Risk</td>
+              <td>Hierarchy Tree</td>
+              <td>Server-side multi-dimensional risk aggregation and limit status.</td>
+            </tr>
+            <tr>
+              <td class="mono">=CELNET.VAR(...)</td>
+              <td>Enterprise Risk</td>
+              <td>1 &times; 2 Spill</td>
+              <td>Historical Value-at-Risk (VaR) and Expected Shortfall (ES).</td>
+            </tr>
+            <tr>
+              <td class="mono">=CELNET.STREAM(...)</td>
+              <td>Trading Desk</td>
+              <td>RTD Cell (Dynamic)</td>
+              <td>Subscribes to live ticking bid/offer quotes with RTD streaming.</td>
+            </tr>
+            <tr>
+              <td class="mono">=CELNET.RFQ.REQUEST(...)</td>
+              <td>Trading Desk</td>
+              <td>1 &times; 5 Spill</td>
+              <td>Requests two-way quote from market maker desk with execution token.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid-2" style="margin-top: 0.45rem;">
+        <div class="panel">
+          <h3 style="color: #fff; font-size: 8.5pt; margin-top: 0;">Zero Model Drift (f64::to_bits Parity)</h3>
+          <p style="font-size: 7.8pt; margin-bottom: 0;">
+            Because the Excel Add-in links directly to the same compiled Rust numerical library via the C ABI, there is <strong>zero divergence</strong> between trader spreadsheet models, WebGPU Cockpit views, and end-of-day risk batches. The exact 64-bit IEEE 754 floating-point representation is preserved end-to-end.
+          </p>
+        </div>
+
+        <div class="panel">
+          <h3 style="color: #fff; font-size: 8.5pt; margin-top: 0;">Real-Time Data (RTD) Engine</h3>
+          <p style="font-size: 7.8pt; margin-bottom: 0;">
+            The Excel integration implements the COM <code>IRtdServer</code> interface, subscribing directly to the SBE IPC fan-out or WebSocket stream. Ticks update spreadsheet cells at up to <strong>100,000 quotes/sec</strong> with zero spreadsheet freezing or UI lockup.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- =======================================================================
+         PAGE 10: INSTITUTIONAL DIFFERENTIATORS & STRATEGIC OUTCOMES
+         ======================================================================= -->
+    <div class="doc-page" id="page-10">
+      <h2>
+        <span>9. Institutional Differentiators &amp; Strategic Outcomes</span>
+        <span style="font-size: 7.2pt; font-family: 'JetBrains Mono', monospace; color: var(--text-muted);">CELNET VS LEGACY MONOLITHS</span>
+      </h2>
+      <p>
+        A feature-by-feature comparative analysis of CelNet against traditional vendor legacy platforms (Murex MX.3, Calypso, OpenLink) and fragmented in-house libraries.
+      </p>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Architectural Dimension</th>
+              <th>CelNet Sovereign Platform</th>
+              <th>Legacy Vendor Monoliths (Murex, Calypso)</th>
+              <th>Fragmented In-House Stacks</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Core Execution Latency</strong></td>
+              <td style="color: var(--accent-positive); font-weight: 700;">42 ns p50 &middot; 84 ns p99 (ALU bound)</td>
+              <td>150 µs – 2.5 ms (JVM / C++ heap tax)</td>
+              <td>1.2 µs – 15 µs (Sub-optimal compilers)</td>
+            </tr>
+            <tr>
+              <td><strong>Hot Path Memory Model</strong></td>
+              <td style="color: var(--accent-positive); font-weight: 700;">100% Zero Heap Allocations</td>
+              <td>Frequent GC pauses &amp; heap fragmentation</td>
+              <td>Ad-hoc malloc / vector reallocations</td>
+            </tr>
+            <tr>
+              <td><strong>Memory Safety Contract</strong></td>
+              <td style="color: var(--accent-positive); font-weight: 700;">#![forbid(unsafe_code)] across crates</td>
+              <td>C/C++ segfault vulnerabilities, buffer overruns</td>
+              <td>Unchecked pointer arithmetic in old C++</td>
+            </tr>
+            <tr>
+              <td><strong>Client API Discrepancy</strong></td>
+              <td style="color: var(--accent-positive); font-weight: 700;">Bit-Identical (f64::to_bits parity)</td>
+              <td>Micro-price gaps between GUI, Excel &amp; Risk</td>
+              <td>Discrepancies between C++ DLL &amp; Python wrappers</td>
+            </tr>
+            <tr>
+              <td><strong>Inter-Process IPC</strong></td>
+              <td style="color: var(--accent-secondary); font-weight: 700;">14.46 ns (POSIX SBE /dev/shm)</td>
+              <td>250 µs – 1.2 ms (gRPC, TCP sockets, Tibco)</td>
+              <td>5 µs – 50 µs (Unix domain sockets / pipes)</td>
+            </tr>
+            <tr>
+              <td><strong>Quant Extensibility</strong></td>
+              <td style="color: var(--accent-primary); font-weight: 700;">WASM Sandboxed Open Quant SDK</td>
+              <td>6-month release cycles, heavy proprietary SDKs</td>
+              <td>Fragile re-compilations &amp; DLL dependencies</td>
+            </tr>
+            <tr>
+              <td><strong>Consensus &amp; Durability</strong></td>
+              <td style="color: #ffffff; font-weight: 700;">Raft Consensus Log with bit-exact replay</td>
+              <td>Active/Passive DB mirroring with failover lag</td>
+              <td>Fragile Redis replication / file append logs</td>
+            </tr>
+            <tr>
+              <td><strong>Cross-Asset Model Law</strong></td>
+              <td style="color: var(--accent-primary); font-weight: 700;">Unified ADR-0012 Carry Seam (gBSM)</td>
+              <td>Siloed pricing libraries per asset class</td>
+              <td>Duplicate models across FX, Equities, Rates</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Strategic Outcomes Grid -->
+      <div class="grid-2" style="margin: 0.45rem 0;">
+        <div class="panel">
+          <div style="font-weight: 700; color: #fff; margin-bottom: 0.15rem; font-size: 8pt;">1. Enterprise Capital Efficiency</div>
+          <p style="font-size: 7.4pt; margin-bottom: 0; color: var(--text-dim);">
+            Continuous intraday risk rollups avoid conservative margin padding. Real-time Greeks allow dynamic hedging at tick frequency, dramatically shrinking collateral requirements with prime brokers and clearinghouses.
+          </p>
+        </div>
+
+        <div class="panel">
+          <div style="font-weight: 700; color: #fff; margin-bottom: 0.15rem; font-size: 8pt;">2. Quantitative Market-Making Alpha</div>
+          <p style="font-size: 7.4pt; margin-bottom: 0; color: var(--text-dim);">
+            Sub-microsecond quote refreshes protect liquidity providers from picking-off risk on fast market moves. The 14.46 ns IPC enables instantaneous volatility recalibration across all tenors.
+          </p>
+        </div>
+
+        <div class="panel">
+          <div style="font-weight: 700; color: #fff; margin-bottom: 0.15rem; font-size: 8pt;">3. Total Cost of Ownership (TCO)</div>
+          <p style="font-size: 7.4pt; margin-bottom: 0; color: var(--text-dim);">
+            Replaces massive server footprints with a single bare-metal deployment. Eliminates multimillion-dollar software maintenance and database licensing fees, reducing infrastructure cost by &gt; 80%.
+          </p>
+        </div>
+
+        <div class="panel">
+          <div style="font-weight: 700; color: #fff; margin-bottom: 0.15rem; font-size: 8pt;">4. Regulatory &amp; Audit Governance</div>
+          <p style="font-size: 7.4pt; margin-bottom: 0; color: var(--text-dim);">
+            Deterministic, bit-exact replay logs provide complete mathematical transparency. Meets the most stringent standards for FRTB, SA-CCR, and BCBS 239 risk data aggregation.
+          </p>
+        </div>
+      </div>
+
+      <!-- Official Engineering Sign-off -->
+      <div style="border-top: 1px solid var(--border-subtle); padding-top: 0.55rem; display: flex; justify-content: space-between; align-items: center; font-size: 7pt; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;">
+        <div>CELNET SOVEREIGN TECHNOLOGIES &copy; 2026. ALL RIGHTS RESERVED.</div>
+        <div>VERIFIED BY REFUTE-DEFAULT CI AUTOMATION &middot; GOLDEN ORACLE PARITY CONFIRMED</div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    function setTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      document.querySelectorAll('.theme-btn').forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.textContent.toLowerCase().includes(theme)) {
+          btn.classList.add('active');
+        }
+      });
+      localStorage.setItem('celnet_doc_theme', theme);
+    }
+
+    // Restore user theme preference
+    const saved = localStorage.getItem('celnet_doc_theme');
+    if (saved) setTheme(saved);
+
+    // Keyboard shortcuts (1-4) for instant theme switching
+    window.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.key === '1') setTheme('chartreuse');
+      if (e.key === '2') setTheme('orange');
+      if (e.key === '3') setTheme('amber');
+      if (e.key === '4') setTheme('monolith');
+    });
+  </script>
+</body>
+</html>

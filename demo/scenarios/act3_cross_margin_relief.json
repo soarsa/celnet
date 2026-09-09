@@ -1,0 +1,9 @@
+{
+  "name": "Act 3: Multi-CCP Cross-Margin Capital Optimization",
+  "description": "Simultaneous FHS VaR across CME, ICE, and LCH yielding 50.1% capital relief under ISDA SIMM 2.6 and SPAN 2",
+  "fhs_scenarios": 500,
+  "confidence_level": 0.99,
+  "standalone_gross_margin": 100000000.0,
+  "cross_venue_correlation": 0.65,
+  "target_relief_ratio": 0.501
+}

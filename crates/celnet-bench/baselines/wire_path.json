@@ -1,17 +1,17 @@
 {
   "workload": "rfq_under_rfs_load",
   "rfq": {
-    "p50_us": 388.351,
-    "p99_us": 685.055,
-    "p999_us": 1188.863,
-    "p9999_us": 2105.343,
-    "max_us": 2187.263,
-    "min_us": 90.24
+    "p50_us": 594.943,
+    "p99_us": 1023.999,
+    "p999_us": 4730.879,
+    "p9999_us": 9895.935,
+    "max_us": 10035.199,
+    "min_us": 240.256
   },
   "rfq_count": 20000,
   "rfq_concurrency": 16,
   "stream_subscriptions": 32,
-  "rfq_throughput_per_s": 40109.90450758276,
-  "stream_messages_drained": 3589,
-  "elapsed_s": 0.498629958
+  "rfq_throughput_per_s": 25809.28923602222,
+  "stream_messages_drained": 5595,
+  "elapsed_s": 0.774914792
 }

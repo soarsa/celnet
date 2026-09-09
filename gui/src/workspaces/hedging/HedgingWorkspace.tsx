@@ -1,6 +1,6 @@
 /**
  * HedgingWorkspace — the trader-facing AUTO-HEDGE RULES / CONFIG surface
- * (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md §5, §8). Authoring-only —
+ * (docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md §5, §8). Authoring-only —
  * six tabs, which together answer WHEN / WHAT KIND / WITH WHAT / WHETHER TO FIRE:
  *
  *   • Exit Policy — the drag-and-drop exit-policy graph editor (the SAME risk-routing

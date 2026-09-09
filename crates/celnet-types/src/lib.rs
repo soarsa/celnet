@@ -10,9 +10,17 @@
 
 #![forbid(unsafe_code)]
 
+pub mod cdm;
+
 use core::fmt;
 
 use serde::{Deserialize, Serialize};
+
+pub use cdm::{
+    CdmExerciseStyle, CdmForwardPayout, CdmInterestRatePayout, CdmLifecycleEvent,
+    CdmLifecycleEventType, CdmOptionPayout, CdmParty, CdmPartyRole, CdmPayout, CdmProduct,
+    CdmSettlementType, CdmTradeIdentifier,
+};
 
 /// Call or put.
 ///

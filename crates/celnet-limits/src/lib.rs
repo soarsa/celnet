@@ -1,5 +1,5 @@
 //! Celnet **limits / entitlements** layer (`docs/RISK-HIERARCHY.md` §5,
-//! `docs/EXPERIENCE-ARCHITECTURE.md` P2-7).
+//! `docs/clients/EXPERIENCE-ARCHITECTURE.md` P2-7).
 //!
 //! # What this crate is
 //!

@@ -1,5 +1,5 @@
 /**
- * FI "Book" → "Risk" consolidation (docs/FI-BOOK-CONCEPTS.md), post-flatten.
+ * FI "Book" → "Risk" consolidation (docs/fixed-income/FI-BOOK-CONCEPTS.md), post-flatten.
  *
  * The redundant Fixed-Income "Book" rail entry is removed; its position-ledger
  * surfaces (Positions · Quotes · Client blotter) are now TOP-LEVEL tabs of the

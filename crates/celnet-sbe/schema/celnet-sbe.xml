@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2014/sbe"
+                   package="celnet.sbe"
+                   id="1"
+                   version="1"
+                   semanticVersion="1.0.0"
+                   description="Celnet Ultra-Low-Latency SBE Wire & IPC Message Schema (FIX Trading Community Standard)"
+                   byteOrder="littleEndian">
+
+  <types>
+    <composite name="messageHeader" description="Canonical 8-Byte SBE Message Header">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId"  primitiveType="uint16"/>
+      <type name="schemaId"    primitiveType="uint16"/>
+      <type name="version"     primitiveType="uint16"/>
+    </composite>
+
+    <enum name="Side" encodingType="uint8">
+      <validValue name="BUY">1</validValue>
+      <validValue name="SELL">2</validValue>
+      <validValue name="TWO_WAY">3</validValue>
+    </enum>
+
+    <enum name="ExecutionStatus" encodingType="uint8">
+      <validValue name="NEW">0</validValue>
+      <validValue name="FILLED">1</validValue>
+      <validValue name="REJECTED">2</validValue>
+      <validValue name="EXPIRED">3</validValue>
+    </enum>
+
+    <composite name="GreeksStrip" description="The full 14-member Greek sensitivity strip (112 bytes)">
+      <type name="price"        primitiveType="double"/>
+      <type name="deltaSpot"    primitiveType="double"/>
+      <type name="deltaForward" primitiveType="double"/>
+      <type name="gamma"        primitiveType="double"/>
+      <type name="vega"         primitiveType="double"/>
+      <type name="theta"        primitiveType="double"/>
+      <type name="rhoDomestic"  primitiveType="double"/>
+      <type name="rhoForeign"   primitiveType="double"/>
+      <type name="vanna"        primitiveType="double"/>
+      <type name="volga"        primitiveType="double"/>
+      <type name="charm"        primitiveType="double"/>
+      <type name="speed"        primitiveType="double"/>
+      <type name="zomma"        primitiveType="double"/>
+      <type name="color"        primitiveType="double"/>
+    </composite>
+  </types>
+
+  <!-- Template 101: PriceTick (Market Data Spot Feed) -->
+  <sbe:message name="PriceTick" id="101" blockLength="40" description="Ultra-Low-Latency Spot Market Data Tick">
+    <field name="epochNanos" id="1" type="int64"/>
+    <field name="pairId"     id="2" type="uint32"/>
+    <field name="flags"      id="3" type="uint32"/>
+    <field name="bid"        id="4" type="double"/>
+    <field name="ask"        id="5" type="double"/>
+  </sbe:message>
+
+  <!-- Template 102: OptionQuote (Two-Way RFQ / RFS Quote with 14 Greeks) -->
+  <sbe:message name="OptionQuote" id="102" blockLength="168" description="Two-Way Option Quote with Full Greeks Strip">
+    <field name="quoteId"         id="1" type="uint64"/>
+    <field name="epochNanos"      id="2" type="int64"/>
+    <field name="validUntilNanos" id="3" type="int64"/>
+    <field name="bidPrice"        id="4" type="double"/>
+    <field name="askPrice"        id="5" type="double"/>
+    <field name="resolvedStrike"  id="6" type="double"/>
+    <field name="surfaceVersion"  id="7" type="uint64"/>
+    <field name="greeks"          id="8" type="GreeksStrip"/>
+  </sbe:message>
+
+  <!-- Template 103: QuoteRequest (Inbound RFQ Intent) -->
+  <sbe:message name="QuoteRequest" id="103" blockLength="48" description="Inbound RFQ Request Intent">
+    <field name="requestId"      id="1" type="uint64"/>
+    <field name="epochNanos"      id="2" type="int64"/>
+    <field name="pairId"          id="3" type="uint32"/>
+    <field name="instrumentType"  id="4" type="uint16"/>
+    <field name="side"            id="5" type="Side"/>
+    <field name="padding"         id="6" type="uint8"/>
+    <field name="notional"        id="7" type="double"/>
+    <field name="expiryYears"     id="8" type="double"/>
+  </sbe:message>
+
+  <!-- Template 104: ExecutionReport (Trade Confirmation) -->
+  <sbe:message name="ExecutionReport" id="104" blockLength="56" description="Confirmed Trade Execution Report">
+    <field name="execId"       id="1" type="uint64"/>
+    <field name="quoteId"      id="2" type="uint64"/>
+    <field name="epochNanos"   id="3" type="int64"/>
+    <field name="execPrice"    id="4" type="double"/>
+    <field name="execQuantity" id="5" type="double"/>
+    <field name="side"         id="6" type="Side"/>
+    <field name="status"       id="7" type="ExecutionStatus"/>
+    <field name="lpId"         id="8" type="uint64"/>
+  </sbe:message>
+
+  <!-- Template 105: MarketDepthLevel (Order Book Level) -->
+  <sbe:message name="MarketDepthLevel" id="105" blockLength="32" description="Single Order Book Level">
+    <field name="pairId"    id="1" type="uint32"/>
+    <field name="side"      id="2" type="Side"/>
+    <field name="level"     id="3" type="uint8"/>
+    <field name="padding"   id="4" type="uint16"/>
+    <field name="price"     id="5" type="double"/>
+    <field name="size"      id="6" type="double"/>
+    <field name="orderCount" id="7" type="uint64"/>
+  </sbe:message>
+
+</sbe:messageSchema>

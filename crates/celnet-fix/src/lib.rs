@@ -22,6 +22,7 @@
 
 pub mod acceptor;
 pub mod backend;
+pub mod dialect_cross_asset;
 pub mod dialect_fx;
 pub mod dialect_rates;
 pub mod dictionary;
@@ -36,6 +37,11 @@ pub mod transport;
 pub use backend::{
     BackendError, DeskBackend, DeskFill, DeskQuoteOut, DeskRfq, DeskSide, GrpcDeskBackend,
     RequestKind, ResponseOutcome, usd_sofr_curve,
+};
+pub use dialect_cross_asset::{
+    CrossAssetDialectError, CrossAssetOptionRfq, CrossAssetProductKind, CrossAssetQuoteOut,
+    PRODUCT_COMMODITY, PRODUCT_DIGITAL_ASSET, PRODUCT_EQUITY, decode_cross_asset_rfq,
+    encode_cross_asset_quote,
 };
 pub use dictionary::MsgType;
 pub use framing::{FrameCursor, FrameEncoder, FrameError};

@@ -40,6 +40,23 @@
   filter: drop-shadow(0 2px 8px oklch(from var(--brand) l c h / 0.45));
 }
 
+.deskRail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  flex: 0 0 auto;
+  margin-bottom: var(--space-2);
+}
+
+.deskDivider {
+  width: 32px;
+  height: 1px;
+  background: var(--border-subtle, rgba(255, 255, 255, 0.12));
+  margin: var(--space-2) 0;
+}
+
 /* The scroll region: fills the space between the pinned brand and foot, and scrolls
  * vertically only when the grouped rows overflow a short viewport. `min-height: 0`
  * lets a flex child actually shrink so overflow (not the whole rail) takes over. */

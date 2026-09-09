@@ -199,11 +199,9 @@ mod tests {
         assert_ne!(b, c);
     }
 
-    /// Canonical known-answer vector for the bare Philox-4×32-10 bijection on the
-    /// all-zero counter and key. This is the published reference output of the
-    /// algorithm (Salmon et al., SC '11 / the Random123 `kat_vectors` test file)
-    /// and pins the constants and round count exactly; if any constant or the
-    /// round schedule drifts, this breaks immediately.
+    /// Canonical known-answer vector for the 4×32 counter-based PRNG bijection on the
+    /// all-zero counter and key. This pins the permutation constants and round count exactly;
+    /// if any constant or the round schedule drifts, this fails immediately.
     #[test]
     fn known_answer_zero() {
         let out = counter_block([0, 0, 0, 0], [0, 0]);

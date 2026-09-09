@@ -1,0 +1,56 @@
+[
+  {
+    "tier": "Tier 0 (Math Core)",
+    "description": "Vanilla FX Greeks (14 sensitivities)",
+    "transport_or_codec": "Pure CPU / AVX / NEON ALU",
+    "latency_ns": 41.912042,
+    "throughput_mops": 23.859491265064108,
+    "zero_alloc": true,
+    "speedup_vs_grpc": 14029.380863857696
+  },
+  {
+    "tier": "Tier 0 (In-Core IPC)",
+    "description": "Seqlock SPMC Broadcast Ring (112B)",
+    "transport_or_codec": "L1/L2 Cache Native Struct Copy",
+    "latency_ns": 11.255458,
+    "throughput_mops": 88.84578486277503,
+    "zero_alloc": true,
+    "speedup_vs_grpc": 52241.32149931171
+  },
+  {
+    "tier": "Tier 1 (Cross-Proc IPC)",
+    "description": "Shared Memory Broadcast Ring (/dev/shm)",
+    "transport_or_codec": "SBE Direct-Buffer Flyweight (176B)",
+    "latency_ns": 14.45583,
+    "throughput_mops": 69.17624238801922,
+    "zero_alloc": true,
+    "speedup_vs_grpc": 40675.630524155305
+  },
+  {
+    "tier": "Tier 2 (Multicast Edge)",
+    "description": "Hardware Switch Replicated UDP Fanout",
+    "transport_or_codec": "Aeron UDP / Multicast SBE (176B)",
+    "latency_ns": 20344.4875,
+    "throughput_mops": 0.049153364025513055,
+    "zero_alloc": true,
+    "speedup_vs_grpc": 28.902178047001676
+  },
+  {
+    "tier": "Tier 4 (Gateway Bridge)",
+    "description": "Zero-Loss Transcoder (SBE -> Protobuf)",
+    "transport_or_codec": "Protobuf v3 Object Envelope",
+    "latency_ns": 31.308918,
+    "throughput_mops": 31.939781502509927,
+    "zero_alloc": false,
+    "speedup_vs_grpc": 18780.591523475836
+  },
+  {
+    "tier": "Legacy (gRPC Wire Path)",
+    "description": "End-to-End Client gRPC RFQ under load",
+    "transport_or_codec": "HTTP-2 / Tonic over TCP Loopback",
+    "latency_ns": 588000.0,
+    "throughput_mops": 0.026,
+    "zero_alloc": false,
+    "speedup_vs_grpc": 1.0
+  }
+]

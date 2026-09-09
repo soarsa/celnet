@@ -23,4 +23,7 @@ pub mod curve_definitions;
 pub mod fix_connections;
 pub mod hedge_policy;
 pub mod identity;
+pub mod platform;
 pub mod reference_data;
+
+pub use platform::PlatformConfig;

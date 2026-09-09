@@ -3,7 +3,7 @@
 Status: **REQUIREMENT (not yet implemented)** · Authored 2026-06-28 · Owner: auth/identity lane
 Supersedes nothing; **extends** the existing identity/entitlement model. This is the
 capability layer the `accept`/quote/execute paths in
-[`SECURITY-AUTHZ-FINDING.md`](../SECURITY-AUTHZ-FINDING.md) §"Minimal fix" #2/#3 are missing.
+[`SECURITY-AUTHZ-FINDING.md`](../archive/audits/SECURITY-AUTHZ-FINDING.md) §"Minimal fix" #2/#3 are missing.
 
 ---
 
@@ -212,5 +212,5 @@ Extends `IdentityAdminService`. All admin RPCs require `Capability(Administer, *
 ---
 
 *Provenance/why is recorded here and (to be) anchored as a lodestar `adr` claim against the
-access seam once slice 1 lands. Cross-references: [`SECURITY-AUTHZ-FINDING.md`](../SECURITY-AUTHZ-FINDING.md),
+access seam once slice 1 lands. Cross-references: [`SECURITY-AUTHZ-FINDING.md`](../archive/audits/SECURITY-AUTHZ-FINDING.md),
 `docs/RISK-HIERARCHY.md` §2.6/§4, `docs/EXPERIENCE-ARCHITECTURE.md` P2-8.*

@@ -1663,13 +1663,29 @@ pub(super) fn price_xva_request_from_json(o: &Map<String, Value>) -> Result<Pric
     })
 }
 
-/// Encode an `XvaResult` `{ cva, dva, fva, total_adjustment }`.
+fn exposure_bucket_to_json(b: &celnet_proto::ExposureBucket) -> Value {
+    json!({
+        "time_years": b.time_years,
+        "label": b.label,
+        "ee": b.ee,
+        "q25": b.q25,
+        "q75": b.q75,
+        "pfe_lo": b.pfe_lo,
+        "pfe": b.pfe,
+        "ene": b.ene,
+        "ene_band_lo": b.ene_band_lo,
+        "ene_band_hi": b.ene_band_hi,
+    })
+}
+
+/// Encode an `XvaResult` `{ cva, dva, fva, total_adjustment, buckets }`.
 fn xva_result_to_json(r: &WireXvaResult) -> Value {
     json!({
         "cva": r.cva,
         "dva": r.dva,
         "fva": r.fva,
         "total_adjustment": r.total_adjustment,
+        "buckets": r.buckets.iter().map(exposure_bucket_to_json).collect::<Vec<_>>(),
     })
 }
 
@@ -9081,7 +9097,7 @@ mod tests {
         // The response re-encodes to the browser shape, field-for-field.
         let resp = celnet_proto::PriceXvaResponse {
             request_id: req.request_id,
-            result: Some(result),
+            result: Some(result.clone()),
             correlation_id: req.correlation_id,
         };
         let v = price_xva_response_to_json(&resp);
@@ -9094,6 +9110,7 @@ mod tests {
             v["result"]["total_adjustment"].as_f64().unwrap(),
             result.total_adjustment
         );
+        assert!(!v["result"]["buckets"].as_array().unwrap().is_empty());
     }
 
     /// The `build_curve` frame decodes the registry-referenced pillar set the GUI /

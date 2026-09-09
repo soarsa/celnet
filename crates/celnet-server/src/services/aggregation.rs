@@ -157,6 +157,7 @@ struct BondPricingTerms {
     frequency: PaymentFrequency,
     day_count: AccrualBasis,
     redemption: f64,
+    pool_factor: Option<f64>,
 }
 
 /// The reference-data identity of an instrument, resolved for the composite line's
@@ -1130,7 +1131,7 @@ impl AggregationHub {
     /// The per-subscriber **ESP** composite for `book_id`, priced through `pipeline`
     /// (a pricing group's ESP pipeline) applied to the book's raw consolidated
     /// composite — so a grouped subscriber receives its own outbound two-way off the
-    /// same raw liquidity (`docs/FI-PRICING-GROUPS-DESIGN.md` §5). `None` when no enabled
+    /// same raw liquidity (`docs/fixed-income/FI-PRICING-GROUPS-DESIGN.md` §5). `None` when no enabled
     /// book with that id exists (mirroring [`Self::snapshot`]).
     ///
     /// The no-group ESP path does **not** call this — it keeps handing out
@@ -1160,7 +1161,7 @@ impl AggregationHub {
     /// Resolve the **RFQ** composite line for `instrument_id`, priced through `pipeline`
     /// (a pricing group's effective RFQ pipeline) applied to the book's raw consolidated
     /// two-way — so a grouped caller's quote is built from the raw liquidity through its
-    /// own pipeline (`docs/FI-PRICING-GROUPS-DESIGN.md` §5). Book selection,
+    /// own pipeline (`docs/fixed-income/FI-PRICING-GROUPS-DESIGN.md` §5). Book selection,
     /// freshness/quorum, the degenerate-composite guard, and the member-line panel are
     /// **identical** to [`Self::resolve_rfq_composite`]; only the priced best bid/offer
     /// differ.
@@ -1329,7 +1330,7 @@ fn pricing_ctx_for_line(
 /// Re-price a book's **raw** composite through a pricing-group [`FeaturePipeline`], one
 /// instrument line at a time. Mirrors [`apply_tiering`] but runs the ordered,
 /// trader-composed features (RAW → … → outbound) instead of a single [`TieringConfig`],
-/// returning each line's guarded outbound two-way (`docs/FI-PRICING-GROUPS-DESIGN.md`
+/// returning each line's guarded outbound two-way (`docs/fixed-income/FI-PRICING-GROUPS-DESIGN.md`
 /// §6). A line whose raw two-way is non-finite is dropped (as the tiering path drops a
 /// non-finite mid).
 fn apply_pipeline(
@@ -1447,6 +1448,7 @@ fn build_bond_terms(store: &IdentityStore) -> HashMap<String, BondPricingTerms> 
                 frequency,
                 day_count,
                 redemption: b.redemption,
+                pool_factor: b.pool_factor,
             },
         );
     }
@@ -1468,7 +1470,7 @@ fn settlement_date(now: i64) -> Option<time::Date> {
 /// at that yield. `None` (⇒ the yield-bps line suppresses) if the contract is malformed
 /// for this settlement/maturity or the yield solve fails.
 fn bond_dv01(terms: &BondPricingTerms, settlement: time::Date, mid_clean: f64) -> Option<f64> {
-    let bond = Bond::new(
+    let mut bond = Bond::new(
         settlement,
         terms.maturity,
         terms.coupon_rate,
@@ -1477,6 +1479,9 @@ fn bond_dv01(terms: &BondPricingTerms, settlement: time::Date, mid_clean: f64) -
         terms.redemption,
     )
     .ok()?;
+    if let Some(pf) = terms.pool_factor {
+        bond = bond.with_pool_factor(pf).ok()?;
+    }
     let accrued = accrued_interest(&bond).ok()?;
     let dirty = mid_clean + accrued;
     let risk = bond_risk(&bond, dirty).ok()?;
@@ -2303,6 +2308,7 @@ mod tests {
                 },
                 redemption: 100.0,
                 calendars: vec!["united_states".to_string()],
+                pool_factor: None,
             }),
         }
     }

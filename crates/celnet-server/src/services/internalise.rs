@@ -1,5 +1,5 @@
 //! The **price-tolerance / "are we making money" check** for the internalise decision
-//! (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §6). Pure, off-core.
+//! (`docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §6). Pure, off-core.
 //!
 //! When a dealer books a fill, the booking engine decides whether to **warehouse**
 //! (internalise) the risk or shed it as an advisory external back-to-back. The first gate

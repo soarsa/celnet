@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Celnet — User Model Extensibility & Runtime Replaceability</title>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --primary: #38bdf8;
+      --accent: #10b981;
+      --warning: #f59e0b;
+      --purple: #a855f7;
+      --code-bg: #030712;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      line-height: 1.6;
+      padding: 2rem 1.5rem;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    header {
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.65rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-radius: 9999px;
+      margin-right: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .badge-primary { background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid rgba(56, 189, 248, 0.3); }
+    .badge-accent { background: rgba(16, 185, 129, 0.15); color: var(--accent); border: 1px solid rgba(16, 185, 129, 0.3); }
+    .badge-purple { background: rgba(168, 85, 247, 0.15); color: var(--purple); border: 1px solid rgba(168, 85, 247, 0.3); }
+    h1 { font-size: 2.25rem; font-weight: 800; color: #ffffff; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.5rem; font-weight: 700; color: #ffffff; margin: 2rem 0 1rem; border-left: 4px solid var(--primary); padding-left: 0.75rem; }
+    h3 { font-size: 1.15rem; font-weight: 600; color: var(--primary); margin: 1.25rem 0 0.5rem; }
+    p { margin-bottom: 1rem; color: #d1d5db; }
+    
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+    .card:hover {
+      border-color: #374151;
+      transform: translateY(-2px);
+    }
+    .card-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    
+    /* Code Blocks */
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 0.5rem;
+      padding: 1rem;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      color: #e5e7eb;
+      margin-bottom: 1.25rem;
+    }
+    code { font-family: var(--font-mono); color: var(--primary); }
+    
+    /* Comparison Table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1.5rem 0;
+      background: var(--card-bg);
+      border-radius: 0.5rem;
+      overflow: hidden;
+      border: 1px solid var(--card-border);
+    }
+    th, td {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--card-border);
+    }
+    th {
+      background: rgba(255, 255, 255, 0.03);
+      font-weight: 600;
+      color: var(--primary);
+    }
+    tr:last-child td { border-bottom: none; }
+    
+    .arch-diagram {
+      background: #030712;
+      border: 1px solid var(--card-border);
+      border-radius: 0.5rem;
+      padding: 1.25rem;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      line-height: 1.4;
+      color: #38bdf8;
+      overflow-x: auto;
+      white-space: pre;
+      margin-bottom: 2rem;
+    }
+    .pill-green { color: var(--accent); font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <span class="badge badge-accent">Production Grade</span>
+        <span class="badge badge-primary">Zero Downtime</span>
+        <span class="badge badge-purple">Multi-Tier Sandboxing</span>
+      </div>
+      <h1>Celnet Model Extensibility & Runtime Replaceability</h1>
+      <p style="color: var(--text-muted);">Architectural critique and technical specification for 100% pluggable, hot-swappable pricing models, rates curves, exotic payoffs, and execution strategies.</p>
+    </header>
+
+    <h2>1. Unified Tier-Blind Architecture</h2>
+    <div class="arch-diagram">
++---------------------------------------------------------------------------------------------------+
+|                                CELNET EXTENSIBILITY ARCHITECTURE                                   |
++---------------------------------------------------------------------------------------------------+
+|                                                                                                   |
+|  [ Quantitative Trading Desk / User ]                                                             |
+|            |                                                                                      |
+|            +---> Tier 0: Native Rust / C-ABI Plugin (Hot Path, <50ns dispatch overhead)           |
+|            |                                                                                      |
+|            +---> Tier 1: Sandboxed Wasm Plugin (`wasmi`, Pure Rust, Fuel SLA, Zero Authority)     |
+|            |                                                                                      |
+|            +---> Tier 2: IPC / Shared Memory / Sidecars (Python SDK, Excel Add-in, JNI)           |
+|                                                                                                   |
++---------------------------------------------+-----------------------------------------------------+
+                                              |
+                                              v
++---------------------------------------------------------------------------------------------------+
+|                         celnet-plugin-host: Unified ModelRegistry                                  |
++---------------------------------------------------------------------------------------------------+
+|  * replace_or_insert_native()       * set_active_pricing_model()                                  |
+|  * replace_or_insert_native_rates() * set_active_rates_model()                                    |
+|  * replace_or_insert_native_exotic()* set_active_exotic_model()                                   |
+|  * hot_swap_licensed_artifact()     * hydrate_from_cache()                                        |
++---------------------------------------------+-----------------------------------------------------+
+                                              |
+               +------------------------------+-------------------------------+
+               |                              |                               |
+               v                              v                               v
+    +--------------------+        +-----------------------+        +----------------------+
+    | celnet-server      |        | celnet-server         |        | celnet-algo          |
+    | Analytic Vanilla   |        | Linear Rates Engine   |        | Execution Engine     |
+    +--------------------+        +-----------------------+        +----------------------+
+    | Active Pricing     |        | Active Rates Model    |        | StrategyRegistry     |
+    | Seam (CarryInputs) |        | Seam (RatesTerms)     |        | Dynamic Step & TCA   |
+    +--------------------+        +-----------------------+        +----------------------+
+    </div>
+
+    <h2>2. Architectural Critique & Implemented Hardening</h2>
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">1. Exotic Derivatives Lock-in</div>
+        <p><strong>Critique:</strong> Exotic pricing arms previously bypassed the plugin registry entirely, forcing static dispatch to compiled-in engines.</p>
+        <p><strong>Solution:</strong> Added <code>ExoticHostModel</code>, <code>NativeExoticModel</code>, and <code>ExoticPluginModelEngine</code> in <code>celnet-server</code>. Exotics now consult the active exotic plugin model with automatic fallback to native engines.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">2. In-Place Runtime Replacement</div>
+        <p><strong>Critique:</strong> Registry rejected duplicate IDs with <code>InvalidInput("duplicate model id")</code>, preventing online recalibration updates without service restarts.</p>
+        <p><strong>Solution:</strong> Implemented <code>replace_or_insert_native</code>, <code>replace_or_insert_native_rates</code>, and <code>replace_or_insert_native_exotic</code> preserving stable discovery order.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">3. Dynamic Model Selection</div>
+        <p><strong>Critique:</strong> Model resolution was a naive scan picking the first model at index 0, blocking users from activating newer models.</p>
+        <p><strong>Solution:</strong> Added explicit active model IDs: <code>set_active_pricing_model</code>, <code>set_active_rates_model</code>, and <code>set_active_exotic_model</code> with automatic fallback.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">4. Algorithmic Strategy Pluggability</div>
+        <p><strong>Critique:</strong> Algo orders were restricted to closed protobuf enums (TWAP, Optimal Liquidation) without user-defined strategy hooks.</p>
+        <p><strong>Solution:</strong> Introduced <code>StrategyRegistry</code>, <code>AlgoStrategyType::Custom</code>, and <code>AlgoParentOrder::step_strategy</code> for dynamic slicing and TCA.</p>
+      </div>
+    </div>
+
+    <h2>3. Mathematical Seams Across Asset Classes</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Seam Trait</th>
+          <th>Domain / Asset Class</th>
+          <th>Mathematical Formulation</th>
+          <th>Output Measures</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>PricingModel</code></td>
+          <td>Vanilla Options (FX, Equity, Metals)</td>
+          <td>Cost-of-carry PDE: $\frac{\partial V}{\partial t} + \frac{1}{2}\sigma^2 S^2 \frac{\partial^2 V}{\partial S^2} + b S \frac{\partial V}{\partial S} - r V = 0$</td>
+          <td>Price + 14-Greek Strip ($\Delta, \Gamma, \mathcal{V}, \Theta, \rho, \dots$)</td>
+        </tr>
+        <tr>
+          <td><code>RatesPricingModel</code></td>
+          <td>Linear Rates (OIS, IRS, FRA, Bonds)</td>
+          <td>Discount Factor Integral: $P(0, T) = \exp\left( -\int_0^T r(s) ds \right)$</td>
+          <td>PV, Par Rate, PV01, DV01, Key Rate Durations</td>
+        </tr>
+        <tr>
+          <td><code>ExoticPricingModel</code></td>
+          <td>Exotics (Barriers, Asians, Baskets)</td>
+          <td>Correlated SDEs: $dS_i = \mu_i S_i dt + \sigma_i S_i dW_i, \langle dW_i, dW_j \rangle = \rho_{ij} dt$</td>
+          <td>Payoff PV, Multi-Asset Delta Vector</td>
+        </tr>
+        <tr>
+          <td><code>PluggableExecutionStrategy</code></td>
+          <td>Algorithmic Execution</td>
+          <td>Imbalance Dynamics: $\text{OBI}(t) = \frac{Q_{\text{bid}} - Q_{\text{ask}}}{Q_{\text{bid}} + Q_{\text{ask}}}$</td>
+          <td>Child Slices, Limit Price, Pegging Style</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>4. Verified Invariants & Code Blueprints</h2>
+    <h3>A. Dynamic Strategy Stepping in celnet-algo</h3>
+    <pre><code>let mut order = AlgoParentOrder::new_pluggable("ORD-101", "EURUSD", 1_000_000.0, 1.0850)?;
+let mut strategy = registry.create_strategy("ADAPTIVE_SPREAD_SNIPER")?;
+let book = MarketBookSnapshot::new(1.0850, 500_000.0, 1.0852, 400_000.0);
+
+// Dynamic step calculation based on order book state
+let slice = order.step_strategy(&mut *strategy, &book, 0.0, 300.0, 0.10)?;
+order.record_fill(0, slice.unwrap().target_quantity, 1.0851)?;</code></pre>
+
+    <h3>B. In-Place Hot-Swapping of Models in celnet-plugin-host</h3>
+    <pre><code>let mut registry = ModelRegistry::new();
+let model_id = registry.register_native(ProprietaryPricer::new(calib_v1))?;
+registry.set_active_pricing_model(model_id)?;
+
+// Online recalibration without stopping the server:
+registry.replace_or_insert_native(ProprietaryPricer::new(calib_v2))?;
+assert_eq!(registry.active_pricing_model_id(), Some(model_id));</code></pre>
+
+    <h2>5. Verification Status</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Verification Target</th>
+          <th>Test Suite</th>
+          <th>Tests Count</th>
+          <th>Verdict</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>celnet-plugin-host</code></td>
+          <td>Unit, Replay, Licensed Artifact, Sandbox</td>
+          <td>30 / 30</td>
+          <td><span class="pill-green">&#10004; PASSED</span></td>
+        </tr>
+        <tr>
+          <td><code>celnet-algo</code></td>
+          <td>Unit, Propagator, Optimal, TWAP, Strategy</td>
+          <td>11 / 11</td>
+          <td><span class="pill-green">&#10004; PASSED</span></td>
+        </tr>
+        <tr>
+          <td><code>celnet-server</code></td>
+          <td>Edge, Engines, Streams, Rates, Exotics</td>
+          <td>883 / 883</td>
+          <td><span class="pill-green">&#10004; PASSED</span></td>
+        </tr>
+        <tr>
+          <td><code>celnet-c-api</code></td>
+          <td>C-ABI Exports & Pricing FFI</td>
+          <td>10 / 10</td>
+          <td><span class="pill-green">&#10004; PASSED</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

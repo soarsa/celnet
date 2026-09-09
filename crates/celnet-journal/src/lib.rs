@@ -164,7 +164,9 @@
 #![forbid(unsafe_code)]
 
 mod crc32;
+pub mod async_journal;
 
+pub use async_journal::{AppendReceipt, AsyncJournal, CxlPmemJournal, DurabilityPolicy};
 pub use crc32::crc32;
 
 use std::fs::{File, OpenOptions};

@@ -9,7 +9,7 @@ The whole desk lives behind **one window and five workspaces** — Ticket, Strea
 ![The live Stream blotter — multiplexed RFS two-ways with click-to-trade and the trend selector.](../assets/celnet-capabilities/shot-01-stream-blotter.png)
 *Figure 11-1 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Stream (⌘2): the resting state of the desk. A living blotter of streaming two-way markets, click a side to trade.*
 
-### 11.1 The shell — one window, five workspaces
+## 11.1 The shell — one window, five workspaces
 
 Three fixtures frame every workspace:
 
@@ -21,11 +21,11 @@ Three fixtures frame every workspace:
 
 Below the title bar runs the always-visible **pair watchlist strip**; below that, the active workspace canvas; below that, the ribbon. The brand is coral-on-indigo with the Anaheim display face — no traffic-light chrome, no function codes, no `<GO>`.
 
-#### The scope breadcrumb
+### The scope breadcrumb
 
 The breadcrumb renders the current slice of the firm as a clickable path — **Firm · Desk · Book · …** — with each ancestor crumb a drill-back-up target and the tail crumb the live scope. At the firm root it spells out the implied span ("all desks · all books") rather than leaving the crumb bare. Scope is wired through every data path in the GUI, so what you see in Stream, Risk, and Book is exactly the slice the breadcrumb names: the same server-side, entitlement-aware pruning that the position-fact cube enforces, surfaced as a navigation control.
 
-#### The pair navigator
+### The pair navigator
 
 Two complementary affordances move the desk between currency pairs. The **watchlist strip** pins one tile per watched pair across the top of every workspace: the pair label, its live spot at the pair's pip precision, a tick-direction cue, and an inline sparkline of that pair's most-active streamed line. The active pair is raised onto a brighter material and marked in brand coral with a subtle live pulse; the rest stay quiet. Tiles are fully keyboard-navigable (arrow across, Enter/Space to select).
 
@@ -34,18 +34,18 @@ Two complementary affordances move the desk between currency pairs. The **watchl
 
 The **pair menu** in the title bar is a real anchored dropdown: clicking the `▾` caret opens a compact popover of the watched pairs (label + live spot, active in coral); selecting one re-targets the global pair everywhere. Its footer row escalates to the command palette for searching the entire universe when the watchlist is too long to eyeball — the right tool when a desk runs hundreds of pairs.
 
-#### The command palette (⌘K)
+### The command palette (⌘K)
 
 ![The command palette — fuzzy search over pairs, workspaces, and actions.](../assets/celnet-capabilities/shot-07-command-palette.png)
 *Figure 11-3 ([index](../CELNET-CAPABILITIES.md#figure-index)) — `⌘K`: the keyboard-first spine. Type a pair, a workspace, or an action; arrow + Enter to run.*
 
 `⌘K` (or `⌘P`) opens the palette — the universal escape hatch and the keyboard-first spine of the GUI. It fuzzy-matches across three families at once: **pairs** (jump to any currency pair, with its spot as a hint), **workspaces** (go to any of the five lanes), and **actions** (mark the surface, open a risk scenario, toggle light/dark or contrast, and *promote a structure straight into the live blotter* — e.g. "Stream EUR/USD 1M 25Δ RR", which subscribes the exact instrument and lands you on the blotter ticking). It is fully driven from the keyboard, honours Escape, and renders on a thick-blur material that owns focus while open. No function codes, no command syntax to memorise.
 
-#### The keyboard cheatsheet (?)
+### The keyboard cheatsheet (?)
 
 Because the GUI is keyboard-first, every chord is discoverable: pressing `?` (or selecting it from the command palette) opens a modal **shortcuts overlay** that enumerates the *same* binding grammar the shell and the overlays actually honour. It is read from one `src/lib/shortcuts.ts` source of truth and rendered as grouped definition lists, so the advertised bindings can never drift from the real ones. It is a focus-trapping dialog — focus moves into it on open, Escape and a scrim click close it — and carries an accessible name and grouped sections (`gui/src/components/ShortcutsOverlay.tsx`).
 
-### 11.2 Ticket (⌘1) — the analytics surface that is also the executable
+## 11.2 Ticket (⌘1) — the analytics surface that is also the executable
 
 ![The Ticket card — structure, tenor, legs, a live two-way, the full Greek set, and conventions on the face.](../assets/celnet-capabilities/shot-02-ticket-structuring.png)
 *Figure 11-4 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Ticket (⌘1): one card that is both the analytics surface and the executable.*
@@ -70,7 +70,7 @@ Walking the card top to bottom:
 - **Conventions on the face** — the delta convention, ATM rule, and premium currency are shown inline before quoting; the trading vol (the real smile vol the structure trades on at its strikes, vega-weighted across legs) is shown alongside the quote — not a flat ATM.
 - **Promote, never re-key** — `Stream this ≋` drops the *exact same* instrument into the blotter; `Add to risk ⊞` drops it into the scenario grid. The same instrument object flows across lanes with no re-typing.
 
-### 11.3 Stream (⌘2) — the RFS blotter
+## 11.3 Stream (⌘2) — the RFS blotter
 
 The Stream blotter is the desk's resting state: a living table of streaming two-ways, multiplexed over **one** StreamSession. Each row carries the pair, structure (with the quoting owner when the wire attributes it), tenor, **bid / premium-mid / offer**, a trend cell, spot delta, implied vol, and an honest **per-row stream-health badge** (healthy / resyncing / stale) driven by real sequence and resync state. Only changed numbers flash — calm under fire.
 
@@ -82,7 +82,7 @@ The Stream blotter is the desk's resting state: a living table of streaming two-
 - **The trend selector** — a row of mode chips re-plots every row's trend column from a **real streamed observable**: Premium (the row's own streamed premium-mid history), ATM vol, 25Δ RR, 25Δ BF, Spot, and Forward — each served from the contract's market-series feed. The selected mode's label and unit annotate the column header and each tile; the sparkline tint and the up/down glyph share one direction truth.
 - **Subscribe** — `+ Subscribe (⌘K)` opens the palette to add a line; the blotter footer notes the conflation cadence and the number of LPs in competition.
 
-### 11.4 Surface (⌘3) — mark and recalibrate
+## 11.4 Surface (⌘3) — mark and recalibrate
 
 ![The Surface workspace — smile chart, the broker marking grid, the arb gate, model selector, and surface version.](../assets/celnet-capabilities/shot-03-surface-marking.png)
 *Figure 11-6 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Surface (⌘3): three linked views of one marked surface, with live recalibration and an arbitrage gate.*
@@ -99,7 +99,7 @@ Three controls govern the mark:
 - **The model selector** — **five** model chips — Market hedge, Stochastic vol, Parametric, Parametric-surface, and **eSSVI** (the extended whole-surface fit with a maturity-dependent skew) — route the choice into the contract's `MarkSurfaceRequest.smile_model` field (`SMILE_MODELS` in `gui/src/workspaces/SurfaceWorkspace.tsx`, the `EXTENDED_SURFACE` arm); selecting a family re-marks the live surface under it and bumps the surface version. The family the server *actually* calibrated under is read back from each smile's **typed** `arbitrage.model` provenance field and shown as "marked as …" — honest provenance, not the requested label.
 - **Reset / Publish** — `Reset to live` discards unpublished edits; `Publish vN` transmits the edited marks through the *same* mark API the SDK and Excel use and deposits them under a fresh surface version (with the marking timestamp and handle count disclosed). Pricing, RFQ, and RFS paths then pin against that version.
 
-### 11.5 Risk (⌘4) — the scenario grid
+## 11.5 Risk (⌘4) — the scenario grid
 
 ![The Risk workspace — a spot×vol reprice grid with swappable axes, metric tabs, a vega ladder, cross-gamma, and theta-roll.](../assets/celnet-capabilities/shot-04-risk-scenario.png)
 *Figure 11-7 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Risk (⌘4): a real-reprice shock grid for the selected structure, with the book-shaped decomposition as a disclosure.*
@@ -114,7 +114,7 @@ The Risk workspace analyses one structure under a two-axis shock grid, every cel
 
 When you arrive here by drilling from the Book, a `‹ Book` affordance in the title returns you to the desk-wide cube — Book and Risk are two zooms of the same position-fact cube.
 
-### 11.6 Book (⌘5) — desk-wide aggregated risk
+## 11.6 Book (⌘5) — desk-wide aggregated risk
 
 ![The Book workspace — net P&L/Vega/Gamma/Theta cards, a per-pair breakdown that drills to Risk, and an aggregate vega ladder.](../assets/celnet-capabilities/shot-05-book-aggregate.png)
 *Figure 11-8 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Book (⌘5): the desk-wide aggregated picture, one click from any position's scenario risk.*
@@ -127,7 +127,7 @@ The Book sums the **real** per-position risk across every open position across e
 
 The Book is candid about its own numeraire: cross-pair totals are summed in each pair's native premium units, with common-numeraire normalisation noted as the firm-wide cube's job — the same OLAP position-fact cube described in the risk section, of which Book and Risk are two GUI zooms. Positions whose pair has no marked market are disclosed and excluded rather than priced against a fabricated market, and an empty book shows an explicit empty state.
 
-### 11.7 One contract, every surface
+## 11.7 One contract, every surface
 
 Light and dark themes, a high-contrast mode, the keyboard cheatsheet, the trend modes, the scope breadcrumb, and the pair navigator are all conveniences layered over the *same* API that the Rust SDK, the CLI, and the Excel `CELNET.*` add-in consume. A value priced in the Ticket — across the full catalogue from vanilla through American/Bermudan and correlated baskets — streamed in the blotter, marked in the Surface under any of the five smile families, shocked in Risk, or aggregated in the Book is the engine's value — identical across every client. The GUI is the desk's richest window onto Celnet, not a parallel implementation of it. (Its keyboard-first behaviour and accessibility are themselves under test — see the Playwright end-to-end and axe accessibility suites covered in the *Engineering Rigor & Assurance* chapter.)
 

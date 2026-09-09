@@ -269,7 +269,7 @@ struct StoreInner {
     wire_ids: HashMap<u32, u64>,
     /// The limit tree configured at hierarchy scopes (caps + RAG bands).
     limits: LimitTree,
-    /// The current firm-wide **risk-routing graph** (`docs/FI-RISK-ROUTING-REQUIREMENTS.md`
+    /// The current firm-wide **risk-routing graph** (`docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md`
     /// §4), if configured. `None` ⇒ no routing: a fill books exactly as before with
     /// **no** risk-book stamp — byte-identical to the pre-routing path. Held behind an
     /// [`Arc`] so a fill clones only a pointer (never the graph) on the off-hot-path
@@ -1710,7 +1710,7 @@ pub(crate) fn limit_breach_message(res: &PreTradeResult) -> String {
 /// Project this fill's post-book risk-book aggregate over the resolved book **and each
 /// ancestor**, returning a typed `failed_precondition` breach if any HARD notional cap
 /// (`max_net_notional` on `|net|`, `max_gross_notional` on gross) would be EXCEEDED — the
-/// per-book enforcement (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §8.3). Runs on the SAME
+/// per-book enforcement (`docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md` §8.3). Runs on the SAME
 /// read snapshot the routing used, BEFORE any mutation, so a breach rejects with the store
 /// left unmutated (the load-bearing risk-control invariant, mirroring the FactKey gate).
 ///
@@ -1853,7 +1853,7 @@ fn risk_book_chain_contains(
 }
 
 /// A typed `failed_precondition` for a routed-risk-book hard notional-cap breach — book id +
-/// metric + used/limit (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §8.3). Distinct from the
+/// metric + used/limit (`docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md` §8.3). Distinct from the
 /// FactKey [`limit_breached_status`] so a client can tell a per-book cap breach apart.
 #[must_use]
 fn risk_book_limit_breached(book_id: &str, metric: &str, used: f64, cap: f64) -> tonic::Status {

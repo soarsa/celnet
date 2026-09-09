@@ -1,5 +1,5 @@
 //! The dimension-subtree scope primitive (`docs/RISK-HIERARCHY.md` §4,
-//! `docs/EXPERIENCE-ARCHITECTURE.md` §3).
+//! `docs/clients/EXPERIENCE-ARCHITECTURE.md` §3).
 //!
 //! A [`Scope`] names a **subtree** of one cube dimension by pinning that
 //! dimension to a single value — e.g. `Desk = 99` is "the EM-vol desk subtree".

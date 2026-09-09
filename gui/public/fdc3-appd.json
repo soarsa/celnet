@@ -1,0 +1,64 @@
+{
+  "$schema": "https://fdc3.finos.org/schemas/2.1/app-directory.json",
+  "appId": "celnet-sovereign-trading",
+  "name": "CelNet Chronos 2026",
+  "version": "2026.9.0",
+  "title": "CelNet Sovereign Capital Markets Execution & Risk Suite",
+  "tooltip": "Institutional Cross-Asset Quantitative Execution, Margin Fortress & Real-Time Risk",
+  "description": "Ultra-low-latency institutional trading system powered by zero-allocation Rust cores, Cheyette 2F swaptions, Rough Volatility tensor path signatures, and CME SPAN 2 / ISDA SIMM 2.6 clearing.",
+  "type": "web",
+  "url": "https://celnet.internal:9876",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "size": "32x32",
+      "type": "image/x-icon"
+    }
+  ],
+  "interop": {
+    "intents": {
+      "listensFor": {
+        "ViewInstrument": {
+          "contexts": ["fdc3.instrument"],
+          "displayName": "View Instrument Volatility & Curves in CelNet Markets"
+        },
+        "ViewChart": {
+          "contexts": ["fdc3.instrument"],
+          "displayName": "View Dynamic Smiles in CelNet Pricing Studio"
+        },
+        "Trade": {
+          "contexts": ["fdc3.instrument", "fdc3.order"],
+          "displayName": "Trade Instrument via CelNet Quoting Engine"
+        },
+        "ViewOrders": {
+          "contexts": ["fdc3.instrument"],
+          "displayName": "View Active Orders in CelNet Blotter"
+        },
+        "ViewAnalysis": {
+          "contexts": ["fdc3.instrument", "fdc3.position"],
+          "displayName": "Analyze Position in CelNet Risk Cockpit"
+        }
+      },
+      "raises": {
+        "ViewQuote": ["fdc3.instrument"],
+        "ViewOrders": ["fdc3.instrument"],
+        "ViewTrades": ["fdc3.trade"]
+      }
+    },
+    "userChannels": {
+      "broadcasts": ["fdc3.instrument", "fdc3.trade", "fdc3.order", "fdc3.valuation"],
+      "listensFor": ["fdc3.instrument", "fdc3.order"]
+    }
+  },
+  "hostManifests": {
+    "OpenFin": {
+      "manifestUrl": "/openfin-app.json"
+    },
+    "interop.io": {
+      "appType": "window",
+      "details": {
+        "url": "/index.html"
+      }
+    }
+  }
+}

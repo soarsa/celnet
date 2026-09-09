@@ -66,6 +66,44 @@ pub enum Role {
     Leader,
 }
 
+/// Consensus quorum policy: Symmetric majority vs Asymmetric low-latency quorums.
+///
+/// Quorum safety invariant: `Q_elect ∩ Q_commit ≠ ∅` (`Q_elect + Q_commit > N`).
+/// Asymmetric quorums allow sub-millisecond local datacenter commits without waiting for cross-region roundtrips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QuorumPolicy {
+    /// Classic majority quorum: Q = floor(N / 2) + 1 for both election and commit.
+    #[default]
+    Majority,
+    /// Asymmetric quorums allowing faster local commit without WAN stalls.
+    Flexible {
+        /// Fast commit quorum size (e.g. 2 in a 5-node cluster).
+        fast_commit_quorum: usize,
+        /// Election quorum size (e.g. 4 in a 5-node cluster).
+        election_quorum: usize,
+    },
+}
+
+impl QuorumPolicy {
+    /// The required commit quorum size under this policy for a cluster of `total_nodes`.
+    #[must_use]
+    pub fn commit_quorum(&self, total_nodes: usize) -> usize {
+        match *self {
+            Self::Majority => total_nodes / 2 + 1,
+            Self::Flexible { fast_commit_quorum, .. } => fast_commit_quorum,
+        }
+    }
+
+    /// The required election quorum size under this policy for a cluster of `total_nodes`.
+    #[must_use]
+    pub fn election_quorum(&self, total_nodes: usize) -> usize {
+        match *self {
+            Self::Majority => total_nodes / 2 + 1,
+            Self::Flexible { election_quorum, .. } => election_quorum,
+        }
+    }
+}
+
 /// Timing parameters for the consensus protocol. The election-timeout *range*
 /// must be comfortably larger than the heartbeat interval (so a live leader keeps
 /// followers from timing out) and randomized per node (so split votes resolve).
@@ -79,21 +117,18 @@ pub struct RaftConfig {
     pub heartbeat: Duration,
     /// Per-RPC socket deadline so a dead peer fails fast (never hangs).
     pub io_timeout: Duration,
+    /// Quorum policy for leader election and log commitment.
+    pub quorum_policy: QuorumPolicy,
 }
 
 impl Default for RaftConfig {
     fn default() -> Self {
-        // The election timeout is ~10–20× the heartbeat with a wide random spread —
-        // the standard Raft ratio — so an occasional stall (notably a durable
-        // `fsync` taking tens of ms while the core lock is held, which briefly delays
-        // the next heartbeat) does not trip a follower into a spurious election, yet
-        // a genuinely dead leader is still detected within ~half a second. These are
-        // loopback/local-disk-tuned; a cross-host deploy would widen them further.
         Self {
             election_min: Duration::from_millis(400),
             election_max: Duration::from_millis(800),
             heartbeat: Duration::from_millis(40),
             io_timeout: Duration::from_secs(2),
+            quorum_policy: QuorumPolicy::Majority,
         }
     }
 }
@@ -138,6 +173,8 @@ struct NodeCore {
     /// election timeout — so a flaky node cannot disrupt a healthy leader.
     last_leader_contact: Instant,
     cfg: RaftConfig,
+    /// Active cluster membership configuration (Simple or Joint Consensus).
+    membership: crate::membership::ClusterConfig,
 }
 
 impl NodeCore {
@@ -361,8 +398,25 @@ impl NodeCore {
         Ok(Some(lii))
     }
 
+    #[inline]
+    #[allow(dead_code)]
+    pub(crate) fn commit_quorum(&self) -> usize {
+        match self.cfg.quorum_policy {
+            QuorumPolicy::Majority => self.cluster_size / 2 + 1,
+            QuorumPolicy::Flexible { fast_commit_quorum, .. } => fast_commit_quorum.max(1),
+        }
+    }
+
+    #[inline]
+    fn election_quorum(&self) -> usize {
+        match self.cfg.quorum_policy {
+            QuorumPolicy::Majority => self.cluster_size / 2 + 1,
+            QuorumPolicy::Flexible { election_quorum, .. } => election_quorum.max(1),
+        }
+    }
+
     /// Leader §5.4.2 commit advance: find the highest `N > commit_index` such that
-    /// a strict majority of nodes (self + peers with `match_index >= N`) hold it
+    /// a quorum of nodes (self + peers with `match_index >= N`) hold it
     /// **and** `log[N].term == current_term`, then advance and apply.
     fn leader_advance_commit(&mut self) {
         if self.role != Role::Leader {
@@ -371,22 +425,38 @@ impl NodeCore {
         let Some(last) = self.log.last_index() else {
             return;
         };
-        let majority = self.cluster_size / 2 + 1;
         let current_term = self.current_term();
         let start = self.commit_index.map_or(0, |c| c + 1);
         let mut new_commit = self.commit_index;
+
+        let mut matches = HashMap::with_capacity(self.peers.len() + 1);
+        matches.insert(self.id, last);
+        for (&pid, p) in &self.peers {
+            if let Some(m) = p.match_index {
+                matches.insert(pid, m);
+            }
+        }
+
         for n in start..=last {
             // Only directly commit entries from the leader's own current term.
             if self.log.term_at(n) != Some(current_term) {
                 continue;
             }
-            let mut holders = 1usize; // the leader holds it
-            for p in self.peers.values() {
-                if p.match_index.is_some_and(|m| m >= n) {
-                    holders += 1;
+            let is_committed = match self.cfg.quorum_policy {
+                QuorumPolicy::Flexible { fast_commit_quorum, .. } => {
+                    let mut holders = 1usize; // the leader holds it
+                    for p in self.peers.values() {
+                        if p.match_index.is_some_and(|m| m >= n) {
+                            holders += 1;
+                        }
+                    }
+                    holders >= fast_commit_quorum.max(1)
                 }
-            }
-            if holders >= majority {
+                QuorumPolicy::Majority => {
+                    self.membership.is_committed(&matches, n)
+                }
+            };
+            if is_committed {
                 new_commit = Some(n);
             }
         }
@@ -533,6 +603,12 @@ impl RaftNode {
             );
         }
 
+        let mut members = vec![id];
+        for &a in peer_addrs {
+            members.push(u64::from(a.port()));
+        }
+        let membership = crate::membership::ClusterConfig::simple(members);
+
         let mut core = NodeCore {
             id,
             role: Role::Follower,
@@ -552,6 +628,7 @@ impl RaftNode {
                 .checked_sub(cfg.election_max)
                 .unwrap_or_else(Instant::now),
             cfg,
+            membership,
         };
         core.reset_election_timer();
         let core = Arc::new(Mutex::new(core));
@@ -784,6 +861,60 @@ impl RaftNode {
     #[must_use]
     pub fn retained_log_len(&self) -> usize {
         self.core.lock().expect("core lock").log.len()
+    }
+
+    /// Enter dynamic Joint Consensus transition (§6) toward `new_members`.
+    pub fn enter_joint_consensus(&self, new_members: Vec<u64>) -> Result<(), String> {
+        let mut core = self.core.lock().expect("core lock");
+        if core.role != Role::Leader {
+            return Err("only leader can initiate joint consensus".to_string());
+        }
+        core.membership = core.membership.enter_joint(new_members);
+        core.cluster_size = core.membership.total_members();
+        Ok(())
+    }
+
+    /// Finalize dynamic Joint Consensus transition (§6) into the target configuration.
+    pub fn finalize_joint_consensus(&self) -> Result<(), String> {
+        let mut core = self.core.lock().expect("core lock");
+        if core.role != Role::Leader {
+            return Err("only leader can finalize joint consensus".to_string());
+        }
+        match core.membership.finalize_joint() {
+            Some(target_config) => {
+                core.membership = target_config;
+                core.cluster_size = core.membership.total_members();
+                Ok(())
+            }
+            None => Err("cluster is not in joint consensus".to_string()),
+        }
+    }
+
+    /// Read the current active cluster membership configuration.
+    #[must_use]
+    pub fn cluster_config(&self) -> crate::membership::ClusterConfig {
+        let core = self.core.lock().expect("core lock");
+        core.membership.clone()
+    }
+
+    /// Dynamically register a peer into this node's replication state.
+    pub fn add_peer(&self, pid: u64, addr: SocketAddr) {
+        let mut core = self.core.lock().expect("core lock");
+        let next_index = core.log.last_index().map_or(0, |i| i + 1);
+        core.peers.insert(
+            pid,
+            PeerState {
+                addr,
+                next_index,
+                match_index: None,
+            },
+        );
+    }
+
+    /// Dynamically remove a peer from this node's replication state.
+    pub fn remove_peer(&self, pid: u64) {
+        let mut core = self.core.lock().expect("core lock");
+        core.peers.remove(&pid);
     }
 
     /// Wake the tick thread immediately (e.g. after a proposal).
@@ -1208,7 +1339,7 @@ fn wait_or_wake(wake: &Arc<(Mutex<bool>, Condvar)>, dur: Duration) {
 /// still hear the leader, so it never inflates the term and never forces a re-election.
 fn start_election(core: &Arc<Mutex<NodeCore>>, stop: &Arc<AtomicBool>) {
     // Snapshot the election parameters under the lock (no persistent change yet).
-    let (current_term, id, last_log_index, last_log_term, peer_addrs, io_timeout, cluster_size) = {
+    let (current_term, id, last_log_index, last_log_term, peer_addrs, io_timeout, election_quorum) = {
         let mut c = core.lock().expect("core lock");
         // Become a candidate (volatile role) so the tick loop keeps timing out, but
         // do NOT bump the persistent term until pre-vote succeeds.
@@ -1224,10 +1355,10 @@ fn start_election(core: &Arc<Mutex<NodeCore>>, stop: &Arc<AtomicBool>) {
                 .map(|p| p.addr)
                 .collect::<Vec<SocketAddr>>(),
             c.cfg.io_timeout,
-            c.cluster_size,
+            c.election_quorum(),
         )
     };
-    let majority = cluster_size / 2 + 1;
+    let majority = election_quorum;
 
     if stop.load(Ordering::Acquire) {
         return;
@@ -1655,6 +1786,11 @@ mod core_tests {
                 .checked_sub(Duration::from_secs(3600))
                 .unwrap_or_else(Instant::now),
             cfg,
+            membership: crate::membership::ClusterConfig::simple(
+                std::iter::once(40_000)
+                    .chain((0..cluster_size.saturating_sub(1)).map(|i| 50_000 + i as u64))
+                    .collect(),
+            ),
         }
     }
 
@@ -2195,6 +2331,74 @@ mod core_tests {
         assert_eq!(c.commit_index, Some(1), "a current-term majority commits");
         assert_eq!(c.applied.get(1).map(f64::to_bits), Some(10.0f64.to_bits()));
         assert_eq!(c.applied.get(2).map(f64::to_bits), Some(20.0f64.to_bits()));
+    }
+
+    #[test]
+    fn flexible_paxos_fast_commit_quorum_allows_early_commit() {
+        let mut c = core(5); // 4 peers + self, standard majority would require 3 nodes
+        c.cfg.quorum_policy = QuorumPolicy::Flexible {
+            fast_commit_quorum: 2,
+            election_quorum: 4,
+        };
+        c.persist.save(1, None).unwrap();
+        c.role = Role::Leader;
+        c.log.append(&data_entry(1, 0, 100, 1.2345)).unwrap();
+
+        // 0 peers matched: leader only (1 < 2) -> no commit
+        c.leader_advance_commit();
+        assert_eq!(c.commit_index, None);
+
+        // 1 peer matches -> holders = 2 (self + peer) >= fast_commit_quorum (2) -> commits!
+        let pid = *c.peers.keys().next().unwrap();
+        c.peers.get_mut(&pid).unwrap().match_index = Some(0);
+        c.leader_advance_commit();
+        assert_eq!(c.commit_index, Some(0), "flexible paxos commits with 2 nodes out of 5");
+        assert_eq!(c.applied.get(100).map(f64::to_bits), Some(1.2345f64.to_bits()));
+    }
+
+    #[test]
+    fn joint_consensus_dual_majority_commitment() {
+        // Start with 3 nodes: 40_000 (self), 50_000, 50_001
+        let mut c = core(3);
+        c.persist.save(1, None).unwrap();
+        c.role = Role::Leader;
+        c.log.append(&data_entry(1, 0, 42, 99.0)).unwrap();
+
+        // Enter joint consensus with new members: 40_000, 50_000, 60_000, 60_001
+        // C_old: {40_000, 50_000, 50_001} (majority = 2)
+        // C_new: {40_000, 50_000, 60_000, 60_001} (majority = 3)
+        c.membership = c.membership.enter_joint(vec![40_000, 50_000, 60_000, 60_001]);
+
+        // Scenario 1: Only 40_000 and 50_001 match.
+        // C_old has 2 (40_000, 50_001) -> majority satisfied!
+        // But C_new only has 1 (40_000) -> NOT satisfied! -> must not commit!
+        c.peers.get_mut(&50_001).unwrap().match_index = Some(0);
+        c.leader_advance_commit();
+        assert_eq!(c.commit_index, None, "joint consensus requires BOTH majorities");
+
+        // Scenario 2: Node 50_000 also matches.
+        // C_old has 3/3 >= 2. C_new has {40_000, 50_000} = 2/4 < 3 -> still not committed!
+        c.peers.get_mut(&50_000).unwrap().match_index = Some(0);
+        c.leader_advance_commit();
+        assert_eq!(c.commit_index, None, "C_new majority still not reached");
+
+        // Scenario 3: Register 60_000 and have it match.
+        c.peers.insert(
+            60_000,
+            PeerState {
+                addr: SocketAddr::from(([127, 0, 0, 1], 60_000)),
+                next_index: 1,
+                match_index: Some(0),
+            },
+        );
+        // Now C_new has {40_000, 50_000, 60_000} = 3/4 >= 3 -> BOTH majorities hold -> COMMITS!
+        c.leader_advance_commit();
+        assert_eq!(c.commit_index, Some(0), "joint consensus commits when both majorities hold");
+        assert_eq!(c.applied.get(42).map(f64::to_bits), Some(99.0f64.to_bits()));
+
+        // Finalize joint consensus into C_new
+        c.membership = c.membership.finalize_joint().unwrap();
+        assert_eq!(c.membership.total_members(), 4);
     }
 
     // ---- step_down (§5.1) — line 173 ----------------------------------------

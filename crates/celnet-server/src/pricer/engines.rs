@@ -43,14 +43,15 @@ use celnet_exotics::{
     price_basket, quanto_digital_price, quanto_vanilla_price, single_barrier_price, tarf_price,
     turnbull_wakeman_price,
 };
-use celnet_plugin_host::{HostModel, ModelRegistry};
+use celnet_plugin_api::{ExoticArchetype, ExoticPayoffDescriptor, MultiAssetInputs};
+use celnet_plugin_host::{ExoticHostModel, HostModel, ModelRegistry};
 
 use super::{
     DEFAULT_ACCUMULATOR_MC_PAIRS, DEFAULT_BASKET_MC_PATHS, DEFAULT_BASKET_MC_REPLICATIONS,
     DEFAULT_BASKET_MC_STEPS, DEFAULT_CLIQUET_MC_PAIRS, DEFAULT_LOOKBACK_MC_PAIRS,
     DEFAULT_LOOKBACK_OBSERVATIONS, DEFAULT_PIVOT_MC_PAIRS, DEFAULT_TARF_MC_PAIRS, ExoticPrice,
     PriceError, Priced, ZERO_GREEKS, add_scaled, decode_option_type, exotic_greeks,
-    exotic_inputs_at, fx_wire_greeks, inputs_at, price_fx_forward, price_fx_swap,
+    exotic_inputs_at, fx_wire_greeks, price_fx_forward, price_fx_swap,
     price_listed_future_option, price_ndf, price_perpetual, price_vanilla_leg, resolve_strike,
     var_swap_context,
 };
@@ -194,6 +195,90 @@ impl ProductEngine for PluginModelEngine<'_> {
     }
 }
 
+/// Exotic plugin pricer adapter bridging the unified [`ModelRegistry`] to the exotic dispatch seam.
+pub(super) struct ExoticPluginModelEngine<'r> {
+    model: &'r dyn ExoticHostModel,
+    underlying: celnet_types::Underlying,
+}
+
+impl<'r> ExoticPluginModelEngine<'r> {
+    /// Wrap a registered exotic host model.
+    pub(super) fn new(
+        model: &'r dyn ExoticHostModel,
+        underlying: celnet_types::Underlying,
+    ) -> Self {
+        Self { model, underlying }
+    }
+
+    /// Price a single barrier instrument through the registered exotic model.
+    pub(super) fn price_single_barrier(
+        &self,
+        b: &celnet_proto::SingleBarrier,
+        ctx: &EngineCtx<'_>,
+    ) -> Result<Priced, PriceError> {
+        let (market, expiry, conv) = (ctx.market, ctx.expiry, ctx.conv);
+        let v = b
+            .vanilla
+            .as_ref()
+            .ok_or(PriceError::MissingField("single_barrier.vanilla"))?;
+        let option_type = decode_option_type(v.option_type)?;
+        let spec = v
+            .strike
+            .as_ref()
+            .and_then(|s| s.spec.as_ref())
+            .ok_or(PriceError::MissingField("single_barrier.vanilla.strike"))?;
+        let strike = resolve_strike(spec, market, expiry, conv, option_type)?;
+        let bside =
+            celnet_proto::BarrierSide::try_from(b.side).map_err(|_| PriceError::UnknownEnum {
+                kind: "BarrierSide",
+                tag: b.side,
+            })?;
+        let up = matches!(bside, celnet_proto::BarrierSide::Up);
+
+        let payoff = ExoticPayoffDescriptor {
+            archetype: ExoticArchetype::Barrier,
+            strike,
+            upper_barrier: if up { Some(b.barrier) } else { None },
+            lower_barrier: if !up { Some(b.barrier) } else { None },
+            rebate: b.rebate,
+            weights: vec![1.0],
+        };
+        let numeraire = self
+            .underlying
+            .as_ccy_pair()
+            .map(|p| p.quote)
+            .unwrap_or_else(|| celnet_types::Ccy::parse("USD").unwrap());
+        let inputs = MultiAssetInputs {
+            underlyings: vec![self.underlying.clone()],
+            spots: vec![market.spot],
+            vols: vec![market.vol],
+            correlation_matrix: vec![1.0],
+            expiry_years: expiry,
+            observation_schedule: vec![],
+            past_fixings: vec![],
+            numeraire,
+        };
+
+        match self.model.price_exotic(&payoff, &inputs) {
+            Ok(pv) => {
+                let deltas = self.model.deltas(&payoff, &inputs).unwrap_or_default();
+                let delta_spot = deltas.first().copied().unwrap_or(0.0);
+                Ok(Priced {
+                    greeks: Greeks {
+                        price: pv,
+                        delta_spot,
+                        ..ZERO_GREEKS
+                    },
+                    resolved_strike: strike,
+                    vol: market.vol,
+                    std_error: None,
+                })
+            }
+            Err(_) => SingleBarrierEngine.price(b, ctx),
+        }
+    }
+}
+
 /// A multi-leg strategy: the signed-ratio Greek sum of its vanilla legs.
 pub(super) struct StrategyEngine;
 impl ProductEngine for StrategyEngine {
@@ -287,10 +372,10 @@ impl ProductEngine for SingleBarrierEngine {
             rebate,
         };
         let price = |m: &WireMarketContext| {
-            single_barrier_price(&(&inputs_at(m, expiry, strike, m.vol)).into(), ex_spec)
+            single_barrier_price(&exotic_inputs_at(m, expiry, strike, m.vol), ex_spec)
         };
         let price_at = |t: f64, m: &WireMarketContext| {
-            single_barrier_price(&(&inputs_at(m, t, strike, m.vol)).into(), ex_spec)
+            single_barrier_price(&exotic_inputs_at(m, t, strike, m.vol), ex_spec)
         };
         let greeks = exotic_greeks(&price, &price_at, market, expiry);
         Ok(Priced {
@@ -333,19 +418,35 @@ impl ProductEngine for DoubleBarrierEngine {
         // A double knock-in is priced by in-out parity: KI = vanilla − KO.
         let knock_in = matches!(kind, celnet_proto::BarrierKind::KnockIn);
         let price = move |m: &WireMarketContext| {
-            let ki = inputs_at(m, expiry, strike, m.vol);
-            let ko_px = double_knock_out_price(&(&ki).into(), ko);
+            let ki = exotic_inputs_at(m, expiry, strike, m.vol);
+            let ko_px = double_knock_out_price(&ki, ko);
             if knock_in {
-                celnet_vanilla::price(option_type, &ki) - ko_px
+                celnet_core::gbsm_carry_price(
+                    option_type,
+                    ki.carry_rate(),
+                    ki.discount_rate(),
+                    ki.spot,
+                    ki.strike,
+                    ki.vol,
+                    ki.t,
+                ) - ko_px
             } else {
                 ko_px
             }
         };
         let price_at = move |t: f64, m: &WireMarketContext| {
-            let ki = inputs_at(m, t, strike, m.vol);
-            let ko_px = double_knock_out_price(&(&ki).into(), ko);
+            let ki = exotic_inputs_at(m, t, strike, m.vol);
+            let ko_px = double_knock_out_price(&ki, ko);
             if knock_in {
-                celnet_vanilla::price(option_type, &ki) - ko_px
+                celnet_core::gbsm_carry_price(
+                    option_type,
+                    ki.carry_rate(),
+                    ki.discount_rate(),
+                    ki.spot,
+                    ki.strike,
+                    ki.vol,
+                    ki.t,
+                ) - ko_px
             } else {
                 ko_px
             }
@@ -379,10 +480,10 @@ impl ProductEngine for DigitalEngine {
         let strike = d.strike;
         let payout = d.payout;
         let price = move |m: &WireMarketContext| {
-            payout * digital_price(kind, &(&inputs_at(m, expiry, strike, m.vol)).into())
+            payout * digital_price(kind, &exotic_inputs_at(m, expiry, strike, m.vol))
         };
         let price_at = move |t: f64, m: &WireMarketContext| {
-            payout * digital_price(kind, &(&inputs_at(m, t, strike, m.vol)).into())
+            payout * digital_price(kind, &exotic_inputs_at(m, t, strike, m.vol))
         };
         let greeks = exotic_greeks(&price, &price_at, market, expiry);
         Ok(Priced {
@@ -413,14 +514,14 @@ impl ProductEngine for TouchEngine {
         let price: Box<ExoticPrice<'_>> = match kind {
             celnet_proto::TouchKind::OneTouch => Box::new(move |m: &WireMarketContext| {
                 one_touch_price(
-                    &(&inputs_at(m, expiry, lower, m.vol)).into(),
+                    &exotic_inputs_at(m, expiry, lower, m.vol),
                     lower,
                     rebate,
                     RebateTiming::AtHit,
                 )
             }),
             celnet_proto::TouchKind::NoTouch => Box::new(move |m: &WireMarketContext| {
-                no_touch_price(&(&inputs_at(m, expiry, lower, m.vol)).into(), lower, rebate)
+                no_touch_price(&exotic_inputs_at(m, expiry, lower, m.vol), lower, rebate)
             }),
             celnet_proto::TouchKind::DoubleNoTouch => {
                 if !(lower > 0.0 && lower < upper) {
@@ -430,7 +531,7 @@ impl ProductEngine for TouchEngine {
                 }
                 Box::new(move |m: &WireMarketContext| {
                     double_no_touch_price(
-                        &(&inputs_at(m, expiry, lower, m.vol)).into(),
+                        &exotic_inputs_at(m, expiry, lower, m.vol),
                         DoubleNoTouch::new(lower, upper, rebate),
                     )
                 })
@@ -443,7 +544,7 @@ impl ProductEngine for TouchEngine {
                 }
                 Box::new(move |m: &WireMarketContext| {
                     double_touch_price(
-                        &(&inputs_at(m, expiry, lower, m.vol)).into(),
+                        &exotic_inputs_at(m, expiry, lower, m.vol),
                         DoubleNoTouch::new(lower, upper, rebate),
                     )
                 })
@@ -454,20 +555,20 @@ impl ProductEngine for TouchEngine {
         let price_at = move |t_exp: f64, m: &WireMarketContext| -> f64 {
             match kind {
                 celnet_proto::TouchKind::OneTouch => one_touch_price(
-                    &(&inputs_at(m, t_exp, lower, m.vol)).into(),
+                    &exotic_inputs_at(m, t_exp, lower, m.vol),
                     lower,
                     rebate,
                     RebateTiming::AtHit,
                 ),
                 celnet_proto::TouchKind::NoTouch => {
-                    no_touch_price(&(&inputs_at(m, t_exp, lower, m.vol)).into(), lower, rebate)
+                    no_touch_price(&exotic_inputs_at(m, t_exp, lower, m.vol), lower, rebate)
                 }
                 celnet_proto::TouchKind::DoubleNoTouch => double_no_touch_price(
-                    &(&inputs_at(m, t_exp, lower, m.vol)).into(),
+                    &exotic_inputs_at(m, t_exp, lower, m.vol),
                     DoubleNoTouch::new(lower, upper, rebate),
                 ),
                 celnet_proto::TouchKind::DoubleOneTouch => double_touch_price(
-                    &(&inputs_at(m, t_exp, lower, m.vol)).into(),
+                    &exotic_inputs_at(m, t_exp, lower, m.vol),
                     DoubleNoTouch::new(lower, upper, rebate),
                 ),
             }
@@ -1473,7 +1574,7 @@ pub(super) fn dispatch(
                     .instrument
                     .underlying
                     .as_ref()
-                    .and_then(|u| celnet_types::Underlying::try_from(u.clone()).ok())
+                    .and_then(|u| celnet_types::Underlying::try_from(u).ok())
                     .filter(|u| u.as_ccy_pair().is_some())
             {
                 PluginModelEngine { model, underlying }.price(v, ctx)
@@ -1482,7 +1583,20 @@ pub(super) fn dispatch(
             }
         }
         P::Strategy(s) => StrategyEngine.price(s, ctx),
-        P::SingleBarrier(b) => SingleBarrierEngine.price(b, ctx),
+        P::SingleBarrier(b) => {
+            if let Some(registry) = ctx.plugin_models
+                && let Some(model) = registry.active_exotic_model()
+                && let Some(underlying) = ctx
+                    .instrument
+                    .underlying
+                    .as_ref()
+                    .and_then(|u| celnet_types::Underlying::try_from(u).ok())
+            {
+                ExoticPluginModelEngine::new(model, underlying).price_single_barrier(b, ctx)
+            } else {
+                SingleBarrierEngine.price(b, ctx)
+            }
+        }
         P::DoubleBarrier(b) => DoubleBarrierEngine.price(b, ctx),
         P::Digital(d) => DigitalEngine.price(d, ctx),
         P::Touch(t) => TouchEngine.price(t, ctx),

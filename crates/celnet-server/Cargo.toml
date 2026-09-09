@@ -58,7 +58,7 @@ celnet-xva.workspace = true
 celnet-rfq.workspace = true
 celnet-aggregation.workspace = true
 # Outbound price tiering (FI-first, asset-agnostic): margins/skews the aggregation
-# composite before publish (docs/FI-TIERING-RESEARCH.md; Phase 2a wiring).
+# composite before publish (docs/fixed-income/FI-TIERING-RESEARCH.md; Phase 2a wiring).
 celnet-tiering.workspace = true
 celnet-engine.workspace = true
 # User-extensible analytics: the tiered plugin host whose ModelRegistry the
@@ -74,6 +74,7 @@ celnet-plugin-api.workspace = true
 celnet-proto.workspace = true
 celnet-risk-normalize.workspace = true
 celnet-risk-cube.workspace = true
+celnet-risk-accel.workspace = true
 # Linear-FI scenario risk (the C2a rate-shock engine): supplies the `FiPosition` /
 # `RatePillars` / `RateShock` the `RiskService.CombinedTailRisk` edge builds the
 # `celnet_risk_cube::combined_tail_risk` joint-tail cube from. One-way edge
@@ -81,7 +82,7 @@ celnet-risk-cube.workspace = true
 # already in the server tree, so no cycle.
 celnet-rates-risk.workspace = true
 celnet-limits.workspace = true
-# Risk routing (FI risk-book routing, docs/FI-RISK-ROUTING-REQUIREMENTS.md §8): the
+# Risk routing (FI risk-book routing, docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md §8): the
 # pure decision-graph engine whose RiskRoutingGraph + validator the identity store
 # persists and shape-validates alongside the risk-book registry (Phase 2, config layer).
 celnet-risk-routing.workspace = true
@@ -111,8 +112,15 @@ celnet-replog.workspace = true
 celnet-observability.workspace = true
 celnet-client.workspace = true
 celnet-fix.workspace = true
+celnet-sbe.workspace = true
+celnet-exchange-codecs.workspace = true
+celnet-margin.workspace = true
+celnet-algo.workspace = true
+celnet-rates-exotics.workspace = true
 celnet-integration.workspace = true
+celnet-upgrade.workspace = true
 rtrb.workspace = true
+arc-swap.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 tonic.workspace = true
 prost.workspace = true

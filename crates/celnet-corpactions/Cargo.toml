@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Celnet corporate-actions model — the vendor-neutral CAEV/CAMV event vocabulary (ISO 15022 MT 56x / ISO 20022 seev.*) and the PURE, deterministic effect functions that transform a bond's absolute-dated cashflow schedule and a holder's position for each event (REDM/INTR/MCAL/PCAL/PRED/DRAW/BPUT redemptions + calls + sinking draws, plus the TEND/EXOF/CONV corporate shapes). No IO, no clock, no rng; the govvie-deterministic set is fully derivable in-house, corporate content arrives via a pluggable feed adapter (see docs/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md). Off the pinned pricing hot core."
+description = "Celnet corporate-actions model — the vendor-neutral CAEV/CAMV event vocabulary (ISO 15022 MT 56x / ISO 20022 seev.*) and the PURE, deterministic effect functions that transform a bond's absolute-dated cashflow schedule and a holder's position for each event (REDM/INTR/MCAL/PCAL/PRED/DRAW/BPUT redemptions + calls + sinking draws, plus the TEND/EXOF/CONV corporate shapes). No IO, no clock, no rng; the govvie-deterministic set is fully derivable in-house, corporate content arrives via a pluggable feed adapter (see docs/fixed-income/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md). Off the pinned pricing hot core."
 publish = false
 
 [lints]

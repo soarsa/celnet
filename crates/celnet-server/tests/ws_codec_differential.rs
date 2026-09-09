@@ -1088,6 +1088,18 @@ fn price_xva_response_encode_is_byte_identical() {
             dva: -678.25,
             fva: 90.1,
             total_adjustment: 646.35,
+            buckets: vec![celnet_proto::ExposureBucket {
+                time_years: 1.0,
+                label: "1Y".to_string(),
+                ee: 50.0,
+                q25: 30.0,
+                q75: 70.0,
+                pfe_lo: 10.0,
+                pfe: 100.0,
+                ene: -20.0,
+                ene_band_lo: -40.0,
+                ene_band_hi: -5.0,
+            }],
         }),
         correlation_id: Some(11),
     };

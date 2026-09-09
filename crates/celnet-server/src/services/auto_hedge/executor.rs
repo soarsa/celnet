@@ -3,7 +3,7 @@
 //! [`AutoHedgeEngine`](super::engine::AutoHedgeEngine) is the complete decision +
 //! provenance layer; the *booking* of the legs it decides is delegated here so the
 //! decision core stays pure and the live-booking wiring is one explicit, swappable seam
-//! (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §7).
+//! (`docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §7).
 //!
 //! Two implementations ship:
 //!
@@ -817,6 +817,121 @@ where
     }
 }
 
+
+/// Outcome of an algorithmic execution hedge slice schedule.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlgorithmicHedgeOutcome {
+    /// Total target hedge size.
+    pub target_size: f64,
+    /// Total quantity successfully filled across slices.
+    pub total_filled: f64,
+    /// Volume-weighted average execution price (VWAP).
+    pub vwap_price: f64,
+    /// Number of slices executed.
+    pub slices_count: usize,
+    /// Individual fill records for each executed slice.
+    pub slice_fills: Vec<ExternalHedgeFill>,
+    /// Unfilled residual quantity.
+    pub residual: f64,
+}
+
+/// Slices a large hedge request using an algorithmic execution strategy
+/// ([`celnet_algo::PluggableExecutionStrategy`]), routing each slice through the
+/// external LP panel / router to minimize market impact and adverse selection.
+pub fn execute_algorithmic_hedge(
+    req: &ExternalHedgeRequest<'_>,
+    lp: &dyn LpHedgeSource,
+    router: &dyn StreetOrderRouter,
+    strategy: &mut dyn celnet_algo::PluggableExecutionStrategy,
+    total_duration_secs: f64,
+    num_steps: usize,
+) -> AlgorithmicHedgeOutcome {
+    if req.size <= 0.0 || req.mode.is_advisory() || num_steps == 0 {
+        return AlgorithmicHedgeOutcome {
+            target_size: req.size,
+            total_filled: 0.0,
+            vwap_price: req.mid,
+            slices_count: 0,
+            slice_fills: Vec::new(),
+            residual: req.size,
+        };
+    }
+
+    let mut remaining = req.size;
+    let mut total_filled = 0.0;
+    let mut sum_notional = 0.0;
+    let mut slice_fills = Vec::with_capacity(num_steps);
+    let step_duration = total_duration_secs / (num_steps as f64);
+
+    let half_spread = req.composite_spread_bp * req.bp_scale * 0.5;
+    let book = celnet_algo::MarketBookSnapshot::new(
+        req.mid - half_spread,
+        1_000_000.0,
+        req.mid + half_spread,
+        1_000_000.0,
+    );
+
+    for step in 0..num_steps {
+        if remaining <= 1e-6 {
+            break;
+        }
+
+        let elapsed = (step as f64) * step_duration;
+        let ctx = celnet_algo::StrategyExecutionContext {
+            total_order_qty: req.size,
+            executed_qty: total_filled,
+            remaining_qty: remaining,
+            elapsed_seconds: elapsed,
+            total_duration_seconds: total_duration_secs,
+            book: &book,
+            historical_volume_fraction: (step + 1) as f64 / num_steps as f64,
+        };
+
+        if let Ok(Some(slice)) = strategy.compute_slice(&ctx) {
+            let slice_qty = slice.quantity.min(remaining);
+            if slice_qty <= 0.0 {
+                continue;
+            }
+
+            let slice_req = ExternalHedgeRequest {
+                size: slice_qty,
+                instrument: req.instrument,
+                net_risk: req.net_risk,
+                mid: req.mid,
+                bp_scale: req.bp_scale,
+                mode: req.mode,
+                composite_spread_bp: req.composite_spread_bp,
+            };
+
+            let fill = execute_external(&slice_req, lp, router);
+            if fill.is_filled() {
+                let filled_qty = fill.filled;
+                let price = fill.hedge_price;
+                strategy.on_fill(filled_qty, price);
+                remaining = (remaining - filled_qty).max(0.0);
+                total_filled += filled_qty;
+                sum_notional += filled_qty * price;
+            }
+            slice_fills.push(fill);
+        }
+    }
+
+    let vwap_price = if total_filled > 0.0 {
+        sum_notional / total_filled
+    } else {
+        req.mid
+    };
+
+    AlgorithmicHedgeOutcome {
+        target_size: req.size,
+        total_filled,
+        vwap_price,
+        slices_count: slice_fills.len(),
+        slice_fills,
+        residual: remaining,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1487,4 +1602,31 @@ mod tests {
             "our missing configuration is never a counterparty's refusal"
         );
     }
+
+    /// Algorithmic execution slices a large hedge across multiple child steps.
+    #[test]
+    fn algorithmic_execution_slices_hedge_across_steps() {
+        let mut strategy = celnet_algo::AdaptiveSpreadStrategy::new(1.0);
+        let outcome = execute_algorithmic_hedge(
+            &req(
+                100_000.0,
+                50_000.0,
+                100.0,
+                1e-2,
+                HedgeExecutionMode::LpPanel,
+                0.5,
+            ),
+            &PanelLp,
+            &AlwaysTrades,
+            &mut strategy,
+            60.0,
+            5,
+        );
+
+        assert!(outcome.total_filled > 0.0);
+        assert!(outcome.slices_count > 0);
+        assert_eq!(outcome.target_size, 50_000.0);
+        assert!(outcome.residual < 50_000.0);
+    }
+
 }

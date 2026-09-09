@@ -252,16 +252,37 @@ fn inputs_at(
 }
 
 /// Build the agnostic carry-seam exotic inputs for `strike` — the
-/// [`celnet_exotics::ExoticInputs`] view of [`inputs_at`] (`Carry::FxRates`,
-/// byte-identical to the FX two-rate form) consumed by every migrated exotics
-/// engine.
+/// [`celnet_exotics::ExoticInputs`] view consumed by every exotics engine.
+/// When the market context carries a generalized cost-of-carry arm (`b`),
+/// it is preserved as [`Carry::CostOfCarry { r, b }`]; otherwise (FX two-rate
+/// or absent carry) it is [`Carry::FxRates { r_dom, r_for }`], which reproduces
+/// the FX two-rate form bit-for-bit.
 fn exotic_inputs_at(
     market: &WireMarketContext,
     expiry_years: f64,
     strike: f64,
     vol: f64,
 ) -> celnet_exotics::ExoticInputs {
-    (&inputs_at(market, expiry_years, strike, vol)).into()
+    let carry = match market.carry.as_ref().and_then(|c| c.model.as_ref()) {
+        Some(celnet_proto::carry_model::Model::Generalized(g)) => Carry::CostOfCarry {
+            r: market.discount_rate,
+            b: g.b,
+        },
+        _ => Carry::FxRates {
+            r_dom: market.r_dom(),
+            r_for: market.r_for(),
+        },
+    };
+    celnet_exotics::ExoticInputs::new(
+        market.spot,
+        strike,
+        vol,
+        expiry_years,
+        Underlying::Fx(
+            celnet_types::CcyPair::parse("EURUSD").expect("static FX identity placeholder"),
+        ),
+        carry,
+    )
 }
 
 /// Lower the American engine's generalized [`CarryGreeks`] strip onto the FX wire
@@ -663,7 +684,7 @@ pub(crate) fn streamed_rate_sensitivities(
     let cross_asset = instrument
         .underlying
         .as_ref()
-        .and_then(|u| celnet_types::Underlying::try_from(u.clone()).ok())
+        .and_then(|u| celnet_types::Underlying::try_from(u).ok())
         .is_some_and(|u| is_cross_asset(&u));
     if cross_asset {
         RateSensitivities::Carry {
@@ -957,7 +978,7 @@ fn linear_market(
         .underlying
         .as_ref()
         .ok_or(PriceError::MissingField("instrument.underlying"))?;
-    let underlying = celnet_types::Underlying::try_from(wire_underlying.clone())
+    let underlying = celnet_types::Underlying::try_from(wire_underlying)
         .map_err(|_| PriceError::Domain("instrument.underlying is malformed"))?;
     // The carry guard at the top of `price_instrument` has already rejected a
     // non-FX carry, so the FX two-rate carry reproduces the forward/discount the
@@ -3730,8 +3751,32 @@ mod tests {
     }
 
     #[test]
-    fn cross_asset_non_vanilla_product_is_rejected() {
-        // Only vanilla is a cross-asset option; a digital on an equity is refused.
+    fn cross_asset_fx_linear_product_is_rejected() {
+        // FX linear contracts (forward, swap, NDF) are FX-only; an FX forward on an equity is refused.
+        let m = cross_asset_market(100.0, 0.20, 0.05, 0.02);
+        let underlying = celnet_proto::Underlying::equity(celnet_proto::EquityRef::new(
+            celnet_proto::Symbol::new("AAPL", "XNAS"),
+            "USD",
+        ));
+        let instr = Instrument {
+            underlying: Some(underlying),
+            expiry_years: 1.0,
+            product: Some(Product::FxForward(celnet_proto::FxForward {
+                contract_rate: 100.0,
+                notional: 1_000_000.0,
+                side: celnet_proto::Side::Buy as i32,
+            })),
+            ..Default::default()
+        };
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+    }
+
+    #[test]
+    fn cross_asset_digital_option_prices_successfully() {
+        // In the target architecture, exotics (like digital cash-or-nothing on equity) price cleanly.
         let m = cross_asset_market(100.0, 0.20, 0.05, 0.02);
         let underlying = celnet_proto::Underlying::equity(celnet_proto::EquityRef::new(
             celnet_proto::Symbol::new("AAPL", "XNAS"),
@@ -3748,10 +3793,9 @@ mod tests {
             })),
             ..Default::default()
         };
-        assert!(matches!(
-            price_instrument(&instr, &m, &conv_set()),
-            Err(PriceError::UnsupportedModel { .. })
-        ));
+        let priced = price_instrument(&instr, &m, &conv_set()).expect("equity digital must price");
+        assert!(priced.greeks.price > 0.0);
+        assert!(priced.greeks.price.is_finite());
     }
 
     #[test]

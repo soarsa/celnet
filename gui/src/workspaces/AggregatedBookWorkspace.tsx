@@ -12,7 +12,7 @@
  * instrument scope, consolidation tuning, and the per-book OUTBOUND TIERING config
  * (widen / skew before publish) — so venue/liquidity ops manage the book + tiering
  * under Fixed Income WITHOUT full Administer. A user without the cap never sees the
- * Manage toggle (docs/PERMISSIONS-GRANULAR-REVIEW.md §4).
+ * Manage toggle (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4).
  *
  * The composite is a READ line (any authenticated user) — there is NO click-to-
  * trade token on it, so no execute action is offered (honest: executable two-way
@@ -224,7 +224,7 @@ export function AggregatedBookWorkspace(): React.ReactElement {
   // "Manage" mode edits the book roster + per-book tiering right here under Fixed
   // Income. The View composite is a trader read (any FI viewer), but the Manage panel
   // gates on the granular `manage_liquidity·fixed_income` capability (venue/liquidity
-  // ops, distinct from super-admin — docs/PERMISSIONS-GRANULAR-REVIEW.md §4); admin
+  // ops, distinct from super-admin — docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4); admin
   // holds it via grant-all. A user without it never sees the Manage toggle.
   const canManageLiquidity = auth.can("manage_liquidity", "fixed_income");
   const [connections, setConnections] = useState<FixConnection[]>([]);

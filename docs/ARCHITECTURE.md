@@ -1,15 +1,12 @@
 # Celnet — System Architecture
 
-> **Currency:** the §2 crate tree was re-verified against `ls crates` on **2026-08-18** and
-> enumerates all **55** crates. Prose outside §2 predates that sweep — treat an undated claim
-> as unverified, and see [`README.md`](README.md) for how this document relates to
-> `ARCHITECTURE-TARGET.md` (the intended state) and `ARCHITECTURE-DETERMINATION.md` (how that
-> target was chosen). This one is the **as-built** record.
+> **Currency:** the §2 crate tree was verified against `cargo metadata` in **September 2026** and
+> enumerates all **64** crates. This document is the **as-built** record of the platform.
 
-> Ultra-low-latency, scalable, mission-critical, hot-upgradable FX-options pricing
-> platform in Rust. Greenfield (started 2026-05-30). Toolchain pinned to **Rust 1.96.0**,
-> **edition 2024**. Primary dev host: Apple M4 / Metal 4 (`aarch64-apple-darwin`); CUDA
-> validated in CI/containers on Linux.
+> Ultra-low-latency, scalable, mission-critical, hot-upgradable cross-asset pricing, risk,
+> execution, and analytics platform in Rust. Toolchain pinned to **Rust 1.96.0**,
+> **edition 2024**. Primary dev host: Apple Silicon (`aarch64-apple-darwin`); Linux
+> validated in CI/containers with SIMD AVX-512 / NEON.
 
 > **Binding-rules override (2026-05-30):** where this document predates the current product
 > rules it is superseded by `CLAUDE.md` guardrails: crate prefix is **`celnet-`** (not
@@ -91,12 +88,8 @@ pinned centrally via `[workspace.dependencies]` and `[workspace.lints]`; a singl
 Crates are **layered by domain function, not by technical tier**. New transports (a new
 gRPC service, an admin CLI) are added as *thin new crates*, not by bloating existing ones.
 
-The **implemented** workspace is **55 crates** (flat under `crates/`; verified by
-`ls crates | wc -l`). The early design sketched a finer split that was then partly
-**consolidated** into cohesive crates (so the early provenance-named draft crates do not
-exist), while the scale-out, risk-hierarchy, durability, cross-asset/linear, RFQ-to-many,
-fixed-income/rates and verification waves added new disjoint leaf crates. This block
-reflects the real tree (`ls crates`):
+The **implemented** workspace is **64 crates** (flat under `crates/`; verified by
+`cargo metadata`).
 
 ```
 celnet/
@@ -126,60 +119,64 @@ celnet/
     │                          #   Philox MC + BGK + control variates; geo/arith Asian; var/vol swap; forward-start/cliquet;
     │                          #   TARF/accumulator/quanto/lookback; American/Bermudan (PSOR/LSM); correlated multi-asset basket;
     │                          #   LSV (Andersen-QE variance + Dupire/particle leverage + HV-ADI)
-    ├── celnet-heston          # standalone Heston (1993) European vanilla via two independent CF transforms (Carr-Madan + Fang-Oosterlee COS)
-    ├── celnet-qmc             # scrambled Joe-Kuo Sobol + Owen-style nested scramble + Brownian-bridge path construction (CPU-first; GPU-reusable)
-    # ── Layer 5: GPU ──
-    ├── celnet-gpu             # PricingBackend trait + wgpu (Metal/Vulkan/DX12) f32 backend + f64 CPU reconciliation; Philox WGSL;
-    │                          #   path/greeks/batch/scenario kernels (closed-form batch + MC path + pathwise/LR Greeks)
-    ├── celnet-risk-accel      # GPU screening lens behind the risk cube's ScenarioReprice seam (keeps wgpu out of the cube).
-    │                          #   NOTE: currently has ZERO reverse dependencies — celnet-gpu is therefore unreachable from
-    │                          #   the server binary. Wiring or retiring it is ADR-0013's open decision.
-    # ── Layer 4: engine (hot core) ──
-    ├── celnet-engine          # core-pinned zero-alloc hot path; rtrb SPSC; arc-swap/seqlock; blue-green state handoff; durable-book journal
-    # ── Layer 5b: durability + replication + fan-out ──
-    ├── celnet-journal         # fsync'd append-only sequence-ordered log + deterministic crash recovery (CRC + torn-tail truncation + compaction)
-    ├── celnet-replog          # leader-replicated, deterministic-replay log over real loopback sockets: quorum commit, hot-standby failover, full Raft
-    ├── celnet-fanout          # lock-free SPMC broadcast ring (every consumer sees every item in order; slow consumers conflate with counted skips)
-    # ── Layer 6: risk hierarchy ──
-    ├── celnet-risk-normalize  # convention canonicalization + common-numeraire conversion → convention-free canonical risk leaf
-    ├── celnet-risk-cube       # single-node hierarchical OLAP risk cube: additive roll-up + non-additive (VaR/ES, FRTB curvature) bump-and-revalue
-    ├── celnet-risk-fleet      # cross-shard risk fan-out ALGEBRA over the celnet-router HRW map; fan-out == single-node (transport designed-only)
-    ├── celnet-router          # fleet router — shard-by-pair/tenant HRW partition map, stateless replica routing, hot-standby failover
-    ├── celnet-limits          # hierarchical limit tree (greek/vega/VaR/concentration/tenor/stop-loss) + RAG + pre/post-trade breach checks
-    ├── celnet-entitlements    # principal role-grants + deny rules (information barriers); pre-aggregation pruning predicate (deny-by-default; grant-all only as an explicit, audited assertion)
-    ├── celnet-xva             # XVA engine — EPE/ENE exposure profiles + CVA/DVA/FVA over a hazard-rate survival curve (synthetic netting sets)
-    ├── celnet-risk-routing    # pure decision-graph engine routing an accepted fill to a risk book (fields/ops/leaves; cycle-checked)
-    ├── celnet-risk-transfer   # manual movement of existing risk between books: validation + offsetting-leg / realised-P&L computation
-    ├── celnet-hedge-routing   # decision graph resolving a book's risk state to an EXIT action; banded warehouse sizing; vehicle DV01 ratios
-    ├── celnet-acceptance      # trader-configurable incoming-quote acceptance rule engine (production, consumed by celnet-server)
-    # ── Layer 7: plugin host ──
-    ├── celnet-plugin-host     # tiered host: Tier-0 native registry + Tier-2 wasmi fuel-metered sandbox + deterministic replay harness
-    # ── Layer 6b: fixed-income / rates (multi-curve term-structure subsystem) ──
+    ├── celnet-heston          # standalone Heston European vanilla via two independent CF transforms (Carr-Madan + COS)
+    ├── celnet-qmc             # scrambled Joe-Kuo Sobol + Owen-style nested scramble + Brownian-bridge path construction
+    # ── Layer 4: fixed-income / rates & exotics ──
+    ├── celnet-rates           # FI rates leaf: OIS/SOFR multi-curve bootstrap (log-linear-DF Curve) + FRA/IRS PV + key-rate ladder
     ├── celnet-bond            # settlement-aware cash bond: dirty/clean price, accrued interest, yield-to-maturity, DV01, convexity
-    ├── celnet-rates-risk      # bump-and-revalue rate VaR/ES for linear FI + FRTB GIRR delta + the signed key-rate ladder
-    ├── celnet-refdata         # pure curated universe: government bonds + CBOT Treasury/STIR futures, ISIN- and date-validated from a committed JSON snapshot
-    ├── celnet-refstore        # effective-dated golden-source instrument / corporate-action store (announce→confirm→apply); durability delegated to celnet-journal
-    ├── celnet-corpactions     # pure CAEV/CAMV corporate-action model + deterministic effect math (no IO, clock or rng)
-    ├── celnet-rates           # FI rates leaf: OIS/SOFR multi-curve bootstrap (log-linear-DF Curve) + FRA/IRS(vanilla-swap)/STIR-futures/cash-bond PV + par-rate/PV01/DV01 + key-rate ladder + Brent solver; over celnet-types/-calendar only (no IO)
-    # ── Layer 8: integration + RFQ ──
-    ├── celnet-integration     # Celer estate + vendor FX-options MD adapters; multi-source aggregation + divergence detection; egress governor; DeploymentMode {CelerIntegrated/Hybrid/Standalone/ExternalFeedOnly}
-    ├── celnet-fix             # FIX engine — zero-copy framing, FIXT/4.4 session, FX-options dialect, acceptor + initiator
-    ├── celnet-aggregation     # consolidates N venue top-of-books into one BBO/mid/confidence (median consensus + MAD outlier + staleness decay)
-    ├── celnet-tiering         # margins/skews an outbound two-way from a composite mid (flat markup / inventory skew / scaled-smoothed spread)
-    ├── celnet-rfq             # multi-dealer RFQ-to-many engine: concurrent fan-out, best-bid/offer ranking, deterministic tie-break, last-look; over celnet-proto/-fix/-types
-    # ── Layer 9: edge & clients ──
-    ├── celnet-server          # tokio async edge: tonic gRPC (Pricing/Quote/Stream/Surface/Risk/Rates/RFQ-desk/Notification/Auth); FIX acceptor; vendor-feed attach + fleet federation; capability-gated control plane
+    ├── celnet-rates-risk      # bump-and-revalue rate VaR/ES for linear FI + FRTB GIRR delta + signed key-rate ladder
+    ├── celnet-rates-exotics   # Hull-White 1F/2F short rate, SABR Swaption, CMS Spread Options, Bermudan Swaption PDE/Tree
+    ├── celnet-refdata         # pure curated universe: government bonds + CBOT Treasury/STIR futures
+    ├── celnet-refstore        # effective-dated golden-source instrument / corporate-action store
+    ├── celnet-corpactions     # pure CAEV/CAMV corporate-action model + deterministic effect math
+    # ── Layer 5: margin, XVA & portfolio risk fleet ──
+    ├── celnet-margin          # ISDA SIMM 2.6/2.7 Initial/Variation Margin + CME Span / Historical Simulation Margin
+    ├── celnet-xva             # XVA engine — EPE/ENE exposure profiles + CVA/DVA/FVA/MVA/KVA over hazard-rate survival curves
+    ├── celnet-risk-normalize  # convention canonicalization + common-numeraire conversion → convention-free canonical risk leaf
+    ├── celnet-risk-cube       # single-node hierarchical OLAP risk cube: additive roll-up + non-additive (VaR/ES, FRTB) bump-and-revalue
+    ├── celnet-risk-fleet      # cross-shard risk fan-out ALGEBRA over the celnet-router HRW map
+    ├── celnet-router          # fleet router — shard-by-pair/tenant HRW partition map, stateless replica routing
+    ├── celnet-limits          # hierarchical limit tree (greek/vega/VaR/concentration/tenor/stop-loss) + RAG breach checks
+    ├── celnet-entitlements    # principal role-grants + deny rules; pre-aggregation pruning predicate
+    ├── celnet-risk-routing    # pure decision-graph engine routing an accepted fill to a risk book
+    ├── celnet-risk-transfer   # movement of existing risk between books: validation + offsetting-leg computation
+    ├── celnet-hedge-routing   # decision graph resolving a book's risk state to an EXIT action; banded warehouse sizing
+    ├── celnet-acceptance      # trader-configurable incoming-quote acceptance rule engine
+    # ── Layer 6: GPU & hardware acceleration ──
+    ├── celnet-gpu             # PricingBackend trait + wgpu (Metal/Vulkan/DX12) f32 backend + f64 CPU reconciliation; Philox WGSL
+    ├── celnet-risk-accel      # GPU screening lens behind the risk cube's ScenarioReprice seam
+    # ── Layer 7: engine, execution & messaging fabric ──
+    ├── celnet-engine          # core-pinned zero-alloc hot path; rtrb SPSC; arc-swap/seqlock; blue-green state handoff
+    ├── celnet-algo            # institutional execution algos (TWAP, VWAP, POV, Implementation Shortfall, Iceberg, Sniper)
+    ├── celnet-sbe             # Simple Binary Encoding (SBE) for ultra-low latency market data & order entry with zero allocation
+    ├── celnet-shm             # lock-free shared memory ring buffer IPC with cache-line padding and seqlock synchronization
+    ├── celnet-fanout          # lock-free SPMC broadcast ring with counted-skip conflation and seqlock validation
+    ├── celnet-journal         # fsync'd append-only sequence-ordered log + deterministic crash recovery
+    ├── celnet-exchange-codecs # high-performance exchange codecs (CME iLink3 / MDP 3.0, Nasdaq ITCH/OUCH, Eurex T7, ICE FIX)
+    ├── celnet-fix             # FIX engine — zero-copy framing, FIXT/4.4/5.0SP2 session, FX-options dialect
+    ├── celnet-aggregation     # consolidates N venue top-of-books into one BBO/mid/confidence
+    ├── celnet-tiering         # margins/skews an outbound two-way from a composite mid (flat markup / inventory skew)
+    ├── celnet-rfq             # multi-dealer RFQ-to-many engine: concurrent fan-out, best-bid/offer ranking, last-look
+    # ── Layer 8: consensus, upgrades & licensing ──
+    ├── celnet-replog          # leader-replicated, Multi-Raft log with asymmetric quorums (Q_commit=2) and Pre-Vote
+    ├── celnet-upgrade         # five-stage zero-loss rolling upgrade protocol (ZLUP), joint consensus transitions, twin comparator
+    ├── celnet-license         # cryptographic capability tokens, Ed25519 attenuation, first-order policy engine, TUF manifest
+    ├── celnet-plugin-host     # tiered host: Tier-0 native registry + Tier-2 wasmi fuel-metered sandbox + atomic hot-swapping
+    # ── Layer 9: edge, APIs & client SDKs ──
+    ├── celnet-server          # tokio async edge: tonic gRPC, WebSocket streaming, FIX acceptor, capability-gated control plane
     ├── celnet-cli             # operator/quant CLI: price, surface, exotic, convention, risk, stream
-    ├── celnet-client          # typed async Rust SDK over the wire contract (RFQ/RFS/surface/scenario/risk + exotic vocab builders)
-    # ── Observability & validation ──
+    ├── celnet-client          # typed async Rust SDK over the wire contract
+    ├── celnet-c-api           # C-ABI Dynamic FFI bindings (celnet.h) for C/C++/C# runtime integration
+    # ── Observability, validation & benchmarking ──
     ├── celnet-observability   # POD telemetry rings, drain threads, HdrHistogram, metrics, audit, error taxonomy
     ├── celnet-golden          # frozen QuantLib 1.42.1 reference tables (oracle + generator)
-    ├── celnet-parity          # executable competitive-parity matrix — each capability claim vs incumbents backed by a gated test
+    ├── celnet-parity          # executable competitive-parity matrix — each capability claim backed by a gated test
     ├── celnet-analytics       # pure deterministic fold over client-flow / LP / street-order records into P&L-attribution metrics
     ├── celnet-lp-sim          # deterministic synthetic FI liquidity-provider fleet implementing the VenueFeed seam
-    ├── celnet-cme-sim         # listed-futures venue built ON TOP of celnet-lp-sim's engine (not a fork — it reuses it)
-    ├── celnet-testkit         # invariant assertions, proptest strategies, fixture loaders
-    └── celnet-bench           # divan + HdrHistogram latency/throughput suites + committed baselines (core_load/bench_gate/gpu_load/gpu_gate)
+    ├── celnet-cme-sim         # listed-futures venue built ON TOP of celnet-lp-sim's engine
+    ├── celnet-testkit         # shared test fixtures, market data builders, and scenario harnesses
+    ├── celnet-integration     # Celer estate + vendor FX-options MD adapters; multi-source aggregation
+    └── celnet-bench           # comprehensive micro-benchmarks, fleet SLO regression gates, and load generators
 ```
 
 > **Built:** `celnet-plugin-host` — the tiered plugin host (Tier-0 native registry + Tier-2

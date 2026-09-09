@@ -1,7 +1,7 @@
 # Celnet — FX-Options Convention Spec
 
 The authoritative, detailed convention/analytics treatment lives in
-[`ANALYTICS-SPEC.md`](./ANALYTICS-SPEC.md). This file is the quick map from those market
+[`ANALYTICS-SPEC.md`](ANALYTICS-SPEC.md). This file is the quick map from those market
 conventions to the **`celnet-types` enums** that encode them as first-class per-`(pair, tenor)`
 configuration (never global defaults — convention errors dwarf model error).
 

@@ -45,6 +45,8 @@ pub enum NotificationKind {
     QuoteAccepted,
     /// A desk quote was rejected by the counterparty.
     QuoteRejected,
+    /// An inbound RFQ/RFS could not be auto-priced and needs human trader intervention.
+    ManualInterventionRequired,
     /// A firm order landed on the desk (a taker's NewOrderSingle against a live
     /// auto-quote on the FIX venue) — the inbound-order signal.
     OrderReceived,
@@ -62,6 +64,9 @@ impl NotificationKind {
             Ok(WireNotificationKind::RequestExpired) => Ok(NotificationKind::RequestExpired),
             Ok(WireNotificationKind::QuoteAccepted) => Ok(NotificationKind::QuoteAccepted),
             Ok(WireNotificationKind::QuoteRejected) => Ok(NotificationKind::QuoteRejected),
+            Ok(WireNotificationKind::ManualInterventionRequired) => {
+                Ok(NotificationKind::ManualInterventionRequired)
+            }
             Ok(WireNotificationKind::OrderReceived) => Ok(NotificationKind::OrderReceived),
             Ok(WireNotificationKind::Fill) => Ok(NotificationKind::Fill),
             _ => Err(ClientError::Wire(WireError::UnknownEnum {
@@ -252,10 +257,14 @@ mod tests {
 
     #[test]
     fn order_received_and_fill_wire_tags_decode_to_typed_kinds() {
-        // Phase-6 parity: a wire kind=8 / kind=9 notification (emitted by the desk
-        // FIX-venue lift `book_fix_lift`) decodes to the typed `OrderReceived` / `Fill`
-        // arms, never a silent default — the SDK is the reference every other client
-        // matches.
+        // Phase-6 parity: wire kind=7 / kind=8 / kind=9 notifications decode to the
+        // typed `ManualInterventionRequired` / `OrderReceived` / `Fill` arms, never a
+        // silent default — the SDK is the reference every other client matches.
+        assert_eq!(
+            NotificationKind::from_wire(WireNotificationKind::ManualInterventionRequired as i32)
+                .expect("kind 7"),
+            NotificationKind::ManualInterventionRequired,
+        );
         assert_eq!(
             NotificationKind::from_wire(WireNotificationKind::OrderReceived as i32)
                 .expect("kind 8"),
@@ -265,6 +274,7 @@ mod tests {
             NotificationKind::from_wire(WireNotificationKind::Fill as i32).expect("kind 9"),
             NotificationKind::Fill,
         );
+        assert_eq!(WireNotificationKind::ManualInterventionRequired as i32, 7);
         assert_eq!(WireNotificationKind::OrderReceived as i32, 8);
         assert_eq!(WireNotificationKind::Fill as i32, 9);
     }

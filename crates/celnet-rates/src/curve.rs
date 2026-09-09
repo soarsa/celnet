@@ -32,6 +32,8 @@ struct Node {
     t: f64,
     /// Natural log of the discount factor at `t` (`<= 0` for non-negative zero rates).
     ln_df: f64,
+    /// Precomputed slope `(ln_df - prev.ln_df) / (t - prev.t)` for the segment `[t_{i-1}, t_i]`.
+    slope: f64,
 }
 
 /// Construction error for a [`Curve`].
@@ -145,7 +147,10 @@ impl Curve {
     /// Returns [`CurveError::TooFewPillars`] if empty, [`CurveError::NonPositiveZeroTime`] if any
     /// pillar time is `<= 0`, or [`CurveError::NonMonotonicTime`] if times are not increasing.
     pub fn from_zero_rates(pillars: &[(Time, Rate)]) -> Result<Self, CurveError> {
-        Self::from_log_linear_dfs(&Self::zero_rate_pillars(pillars)?)
+        Ok(Self::from_nodes(
+            Self::parse_zero_rate_pillars(pillars)?,
+            Interpolation::LogLinearDf,
+        ))
     }
 
     /// Build a curve from `(time, continuously-compounded zero rate)` pillars under
@@ -159,7 +164,10 @@ impl Curve {
     /// Returns [`CurveError::TooFewPillars`] if empty, [`CurveError::NonPositiveZeroTime`] if any
     /// pillar time is `<= 0`, or [`CurveError::NonMonotonicTime`] if times are not increasing.
     pub fn from_monotone_convex_zero_rates(pillars: &[(Time, Rate)]) -> Result<Self, CurveError> {
-        Self::from_monotone_convex_dfs(&Self::zero_rate_pillars(pillars)?)
+        Ok(Self::from_nodes(
+            Self::parse_zero_rate_pillars(pillars)?,
+            Interpolation::MonotoneConvexForward,
+        ))
     }
 
     /// Validate `(time, DF)` pillars and convert them to ascending log-DF nodes.
@@ -185,25 +193,48 @@ impl Curve {
             nodes.push(Node {
                 t: t.0,
                 ln_df: df.0.ln(),
+                slope: 0.0,
             });
+        }
+        for i in 1..nodes.len() {
+            let dt = nodes[i].t - nodes[i - 1].t;
+            nodes[i].slope = (nodes[i].ln_df - nodes[i - 1].ln_df) / dt;
         }
         Ok(nodes)
     }
 
-    /// Prepend the origin pillar and convert `(time, zero rate)` pillars to `(time, DF)` pillars.
-    fn zero_rate_pillars(pillars: &[(Time, Rate)]) -> Result<Vec<(Time, Df)>, CurveError> {
+    /// Prepend the origin pillar and convert `(time, zero rate)` pillars directly to nodes,
+    /// avoiding intermediate vector allocation and redundant `exp()`/`ln()` transcendental calls.
+    fn parse_zero_rate_pillars(pillars: &[(Time, Rate)]) -> Result<Vec<Node>, CurveError> {
         if pillars.is_empty() {
             return Err(CurveError::TooFewPillars);
         }
-        let mut dfs: Vec<(Time, Df)> = Vec::with_capacity(pillars.len() + 1);
-        dfs.push((Time(0.0), Df(1.0)));
+        let mut nodes: Vec<Node> = Vec::with_capacity(pillars.len() + 1);
+        nodes.push(Node {
+            t: 0.0,
+            ln_df: 0.0,
+            slope: 0.0,
+        });
+        let mut prev_t = 0.0;
         for &(t, z) in pillars {
             if t.0 <= 0.0 {
                 return Err(CurveError::NonPositiveZeroTime);
             }
-            dfs.push((t, Df((-z.0 * t.0).exp())));
+            if t.0 <= prev_t {
+                return Err(CurveError::NonMonotonicTime);
+            }
+            prev_t = t.0;
+            nodes.push(Node {
+                t: t.0,
+                ln_df: -z.0 * t.0,
+                slope: 0.0,
+            });
         }
-        Ok(dfs)
+        for i in 1..nodes.len() {
+            let dt = nodes[i].t - nodes[i - 1].t;
+            nodes[i].slope = (nodes[i].ln_df - nodes[i - 1].ln_df) / dt;
+        }
+        Ok(nodes)
     }
 
     /// Assemble a curve from validated nodes, precomputing knot forwards for the smooth scheme.
@@ -252,8 +283,7 @@ impl Curve {
     fn ln_df_log_linear(&self, t: f64) -> f64 {
         let hi = self.bracket(t);
         let a = self.nodes[hi - 1];
-        let b = self.nodes[hi];
-        let slope = (b.ln_df - a.ln_df) / (b.t - a.t);
+        let slope = self.nodes[hi].slope;
         a.ln_df + slope * (t - a.t)
     }
 
@@ -274,7 +304,7 @@ impl Curve {
         let a = self.nodes[hi - 1];
         let b = self.nodes[hi];
         let dt = b.t - a.t;
-        let fdisc = (a.ln_df - b.ln_df) / dt;
+        let fdisc = -self.nodes[hi].slope;
         let g0 = self.knot_fwds[hi - 1] - fdisc;
         let g1 = self.knot_fwds[hi] - fdisc;
         let x = (t - a.t) / dt;
@@ -286,9 +316,7 @@ impl Curve {
     /// forward, which is piecewise-constant for the log-linear scheme.
     fn segment_forward(&self, t: f64) -> f64 {
         let hi = self.bracket(t);
-        let a = self.nodes[hi - 1];
-        let b = self.nodes[hi];
-        -(b.ln_df - a.ln_df) / (b.t - a.t)
+        -self.nodes[hi].slope
     }
 
     /// The continuous instantaneous forward under monotone-convex interpolation: `f^d_i + g(x)` on
@@ -399,7 +427,7 @@ impl DiscountCurve for Curve {
 /// coincides with log-linear.
 fn knot_forwards(nodes: &[Node]) -> Vec<f64> {
     let n = nodes.len();
-    let fdisc = |k: usize| (nodes[k - 1].ln_df - nodes[k].ln_df) / (nodes[k].t - nodes[k - 1].t);
+    let fdisc = |k: usize| -nodes[k].slope;
     let mut f = vec![0.0_f64; n];
     for j in 1..n - 1 {
         let span = nodes[j + 1].t - nodes[j - 1].t;

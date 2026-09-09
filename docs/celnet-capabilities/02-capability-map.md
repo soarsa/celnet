@@ -7,7 +7,7 @@ Celnet is not a thin challenger closing gaps — it is a functionally complete, 
 ![The Celnet capability landscape — pricing & analytics, engine & performance, GPU, risk, extensibility, edge & API, clients, and Celer integration, all served from one contract.](../assets/celnet-capabilities/fig-12-capability-landscape.png)
 *Figure 12 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The capability landscape: a full FX-options catalogue (vanilla → first-generation exotics → structured & path-dependent → American/Bermudan → correlated basket → LSV booking), a nanosecond-class in-core engine, GPU acceleration, server-side hierarchical risk with FRTB-SA and internal XVA, an open quant SDK, and Celer trade-lifecycle integration — unified by a single API-first contract.*
 
-### 2.1 Pricing & analytics — the full catalogue
+## 2.1 Pricing & analytics — the full catalogue
 
 Celnet prices the complete FX-options book a real desk trades: vanilla through the full first-generation exotics catalogue, the structured and path-dependent products, American/Bermudan early exercise, correlated multi-asset baskets, and a particle-calibrated LSV booking model — **all on the one wire (18-product arms on the unified `Instrument`, `celnet.proto:1016-1062`), each parity-gated against an independent oracle and reachable from all five clients.** Vanilla pricing is Garman-Kohlhagen off the outright forward with separate domestic and foreign discount factors. The smile and surface engine carries five market-standard parametrisations and calibrates them from broker quotes behind arbitrage gates. The Open Quant SDK *extends* this already-deep catalogue with private-IP models; it is not the route to depth, because the depth ships in core.
 
@@ -30,7 +30,7 @@ Celnet prices the complete FX-options book a real desk trades: vanilla through t
 
 > **Validation honesty (per product class).** Frozen QuantLib golden tables back **vanilla, both digital styles, all 8 barriers, touch, and Heston** to ~1e-10/last-bit; the rest are gated against closed-form limits, finite-difference oracles, and hand-pinned published constants. MC-priced products (TARF, accumulator, discrete lookback, basket/best-of/worst-of, American-via-LSM) carry a **price standard error** and are never labelled "machine precision" — that bar is reserved for the analytic/PDE/golden-gated set.
 
-### 2.2 Engine, performance, GPU & durability
+## 2.2 Engine, performance, GPU & durability
 
 The core is so fast that network framing, not arithmetic, is the latency floor. An async edge meets pinned, allocation-free hot cores over wait-free rings; state is published lock-free and handed over without downtime; and the journal makes the book durable across a crash.
 
@@ -46,7 +46,7 @@ The core is so fast that network framing, not arithmetic, is the latency floor. 
 
 > **GPU boundary (verbatim).** The M4 Metal dev host **lacks f64**, so the in-repo GPU path proves **correctness (GPU-f32 ≈ CPU-f64 ≈ golden) + RATIOS only** (M4 / Lavapipe). CUDA/NVIDIA **absolute** GPU throughput, the ≤50ms exotic figure, and the Workload-A/B absolute numbers are **deploy-gated** — never claimed in-repo, and f64-on-Metal is never claimed.
 
-### 2.3 Risk
+## 2.3 Risk
 
 Risk has complementary zooms of one underlying fact cube: book-shaped scenario risk for the desk in front of the screen, a firm-wide OLAP position-fact cube for aggregation, limits, and entitlement — now including booked **exotic legs** — plus regulatory capital (FRTB-SA) and counterparty valuation adjustments (XVA, internal).
 
@@ -67,7 +67,7 @@ Risk has complementary zooms of one underlying fact cube: book-shaped scenario r
 
 > **XVA boundary (verbatim).** XVA is **internal-only, with no client/wire surface, on synthetic netting sets only** (a grep of `celnet.proto` for cva/xva returns nothing). Live CSAs, collateral, and wrong-way risk are **deploy-gated** — not in-repo data.
 
-### 2.4 Extensibility & plugins
+## 2.4 Extensibility & plugins
 
 Desks run their own private-IP models inside the engine without forking Celnet — to *extend* an already-deep built-in catalogue, not to reach it. The Open Quant SDK is a frozen, runtime-agnostic contract; the host runs models across tiers, **two of which ship today** and two of which are designed to slot in behind the same frozen contract.
 
@@ -83,7 +83,7 @@ Desks run their own private-IP models inside the engine without forking Celnet �
 
 > **Plugin tier boundary (verbatim).** Only **Tier-0 native + Tier-2 wasmi are shipped**. **Tier-1 signed-`.so` (stabby) and Tier-3 Landlock/seccomp are designed-only** — proven at deploy, never claimed as built in-repo.
 
-### 2.5 Edge, API & wire
+## 2.5 Edge, API & wire
 
 One clean, unversioned contract carries everything across **five gRPC services** plus a byte-identical WebSocket JSON mirror. The streaming session multiplexes many subscriptions over a single channel, and click-to-trade is bound to the streamed line with an unguessable token and last-look.
 
@@ -102,7 +102,7 @@ One clean, unversioned contract carries everything across **five gRPC services**
 
 **API-first parity.** Every capability lives in the one contract. The GUI, the Rust SDK, the CLI, and the Excel add-in all consume that same contract — the front-end has no privileged path — so a value is bit-identical across every surface, proven continuously by `CLIENT-PARITY-MATRIX.md` (all 18-products × the service families reachable from all five surfaces, with honest exceptions, e.g. basket Greeks deliberately zeroed).
 
-### 2.6 Clients — GUI, Excel, SDK, CLI
+## 2.6 Clients — GUI, Excel, SDK, CLI
 
 | Client | What it delivers |
 |---|---|
@@ -117,7 +117,7 @@ One clean, unversioned contract carries everything across **five gRPC services**
 ![The branded Excel hero — CELNET formulas spilling RFQ, the full Greek vector, and a surface smile alongside live series cells.](../assets/celnet-capabilities/shot-10-excel-grid-branded.png)
 *Screenshot 10 — The Excel add-in: a CELNET.RFQ formula bar, RFQ and full GREEKS spills, a SURFACE smile spill, and live SERIES cells — every value the server's, bit-identical to the GUI.*
 
-### 2.7 Distributed correctness & scale-out
+## 2.7 Distributed correctness & scale-out
 
 Horizontal scale-out is a built substrate, not a promise: a Raft-replicated event log, a lock-free broadcast ring under the edge, and a cross-fleet risk fan-out — each proven on localhost multi-process to be correct and bit-identical to the single-node result.
 
@@ -129,7 +129,7 @@ Horizontal scale-out is a built substrate, not a promise: a Raft-replicated even
 
 > **Scale-out boundary (verbatim).** Localhost multi-process proves correctness / quorum / framing only. **Cross-host wire p99, kernel-bypass NIC latency, cross-DC transport, real network partitions, Raft §6 dynamic membership, the §11 absolute wire-latency SLOs, and the physical cross-node risk transport are deploy-gated** — never claimed as in-repo-proven.
 
-### 2.8 Celer integration
+## 2.8 Celer integration
 
 Celnet is the FX-options pricing system-of-record inside the Celer trade lifecycle. It injects option price, Greeks, and surface into the price path and option risk into the risk and position path, and runs in three deployment modes reached by swapping adapters on the seam traits — never by a rewrite.
 
@@ -142,7 +142,7 @@ Celnet is the FX-options pricing system-of-record inside the Celer trade lifecyc
 
 > **Celer boundary (verbatim).** The in-repo work is the **seams + adapters only** (trait swap + FIX 4.4 loopback). The **entire live JVM Celer estate lifecycle** — distributor sidecar handshake, mailbox calibration, live quote-feed entitlement, tenant overlays — is **deploy/live-gated, proven at deploy against the running estate**, not exercised in-repo.
 
-### 2.9 Positioning
+## 2.9 Positioning
 
 Celnet's parity claims are executable: `CLIENT-PARITY-MATRIX.md` plus ~26 `celnet-parity` rows render each capability as a gated test against an independent oracle, so "meets or beats" is continuously proven rather than asserted. Comparisons use vendor-neutral archetypes — a closed terminal, a front-to-back platform, a data venue, a modern library. The platform now matches the deep-catalogue front-to-back incumbents on structured / path-dependent / American / multi-asset breadth **while retaining the edges they structurally lack**: an open quant SDK, one clean unversioned contract with bit-identical values across five surfaces, a pinned zero-alloc nanosecond hot core, and server-side hierarchical risk — supply-chain-clean and cross-platform deterministic.
 

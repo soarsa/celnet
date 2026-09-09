@@ -105,6 +105,8 @@ pub(crate) enum Command {
     /// notification contract the GUI `NotificationCenter` and the Excel add-in
     /// consume. Every `NotificationKind` is first-class (no silent default).
     Notify(NotifyArgs),
+    /// Authenticate against a running edge via `AuthService.Login` and print the issued session token.
+    Login(LoginArgs),
 }
 
 /// Arguments to `risk` — the edge endpoint, the entitlement scope flags, and one
@@ -357,6 +359,26 @@ pub(crate) struct RfqArgs {
     /// commands).
     #[arg(long = "session-token")]
     pub(crate) session_token: Option<String>,
+    /// User email for auto-login when accepting without a session token.
+    #[arg(long, default_value = "admin@celnet.com")]
+    pub(crate) email: Option<String>,
+    /// User password for auto-login when accepting without a session token.
+    #[arg(long, default_value = "password")]
+    pub(crate) password: Option<String>,
+}
+
+/// Arguments to `login` — authenticates with the server and prints a session token.
+#[derive(Debug, Args)]
+pub(crate) struct LoginArgs {
+    /// The gRPC endpoint of the edge.
+    #[arg(long, default_value = "http://127.0.0.1:50051")]
+    pub(crate) endpoint: String,
+    /// User email address.
+    #[arg(long, default_value = "admin@celnet.com")]
+    pub(crate) email: String,
+    /// User password.
+    #[arg(long, default_value = "password")]
+    pub(crate) password: String,
 }
 
 /// Arguments to `fix` — the gateway FIX-listener target, the session CompIDs, and
@@ -2067,6 +2089,8 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                 accept: a.accept,
                 side: a.side.into(),
                 session_token: a.session_token,
+                email: a.email,
+                password: a.password,
             };
             rfq::run(&req, out).map_err(DispatchError::Risk)?;
             Ok(())
@@ -2096,6 +2120,21 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                 count: a.count,
             };
             notify::run_notify(&req, out).map_err(DispatchError::Risk)?;
+            Ok(())
+        }
+        Command::Login(a) => {
+            let token = crate::risk::block_on(async {
+                let mut client = celnet_client::Client::connect(&a.endpoint)
+                    .await
+                    .map_err(crate::risk::RiskError::Client)?;
+                client
+                    .login(&a.email, &a.password)
+                    .await
+                    .map_err(crate::risk::RiskError::Client)
+            })
+            .map_err(DispatchError::Risk)?
+            .map_err(DispatchError::Risk)?;
+            writeln!(out, "{token}").map_err(|e| DispatchError::Invalid(e.to_string()))?;
             Ok(())
         }
     }

@@ -16,8 +16,11 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 /// The consistency tier a book's authoritative state write runs at (ADR-0015 §2.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ConsistencyLevel {
     /// **Opt-in.** The authoritative book write becomes a `celnet_replog::BookUpdate`
     /// quorum-committed through Raft — linearizable, quorum-replicated, zero-data-loss,

@@ -1,5 +1,5 @@
 //! Per-risk-book risk aggregation, rolled up the book tree
-//! (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §5, §8.5).
+//! (`docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md` §5, §8.5).
 //!
 //! A [`PositionStore`] buckets each routed fill under the `risk_book_id` the
 //! firm-wide graph resolved for it ([`PositionStore::positions_in_risk_book`]).
@@ -62,7 +62,7 @@ use crate::services::rates_book::{
 
 use super::store::PositionStore;
 
-/// The traffic-light band for a limit utilization (`docs/FI-RISK-ROUTING-REQUIREMENTS.md`
+/// The traffic-light band for a limit utilization (`docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md`
 /// §5): GREEN below 0.8, AMBER in `[0.8, 1.0)`, RED at or above 1.0 (a breach).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RagBand {

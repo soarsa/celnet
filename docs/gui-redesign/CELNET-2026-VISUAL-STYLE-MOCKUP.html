@@ -1,0 +1,3058 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="chartreuse">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CELNET // CHRONOS 2026 — Sovereign Quantitative & Execution Platform</title>
+  <style>
+    /* ==========================================================================
+       SOVEREIGN CHRONOS DESIGN SYSTEM — SEPTEMBER 2026 SPECIFICATION
+       Multi-Theme Spectral Architecture: Zero Legacy Cyan / Zero Blue Darks
+       ========================================================================== */
+
+    /* --------------------------------------------------------------------------
+       THEME 1 (DEFAULT): ANODIZED BASALT & ACID CHARTREUSE (HIGH-ENERGY QUANT)
+       -------------------------------------------------------------------------- */
+    :root, [data-theme="chartreuse"] {
+      --theme-name: "01 ACID CHARTREUSE";
+      --theme-ambient-glow: rgba(198, 255, 0, 0.08);
+      
+      /* Pure Neutral Basalt / Carbon Substrates (Zero Blue Chroma) */
+      --void-0: #0b0c0e;             /* Deepest basalt substrate */
+      --void-1: #111215;             /* Secondary canvas backdrop */
+      --surface-1: #17181c;          /* Primary elevated container card */
+      --surface-2: #1e2025;          /* Inset active telemetry panel */
+      --surface-glass: rgba(23, 24, 28, 0.88); /* Frosted basalt glass */
+
+      /* Structural Hairline Precision Seams */
+      --border-subtle: rgba(255, 255, 255, 0.07);
+      --border-edge: rgba(255, 255, 255, 0.13);
+      --border-highlight: rgba(198, 255, 0, 0.45);
+
+      /* Avant-Garde Spectral Accents */
+      --accent-primary: #c6ff00;      /* Electric Acid Chartreuse */
+      --accent-secondary: #ffd600;    /* Cadmium Gold */
+      --accent-dim: rgba(198, 255, 0, 0.12);
+      
+      --status-positive: #c6ff00;     /* In-The-Money / Alpha Gain / Safe */
+      --status-warning: #ffd600;      /* Volatility Alert / Skew Shift */
+      --status-negative: #ff3b00;     /* Molten Persimmon / Risk Breach */
+      --status-neutral: #a1a1aa;      /* Technical Muted */
+
+      /* Optic White & Neutral Typographic Scale */
+      --text-primary: #f4f4f5;        /* Crisp Glacial White */
+      --text-secondary: #a1a1aa;      /* Neutral Technical Body */
+      --text-muted: #71717a;          /* Hairline units & coordinates */
+      --text-dim: #52525b;            /* Inactive registration tags */
+
+      /* Photonic Luminance */
+      --glow-intensity: 1.0;
+      --halo-primary: 0 0 calc(20px * var(--glow-intensity)) rgba(198, 255, 0, 0.22);
+      --halo-positive: 0 0 calc(18px * var(--glow-intensity)) rgba(198, 255, 0, 0.20);
+      --halo-negative: 0 0 calc(18px * var(--glow-intensity)) rgba(255, 59, 0, 0.20);
+      --bevel-top: inset 0 1px 0 0 rgba(255, 255, 255, 0.10);
+      --bevel-bottom: inset 0 -1px 0 0 rgba(0, 0, 0, 0.55);
+      --shadow-elevation: 0 12px 32px -4px rgba(0, 0, 0, 0.65);
+
+      /* Canvas Wireframe Shaders */
+      --canvas-wire1: rgba(198, 255, 0, 0.55);
+      --canvas-wire1-sub: rgba(198, 255, 0, 0.20);
+      --canvas-wire2: rgba(255, 214, 0, 0.45);
+      --canvas-wire2-sub: rgba(255, 214, 0, 0.16);
+      --canvas-facet-high: rgba(198, 255, 0, 0.16);
+      --canvas-facet-mid: rgba(255, 214, 0, 0.10);
+      --canvas-facet-low: rgba(255, 59, 0, 0.08);
+      --canvas-atm: #c6ff00;
+      --canvas-smile: #c6ff00;
+      --canvas-quote: #ffd600;
+      --canvas-fog: #0b0c0e;
+
+      /* Typography Stacks */
+      --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
+      --font-mono: "JetBrains Mono", "SF Mono", "Consolas", monospace;
+      --font-math: "STIX Two Math", "Times New Roman", serif;
+    }
+
+    /* --------------------------------------------------------------------------
+       THEME 2: WARM SWISS HOROLOGY & SAFETY ORANGE (TEENAGE ENGINEERING / LEICA)
+       -------------------------------------------------------------------------- */
+    [data-theme="orange"] {
+      --theme-name: "02 SAFETY ORANGE";
+      --theme-ambient-glow: rgba(255, 85, 0, 0.08);
+
+      --void-0: #100f0e;             /* Warm Carbon / Smoked Umber */
+      --void-1: #161513;
+      --surface-1: #1f1d1a;
+      --surface-2: #282622;
+      --surface-glass: rgba(31, 29, 26, 0.88);
+
+      --border-subtle: rgba(255, 230, 200, 0.07);
+      --border-edge: rgba(255, 230, 200, 0.14);
+      --border-highlight: rgba(255, 85, 0, 0.50);
+
+      --accent-primary: #ff5500;      /* International Safety Orange */
+      --accent-secondary: #e2d9c8;    /* Travertine Bone / Raw Brass */
+      --accent-dim: rgba(255, 85, 0, 0.14);
+
+      --status-positive: #4ade80;     /* Nordic Sage */
+      --status-warning: #f59e0b;      /* Warm Topaz */
+      --status-negative: #ef4444;     /* Signal Crimson */
+      --status-neutral: #a8a29e;
+
+      --text-primary: #fafaf9;        /* Warm Paper Bone */
+      --text-secondary: #d6d3d1;
+      --text-muted: #a8a29e;
+      --text-dim: #78716c;
+
+      --halo-primary: 0 0 calc(20px * var(--glow-intensity)) rgba(255, 85, 0, 0.25);
+      --halo-positive: 0 0 calc(18px * var(--glow-intensity)) rgba(74, 222, 128, 0.22);
+      --halo-negative: 0 0 calc(18px * var(--glow-intensity)) rgba(239, 68, 68, 0.22);
+      --bevel-top: inset 0 1px 0 0 rgba(255, 240, 220, 0.12);
+      --bevel-bottom: inset 0 -1px 0 0 rgba(0, 0, 0, 0.60);
+      --shadow-elevation: 0 12px 32px -4px rgba(0, 0, 0, 0.70);
+
+      --canvas-wire1: rgba(255, 85, 0, 0.60);
+      --canvas-wire1-sub: rgba(255, 85, 0, 0.22);
+      --canvas-wire2: rgba(226, 217, 200, 0.45);
+      --canvas-wire2-sub: rgba(226, 217, 200, 0.16);
+      --canvas-facet-high: rgba(255, 85, 0, 0.18);
+      --canvas-facet-mid: rgba(245, 158, 11, 0.10);
+      --canvas-facet-low: rgba(74, 222, 128, 0.08);
+      --canvas-atm: #ff5500;
+      --canvas-smile: #ff5500;
+      --canvas-quote: #fafaf9;
+      --canvas-fog: #100f0e;
+    }
+
+    /* --------------------------------------------------------------------------
+       THEME 3: SMOKED QUARTZ & LIQUID SOLAR TOPAZ (HAUTE HORLOGERIE)
+       -------------------------------------------------------------------------- */
+    [data-theme="amber"] {
+      --theme-name: "03 SOLAR AMBER";
+      --theme-ambient-glow: rgba(245, 158, 11, 0.08);
+
+      --void-0: #0e0d0b;             /* Smoked Quartz */
+      --void-1: #141310;
+      --surface-1: #1c1a16;
+      --surface-2: #25221c;
+      --surface-glass: rgba(28, 26, 22, 0.88);
+
+      --border-subtle: rgba(245, 158, 11, 0.09);
+      --border-edge: rgba(245, 158, 11, 0.18);
+      --border-highlight: rgba(245, 158, 11, 0.50);
+
+      --accent-primary: #f59e0b;      /* Liquid Topaz / Deep Amber */
+      --accent-secondary: #fef08a;    /* Pale Champagne Topaz */
+      --accent-dim: rgba(245, 158, 11, 0.14);
+
+      --status-positive: #10b981;     /* Verdigris Mint */
+      --status-warning: #fbbf24;      /* Cadmium Gold */
+      --status-negative: #e11d48;     /* Rose Crimson */
+      --status-neutral: #d5cfc7;
+
+      --text-primary: #fdfbf7;        /* Opal White */
+      --text-secondary: #d5cfc7;
+      --text-muted: #9c9589;
+      --text-dim: #6e675c;
+
+      --halo-primary: 0 0 calc(20px * var(--glow-intensity)) rgba(245, 158, 11, 0.25);
+      --halo-positive: 0 0 calc(18px * var(--glow-intensity)) rgba(16, 185, 129, 0.22);
+      --halo-negative: 0 0 calc(18px * var(--glow-intensity)) rgba(225, 29, 72, 0.22);
+      --bevel-top: inset 0 1px 0 0 rgba(254, 240, 138, 0.10);
+      --bevel-bottom: inset 0 -1px 0 0 rgba(0, 0, 0, 0.60);
+      --shadow-elevation: 0 12px 32px -4px rgba(0, 0, 0, 0.70);
+
+      --canvas-wire1: rgba(245, 158, 11, 0.65);
+      --canvas-wire1-sub: rgba(245, 158, 11, 0.22);
+      --canvas-wire2: rgba(254, 240, 138, 0.40);
+      --canvas-wire2-sub: rgba(254, 240, 138, 0.14);
+      --canvas-facet-high: rgba(245, 158, 11, 0.18);
+      --canvas-facet-mid: rgba(251, 191, 36, 0.10);
+      --canvas-facet-low: rgba(16, 185, 129, 0.08);
+      --canvas-atm: #f59e0b;
+      --canvas-smile: #f59e0b;
+      --canvas-quote: #fef08a;
+      --canvas-fog: #0e0d0b;
+    }
+
+    /* --------------------------------------------------------------------------
+       THEME 4: ARCHITECTURAL MONOLITH STUDIO (MINIMALIST BRUTALISM)
+       -------------------------------------------------------------------------- */
+    [data-theme="monolith"] {
+      --theme-name: "04 MONOLITH STUDIO";
+      --theme-ambient-glow: rgba(255, 255, 255, 0.05);
+
+      --void-0: #050505;             /* Optical Pitch Black */
+      --void-1: #0c0c0c;
+      --surface-1: #151515;
+      --surface-2: #1e1e1e;
+      --surface-glass: rgba(21, 21, 21, 0.90);
+
+      --border-subtle: rgba(255, 255, 255, 0.09);
+      --border-edge: rgba(255, 255, 255, 0.18);
+      --border-highlight: rgba(255, 255, 255, 0.55);
+
+      --accent-primary: #ffffff;      /* Pure Architectural White */
+      --accent-secondary: #a1a1aa;    /* Brushed Titanium Silver */
+      --accent-dim: rgba(255, 255, 255, 0.12);
+
+      --status-positive: #ffffff;
+      --status-warning: #e4e4e7;
+      --status-negative: #ff003c;     /* Laser Crimson Strobe */
+      --status-neutral: #71717a;
+
+      --text-primary: #ffffff;
+      --text-secondary: #a1a1aa;
+      --text-muted: #71717a;
+      --text-dim: #52525b;
+
+      --halo-primary: 0 0 calc(20px * var(--glow-intensity)) rgba(255, 255, 255, 0.20);
+      --halo-positive: 0 0 calc(18px * var(--glow-intensity)) rgba(255, 255, 255, 0.20);
+      --halo-negative: 0 0 calc(18px * var(--glow-intensity)) rgba(255, 0, 60, 0.25);
+      --bevel-top: inset 0 1px 0 0 rgba(255, 255, 255, 0.16);
+      --bevel-bottom: inset 0 -1px 0 0 rgba(0, 0, 0, 0.65);
+      --shadow-elevation: 0 12px 32px -4px rgba(0, 0, 0, 0.75);
+
+      --canvas-wire1: rgba(255, 255, 255, 0.70);
+      --canvas-wire1-sub: rgba(255, 255, 255, 0.22);
+      --canvas-wire2: rgba(161, 161, 170, 0.40);
+      --canvas-wire2-sub: rgba(161, 161, 170, 0.14);
+      --canvas-facet-high: rgba(255, 255, 255, 0.14);
+      --canvas-facet-mid: rgba(161, 161, 170, 0.08);
+      --canvas-facet-low: rgba(255, 0, 60, 0.08);
+      --canvas-atm: #ffffff;
+      --canvas-smile: #ffffff;
+      --canvas-quote: #ff003c;
+      --canvas-fog: #050505;
+    }
+
+    /* Reset & Base Canvas */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      background-color: var(--void-0);
+      background-image: 
+        radial-gradient(ellipse 80% 50% at 50% -10%, var(--theme-ambient-glow), transparent 70%),
+        linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+      background-size: 100% 100%, 32px 32px, 32px 32px;
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      font-size: 13px;
+      line-height: 1.45;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+      transition: background-color 0.25s ease, color 0.25s ease;
+    }
+
+    /* Custom Micro-Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--void-0); }
+    ::-webkit-scrollbar-thumb { background: var(--border-edge); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--accent-primary); }
+
+    /* ==========================================================================
+       TOP GLOBAL HUD BAR & SOVEREIGN STATUS BANNER
+       ========================================================================== */
+    header.hud-header {
+      height: 52px;
+      background: var(--surface-glass);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-edge);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    .hud-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .hud-glyph {
+      width: 24px;
+      height: 24px;
+      border: 1.5px solid var(--accent-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--accent-primary);
+      box-shadow: var(--halo-primary);
+      border-radius: 3px;
+      transition: all 0.2s ease;
+    }
+
+    .hud-title-group {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .hud-title {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .hud-title span.ver {
+      font-size: 10px;
+      color: var(--accent-primary);
+      padding: 1px 6px;
+      background: var(--accent-dim);
+      border: 1px solid var(--border-highlight);
+      border-radius: 2px;
+    }
+
+    .hud-subtitle {
+      font-size: 10px;
+      color: var(--text-muted);
+      letter-spacing: 0.05em;
+      font-family: var(--font-mono);
+    }
+
+    /* Controls Group */
+    .hud-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* Telemetry Pill */
+    .hud-telemetry-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 4px 10px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-subtle);
+      border-radius: 3px;
+      color: var(--text-secondary);
+    }
+
+    .telemetry-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--status-positive);
+      box-shadow: var(--halo-positive);
+      animation: pulseGreen 2.2s infinite ease-in-out;
+    }
+
+    @keyframes pulseGreen {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.45; transform: scale(0.85); }
+    }
+
+    /* Sound Toggle Button */
+    .sound-btn {
+      background: var(--surface-2);
+      border: 1px solid var(--border-edge);
+      color: var(--accent-primary);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 5px 10px;
+      border-radius: 3px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+      user-select: none;
+    }
+    .sound-btn:hover {
+      background: var(--accent-dim);
+      border-color: var(--accent-primary);
+    }
+    .sound-btn.is-muted {
+      opacity: 0.45;
+      color: var(--text-muted);
+      border-color: var(--border-subtle);
+    }
+
+    /* Regime Badge */
+    .regime-badge {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 5px 12px;
+      border-radius: 3px;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.18s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .regime-badge[data-regime="calm"] {
+      background: var(--surface-2);
+      color: var(--accent-primary);
+      border: 1px solid var(--border-edge);
+    }
+    .regime-badge[data-regime="vol-shock"] {
+      background: var(--status-negative);
+      color: #ffffff;
+      border: 1px solid var(--status-negative);
+      box-shadow: var(--halo-negative);
+      animation: regimePulse 800ms ease-in-out infinite alternate;
+    }
+    @keyframes regimePulse {
+      from { box-shadow: 0 0 8px rgba(255, 59, 0, 0.35); }
+      to   { box-shadow: 0 0 24px rgba(255, 59, 0, 0.75); }
+    }
+
+    /* Hotkey HUD Button */
+    .hud-btn {
+      background: var(--surface-2);
+      border: 1px solid var(--border-edge);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 5px 10px;
+      border-radius: 3px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.15s ease;
+    }
+    .hud-btn:hover {
+      color: var(--text-primary);
+      border-color: var(--text-muted);
+    }
+    .hud-btn kbd {
+      background: var(--void-0);
+      padding: 1px 5px;
+      border-radius: 2px;
+      border: 1px solid var(--border-edge);
+      font-size: 9px;
+      color: var(--accent-primary);
+    }
+
+    /* Dynamic Theme Switcher Pills */
+    .theme-switcher-bar {
+      display: flex;
+      background: var(--void-1);
+      padding: 3px;
+      border: 1px solid var(--border-edge);
+      border-radius: 4px;
+      gap: 3px;
+    }
+
+    .theme-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 3px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+
+    .theme-btn:hover {
+      color: var(--text-primary);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .theme-btn.active {
+      background: var(--surface-2);
+      color: var(--accent-primary);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 2px 6px rgba(0,0,0,0.5);
+      border: 1px solid var(--border-highlight);
+    }
+
+    .theme-btn span.dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .theme-btn[data-theme="chartreuse"] span.dot { background: #c6ff00; }
+    .theme-btn[data-theme="orange"] span.dot { background: #ff5500; }
+    .theme-btn[data-theme="amber"] span.dot { background: #f59e0b; }
+    .theme-btn[data-theme="monolith"] span.dot { background: #ffffff; }
+
+    /* ==========================================================================
+       SUB-BAR: INSTITUTIONAL RFQ EXECUTION STRIP & LAST-LOOK BAR
+       ========================================================================== */
+    .rfq-strip {
+      background: var(--surface-1);
+      border-bottom: 1px solid var(--border-edge);
+      padding: 10px 20px;
+      display: grid;
+      grid-template-columns: auto 1fr auto auto;
+      align-items: center;
+      gap: 20px;
+      position: relative;
+    }
+
+    .rfq-instrument {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+
+    .rfq-symbol {
+      font-family: var(--font-mono);
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      color: var(--text-primary);
+    }
+
+    .rfq-meta {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .rfq-pricing {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .rfq-quote-box {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--void-0);
+      padding: 6px 14px;
+      border: 1px solid var(--border-edge);
+      border-radius: 4px;
+    }
+
+    .quote-side {
+      display: flex;
+      flex-direction: column;
+    }
+    .quote-label {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+    }
+    .quote-val {
+      font-family: var(--font-mono);
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+    }
+    .quote-val.bid { color: var(--status-positive); }
+    .quote-val.ask { color: var(--status-negative); }
+
+    .quote-spread {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-muted);
+      border-left: 1px solid var(--border-subtle);
+      border-right: 1px solid var(--border-subtle);
+      padding: 0 10px;
+      text-align: center;
+    }
+
+    /* Live Last-Look Countdown Meter */
+    .last-look-container {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 140px;
+    }
+
+    .last-look-header {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .last-look-timer {
+      font-weight: 700;
+      color: var(--accent-primary);
+    }
+
+    .last-look-bar-track {
+      width: 100%;
+      height: 5px;
+      background: var(--surface-2);
+      border-radius: 2px;
+      overflow: hidden;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .last-look-bar-fill {
+      height: 100%;
+      width: 78%;
+      background: var(--accent-primary);
+      box-shadow: var(--halo-primary);
+      transition: width 0.1s linear, background-color 0.2s ease;
+    }
+
+    .rfq-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .rfq-btn {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      padding: 8px 18px;
+      border-radius: 3px;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      user-select: none;
+    }
+
+    .rfq-btn.btn-buy {
+      background: var(--status-positive);
+      color: var(--void-0);
+      box-shadow: var(--halo-positive);
+    }
+    .rfq-btn.btn-buy:hover {
+      filter: brightness(1.15);
+      transform: translateY(-1px);
+    }
+
+    .rfq-btn.btn-sell {
+      background: var(--status-negative);
+      color: #ffffff;
+      box-shadow: var(--halo-negative);
+    }
+    .rfq-btn.btn-sell:hover {
+      filter: brightness(1.15);
+      transform: translateY(-1px);
+    }
+
+    .rfq-btn:active {
+      transform: translateY(1px);
+    }
+
+    /* Delta-Hedge Checkbox Pill */
+    .hedge-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      background: var(--surface-2);
+      padding: 7px 12px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 3px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .hedge-toggle input { cursor: pointer; accent-color: var(--accent-primary); }
+
+    /* ==========================================================================
+       MAIN CONTAINER & TAB NAVIGATION
+       ========================================================================== */
+    main.workspace-root {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 16px 20px 24px 20px;
+      gap: 16px;
+      max-width: 1720px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .tab-navigation {
+      display: flex;
+      border-bottom: 1px solid var(--border-edge);
+      gap: 8px;
+      align-items: center;
+    }
+
+    .nav-tab {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      padding: 10px 18px;
+      cursor: pointer;
+      position: relative;
+      transition: color 0.15s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-tab:hover { color: var(--text-primary); }
+
+    .nav-tab.active {
+      color: var(--accent-primary);
+    }
+
+    .nav-tab.active::after {
+      content: "";
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--accent-primary);
+      box-shadow: var(--halo-primary);
+    }
+
+    .tab-badge {
+      font-size: 9px;
+      padding: 1px 5px;
+      border-radius: 2px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+    }
+    .nav-tab.active .tab-badge {
+      color: var(--accent-primary);
+      border-color: var(--border-highlight);
+    }
+
+    /* Tab Content Viewports */
+    .tab-view {
+      display: none;
+      flex-direction: column;
+      gap: 16px;
+      animation: fadeIn 0.2s ease;
+    }
+    .tab-view.active { display: flex; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ==========================================================================
+       VIEW 1: TRADING & RISK COCKPIT (GRID LAYOUT)
+       ========================================================================== */
+    .cockpit-grid {
+      display: grid;
+      grid-template-columns: 340px 1fr 360px;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .panel-card {
+      background: var(--surface-1);
+      border: 1px solid var(--border-edge);
+      border-radius: 5px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: var(--shadow-elevation);
+    }
+
+    .panel-header {
+      padding: 10px 14px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .panel-title {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-tag {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      color: var(--accent-primary);
+      background: var(--accent-dim);
+      border: 1px solid var(--border-highlight);
+      padding: 1px 5px;
+      border-radius: 2px;
+    }
+
+    /* --- Left Column: L2 Order Book Depth Ladder + Time & Sales Tape --- */
+    .orderbook-container {
+      display: flex;
+      flex-direction: column;
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    .ob-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    .ob-table th {
+      padding: 6px 10px;
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      text-align: right;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .ob-table th:first-child { text-align: left; }
+
+    .ob-row {
+      position: relative;
+      cursor: pointer;
+      transition: background 0.08s ease;
+    }
+    .ob-row:hover { background: rgba(255, 255, 255, 0.04); }
+
+    .ob-cell {
+      padding: 4px 10px;
+      text-align: right;
+      position: relative;
+      z-index: 2;
+      white-space: nowrap;
+    }
+    .ob-cell:first-child { text-align: left; }
+
+    .ob-cell.price-ask { color: var(--status-negative); font-weight: 700; }
+    .ob-cell.price-bid { color: var(--status-positive); font-weight: 700; }
+    .ob-cell.size { color: var(--text-secondary); }
+    .ob-cell.total { color: var(--text-muted); }
+
+    /* Depth Fill Visualizer Bar */
+    .depth-bar {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      right: 0;
+      z-index: 1;
+      opacity: 0.22;
+      pointer-events: none;
+      transition: width 0.15s ease;
+    }
+    .ob-row.ask .depth-bar { background: var(--status-negative); }
+    .ob-row.bid .depth-bar { background: var(--status-positive); }
+
+    /* Mid-Market Spread Banner */
+    .ob-mid-strip {
+      padding: 8px 12px;
+      background: var(--void-0);
+      border-top: 1px solid var(--border-edge);
+      border-bottom: 1px solid var(--border-edge);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+    .mid-label { color: var(--text-muted); font-size: 9px; text-transform: uppercase; }
+    .mid-price {
+      font-weight: 800;
+      font-size: 14px;
+      color: var(--text-primary);
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+    .mid-spread { color: var(--accent-secondary); font-size: 10px; }
+
+    /* Delta-Only Flash Animations */
+    @keyframes cellFlashUp {
+      0%   { background-color: rgba(198, 255, 0, 0.35); color: #fff; text-shadow: 0 0 8px var(--status-positive); }
+      100% { background-color: transparent; text-shadow: none; }
+    }
+    @keyframes cellFlashDown {
+      0%   { background-color: rgba(255, 59, 0, 0.35); color: #fff; text-shadow: 0 0 8px var(--status-negative); }
+      100% { background-color: transparent; text-shadow: none; }
+    }
+    .cell-flash-up {
+      animation: cellFlashUp 280ms cubic-bezier(0.22, 1, 0.36, 1) 1 !important;
+    }
+    .cell-flash-down {
+      animation: cellFlashDown 280ms cubic-bezier(0.22, 1, 0.36, 1) 1 !important;
+    }
+
+    /* Time & Sales Tape Container */
+    .tape-section {
+      border-top: 1px solid var(--border-edge);
+      display: flex;
+      flex-direction: column;
+      background: var(--void-0);
+    }
+
+    .tape-header {
+      padding: 6px 10px;
+      background: var(--surface-2);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--text-muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .ts-tape {
+      max-height: 180px;
+      overflow-y: auto;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      line-height: 1.35;
+      padding: 4px 0;
+    }
+    .ts-row {
+      display: grid;
+      grid-template-columns: 60px 58px 42px 42px 1fr;
+      padding: 2px 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+      align-items: center;
+      animation: tsReveal 180ms ease-out forwards;
+    }
+    @keyframes tsReveal {
+      from { opacity: 0; transform: translateY(-3px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .ts-row.ts-buy  { border-left: 2px solid var(--status-positive); }
+    .ts-row.ts-sell { border-left: 2px solid var(--status-negative); }
+    .ts-time { color: var(--text-muted); font-size: 9px; }
+    .ts-price { font-weight: 700; text-align: right; }
+    .ts-buy .ts-price { color: var(--status-positive); }
+    .ts-sell .ts-price { color: var(--status-negative); }
+    .ts-size { color: var(--text-secondary); text-align: right; }
+    .ts-side { font-weight: 700; font-size: 9px; text-align: center; }
+    .ts-buy .ts-side { color: var(--status-positive); }
+    .ts-sell .ts-side { color: var(--status-negative); }
+    .ts-cpty { color: var(--text-dim); text-align: right; font-size: 9px; letter-spacing: 0.04em; }
+
+    /* --- Center Column: Sovereign Volatility Chart & Smile Slicer --- */
+    .cockpit-center {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .chart-container {
+      background: var(--surface-1);
+      border: 1px solid var(--border-edge);
+      border-radius: 5px;
+      padding: 16px;
+      position: relative;
+      box-shadow: var(--shadow-elevation);
+    }
+
+    .chart-hud-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .chart-title {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .chart-tenor-pills {
+      display: flex;
+      background: var(--void-0);
+      padding: 2px;
+      border-radius: 3px;
+      border: 1px solid var(--border-subtle);
+      gap: 2px;
+    }
+
+    .tenor-pill {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 2px;
+      cursor: pointer;
+    }
+    .tenor-pill.active {
+      background: var(--surface-2);
+      color: var(--accent-primary);
+      border: 1px solid var(--border-highlight);
+    }
+
+    canvas#smileCanvas2d {
+      width: 100%;
+      height: 240px;
+      background: var(--void-0);
+      border-radius: 4px;
+      border: 1px solid var(--border-subtle);
+      display: block;
+    }
+
+    /* Greeks Sensitivity Strip */
+    .greeks-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+
+    .greek-card {
+      background: var(--surface-1);
+      border: 1px solid var(--border-edge);
+      border-radius: 4px;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .greek-name {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-muted);
+      letter-spacing: 0.08em;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .greek-val {
+      font-family: var(--font-mono);
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      color: var(--text-primary);
+    }
+    .greek-sub {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      color: var(--accent-primary);
+    }
+
+    /* --- Right Column: Quantitative Pricing & SABR Controls --- */
+    .pricing-engine-form {
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .param-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .param-header {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    .param-label {
+      color: var(--text-secondary);
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    .param-value-badge {
+      color: var(--accent-primary);
+      font-weight: 700;
+      background: var(--void-0);
+      padding: 1px 6px;
+      border-radius: 2px;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .param-slider {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--surface-2);
+      outline: none;
+      transition: background 0.15s ease;
+    }
+    .param-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--accent-primary);
+      cursor: pointer;
+      box-shadow: var(--halo-primary);
+      border: 2px solid var(--void-0);
+      transition: transform 0.1s ease;
+    }
+    .param-slider::-webkit-slider-thumb:hover {
+      transform: scale(1.25);
+    }
+
+    .calc-btn-group {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .calc-action-btn {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      padding: 8px;
+      border-radius: 3px;
+      cursor: pointer;
+      border: 1px solid var(--border-edge);
+      background: var(--surface-2);
+      color: var(--text-primary);
+      transition: all 0.15s ease;
+      text-align: center;
+      user-select: none;
+    }
+    .calc-action-btn:hover {
+      background: var(--accent-dim);
+      border-color: var(--accent-primary);
+      color: var(--accent-primary);
+    }
+
+    /* ==========================================================================
+       VIEW 2: 3D SABR VOLATILITY SURFACE VIEWPORT
+       ========================================================================== */
+    .vol-surface-view-container {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 16px;
+      min-height: 580px;
+    }
+
+    .canvas-card-3d {
+      background: var(--surface-1);
+      border: 1px solid var(--border-edge);
+      border-radius: 5px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      box-shadow: var(--shadow-elevation);
+    }
+
+    .canvas-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .canvas-title {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .canvas-controls-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .cam-btn {
+      background: var(--surface-2);
+      border: 1px solid var(--border-edge);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      user-select: none;
+    }
+    .cam-btn:hover {
+      color: var(--text-primary);
+      border-color: var(--accent-primary);
+      background: var(--accent-dim);
+    }
+
+    .canvas-wrapper-relative {
+      position: relative;
+      flex: 1;
+      width: 100%;
+      min-height: 480px;
+    }
+
+    canvas#volSurfaceCanvas {
+      width: 100%;
+      height: 100%;
+      min-height: 480px;
+      background: var(--void-0);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      display: block;
+      cursor: crosshair;
+    }
+
+    /* Floating Coordinate Pill on Hover */
+    .vol-pill {
+      position: absolute;
+      pointer-events: none;
+      background: var(--surface-glass);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid var(--accent-primary);
+      border-radius: 3px;
+      padding: 5px 12px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--accent-primary);
+      white-space: nowrap;
+      z-index: 900;
+      opacity: 0;
+      transition: opacity 120ms ease;
+      box-shadow: var(--halo-primary);
+      transform: translate(-50%, -130%);
+    }
+    .vol-pill.visible { opacity: 1; }
+
+    /* ==========================================================================
+       VIEW 3: REAL-TIME SHARED MEMORY RING BUFFER TELEMETRY
+       ========================================================================== */
+    .ring-buffer-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .ring-slots-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      padding: 16px;
+    }
+
+    .ring-slot {
+      background: var(--void-0);
+      border: 1px solid var(--border-edge);
+      border-radius: 4px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      position: relative;
+      transition: all 0.2s ease;
+    }
+
+    .ring-slot.active {
+      border-color: var(--accent-primary);
+      box-shadow: var(--halo-primary);
+    }
+
+    .ring-slot.writer {
+      border-color: var(--status-warning);
+      box-shadow: 0 0 16px rgba(255, 214, 0, 0.3);
+    }
+
+    .slot-id {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-muted);
+    }
+
+    .slot-payload {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .slot-state {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      text-transform: uppercase;
+      color: var(--status-positive);
+    }
+
+    /* ==========================================================================
+       VIEW 4: CHRONOS DESIGN SYSTEM PALETTE & TYPOGRAPHY
+       ========================================================================== */
+    .design-system-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .swatches-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      padding: 14px;
+    }
+
+    .swatch-card {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .swatch-box {
+      height: 52px;
+      border-radius: 4px;
+      border: 1px solid var(--border-edge);
+    }
+
+    .swatch-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .swatch-hex {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      color: var(--text-muted);
+    }
+
+    /* ==========================================================================
+       WAR-ROOM TELEMETRY BAR (SLIDES OPEN IN VOL SHOCK REGIME)
+       ========================================================================== */
+    .warroom-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 0;
+      overflow: hidden;
+      background: linear-gradient(to top, rgba(255, 59, 0, 0.12), rgba(11, 12, 14, 0.95));
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-top: 1px solid transparent;
+      transition: height 280ms cubic-bezier(0.22, 1, 0.36, 1), border-color 280ms;
+      z-index: 950;
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      box-shadow: 0 -8px 24px rgba(255, 59, 0, 0.2);
+    }
+    .warroom-bar.open {
+      height: 42px;
+      border-top-color: var(--status-negative);
+    }
+    .warroom-metric {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .warroom-metric .wm-label {
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 10px;
+    }
+    .warroom-metric .wm-value {
+      color: var(--status-negative);
+      font-weight: 800;
+    }
+
+    /* ==========================================================================
+       KEYBOARD SHORTCUTS HUD MODAL
+       ========================================================================== */
+    .kbd-hud-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.76);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease;
+    }
+    .kbd-hud-overlay.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .kbd-hud {
+      background: var(--surface-1);
+      border: 1px solid var(--border-edge);
+      box-shadow: var(--shadow-elevation), var(--halo-primary);
+      border-radius: 6px;
+      padding: 24px 32px;
+      min-width: 380px;
+      max-width: 480px;
+      font-family: var(--font-mono);
+      color: var(--text-primary);
+    }
+    .kbd-hud-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 10px;
+    }
+    .kbd-hud-title {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--accent-primary);
+    }
+    .kbd-hud-close {
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 16px;
+      border: none;
+      background: transparent;
+    }
+    .kbd-hud-close:hover { color: var(--text-primary); }
+    .kbd-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      font-size: 11px;
+    }
+    .kbd-key {
+      background: var(--surface-2);
+      border: 1px solid var(--border-edge);
+      border-radius: 3px;
+      padding: 2px 7px;
+      font-weight: 700;
+      color: var(--accent-primary);
+      min-width: 22px;
+      text-align: center;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+    .kbd-desc { color: var(--text-secondary); }
+
+    /* ==========================================================================
+       FOOTER
+       ========================================================================== */
+    footer.hud-footer {
+      height: 38px;
+      background: var(--void-0);
+      border-top: 1px solid var(--border-edge);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- TOP GLOBAL HUD BAR -->
+  <header class="hud-header">
+    <div class="hud-brand">
+      <div class="hud-glyph">C</div>
+      <div class="hud-title-group">
+        <div class="hud-title">
+          CELNET // CHRONOS <span class="ver">2026.9</span>
+        </div>
+        <div class="hud-subtitle">SOVEREIGN QUANTITATIVE ENGINE & HFT COCKPIT</div>
+      </div>
+    </div>
+
+    <div class="hud-controls">
+      <!-- Live Agent Telemetry -->
+      <div class="hud-telemetry-badge">
+        <div class="telemetry-dot"></div>
+        <span>AGENT: COCKPIT [9ROUTER: CLAUDE-OPUS-5]</span>
+      </div>
+
+      <!-- Sound Engine Mute Toggle -->
+      <button class="sound-btn" id="mute-btn" data-mute-btn title="Toggle Sound Feedback (Key: M)">
+        🔊 LIVE
+      </button>
+
+      <!-- Adaptive Regime Badge -->
+      <div class="regime-badge" id="regime-badge" data-regime="calm" title="Toggle Vol Regime (Key: V)">
+        ● REGIME: CALM
+      </div>
+
+      <!-- Hotkeys HUD Button -->
+      <button class="hud-btn" id="hud-toggle-btn" title="Keyboard Shortcuts (Key: H or ?)">
+        ⌨ HOTKEYS <kbd>?</kbd>
+      </button>
+
+      <!-- Multi-Theme Spectral Switcher (Keys 1-4) -->
+      <div class="theme-switcher-bar">
+        <button class="theme-btn active" data-theme="chartreuse" title="Shortcut: Key 1">
+          <span class="dot"></span> 01 ACID
+        </button>
+        <button class="theme-btn" data-theme="orange" title="Shortcut: Key 2">
+          <span class="dot"></span> 02 ORANGE
+        </button>
+        <button class="theme-btn" data-theme="amber" title="Shortcut: Key 3">
+          <span class="dot"></span> 03 AMBER
+        </button>
+        <button class="theme-btn" data-theme="monolith" title="Shortcut: Key 4">
+          <span class="dot"></span> 04 MONOLITH
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- SUB-BAR: INSTITUTIONAL RFQ EXECUTION STRIP -->
+  <section class="rfq-strip">
+    <div class="rfq-instrument">
+      <span class="rfq-symbol">SPXW 260918P05300000</span>
+      <span class="rfq-meta">[SPX 18-SEP-26 5300 PUT] • EUROPEAN • CASH-SETTLED</span>
+    </div>
+
+    <div class="rfq-pricing">
+      <div class="rfq-quote-box">
+        <div class="quote-side">
+          <span class="quote-label">Indicative Bid</span>
+          <span class="quote-val bid" id="rfq-bid">42.80</span>
+        </div>
+        <div class="quote-spread">
+          <span>SPREAD</span><br>
+          <strong id="rfq-spread">0.40</strong>
+        </div>
+        <div class="quote-side">
+          <span class="quote-label">Indicative Ask</span>
+          <span class="quote-val ask" id="rfq-ask">43.20</span>
+        </div>
+      </div>
+
+      <div class="last-look-container">
+        <div class="last-look-header">
+          <span>LAST LOOK</span>
+          <span class="last-look-timer" id="last-look-timer">08.4s</span>
+        </div>
+        <div class="last-look-bar-track">
+          <div class="last-look-bar-fill" id="last-look-fill" style="width: 84%;"></div>
+        </div>
+      </div>
+    </div>
+
+    <label class="hedge-toggle">
+      <input type="checkbox" id="delta-hedge-check" checked>
+      <span>AUTO DELTA HEDGE</span>
+    </label>
+
+    <div class="rfq-actions">
+      <button class="rfq-btn btn-sell" id="rfq-sell-btn" title="Sell at Bid">SELL 100 LOTS</button>
+      <button class="rfq-btn btn-buy" id="rfq-buy-btn" title="Buy at Ask (Shortcut: Space)">BUY 100 LOTS</button>
+    </div>
+  </section>
+
+  <!-- WORKSPACE MAIN -->
+  <main class="workspace-root">
+    <!-- View Switcher Tabs -->
+    <nav class="tab-navigation">
+      <button class="nav-tab active" data-tab="cockpit">
+        TRADING COCKPIT <span class="tab-badge">L2 & TAPE</span>
+      </button>
+      <button class="nav-tab" data-tab="vol-surface">
+        3D VOLATILITY SURFACE <span class="tab-badge">SABR MESH</span>
+      </button>
+      <button class="nav-tab" data-tab="ring-buffer">
+        SHARED MEMORY RING BUFFER <span class="tab-badge">IPC 4.8ns</span>
+      </button>
+      <button class="nav-tab" data-tab="design-system">
+        DESIGN SYSTEM INSPECTOR <span class="tab-badge">CHRONOS 2026</span>
+      </button>
+    </nav>
+
+    <!-- =======================================================================
+         VIEW 1: TRADING & RISK COCKPIT
+         ======================================================================= -->
+    <section class="tab-view active" id="view-cockpit">
+      <div class="cockpit-grid">
+
+        <!-- Left Column: L2 Depth Ladder + Time & Sales Tape -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <span class="panel-title">L2 ORDER BOOK <span class="panel-tag">TICK TICK</span></span>
+            <span style="font-family: var(--font-mono); font-size: 10px; color: var(--text-muted);" id="latency-val">4.8ns IPC</span>
+          </div>
+
+          <div class="orderbook-container">
+            <!-- Asks (Descending) -->
+            <table class="ob-table">
+              <thead>
+                <tr>
+                  <th style="width: 32%;">PRICE</th>
+                  <th style="width: 34%;">SIZE</th>
+                  <th style="width: 34%;">TOTAL</th>
+                </tr>
+              </thead>
+              <tbody id="ob-asks">
+                <tr class="ob-row ask">
+                  <td class="ob-cell price-ask">5,285.50</td>
+                  <td class="ob-cell size">85</td>
+                  <td class="ob-cell total">340</td>
+                  <td style="padding:0; margin:0; border:none;"><div class="depth-bar" style="width: 100%;"></div></td>
+                </tr>
+                <tr class="ob-row ask">
+                  <td class="ob-cell price-ask">5,285.25</td>
+                  <td class="ob-cell size">60</td>
+                  <td class="ob-cell total">255</td>
+                  <td style="padding:0; margin:0; border:none;"><div class="depth-bar" style="width: 75%;"></div></td>
+                </tr>
+                <tr class="ob-row ask">
+                  <td class="ob-cell price-ask">5,285.00</td>
+                  <td class="ob-cell size">110</td>
+                  <td class="ob-cell total">195</td>
+                  <td style="padding:0; margin:0; border:none;"><div class="depth-bar" style="width: 57%;"></div></td>
+                </tr>
+                <tr class="ob-row ask">
+                  <td class="ob-cell price-ask">5,284.75</td>
+                  <td class="ob-cell size">85</td>
+                  <td class="ob-cell total">85</td>
+                  <td style="padding:0; margin:0; border:none;"><div class="depth-bar" style="width: 25%;"></div></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <!-- Mid-Market Spread Banner -->
+            <div class="ob-mid-strip">
+              <div>
+                <div class="mid-label">INDEX MID</div>
+                <div class="mid-price">
+                  <span id="spot-price" class="spot-price">5,284.50</span>
+                  <span id="spot-delta" class="spot-delta" style="font-size: 11px; color: var(--status-positive);">+0.25</span>
+                </div>
+              </div>
+              <div class="mid-spread">
+                <span>SPREAD: <strong>0.25</strong></span><br>
+                <span>IMPLIED VOL: <strong>16.8%</strong></span>
+              </div>
+            </div>
+
+            <!-- Bids (Descending) -->
+            <table class="ob-table">
+              <tbody id="ob-bids">
+                <tr class="ob-row bid">
+                  <td class="ob-cell price-bid">5,284.50</td>
+                  <td class="ob-cell size">95</td>
+                  <td class="ob-cell total">95</td>
+                  <td style="padding:0; margin:0; border:none;"><div class="depth-bar" style="width: 28%;"></div></td>
+                </tr>
+                <tr class="ob-row bid">
+                  <td class="ob-cell price-bid">5,284.25</td>
+                  <td class="ob-cell size">120</td>
+                  <td class="ob-cell total">215</td>
+                  <td style="padding:0; margin:0; border:none;"><div class="depth-bar" style="width: 63%;"></div></td>
+                </tr>
+                <tr class="ob-row bid">
+                  <td class="ob-cell price-bid">5,284.00</td>
+                  <td class="ob-cell size">70</td>
+                  <td class="ob-cell total">285</td>
+                  <td style="padding:0; margin:0; border:none;"><div class="depth-bar" style="width: 83%;"></div></td>
+                </tr>
+                <tr class="ob-row bid">
+                  <td class="ob-cell price-bid">5,283.75</td>
+                  <td class="ob-cell size">55</td>
+                  <td class="ob-cell total">340</td>
+                  <td style="padding:0; margin:0; border:none;"><div class="depth-bar" style="width: 100%;"></div></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <!-- Real-Time Time & Sales Institutional Tape -->
+            <div class="tape-section">
+              <div class="tape-header">
+                <span>TIME & SALES (INSTITUTIONAL)</span>
+                <span>FEED: CHRONOS-L3</span>
+              </div>
+              <div class="ts-tape" id="ts-tape">
+                <!-- Dynamically populated by ticker engine -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Center Column: 2D Vol Smile & Greeks Sensitivity -->
+        <div class="cockpit-center">
+          <div class="chart-container">
+            <div class="chart-hud-row">
+              <div class="chart-title">
+                SABR IMPLIED VOLATILITY SMILE
+                <span class="panel-tag">CALIBRATED</span>
+              </div>
+              <div class="chart-tenor-pills">
+                <button class="tenor-pill" data-tenor="1m">1M</button>
+                <button class="tenor-pill active" data-tenor="3m">3M</button>
+                <button class="tenor-pill" data-tenor="6m">6M</button>
+                <button class="tenor-pill" data-tenor="1y">1Y</button>
+              </div>
+            </div>
+
+            <canvas id="smileCanvas2d" width="720" height="240"></canvas>
+          </div>
+
+          <!-- Real-Time Greeks Sensitivity Strip -->
+          <div class="greeks-strip">
+            <div class="greek-card">
+              <div class="greek-name">
+                <span>DELTA (Δ)</span>
+                <span>HEDGE</span>
+              </div>
+              <div class="greek-val" id="val-delta">-0.482</div>
+              <div class="greek-sub">Target: -48.2 shares</div>
+            </div>
+
+            <div class="greek-card">
+              <div class="greek-name">
+                <span>GAMMA (Γ)</span>
+                <span>CURVATURE</span>
+              </div>
+              <div class="greek-val" id="val-gamma">+0.0031</div>
+              <div class="greek-sub">Peak @ Strike 5,280</div>
+            </div>
+
+            <div class="greek-card">
+              <div class="greek-name">
+                <span>VEGA (ν)</span>
+                <span>VOL EXPOSURE</span>
+              </div>
+              <div class="greek-val" id="val-vega">+14.28</div>
+              <div class="greek-sub">$14.28 per 1% vol</div>
+            </div>
+
+            <div class="greek-card">
+              <div class="greek-name">
+                <span>THETA (θ)</span>
+                <span>DAILY DECAY</span>
+              </div>
+              <div class="greek-val" id="val-theta" style="color: var(--status-negative);">-4.12</div>
+              <div class="greek-sub">-$4.12 / calendar day</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Quantitative Pricing & SABR Sliders -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <span class="panel-title">PRICING ENGINE <span class="panel-tag">ANALYTICAL</span></span>
+            <span style="font-family: var(--font-mono); font-size: 10px; color: var(--accent-primary);">ORACLE VERIFIED</span>
+          </div>
+
+          <div class="pricing-engine-form">
+            <div class="param-group">
+              <div class="param-header">
+                <span class="param-label">Spot Price (S)</span>
+                <span class="param-value-badge" id="badge-spot">5,284.50</span>
+              </div>
+              <input type="range" class="param-slider" id="slider-spot" min="4500" max="6000" step="5" value="5285">
+            </div>
+
+            <div class="param-group">
+              <div class="param-header">
+                <span class="param-label">Strike (K)</span>
+                <span class="param-value-badge" id="badge-strike">5,300.00</span>
+              </div>
+              <input type="range" class="param-slider" id="slider-strike" min="4500" max="6000" step="10" value="5300">
+            </div>
+
+            <div class="param-group">
+              <div class="param-header">
+                <span class="param-label">Expiry (T, Years)</span>
+                <span class="param-value-badge" id="badge-tenor">0.25y</span>
+              </div>
+              <input type="range" class="param-slider" id="slider-tenor" min="0.05" max="2.0" step="0.05" value="0.25">
+            </div>
+
+            <div class="param-group">
+              <div class="param-header">
+                <span class="param-label">SABR Alpha (α)</span>
+                <span class="param-value-badge" id="badge-alpha">0.320</span>
+              </div>
+              <input type="range" class="param-slider" id="slider-alpha" min="0.05" max="0.80" step="0.01" value="0.32">
+            </div>
+
+            <div class="param-group">
+              <div class="param-header">
+                <span class="param-label">SABR Rho (ρ)</span>
+                <span class="param-value-badge" id="badge-rho">-0.450</span>
+              </div>
+              <input type="range" class="param-slider" id="slider-rho" min="-0.95" max="0.95" step="0.05" value="-0.45">
+            </div>
+
+            <div class="param-group">
+              <div class="param-header">
+                <span class="param-label">SABR Nu (ν)</span>
+                <span class="param-value-badge" id="badge-nu">0.650</span>
+              </div>
+              <input type="range" class="param-slider" id="slider-nu" min="0.10" max="1.50" step="0.05" value="0.65">
+            </div>
+
+            <div class="calc-btn-group">
+              <button class="calc-action-btn" id="btn-recal">RE-CALIBRATE</button>
+              <button class="calc-action-btn" id="btn-reset" title="Reset to Base (Key: R)">RESET BASE</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- =======================================================================
+         VIEW 2: 3D SABR VOLATILITY SURFACE
+         ======================================================================= -->
+    <section class="tab-view" id="view-vol-surface">
+      <div class="vol-surface-view-container">
+        <div class="canvas-card-3d">
+          <div class="canvas-toolbar">
+            <div class="canvas-title">
+              3D SABR VOLATILITY TOPOGRAPHY
+              <span class="panel-tag">ATMOSPHERIC DEPTH FOG</span>
+            </div>
+            <div class="canvas-controls-group">
+              <button class="cam-btn" id="btn-rot-left">⟲ YAW -15°</button>
+              <button class="cam-btn" id="btn-rot-right">⟳ YAW +15°</button>
+              <button class="cam-btn" id="btn-pitch-up">▲ PITCH</button>
+              <button class="cam-btn" id="btn-pitch-down">▼ PITCH</button>
+              <button class="cam-btn" id="btn-cam-reset">RESET VIEW</button>
+            </div>
+          </div>
+
+          <div class="canvas-wrapper-relative">
+            <canvas id="volSurfaceCanvas" width="960" height="520"></canvas>
+            <div class="vol-pill" id="vol-pill">
+              K: 5,300 | T: 0.25y | σ: 18.42%
+            </div>
+          </div>
+        </div>
+
+        <!-- 3D Surface Diagnostics Side Panel -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <span class="panel-title">SURFACE TELEMETRY</span>
+            <span class="panel-tag">HAGAN 2002</span>
+          </div>
+          <div style="padding: 16px; display: flex; flex-direction: column; gap: 14px; font-family: var(--font-mono); font-size: 11px;">
+            <div>
+              <span style="color: var(--text-muted);">ATM LEVEL (F):</span>
+              <div style="font-size: 15px; font-weight: 800; color: var(--accent-primary);">5,284.50</div>
+            </div>
+            <div>
+              <span style="color: var(--text-muted);">BACKBONE SKEW (dσ/dK):</span>
+              <div style="font-size: 15px; font-weight: 800; color: var(--status-warning);">-0.0034 / pt</div>
+            </div>
+            <div>
+              <span style="color: var(--text-muted);">VOL-OF-VOL CONVEXITY:</span>
+              <div style="font-size: 15px; font-weight: 800; color: var(--text-primary);">0.6500 (ν)</div>
+            </div>
+            <div>
+              <span style="color: var(--text-muted);">ARBITRAGE BOUNDS:</span>
+              <div style="font-size: 12px; font-weight: 700; color: var(--status-positive);">✓ NO BUTTERFLY ARB</div>
+              <div style="font-size: 12px; font-weight: 700; color: var(--status-positive);">✓ NO CALENDAR ARB</div>
+            </div>
+            <div style="border-top: 1px solid var(--border-subtle); padding-top: 12px;">
+              <span style="color: var(--text-muted);">INTERACTION HINT:</span>
+              <div style="color: var(--text-secondary); font-size: 10px; margin-top: 4px;">
+                Hover crosshair over any grid node to inspect exact strike & volatility slice. Use camera controls to orbit the 3D manifold.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =======================================================================
+         VIEW 3: SHARED MEMORY RING BUFFER TELEMETRY
+         ======================================================================= -->
+    <section class="tab-view" id="view-ring-buffer">
+      <div class="ring-buffer-container">
+        <div class="panel-card">
+          <div class="panel-header">
+            <span class="panel-title">LOCK-FREE RING BUFFER SLOTS</span>
+            <span class="panel-tag">64-BYTE CACHE LINE ALIGNED</span>
+          </div>
+
+          <div class="ring-slots-grid">
+            <div class="ring-slot active" id="slot0">
+              <span class="slot-id">SLOT #00 [0x000]</span>
+              <span class="slot-payload">SEQ: 104,829,102</span>
+              <span class="slot-state">● COMMITTED</span>
+            </div>
+            <div class="ring-slot" id="slot1">
+              <span class="slot-id">SLOT #01 [0x040]</span>
+              <span class="slot-payload">SEQ: 104,829,103</span>
+              <span class="slot-state">● COMMITTED</span>
+            </div>
+            <div class="ring-slot writer" id="slot2">
+              <span class="slot-id">SLOT #02 [0x080]</span>
+              <span class="slot-payload">SEQ: 104,829,104</span>
+              <span class="slot-state" style="color: var(--status-warning);">⚡ WRITING</span>
+            </div>
+            <div class="ring-slot" id="slot3">
+              <span class="slot-id">SLOT #03 [0x0C0]</span>
+              <span class="slot-payload">SEQ: 104,829,105</span>
+              <span class="slot-state">○ READY</span>
+            </div>
+            <div class="ring-slot" id="slot4">
+              <span class="slot-id">SLOT #04 [0x100]</span>
+              <span class="slot-payload">SEQ: 104,829,106</span>
+              <span class="slot-state">○ READY</span>
+            </div>
+            <div class="ring-slot" id="slot5">
+              <span class="slot-id">SLOT #05 [0x140]</span>
+              <span class="slot-payload">SEQ: 104,829,107</span>
+              <span class="slot-state">○ READY</span>
+            </div>
+          </div>
+
+          <div style="padding: 14px; border-top: 1px solid var(--border-subtle); display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">
+              READER HEAD: Slot #01 | WRITER HEAD: Slot #02
+            </span>
+            <button class="calc-action-btn" id="btn-burst" style="padding: 6px 14px;">TRIGGER BURST (10k MSG)</button>
+          </div>
+        </div>
+
+        <div class="panel-card">
+          <div class="panel-header">
+            <span class="panel-title">IPC PERFORMANCE METRICS</span>
+            <span class="panel-tag">MACOS SYSV SHM</span>
+          </div>
+          <div style="padding: 16px; display: flex; flex-direction: column; gap: 14px; font-family: var(--font-mono);">
+            <div style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--border-subtle); padding-bottom: 8px;">
+              <span style="color: var(--text-muted);">P99 MEMCPY LATENCY:</span>
+              <strong style="color: var(--status-positive);">4.82 nanoseconds</strong>
+            </div>
+            <div style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--border-subtle); padding-bottom: 8px;">
+              <span style="color: var(--text-muted);">PEAK THROUGHPUT:</span>
+              <strong style="color: var(--accent-primary);">18.4 Million msgs / sec</strong>
+            </div>
+            <div style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--border-subtle); padding-bottom: 8px;">
+              <span style="color: var(--text-muted);">CPU AFFINITY:</span>
+              <strong style="color: var(--text-primary);">ISOLCPUS 2-3 (M2 MAX P-CORE)</strong>
+            </div>
+            <div style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--border-subtle); padding-bottom: 8px;">
+              <span style="color: var(--text-muted);">ZERO-COPY SEMANTICS:</span>
+              <strong style="color: var(--status-positive);">ACTIVE (MUTEX-FREE)</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =======================================================================
+         VIEW 4: CHRONOS DESIGN SYSTEM PALETTES
+         ======================================================================= -->
+    <section class="tab-view" id="view-design-system">
+      <div class="design-system-grid">
+        <div class="panel-card">
+          <div class="panel-header">
+            <span class="panel-title">ACTIVE THEME PALETTE SWATCHES</span>
+            <span class="panel-tag" id="active-theme-tag">01 ACID CHARTREUSE</span>
+          </div>
+          <div class="swatches-grid">
+            <div class="swatch-card">
+              <div class="swatch-box" style="background: var(--void-0);"></div>
+              <span class="swatch-label">VOID-0</span>
+              <span class="swatch-hex" id="sw-void0">#0b0c0e</span>
+            </div>
+            <div class="swatch-card">
+              <div class="swatch-box" style="background: var(--surface-1);"></div>
+              <span class="swatch-label">SURFACE-1</span>
+              <span class="swatch-hex" id="sw-surf1">#17181c</span>
+            </div>
+            <div class="swatch-card">
+              <div class="swatch-box" style="background: var(--accent-primary);"></div>
+              <span class="swatch-label">ACCENT</span>
+              <span class="swatch-hex" id="sw-accent">#c6ff00</span>
+            </div>
+            <div class="swatch-card">
+              <div class="swatch-box" style="background: var(--status-negative);"></div>
+              <span class="swatch-label">RISK/NEG</span>
+              <span class="swatch-hex" id="sw-risk">#ff3b00</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel-card">
+          <div class="panel-header">
+            <span class="panel-title">ARCHITECTURAL DESIGN INVARIANTS</span>
+            <span class="panel-tag">CHRONOS 2026</span>
+          </div>
+          <div style="padding: 16px; font-family: var(--font-mono); font-size: 11px; display: flex; flex-direction: column; gap: 10px; color: var(--text-secondary);">
+            <div><strong>1. ZERO LEGACY CYAN:</strong> Complete elimination of generic 2018 web dark-mode blues/cyans. Replaced with curated spectral wavelengths.</div>
+            <div><strong>2. FLASH THE DELTA:</strong> Never repaint full rows. Numeric deltas animate at the digit/cell level to eliminate cognitive distraction.</div>
+            <div><strong>3. PRE-ATTENTIVE HOROLOGY:</strong> High data-density engineered for sub-millisecond recognition using OKLCH perceptual lightness.</div>
+            <div><strong>4. AUDITORY & HAPTIC HUD:</strong> Low-latency Web Audio micro-pulses confirm actions without stealing visual attention.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- WAR-ROOM TELEMETRY BAR (SLIDES OPEN IN VOL SHOCK REGIME) -->
+  <div class="warroom-bar" id="warroom-bar">
+    <div class="warroom-metric">
+      <span class="wm-label">⚠ REGIME:</span>
+      <span class="wm-value">VOL SHOCK EVENT</span>
+    </div>
+    <div class="warroom-metric">
+      <span class="wm-label">PORTFOLIO DELTA:</span>
+      <span class="wm-value" id="wm-delta">-482.4 SHARES</span>
+    </div>
+    <div class="warroom-metric">
+      <span class="wm-label">GAMMA SPIKE:</span>
+      <span class="wm-value">+0.0094 (PEAK)</span>
+    </div>
+    <div class="warroom-metric">
+      <span class="wm-label">VEGA VAR:</span>
+      <span class="wm-value">$248,500 / 1%</span>
+    </div>
+    <div class="warroom-metric">
+      <span class="wm-label">SLIPPAGE GUARD:</span>
+      <span class="wm-value" style="color: var(--status-positive);">STRICT 2.5 BPS</span>
+    </div>
+  </div>
+
+  <!-- KEYBOARD SHORTCUTS HUD MODAL -->
+  <div class="kbd-hud-overlay" id="kbd-hud-overlay">
+    <div class="kbd-hud">
+      <div class="kbd-hud-header">
+        <span class="kbd-hud-title">⌨ POWER-USER KEYBOARD NAVIGATION</span>
+        <button class="kbd-hud-close" id="kbd-hud-close">✕</button>
+      </div>
+      <div class="kbd-row">
+        <span class="kbd-desc">Switch to 01 Acid Chartreuse</span>
+        <span class="kbd-key">1</span>
+      </div>
+      <div class="kbd-row">
+        <span class="kbd-desc">Switch to 02 Safety Orange</span>
+        <span class="kbd-key">2</span>
+      </div>
+      <div class="kbd-row">
+        <span class="kbd-desc">Switch to 03 Solar Amber</span>
+        <span class="kbd-key">3</span>
+      </div>
+      <div class="kbd-row">
+        <span class="kbd-desc">Switch to 04 Monolith Studio</span>
+        <span class="kbd-key">4</span>
+      </div>
+      <div class="kbd-row">
+        <span class="kbd-desc">Execute / Fill RFQ (Buy 100 Lots)</span>
+        <span class="kbd-key">Space</span>
+      </div>
+      <div class="kbd-row">
+        <span class="kbd-desc">Toggle Audio Micro-Pulses</span>
+        <span class="kbd-key">M</span>
+      </div>
+      <div class="kbd-row">
+        <span class="kbd-desc">Toggle Vol Shock Market Regime</span>
+        <span class="kbd-key">V</span>
+      </div>
+      <div class="kbd-row">
+        <span class="kbd-desc">Reset SABR Vol Parameters</span>
+        <span class="kbd-key">R</span>
+      </div>
+      <div class="kbd-row">
+        <span class="kbd-desc">Toggle This HUD Shortcut Modal</span>
+        <span class="kbd-key">H / ?</span>
+      </div>
+      <div class="kbd-row">
+        <span class="kbd-desc">Close Modal / Dismiss</span>
+        <span class="kbd-key">Esc</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- GLOBAL FOOTER -->
+  <footer class="hud-footer">
+    <div>CELNET // CHRONOS HIGH-FREQUENCY PLATFORM — SOVEREIGN QUANT ENGINE</div>
+    <div id="footer-clock">UTC 00:00:00.000</div>
+    <div>ALL SYSTEMS OPERATIONAL • ZERO LATENCY</div>
+  </footer>
+
+  <!-- =========================================================================
+       JAVASCRIPT: AUDIO SYNTH, MARKET PULSE, KEYBOARD & 3D VOL ENGINE
+       ========================================================================= -->
+  <script>
+    /* ══════════════════════════════════════════════════════════════════════════
+       MODULE 1: QUANT_AUDIO (WEB AUDIO API MICRO-SYNTHESIZER)
+       Zero-dependency institutional audio feedback
+       ══════════════════════════════════════════════════════════════════════════ */
+    const QUANT_AUDIO = (() => {
+      let ctx = null;
+      let muted = localStorage.getItem('chronos_muted') === 'true';
+
+      const ensureCtx = () => {
+        if (!ctx) {
+          ctx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (ctx.state === 'suspended') {
+          ctx.resume();
+        }
+        return ctx;
+      };
+
+      const initOnGesture = () => {
+        const handler = () => {
+          ensureCtx();
+          document.removeEventListener('click', handler);
+          document.removeEventListener('keydown', handler);
+        };
+        document.addEventListener('click', handler, { once: false });
+        document.addEventListener('keydown', handler, { once: false });
+      };
+      initOnGesture();
+
+      const createGain = (ac, gainVal, dest) => {
+        const g = ac.createGain();
+        g.gain.value = gainVal;
+        g.connect(dest);
+        return g;
+      };
+
+      const tick = (dir = 'up') => {
+        if (muted) return;
+        try {
+          const ac = ensureCtx();
+          const now = ac.currentTime;
+          const osc = ac.createOscillator();
+          osc.type = dir === 'up' ? 'sine' : 'triangle';
+          osc.frequency.value = dir === 'up' ? 980 : 760;
+          const g = createGain(ac, 0.035, ac.destination);
+          g.gain.setValueAtTime(0.035, now);
+          g.gain.exponentialRampToValueAtTime(0.0001, now + 0.012);
+          osc.connect(g);
+          osc.start(now);
+          osc.stop(now + 0.015);
+        } catch (e) {}
+      };
+
+      const sweep = () => {
+        if (muted) return;
+        try {
+          const ac = ensureCtx();
+          const now = ac.currentTime;
+          const bufferSize = ac.sampleRate * 0.04;
+          const buffer = ac.createBuffer(1, bufferSize, ac.sampleRate);
+          const data = buffer.getChannelData(0);
+          for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+          const src = ac.createBufferSource();
+          src.buffer = buffer;
+          const bp = ac.createBiquadFilter();
+          bp.type = 'bandpass';
+          bp.frequency.value = 420;
+          bp.Q.value = 6;
+          const g = createGain(ac, 0.05, ac.destination);
+          g.gain.setValueAtTime(0.05, now);
+          g.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
+          src.connect(bp);
+          bp.connect(g);
+          src.start(now);
+          src.stop(now + 0.05);
+        } catch (e) {}
+      };
+
+      const rfqChime = () => {
+        if (muted) return;
+        try {
+          const ac = ensureCtx();
+          const now = ac.currentTime;
+          [587.33, 880.00].forEach((freq) => {
+            const osc = ac.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.value = freq;
+            const g = createGain(ac, 0.08, ac.destination);
+            g.gain.setValueAtTime(0.08, now);
+            g.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+            osc.connect(g);
+            osc.start(now);
+            osc.stop(now + 0.20);
+          });
+        } catch (e) {}
+      };
+
+      const volShockAlert = () => {
+        if (muted) return;
+        try {
+          const ac = ensureCtx();
+          const now = ac.currentTime;
+          const osc = ac.createOscillator();
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(220, now);
+          osc.frequency.exponentialRampToValueAtTime(90, now + 0.28);
+          const g = createGain(ac, 0.06, ac.destination);
+          g.gain.setValueAtTime(0.06, now);
+          g.gain.linearRampToValueAtTime(0.0001, now + 0.28);
+          osc.connect(g);
+          osc.start(now);
+          osc.stop(now + 0.30);
+        } catch (e) {}
+      };
+
+      const toggleMute = () => {
+        muted = !muted;
+        localStorage.setItem('chronos_muted', String(muted));
+        syncMuteButton();
+        if (!muted) tick('up');
+        return muted;
+      };
+
+      const syncMuteButton = () => {
+        const btn = document.getElementById('mute-btn');
+        if (btn) {
+          btn.textContent = muted ? '🔇 MUTED' : '🔊 LIVE';
+          btn.classList.toggle('is-muted', muted);
+        }
+      };
+
+      return { tick, sweep, rfqChime, volShockAlert, toggleMute, syncMuteButton, get isMuted() { return muted; } };
+    })();
+
+    /* ══════════════════════════════════════════════════════════════════════════
+       MODULE 2: MARKET_PULSE_AND_ENTROPY (HIGH-FREQUENCY TICK SIMULATOR)
+       "Flash the delta, not the row"
+       ══════════════════════════════════════════════════════════════════════════ */
+    const MARKET_PULSE_AND_ENTROPY = (() => {
+      let regime = 'CALM';
+      let spot = 5284.50;
+      let tickerInterval = null;
+      const BASE_TICK_MS = 400;
+      const SHOCK_TICK_MS = 90;
+
+      const COUNTERPARTIES = [
+        'CITADEL', 'JUMP TRADING', 'VIRTU', 'OPTIVER', 'FLOW TRADERS',
+        'SUSQUEHANNA', 'IMC', 'TOWER RESEARCH', 'JANE STREET', 'DRW', 'WOLVERINE'
+      ];
+
+      const flashCell = (el, isUp) => {
+        if (!el) return;
+        const cls = isUp ? 'cell-flash-up' : 'cell-flash-down';
+        el.classList.add(cls);
+        setTimeout(() => el.classList.remove(cls), 280);
+      };
+
+      const drift = () => {
+        const mag = regime === 'CALM'
+          ? 0.25 + Math.random() * 1.00
+          : 0.50 + Math.random() * 2.75;
+        const dir = Math.random() < 0.5 ? -1 : 1;
+        spot += dir * mag;
+        spot += (5284.50 - spot) * 0.003; // soft anchor
+        spot = Math.round(spot * 100) / 100;
+        return spot;
+      };
+
+      const updateL2Ladder = (mid) => {
+        const asksContainer = document.getElementById('ob-asks');
+        const bidsContainer = document.getElementById('ob-bids');
+        if (!asksContainer || !bidsContainer) return;
+
+        const askRows = asksContainer.querySelectorAll('.ob-row');
+        const bidRows = bidsContainer.querySelectorAll('.ob-row');
+
+        // Asks top to bottom (4 levels)
+        for (let i = 0; i < askRows.length; i++) {
+          const step = (askRows.length - i) * 0.25;
+          const price = Math.round((mid + step) * 100) / 100;
+          const priceCell = askRows[i].querySelector('.price-ask');
+          const sizeCell = askRows[i].querySelector('.size');
+          if (priceCell) {
+            const oldP = parseFloat(priceCell.textContent.replace(',', ''));
+            priceCell.textContent = price.toLocaleString('en-US', { minimumFractionDigits: 2 });
+            if (price !== oldP) flashCell(priceCell, price > oldP);
+          }
+          if (sizeCell && Math.random() < 0.3) {
+            const newSz = Math.floor(40 + Math.random() * 90);
+            sizeCell.textContent = newSz;
+            flashCell(sizeCell, true);
+          }
+        }
+
+        // Bids top to bottom (4 levels)
+        for (let i = 0; i < bidRows.length; i++) {
+          const step = (i + 1) * 0.25;
+          const price = Math.round((mid - step) * 100) / 100;
+          const priceCell = bidRows[i].querySelector('.price-bid');
+          const sizeCell = bidRows[i].querySelector('.size');
+          if (priceCell) {
+            const oldP = parseFloat(priceCell.textContent.replace(',', ''));
+            priceCell.textContent = price.toLocaleString('en-US', { minimumFractionDigits: 2 });
+            if (price !== oldP) flashCell(priceCell, price > oldP);
+          }
+          if (sizeCell && Math.random() < 0.3) {
+            const newSz = Math.floor(40 + Math.random() * 90);
+            sizeCell.textContent = newSz;
+            flashCell(sizeCell, true);
+          }
+        }
+      };
+
+      const appendExecution = (mid) => {
+        const tape = document.getElementById('ts-tape');
+        if (!tape) return;
+
+        const now = new Date();
+        const timeStr = [
+          now.getHours().toString().padStart(2, '0'),
+          now.getMinutes().toString().padStart(2, '0'),
+          now.getSeconds().toString().padStart(2, '0')
+        ].join(':') + '.' + now.getMilliseconds().toString().padStart(3, '0').slice(0, 2);
+
+        const isBuy = Math.random() > 0.48;
+        const size = Math.floor(10 + Math.random() * 120);
+        const cpty = COUNTERPARTIES[Math.floor(Math.random() * COUNTERPARTIES.length)];
+        const execPrice = Math.round((mid + (isBuy ? 0.25 : -0.25)) * 100) / 100;
+
+        const row = document.createElement('div');
+        row.className = `ts-row ${isBuy ? 'ts-buy' : 'ts-sell'}`;
+        row.innerHTML = `
+          <span class="ts-time">${timeStr}</span>
+          <span class="ts-price">${execPrice.toFixed(2)}</span>
+          <span class="ts-size">${size}</span>
+          <span class="ts-side">${isBuy ? 'BUY' : 'SELL'}</span>
+          <span class="ts-cpty">${cpty}</span>
+        `;
+        tape.prepend(row);
+
+        while (tape.children.length > 30) {
+          tape.removeChild(tape.lastChild);
+        }
+      };
+
+      const onTick = () => {
+        const prev = spot;
+        const cur = drift();
+
+        // Update Spot display
+        const spotEl = document.getElementById('spot-price');
+        const deltaEl = document.getElementById('spot-delta');
+        if (spotEl) {
+          spotEl.textContent = cur.toLocaleString('en-US', { minimumFractionDigits: 2 });
+          flashCell(spotEl, cur >= prev);
+        }
+        if (deltaEl) {
+          const delta = cur - 5284.50;
+          const sign = delta >= 0 ? '+' : '';
+          deltaEl.textContent = `${sign}${delta.toFixed(2)}`;
+          deltaEl.style.color = delta >= 0 ? 'var(--status-positive)' : 'var(--status-negative)';
+        }
+
+        updateL2Ladder(cur);
+
+        // ~65% chance of trade execution
+        if (Math.random() < 0.65) {
+          appendExecution(cur);
+        }
+
+        QUANT_AUDIO.tick(cur >= prev ? 'up' : 'down');
+      };
+
+      const start = () => {
+        stop();
+        const interval = regime === 'CALM' ? BASE_TICK_MS : SHOCK_TICK_MS;
+        tickerInterval = setInterval(onTick, interval);
+      };
+
+      const stop = () => {
+        if (tickerInterval) clearInterval(tickerInterval);
+        tickerInterval = null;
+      };
+
+      const toggleRegime = () => {
+        regime = regime === 'CALM' ? 'VOL_SHOCK' : 'CALM';
+        const badge = document.getElementById('regime-badge');
+        const warroom = document.getElementById('warroom-bar');
+
+        if (badge) {
+          badge.dataset.regime = regime === 'CALM' ? 'calm' : 'vol-shock';
+          badge.textContent = regime === 'CALM' ? '● REGIME: CALM' : '⚠ VOL SHOCK [90ms]';
+        }
+        if (warroom) {
+          warroom.classList.toggle('open', regime === 'VOL_SHOCK');
+        }
+
+        if (regime === 'VOL_SHOCK') {
+          QUANT_AUDIO.volShockAlert();
+        } else {
+          QUANT_AUDIO.sweep();
+        }
+
+        start();
+        return regime;
+      };
+
+      return { start, stop, toggleRegime, get currentSpot() { return spot; } };
+    })();
+
+    /* ══════════════════════════════════════════════════════════════════════════
+       MODULE 3: THEMES & COLORWAY REGISTRATION
+       ══════════════════════════════════════════════════════════════════════════ */
+    const themePalettes = {
+      chartreuse: {
+        name: "01 ACID CHARTREUSE",
+        wire1: "rgba(198, 255, 0, 0.65)",
+        wire1Sub: "rgba(198, 255, 0, 0.22)",
+        wire2: "rgba(255, 214, 0, 0.50)",
+        wire2Sub: "rgba(255, 214, 0, 0.16)",
+        facetHigh: "rgba(198, 255, 0,",
+        facetMid: "rgba(255, 214, 0,",
+        facetLow: "rgba(255, 59, 0,",
+        atm: "#c6ff00",
+        smile: "#c6ff00",
+        quote: "#ffd600",
+        fog: "#0b0c0e",
+        accentHex: "#c6ff00",
+        voidHex: "#0b0c0e",
+        surfHex: "#17181c",
+        riskHex: "#ff3b00"
+      },
+      orange: {
+        name: "02 SAFETY ORANGE",
+        wire1: "rgba(255, 85, 0, 0.70)",
+        wire1Sub: "rgba(255, 85, 0, 0.24)",
+        wire2: "rgba(226, 217, 200, 0.50)",
+        wire2Sub: "rgba(226, 217, 200, 0.16)",
+        facetHigh: "rgba(255, 85, 0,",
+        facetMid: "rgba(245, 158, 11,",
+        facetLow: "rgba(74, 222, 128,",
+        atm: "#ff5500",
+        smile: "#ff5500",
+        quote: "#fafaf9",
+        fog: "#100f0e",
+        accentHex: "#ff5500",
+        voidHex: "#100f0e",
+        surfHex: "#1f1d1a",
+        riskHex: "#ef4444"
+      },
+      amber: {
+        name: "03 SOLAR AMBER",
+        wire1: "rgba(245, 158, 11, 0.70)",
+        wire1Sub: "rgba(245, 158, 11, 0.24)",
+        wire2: "rgba(254, 240, 138, 0.45)",
+        wire2Sub: "rgba(254, 240, 138, 0.14)",
+        facetHigh: "rgba(245, 158, 11,",
+        facetMid: "rgba(251, 191, 36,",
+        facetLow: "rgba(16, 185, 129,",
+        atm: "#f59e0b",
+        smile: "#f59e0b",
+        quote: "#fef08a",
+        fog: "#0e0d0b",
+        accentHex: "#f59e0b",
+        voidHex: "#0e0d0b",
+        surfHex: "#1c1a16",
+        riskHex: "#e11d48"
+      },
+      monolith: {
+        name: "04 MONOLITH STUDIO",
+        wire1: "rgba(255, 255, 255, 0.75)",
+        wire1Sub: "rgba(255, 255, 255, 0.25)",
+        wire2: "rgba(161, 161, 170, 0.45)",
+        wire2Sub: "rgba(161, 161, 170, 0.15)",
+        facetHigh: "rgba(255, 255, 255,",
+        facetMid: "rgba(161, 161, 170,",
+        facetLow: "rgba(255, 0, 60,",
+        atm: "#ffffff",
+        smile: "#ffffff",
+        quote: "#ff003c",
+        fog: "#050505",
+        accentHex: "#ffffff",
+        voidHex: "#050505",
+        surfHex: "#151515",
+        riskHex: "#ff003c"
+      }
+    };
+
+    function setTheme(themeKey) {
+      if (!themePalettes[themeKey]) return;
+      document.documentElement.setAttribute('data-theme', themeKey);
+
+      document.querySelectorAll('.theme-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-theme') === themeKey);
+      });
+
+      // Update Swatches view
+      const pal = themePalettes[themeKey];
+      const tag = document.getElementById('active-theme-tag');
+      if (tag) tag.textContent = pal.name;
+      const sVoid = document.getElementById('sw-void0');
+      const sSurf = document.getElementById('sw-surf1');
+      const sAcc = document.getElementById('sw-accent');
+      const sRisk = document.getElementById('sw-risk');
+      if (sVoid) sVoid.textContent = pal.voidHex;
+      if (sSurf) sSurf.textContent = pal.surfHex;
+      if (sAcc) sAcc.textContent = pal.accentHex;
+      if (sRisk) sRisk.textContent = pal.riskHex;
+
+      QUANT_AUDIO.sweep();
+      render3dVolSurface();
+      render2dSmile();
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════════
+       MODULE 4: POWER-USER KEYBOARD NAVIGATION & SHORTCUT HUD
+       ══════════════════════════════════════════════════════════════════════════ */
+    const kbdOverlay = document.getElementById('kbd-hud-overlay');
+    const hudToggleBtn = document.getElementById('hud-toggle-btn');
+    const hudCloseBtn = document.getElementById('kbd-hud-close');
+
+    const toggleHudModal = () => {
+      if (!kbdOverlay) return;
+      const isOpen = kbdOverlay.classList.toggle('visible');
+      if (isOpen) QUANT_AUDIO.sweep();
+    };
+
+    const closeHudModal = () => {
+      if (kbdOverlay && kbdOverlay.classList.contains('visible')) {
+        kbdOverlay.classList.remove('visible');
+      }
+    };
+
+    if (hudToggleBtn) hudToggleBtn.addEventListener('click', toggleHudModal);
+    if (hudCloseBtn) hudCloseBtn.addEventListener('click', closeHudModal);
+    if (kbdOverlay) {
+      kbdOverlay.addEventListener('click', (e) => {
+        if (e.target === kbdOverlay) closeHudModal();
+      });
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+      if (e.key === '1') setTheme('chartreuse');
+      else if (e.key === '2') setTheme('orange');
+      else if (e.key === '3') setTheme('amber');
+      else if (e.key === '4') setTheme('monolith');
+      else if (e.code === 'Space') {
+        e.preventDefault();
+        triggerRfqExecution();
+      }
+      else if (e.key === 'm' || e.key === 'M') {
+        QUANT_AUDIO.toggleMute();
+      }
+      else if (e.key === 'v' || e.key === 'V') {
+        MARKET_PULSE_AND_ENTROPY.toggleRegime();
+      }
+      else if (e.key === 'r' || e.key === 'R') {
+        resetPricingParams();
+      }
+      else if (e.key === 'h' || e.key === 'H' || e.key === '?') {
+        toggleHudModal();
+      }
+      else if (e.key === 'Escape') {
+        closeHudModal();
+      }
+    });
+
+    /* ══════════════════════════════════════════════════════════════════════════
+       MODULE 5: 3D VOLATILITY SURFACE WITH ATMOSPHERIC DEPTH FOG
+       ══════════════════════════════════════════════════════════════════════════ */
+    let camYaw = -38;
+    let camPitch = 28;
+
+    function evalSabrVol(F, K, T) {
+      const alpha = parseFloat(document.getElementById('slider-alpha').value);
+      const beta = 0.5;
+      const rho = parseFloat(document.getElementById('slider-rho').value);
+      const nu = parseFloat(document.getElementById('slider-nu').value);
+
+      if (Math.abs(F - K) < 1e-4) {
+        const FK = Math.pow(F, 1.0 - beta);
+        return (alpha / FK) * (1.0 + (((1.0 - beta)**2 / 24.0) * (alpha**2 / (FK**2)) + 0.25 * rho * beta * nu * alpha / FK + (2.0 - 3.0 * rho**2) / 24.0 * nu**2) * T);
+      }
+      const logFK = Math.log(F / K);
+      const FKbeta = Math.pow(F * K, (1.0 - beta) / 2.0);
+      const z = (nu / alpha) * FKbeta * logFK;
+      const xz = Math.log((Math.sqrt(1.0 - 2.0 * rho * z + z * z) + z - rho) / (1.0 - rho));
+      const term1 = alpha / (FKbeta * (1.0 + ((1.0 - beta)**2 / 24.0) * logFK**2 + ((1.0 - beta)**4 / 1920.0) * logFK**4));
+      const term2 = Math.abs(z) < 1e-5 ? 1.0 : (z / xz);
+      const term3 = 1.0 + (((1.0 - beta)**2 / 24.0) * (alpha**2 / (FKbeta**2)) + 0.25 * rho * beta * nu * alpha / FKbeta + (2.0 - 3.0 * rho**2) / 24.0 * nu**2) * T;
+      return Math.max(0.04, term1 * term2 * term3);
+    }
+
+    function project3d(x, y, z, cx, cy) {
+      const radYaw = (camYaw * Math.PI) / 180;
+      const radPitch = (camPitch * Math.PI) / 180;
+
+      const x1 = x * Math.cos(radYaw) - z * Math.sin(radYaw);
+      const z1 = x * Math.sin(radYaw) + z * Math.cos(radYaw);
+
+      const y2 = y * Math.cos(radPitch) - z1 * Math.sin(radPitch);
+      const z2 = y * Math.sin(radPitch) + z1 * Math.cos(radPitch);
+
+      return { x: cx + x1, y: cy - y2, z: z2 };
+    }
+
+    function render3dVolSurface() {
+      const canvas = document.getElementById('volSurfaceCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      const cx = w / 2;
+      const cy = h / 2 + 10;
+
+      const curThemeKey = document.documentElement.getAttribute('data-theme') || 'chartreuse';
+      const theme = themePalettes[curThemeKey] || themePalettes.chartreuse;
+
+      ctx.fillStyle = theme.fog;
+      ctx.fillRect(0, 0, w, h);
+
+      const nK = 22;
+      const nT = 16;
+      const grid = [];
+      const F = parseFloat(document.getElementById('slider-spot').value);
+
+      for (let j = 0; j <= nT; j++) {
+        grid[j] = [];
+        const T = 0.08 + (j / nT) * 1.92;
+        for (let i = 0; i <= nK; i++) {
+          const K_rel = 0.75 + (i / nK) * 0.50; // 75% to 125% moneyness
+          const K = F * K_rel;
+          const vol = evalSabrVol(1.0, K_rel, T); // Normalized SABR pricing
+
+          const scaleX = 520;
+          const scaleZ = 420;
+          const scaleY = 460;
+
+          const wx = (i / nK - 0.5) * scaleX;
+          const wz = (j / nT - 0.5) * scaleZ;
+          const wy = (vol - 0.28) * scaleY;
+
+          const p = project3d(wx, wy, wz, cx, cy);
+          grid[j][i] = { x: p.x, y: p.y, z: p.z, vol: vol, K: K, T: T };
+        }
+      }
+
+      // Draw Facets with Atmospheric Depth-Fog
+      for (let j = 0; j < nT; j++) {
+        for (let i = 0; i < nK; i++) {
+          const p1 = grid[j][i];
+          const p2 = grid[j][i + 1];
+          const p3 = grid[j + 1][i + 1];
+          const p4 = grid[j + 1][i];
+
+          const avgVol = (p1.vol + p2.vol + p3.vol + p4.vol) / 4;
+          const avgZ = (p1.z + p2.z + p3.z + p4.z) / 4;
+
+          // Depth fog attenuation
+          const depthFactor = Math.max(0.18, Math.min(0.95, 0.95 - ((avgZ + 180) / 450) * 0.65));
+          const alpha = (0.28 * depthFactor).toFixed(3);
+
+          ctx.beginPath();
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.lineTo(p3.x, p3.y);
+          ctx.lineTo(p4.x, p4.y);
+          ctx.closePath();
+
+          if (avgVol > 0.28) {
+            ctx.fillStyle = theme.facetHigh + alpha + ')';
+          } else if (avgVol > 0.20) {
+            ctx.fillStyle = theme.facetMid + alpha + ')';
+          } else {
+            ctx.fillStyle = theme.facetLow + alpha + ')';
+          }
+          ctx.fill();
+        }
+      }
+
+      // Draw Transverse Wireframe Lines
+      ctx.lineWidth = 1.0;
+      for (let j = 0; j <= nT; j++) {
+        ctx.beginPath();
+        for (let i = 0; i <= nK; i++) {
+          const pt = grid[j][i];
+          if (i === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
+        }
+        ctx.strokeStyle = j % 4 === 0 ? theme.wire1 : theme.wire1Sub;
+        ctx.stroke();
+      }
+
+      // Draw Longitudinal Wireframe Lines
+      for (let i = 0; i <= nK; i++) {
+        ctx.beginPath();
+        for (let j = 0; j <= nT; j++) {
+          const pt = grid[j][i];
+          if (j === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
+        }
+        ctx.strokeStyle = i % 4 === 0 ? theme.wire2 : theme.wire2Sub;
+        ctx.stroke();
+      }
+
+      // Highlight ATM Reference Spine
+      ctx.lineWidth = 2.8;
+      ctx.strokeStyle = theme.atm;
+      ctx.shadowColor = theme.atm;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      const atmIndex = Math.floor(nK / 2);
+      for (let j = 0; j <= nT; j++) {
+        const pt = grid[j][atmIndex];
+        if (j === 0) ctx.moveTo(pt.x, pt.y);
+        else ctx.lineTo(pt.x, pt.y);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Store grid for interactive hover
+      canvas._sabrGrid = grid;
+    }
+
+    // 3D Canvas Hover Cursor with Floating Coordinate Pill
+    const volCanvas = document.getElementById('volSurfaceCanvas');
+    const volPill = document.getElementById('vol-pill');
+    if (volCanvas && volPill) {
+      volCanvas.addEventListener('mousemove', (e) => {
+        const rect = volCanvas.getBoundingClientRect();
+        const mx = (e.clientX - rect.left) * (volCanvas.width / rect.width);
+        const my = (e.clientY - rect.top) * (volCanvas.height / rect.height);
+        const grid = volCanvas._sabrGrid;
+        if (!grid) return;
+
+        let closest = null;
+        let minDist = 1e9;
+
+        for (let j = 0; j < grid.length; j++) {
+          for (let i = 0; i < grid[j].length; i++) {
+            const pt = grid[j][i];
+            const d = (pt.x - mx)**2 + (pt.y - my)**2;
+            if (d < minDist) {
+              minDist = d;
+              closest = pt;
+            }
+          }
+        }
+
+        if (closest && minDist < 1600) {
+          volPill.style.left = `${(closest.x / volCanvas.width) * 100}%`;
+          volPill.style.top = `${(closest.y / volCanvas.height) * 100}%`;
+          volPill.textContent = `K: ${Math.round(closest.K).toLocaleString()} | T: ${closest.T.toFixed(2)}y | σ: ${(closest.vol * 100).toFixed(2)}%`;
+          volPill.classList.add('visible');
+        } else {
+          volPill.classList.remove('visible');
+        }
+      });
+
+      volCanvas.addEventListener('mouseleave', () => {
+        volPill.classList.remove('visible');
+      });
+    }
+
+    // 3D Camera Controls
+    document.getElementById('btn-rot-left')?.addEventListener('click', () => { camYaw -= 15; render3dVolSurface(); });
+    document.getElementById('btn-rot-right')?.addEventListener('click', () => { camYaw += 15; render3dVolSurface(); });
+    document.getElementById('btn-pitch-up')?.addEventListener('click', () => { camPitch = Math.min(80, camPitch + 8); render3dVolSurface(); });
+    document.getElementById('btn-pitch-down')?.addEventListener('click', () => { camPitch = Math.max(5, camPitch - 8); render3dVolSurface(); });
+    document.getElementById('btn-cam-reset')?.addEventListener('click', () => { camYaw = -38; camPitch = 28; render3dVolSurface(); });
+
+    /* ══════════════════════════════════════════════════════════════════════════
+       MODULE 6: 2D SMILE SLICER CANVAS
+       ══════════════════════════════════════════════════════════════════════════ */
+    function render2dSmile() {
+      const canvas = document.getElementById('smileCanvas2d');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+
+      ctx.clearRect(0, 0, w, h);
+
+      const curThemeKey = document.documentElement.getAttribute('data-theme') || 'chartreuse';
+      const theme = themePalettes[curThemeKey] || themePalettes.chartreuse;
+
+      const F = parseFloat(document.getElementById('slider-spot').value);
+      const T = parseFloat(document.getElementById('slider-tenor').value);
+
+      // Y-axis grid and vol percentage labels (15% to 40%)
+      ctx.font = '10px "JetBrains Mono", monospace';
+      ctx.textAlign = 'right';
+      const volLevels = [0.15, 0.20, 0.25, 0.30, 0.35, 0.40];
+      volLevels.forEach(vl => {
+        const y = (h - 35) - ((vl - 0.15) / 0.25) * (h - 65);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(55, y); ctx.lineTo(w - 20, y); ctx.stroke();
+        ctx.fillStyle = '#71717a';
+        ctx.fillText((vl * 100).toFixed(0) + '%', 48, y + 3);
+      });
+
+      // X-axis grid and Strike labels (4,500 to 6,100)
+      ctx.textAlign = 'center';
+      const strikeSteps = [0.85, 0.925, 1.00, 1.075, 1.15];
+      strikeSteps.forEach(st => {
+        const x = 55 + ((st - 0.85) / 0.30) * (w - 85);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x, 20); ctx.lineTo(x, h - 35); ctx.stroke();
+        ctx.fillStyle = st === 1.00 ? 'var(--accent-primary)' : '#71717a';
+        const kVal = Math.round(F * st);
+        ctx.fillText(st === 1.00 ? `${kVal} (ATM)` : kVal.toLocaleString(), x, h - 18);
+      });
+
+      // 2D Smile Curve
+      ctx.strokeStyle = theme.smile;
+      ctx.lineWidth = 2.6;
+      ctx.shadowColor = theme.smile;
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      const nPts = 80;
+
+      for (let i = 0; i <= nPts; i++) {
+        const K_rel = 0.85 + (i / nPts) * 0.30;
+        const vol = evalSabrVol(1.0, K_rel, T);
+        const px = 55 + (i / nPts) * (w - 85);
+        const py = (h - 35) - ((vol - 0.15) / 0.25) * (h - 65);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Market Quotes Scatter Nodes
+      const quotes = [
+        { kRel: 0.88, label: '10D PUT' },
+        { kRel: 0.94, label: '25D PUT' },
+        { kRel: 1.00, label: 'ATM 50D' },
+        { kRel: 1.06, label: '25D CALL' },
+        { kRel: 1.12, label: '10D CALL' }
+      ];
+
+      quotes.forEach((q) => {
+        const vol = evalSabrVol(1.0, q.kRel, T);
+        const px = 55 + ((q.kRel - 0.85) / 0.30) * (w - 85);
+        const py = (h - 35) - ((vol - 0.15) / 0.25) * (h - 65);
+
+        // Glowing outer halo
+        ctx.fillStyle = theme.quote;
+        ctx.shadowColor = theme.quote;
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.arc(px, py, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // Label pill
+        ctx.fillStyle = '#f4f4f5';
+        ctx.font = '700 9px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(q.label, px, py - 10);
+      });
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════════
+       MODULE 7: RFQ EXECUTION & LAST-LOOK TIMER
+       ══════════════════════════════════════════════════════════════════════════ */
+    let lastLookSec = 8.4;
+    let rfqInterval = setInterval(() => {
+      lastLookSec -= 0.1;
+      if (lastLookSec <= 0) lastLookSec = 10.0;
+      const timerEl = document.getElementById('last-look-timer');
+      const fillEl = document.getElementById('last-look-fill');
+      if (timerEl) timerEl.textContent = lastLookSec.toFixed(1) + 's';
+      if (fillEl) fillEl.style.width = ((lastLookSec / 10.0) * 100).toFixed(0) + '%';
+    }, 100);
+
+    function triggerRfqExecution() {
+      QUANT_AUDIO.rfqChime();
+      const btn = document.getElementById('rfq-buy-btn');
+      if (btn) {
+        btn.textContent = '✓ EXECUTED 100L';
+        btn.style.filter = 'brightness(1.4)';
+        setTimeout(() => {
+          btn.textContent = 'BUY 100 LOTS';
+          btn.style.filter = 'none';
+        }, 1200);
+      }
+    }
+
+    document.getElementById('rfq-buy-btn')?.addEventListener('click', triggerRfqExecution);
+    document.getElementById('rfq-sell-btn')?.addEventListener('click', () => {
+      QUANT_AUDIO.rfqChime();
+      const btn = document.getElementById('rfq-sell-btn');
+      if (btn) {
+        btn.textContent = '✓ FILLED 100L';
+        setTimeout(() => { btn.textContent = 'SELL 100 LOTS'; }, 1200);
+      }
+    });
+
+    /* ══════════════════════════════════════════════════════════════════════════
+       MODULE 8: PRICING SLIDERS & CALIBRATION
+       ══════════════════════════════════════════════════════════════════════════ */
+    function syncPricingInputs() {
+      const spot = document.getElementById('slider-spot').value;
+      const strike = document.getElementById('slider-strike').value;
+      const tenor = document.getElementById('slider-tenor').value;
+      const alpha = document.getElementById('slider-alpha').value;
+      const rho = document.getElementById('slider-rho').value;
+      const nu = document.getElementById('slider-nu').value;
+
+      document.getElementById('badge-spot').textContent = parseFloat(spot).toLocaleString('en-US', { minimumFractionDigits: 2 });
+      document.getElementById('badge-strike').textContent = parseFloat(strike).toLocaleString('en-US', { minimumFractionDigits: 2 });
+      document.getElementById('badge-tenor').textContent = parseFloat(tenor).toFixed(2) + 'y';
+      document.getElementById('badge-alpha').textContent = parseFloat(alpha).toFixed(3);
+      document.getElementById('badge-rho').textContent = parseFloat(rho).toFixed(3);
+      document.getElementById('badge-nu').textContent = parseFloat(nu).toFixed(3);
+
+      render3dVolSurface();
+      render2dSmile();
+    }
+
+    ['slider-spot', 'slider-strike', 'slider-tenor', 'slider-alpha', 'slider-rho', 'slider-nu'].forEach((id) => {
+      document.getElementById(id)?.addEventListener('input', syncPricingInputs);
+    });
+
+    function resetPricingParams() {
+      document.getElementById('slider-spot').value = 5285;
+      document.getElementById('slider-strike').value = 5300;
+      document.getElementById('slider-tenor').value = 0.25;
+      document.getElementById('slider-alpha').value = 0.32;
+      document.getElementById('slider-rho').value = -0.45;
+      document.getElementById('slider-nu').value = 0.65;
+      syncPricingInputs();
+      QUANT_AUDIO.sweep();
+    }
+    document.getElementById('btn-reset')?.addEventListener('click', resetPricingParams);
+    document.getElementById('btn-recal')?.addEventListener('click', () => {
+      QUANT_AUDIO.sweep();
+      syncPricingInputs();
+    });
+
+    /* ══════════════════════════════════════════════════════════════════════════
+       MODULE 9: TAB SWITCHING & RING BUFFER BENCHMARK
+       ══════════════════════════════════════════════════════════════════════════ */
+    document.querySelectorAll('.nav-tab').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-view').forEach(v => v.classList.remove('active'));
+        tab.classList.add('active');
+        const tabId = tab.getAttribute('data-tab');
+        document.getElementById(`view-${tabId}`)?.classList.add('active');
+        QUANT_AUDIO.tick('up');
+
+        if (tabId === 'vol-surface') render3dVolSurface();
+        else if (tabId === 'cockpit') render2dSmile();
+      });
+    });
+
+    // Ring Buffer burst simulation
+    let burstAnim = null;
+    document.getElementById('btn-burst')?.addEventListener('click', () => {
+      QUANT_AUDIO.sweep();
+      let activeIndex = 0;
+      let count = 0;
+      clearInterval(burstAnim);
+      burstAnim = setInterval(() => {
+        document.querySelectorAll('.ring-slot').forEach(el => el.classList.remove('writer', 'active'));
+        const wSlot = document.getElementById('slot' + (activeIndex % 6));
+        const rSlot = document.getElementById('slot' + ((activeIndex + 1) % 6));
+        if (wSlot) wSlot.classList.add('writer');
+        if (rSlot) rSlot.classList.add('active');
+        QUANT_AUDIO.tick('up');
+        activeIndex++;
+        count++;
+        if (count > 24) clearInterval(burstAnim);
+      }, 60);
+    });
+
+    // Theme Switcher Buttons
+    document.querySelectorAll('.theme-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        setTheme(btn.getAttribute('data-theme'));
+      });
+    });
+
+    // Regime Badge Click
+    document.getElementById('regime-badge')?.addEventListener('click', () => {
+      MARKET_PULSE_AND_ENTROPY.toggleRegime();
+    });
+
+    // Mute Button Click
+    document.getElementById('mute-btn')?.addEventListener('click', () => {
+      QUANT_AUDIO.toggleMute();
+    });
+
+    // High Precision Clock
+    setInterval(() => {
+      const now = new Date();
+      const clockEl = document.getElementById('footer-clock');
+      if (clockEl) {
+        clockEl.textContent = 'UTC ' + now.toISOString().slice(11, 23);
+      }
+    }, 40);
+
+    // Initial Engine Startup
+    window.addEventListener('load', () => {
+      QUANT_AUDIO.syncMuteButton();
+      MARKET_PULSE_AND_ENTROPY.start();
+      render3dVolSurface();
+      render2dSmile();
+    });
+  </script>
+</body>
+</html>

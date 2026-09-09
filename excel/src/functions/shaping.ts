@@ -100,6 +100,15 @@ import type {
   XvaResult,
   XvaSurvivalCurve,
   XvaTrade,
+  MarginCalculationResponse,
+  PreTradeMarginResponse,
+  AlgoOrderResponse,
+  ListAlgoOrdersResponse,
+  ClusterTopologyResponse,
+  UpgradeStatusResponse,
+  ExportCdmResponse,
+  AttestationResponse,
+  LicenseCapabilityResponse,
 } from "../contract/contract";
 import type {
   AdditiveRisk,
@@ -5390,5 +5399,174 @@ export function formatInstrumentsSpill(defs: readonly InstrumentDef[]): SpillMat
   } else {
     rows.push([`${defs.length} instrument${defs.length === 1 ? "" : "s"}`]);
   }
+  return rectangular(rows);
+}
+
+/**
+ * Format CELNET.MARGIN as a clearing initial margin breakdown spill:
+ * Total Initial Margin (IM), Expected Shortfall (ES), VaR, and Stress Add-ons.
+ */
+export function formatMarginSpill(resp: MarginCalculationResponse): SpillMatrix {
+  const rows: SpillMatrix = [
+    ["Metric", "Value", "Currency"],
+    ["Total Initial Margin", resp.totalInitialMargin, resp.currency],
+    ["Expected Shortfall (ES)", resp.expectedShortfall, resp.currency],
+    ["Value-at-Risk (VaR)", resp.valueAtRisk, resp.currency],
+    ["Stress / Liquidity Add-on", resp.stressComponent, resp.currency],
+    ["Portfolio ID", resp.portfolioId, ""],
+    [`Calculated Epoch Nanos`, Number(resp.calculatedEpochNanos), ""],
+  ];
+  return rectangular(rows);
+}
+
+/**
+ * Format CELNET.PRETRADEMARGIN as a pre-trade initial margin simulation spill:
+ * approval outcome, IM before/after, delta margin impact, and collateral headroom.
+ */
+export function formatPreTradeMarginSpill(resp: PreTradeMarginResponse): SpillMatrix {
+  const rows: SpillMatrix = [
+    ["Field", "Value"],
+    ["Pre-Trade Outcome", resp.outcome],
+    ["Initial Margin Before", resp.initialMarginBefore],
+    ["Initial Margin After", resp.initialMarginAfter],
+    ["Delta Margin Impact", resp.deltaMargin],
+    ["Collateral Headroom", resp.collateralHeadroom],
+    ["Decision Reason", resp.reason],
+    ["Portfolio ID", resp.portfolioId],
+  ];
+  return rectangular(rows);
+}
+
+/**
+ * Format CELNET.ALGO as an algorithmic order execution breakdown spill:
+ * parent order state, TWAP/optimal liquidation trajectory, and child slices.
+ */
+export function formatAlgoOrderSpill(resp: AlgoOrderResponse): SpillMatrix {
+  const rows: SpillMatrix = [
+    ["Order ID", "Symbol", "Side", "Total Qty", "Executed Qty", "Arrival Px", "Avg Exec Px", "IS (bps)", "Status"],
+    [
+      resp.parentOrderId,
+      resp.symbol,
+      resp.isBuy ? "BUY" : "SELL",
+      resp.totalQuantity,
+      resp.executedQuantity,
+      resp.arrivalPrice,
+      resp.avgExecPrice,
+      Number(resp.implementationShortfallBps.toFixed(2)),
+      resp.status,
+    ],
+    ["Slice #", "Offset (s)", "Target Qty", "Filled Qty", "Fill Px", "Status"],
+  ];
+  for (const s of resp.slices) {
+    rows.push([
+      s.sliceIndex,
+      s.scheduledOffsetSeconds,
+      s.targetQuantity,
+      s.filledQuantity,
+      s.avgFillPrice,
+      s.status,
+    ]);
+  }
+  return rectangular(rows);
+}
+
+/**
+ * Format CELNET.ALGOORDERS as an algorithmic orders table.
+ */
+export function formatAlgoOrdersListSpill(resp: ListAlgoOrdersResponse): SpillMatrix {
+  const rows: SpillMatrix = [
+    ["Parent Order ID", "Symbol", "Side", "Total Qty", "Executed Qty", "Avg Px", "IS (bps)", "Status"],
+  ];
+  for (const o of resp.orders) {
+    rows.push([
+      o.parentOrderId,
+      o.symbol,
+      o.isBuy ? "BUY" : "SELL",
+      o.totalQuantity,
+      o.executedQuantity,
+      o.avgExecPrice,
+      Number(o.implementationShortfallBps.toFixed(2)),
+      o.status,
+    ]);
+  }
+  if (resp.orders.length === 0) {
+    rows.push(["(no active algo orders)", "", "", "", "", "", "", ""]);
+  }
+  return rectangular(rows);
+}
+
+/**
+ * Format CELNET.CLUSTER as a cluster topology and consensus health spill.
+ */
+export function formatClusterTopologySpill(resp: ClusterTopologyResponse): SpillMatrix {
+  const rows: SpillMatrix = [
+    ["Cluster ID", resp.clusterId],
+    ["Leader ID", resp.leaderId],
+    ["Active Generation", Number(resp.activeGeneration)],
+    ["Joint Consensus Active", resp.jointConsensusActive ? "YES" : "NO"],
+    ["Node ID", "Endpoint", "Status", "In-Flight Trades"],
+  ];
+  for (const m of resp.members) {
+    rows.push([m.nodeId, m.endpoint, m.status, Number(m.activeInFlightTrades)]);
+  }
+  return rectangular(rows);
+}
+
+/**
+ * Format CELNET.UPGRADESTATUS as a zero-downtime hot upgrade and twin validation report.
+ */
+export function formatUpgradeStatusSpill(resp: UpgradeStatusResponse): SpillMatrix {
+  const rows: SpillMatrix = [
+    ["Metric", "Value"],
+    ["Active Generation", Number(resp.activeGeneration)],
+    ["Current Version", resp.currentVersion],
+    ["Shadow Twin Version", resp.shadowVersion],
+    ["Twin Bit-Exact Passed", resp.twinComparisonPassed ? "PASS (0 ULP)" : "FAIL"],
+    ["Max ULP Divergence", Number(resp.maxUlpDivergence)],
+    ["Evaluated Trades Count", Number(resp.evaluatedTradesCount)],
+    ["Cutover Status", resp.cutoverStatus],
+  ];
+  return rectangular(rows);
+}
+
+/**
+ * Format CELNET.CDM as an ISDA CDM 2026 digital trade event spill.
+ */
+export function formatCdmSpill(resp: ExportCdmResponse): SpillMatrix {
+  const rows: SpillMatrix = [
+    ["Property", "Value"],
+    ["Execution ID", Number(resp.executionId)],
+    ["Unique Trade Identifier (UTI)", resp.uti],
+    ["CDM Event Type", resp.cdmEventType],
+    ["ISDA CDM 2026 JSON Payload", resp.cdmJson],
+  ];
+  return rectangular(rows);
+}
+
+/**
+ * Format CELNET.ATTESTATION as a hardware TPM 2.0 PCR attestation quote verification spill.
+ */
+export function formatAttestationSpill(resp: AttestationResponse): SpillMatrix {
+  const rows: SpillMatrix = [
+    ["Status", resp.valid ? "VALID" : "INVALID"],
+    ["Hardware Fingerprint", resp.hardwareFingerprint],
+    ["Status Message", resp.statusMessage],
+    ["Attestation Timestamp", Number(resp.attestationTimestampNanos)],
+  ];
+  return rectangular(rows);
+}
+
+/**
+ * Format CELNET.LICENSE as a dynamic capability token license inspection spill.
+ */
+export function formatLicenseCapabilitiesSpill(resp: LicenseCapabilityResponse): SpillMatrix {
+  const rows: SpillMatrix = [
+    ["Property", "Value"],
+    ["License Valid", resp.valid ? "YES" : "NO"],
+    ["License Subject", resp.subject],
+    ["License Tier", resp.tier],
+    ["Active Capabilities", resp.activeCapabilities.join(", ")],
+    ["Expires (Epoch Secs)", Number(resp.expiryEpochSecs)],
+  ];
   return rectangular(rows);
 }

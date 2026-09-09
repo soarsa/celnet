@@ -49,7 +49,7 @@ pub enum ExecStyle {
 }
 
 /// A terminal exit action — the leaf a resolved policy path lands on
-/// (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §5.3).
+/// (`docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §5.3).
 ///
 /// The engine always internalises before it externalises (the internalisation-ratio
 /// literature, §3.1): `Warehouse`/`Skew` cost nothing, `CrossInternal` nets at the

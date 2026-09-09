@@ -247,10 +247,17 @@ impl PricingEngine {
             instrument::Product::ListedFutureOption(_) => {
                 CrossAssetListedFutureEngine.price(&resolved, &ctx)
             }
-            other => Err(PriceError::UnsupportedModel {
-                model: "DEFAULT",
-                product: product_name(other),
-            }),
+            // Linear FX-specific contracts are not cross-asset options
+            instrument::Product::FxForward(_)
+            | instrument::Product::FxSwap(_)
+            | instrument::Product::Ndf(_) => Err(PriceError::Domain(
+                "FX linear forward/swap/NDF is not supported on cross-asset underlyings",
+            )),
+            // Cross-asset exotics: route directly into the product engine registry.
+            // celnet-exotics was engineered with generalized Carry and ExoticInputs,
+            // enabling barrier, digital, touch, Asian, lookback, cliquet, and American
+            // options on equity, commodity, and crypto underlyings.
+            exotic => engines::dispatch(exotic, &ctx),
         }
     }
 
@@ -624,5 +631,121 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Cross-asset exotics: equity barrier, commodity Asian, crypto digital, and
+    /// equity American options route to the product engines with generalized
+    /// cost-of-carry and price successfully without UnsupportedModel errors.
+    #[test]
+    fn cross_asset_exotics_price_successfully() {
+        let conv = conv();
+
+        // 1. Equity Barrier Option (Single Barrier Up-and-Out Call on AAPL)
+        let eq_market = ca_market(150.0, 0.25, 0.05, 0.02);
+        let eq_barrier = Instrument {
+            underlying: Some(celnet_proto::Underlying::equity(EquityRef::new(
+                Symbol::new("AAPL", "XNAS"),
+                "USD",
+            ))),
+            expiry_years: 1.0,
+            side: Side::Buy as i32,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(Product::SingleBarrier(celnet_proto::SingleBarrier {
+                vanilla: Some(Vanilla {
+                    option_type: celnet_proto::OptionType::Call as i32,
+                    strike: Some(StrikeOrDelta {
+                        spec: Some(strike_or_delta::Spec::Strike(150.0)),
+                    }),
+                }),
+                kind: celnet_proto::BarrierKind::KnockOut as i32,
+                side: celnet_proto::BarrierSide::Up as i32,
+                barrier: 180.0,
+                rebate: 0.0,
+                monitoring: celnet_proto::MonitoringStyle::Continuous as i32,
+            })),
+            ..Default::default()
+        };
+        let eq_res = PricingEngine::price(&eq_barrier, &eq_market, &conv)
+            .expect("equity barrier prices successfully");
+        assert!(eq_res.greeks.price > 0.0, "price must be positive");
+        assert!(eq_res.greeks.price.is_finite(), "price must be finite");
+        assert!(eq_res.greeks.delta_spot.is_finite(), "delta must be finite");
+
+        // 2. Commodity Asian Option (Curran Arithmetic Asian Call on BRENT)
+        let comm_market = ca_market(80.0, 0.30, 0.04, 0.01);
+        let comm_asian = Instrument {
+            underlying: Some(celnet_proto::Underlying::commodity(CommodityRef::new(
+                Symbol::new("BRENT", "IFEU"),
+                "USD",
+            ))),
+            expiry_years: 0.5,
+            side: Side::Buy as i32,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(Product::AsianOption(celnet_proto::AsianOption {
+                option_type: celnet_proto::OptionType::Call as i32,
+                strike: 80.0,
+                averaging: celnet_proto::AveragingStyle::Discrete as i32,
+                observations: 12,
+                method: celnet_proto::AsianMethod::Curran as i32,
+                elapsed_avg: 0.0,
+                elapsed_weight: 0.0,
+            })),
+            ..Default::default()
+        };
+        let comm_res = PricingEngine::price(&comm_asian, &comm_market, &conv)
+            .expect("commodity asian prices successfully");
+        assert!(comm_res.greeks.price > 0.0);
+        assert!(comm_res.greeks.price.is_finite());
+        assert!(comm_res.greeks.delta_spot > 0.0);
+
+        // 3. Crypto Digital Option (Cash-or-Nothing Call on BTC)
+        let crypto_market = ca_market(60_000.0, 0.55, 0.05, 0.03);
+        let crypto_digital = Instrument {
+            underlying: Some(celnet_proto::Underlying::digital_asset(CryptoPair::new(
+                "BTC",
+                "USDT",
+            ))),
+            expiry_years: 0.25,
+            side: Side::Buy as i32,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(Product::Digital(celnet_proto::Digital {
+                style: celnet_proto::DigitalStyle::CashOrNothing as i32,
+                option_type: celnet_proto::OptionType::Call as i32,
+                strike: 65_000.0,
+                payout: 1_000.0,
+            })),
+            ..Default::default()
+        };
+        let crypto_res = PricingEngine::price(&crypto_digital, &crypto_market, &conv)
+            .expect("crypto digital prices successfully");
+        assert!(crypto_res.greeks.price > 0.0);
+        assert!(crypto_res.greeks.price < 1_000.0);
+        assert!(crypto_res.greeks.price.is_finite());
+
+        // 4. Equity American Option (American Put on AAPL)
+        let eq_american = Instrument {
+            underlying: Some(celnet_proto::Underlying::equity(EquityRef::new(
+                Symbol::new("AAPL", "XNAS"),
+                "USD",
+            ))),
+            expiry_years: 1.0,
+            side: Side::Buy as i32,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(Product::American(celnet_proto::AmericanOption {
+                option_type: celnet_proto::OptionType::Put as i32,
+                strike: 150.0,
+                exercise_style: celnet_proto::ExerciseStyle::American as i32,
+                bermudan_dates: Vec::new(),
+                lsm_paths: 0,
+                lsm_exercise_dates: 0,
+                lsm_seed: 0,
+            })),
+            ..Default::default()
+        };
+        let am_res = PricingEngine::price(&eq_american, &eq_market, &conv)
+            .expect("equity american prices successfully");
+        assert!(am_res.greeks.price > 0.0);
+        assert!(am_res.greeks.price.is_finite());
+        assert!(am_res.greeks.delta_spot < 0.0);
     }
 }

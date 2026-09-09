@@ -40,7 +40,7 @@ use celnet_proto::{
     CombinedTailRiskResponse, CommodityRef, Conventions, CreateFixConnectionRequest,
     CreateFixConnectionResponse, CryptoPair, CurveSet, DealerQuote, DecisionRecord,
     DeleteFixConnectionRequest, DeleteFixConnectionResponse, Digital, DoubleBarrier,
-    EntitlementPrincipal, EntitlementRule, EquityRef, Execution, FixConnectionDesc,
+    EntitlementPrincipal, EntitlementRule, EquityRef, Execution, ExposureBucket, FixConnectionDesc,
     FixConnectionSpec, FixMessage, FixingSchedule, ForwardStart, FraInstrument, FxForward, FxSwap,
     Greeks, Instrument, JointTailScenario, Leg, LiquidityProviderDesc, LiquidityProviderQuote,
     ListDecisionJournalRequest, ListDecisionJournalResponse, ListFixConnectionsRequest,
@@ -52,7 +52,9 @@ use celnet_proto::{
     PriceXvaResponse, Quantity, Quanto, Quote, QuoteAccept, QuoteReject, QuoteRequest,
     RateSensitivities, RatesInstrument, RatesPriceRequest, RatesPriceResponse, RatesPricingResult,
     RatesQuote, RatesQuoteRequest, RejectAck, RiskScope, RuleAdvice,
-    SetFixConnectionEnabledRequest, SetFixConnectionEnabledResponse, SingleBarrier, Solve,
+    SetFixConnectionEnabledRequest, SetFixConnectionEnabledResponse,
+    SetLiquidityProviderCapabilitiesRequest, SetLiquidityProviderCapabilitiesResponse,
+    SingleBarrier, Solve,
     Strategy, StrikeOrDelta, Symbol, TailRiskCurvePillar, TailRiskFiPosition, TailRiskKeyRate,
     TailRiskOptionLeg, Tarf, Tenor, Touch, TwoWayPrice, Underlying, UpdateFixConnectionRequest,
     UpdateFixConnectionResponse, Vanilla, VanillaIrsInstrument, VarEs, VarianceSwap,
@@ -786,6 +788,24 @@ impl WireAdapter for RatesQuote {
     }
 }
 
+impl WireAdapter for ExposureBucket {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "time_years" => Some(WireVal::F64(self.time_years)),
+            "label" => Some(WireVal::Str(&self.label)),
+            "ee" => Some(WireVal::F64(self.ee)),
+            "q25" => Some(WireVal::F64(self.q25)),
+            "q75" => Some(WireVal::F64(self.q75)),
+            "pfe_lo" => Some(WireVal::F64(self.pfe_lo)),
+            "pfe" => Some(WireVal::F64(self.pfe)),
+            "ene" => Some(WireVal::F64(self.ene)),
+            "ene_band_lo" => Some(WireVal::F64(self.ene_band_lo)),
+            "ene_band_hi" => Some(WireVal::F64(self.ene_band_hi)),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for WireXvaResult {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -793,6 +813,12 @@ impl WireAdapter for WireXvaResult {
             "dva" => Some(WireVal::F64(self.dva)),
             "fva" => Some(WireVal::F64(self.fva)),
             "total_adjustment" => Some(WireVal::F64(self.total_adjustment)),
+            "buckets" => Some(WireVal::RepeatedMsg(
+                self.buckets
+                    .iter()
+                    .map(|b| b as &dyn WireAdapter)
+                    .collect(),
+            )),
             _ => None,
         }
     }
@@ -2936,6 +2962,30 @@ impl WireBuilder for SetFixConnectionEnabledRequest {
     }
 }
 
+impl WireBuilder for SetLiquidityProviderCapabilitiesRequest {
+    const MESSAGE: &'static str = "SetLiquidityProviderCapabilitiesRequest";
+    fn set(&mut self, field: &WireField, value: Option<&Value>) -> DResult<()> {
+        match field.proto_name {
+            "connection_id" => self.connection_id = req_string(value, "connection_id")?,
+            "rfq_enabled" => self.rfq_enabled = bool_or_false(value),
+            "streaming_enabled" => self.streaming_enabled = bool_or_false(value),
+            "hedging_enabled" => self.hedging_enabled = bool_or_false(value),
+            "principal" => self.principal = opt_msg::<EntitlementPrincipal>(value, "principal")?,
+            "correlation_id" => self.correlation_id = opt_u64(value),
+            "session_token" => self.session_token = opt_string(value, "session_token")?,
+            other => return Err(unhandled(Self::MESSAGE, other)),
+        }
+        Ok(())
+    }
+}
+
+/// Decode a [`SetLiquidityProviderCapabilitiesRequest`] envelope — fully generic.
+pub fn decode_set_liquidity_provider_capabilities_request(
+    o: &Map<String, Value>,
+) -> DResult<SetLiquidityProviderCapabilitiesRequest> {
+    decode(SetLiquidityProviderCapabilitiesRequest::MESSAGE, o)
+}
+
 /// Decode a [`ListFixConnectionsRequest`] envelope — fully generic.
 ///
 /// # Errors
@@ -3079,6 +3129,13 @@ impl WireAdapter for LiquidityProviderDesc {
             "best_bid_count" => Some(WireVal::U64(u64::from(self.best_bid_count))),
             "best_offer_count" => Some(WireVal::U64(u64::from(self.best_offer_count))),
             "mean_weight" => Some(WireVal::F64(self.mean_weight)),
+            "rfq_enabled" => Some(WireVal::Bool(self.rfq_enabled)),
+            "streaming_enabled" => Some(WireVal::Bool(self.streaming_enabled)),
+            "hedging_enabled" => Some(WireVal::Bool(self.hedging_enabled)),
+            "institution_code" => Some(WireVal::Str(&self.institution_code)),
+            "win_rate" => Some(WireVal::F64(self.win_rate)),
+            "last_look_rejection_rate" => Some(WireVal::F64(self.last_look_rejection_rate)),
+            "mean_latency_ms" => Some(WireVal::F64(self.mean_latency_ms)),
             _ => None,
         }
     }
@@ -3195,6 +3252,19 @@ impl WireAdapter for SetFixConnectionEnabledResponse {
     }
 }
 
+impl WireAdapter for SetLiquidityProviderCapabilitiesResponse {
+    fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
+        match proto_name {
+            "connection_id" => Some(WireVal::Str(&self.connection_id)),
+            "rfq_enabled" => Some(WireVal::Bool(self.rfq_enabled)),
+            "streaming_enabled" => Some(WireVal::Bool(self.streaming_enabled)),
+            "hedging_enabled" => Some(WireVal::Bool(self.hedging_enabled)),
+            "correlation_id" => self.correlation_id.map(WireVal::U64),
+            _ => None,
+        }
+    }
+}
+
 impl WireAdapter for ListFixMessagesResponse {
     fn get(&self, proto_name: &str) -> Option<WireVal<'_>> {
         match proto_name {
@@ -3239,6 +3309,14 @@ pub fn encode_delete_fix_connection_response(r: &DeleteFixConnectionResponse) ->
 #[must_use]
 pub fn encode_set_fix_connection_enabled_response(r: &SetFixConnectionEnabledResponse) -> Value {
     encode("SetFixConnectionEnabledResponse", r)
+}
+
+/// Encode a [`SetLiquidityProviderCapabilitiesResponse`] to its WS JSON — descriptor-driven.
+#[must_use]
+pub fn encode_set_liquidity_provider_capabilities_response(
+    r: &SetLiquidityProviderCapabilitiesResponse,
+) -> Value {
+    encode("SetLiquidityProviderCapabilitiesResponse", r)
 }
 
 /// Encode a [`ListFixMessagesResponse`] to its WS JSON — descriptor-driven.
@@ -11114,6 +11192,13 @@ mod lp_panel_wire_probe {
                 best_bid_count: 142,
                 best_offer_count: 159,
                 mean_weight: 0.5,
+                rfq_enabled: true,
+                streaming_enabled: true,
+                hedging_enabled: false,
+                institution_code: "LP01".into(),
+                win_rate: 0.65,
+                last_look_rejection_rate: 0.01,
+                mean_latency_ms: 25.0,
             }],
             quotes: vec![],
             inbound_enabled: true,

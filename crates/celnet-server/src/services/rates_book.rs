@@ -99,7 +99,7 @@ pub struct RatesRoutingAttribution {
 }
 
 /// The firm-wide **auto-hedge / internalisation policy** snapshot primed into the rates
-/// store beside the routing graph (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md`
+/// store beside the routing graph (`docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md`
 /// §6/§7). A booked RFQ-desk / FIX-lift fill that carries a priced reference mid resolves
 /// its `(warehouse-cap × hedge-policy graph)` here and stamps an [`InternaliseProvenance`]
 /// decision onto the deal — the internal (warehoused) vs advisory-external split, the
@@ -273,7 +273,7 @@ pub struct RatesPositionStore {
     /// quorum log **before** the local apply; a `Local` cell (the default) never touches
     /// it, so the fast path stays byte-identical. Off the pinned pricing thread (§4.3).
     consensus: OnceLock<Arc<ConsensusHandle>>,
-    /// The current firm-wide **risk-routing graph** (`docs/FI-RISK-ROUTING-REQUIREMENTS.md`
+    /// The current firm-wide **risk-routing graph** (`docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md`
     /// §4) — the SAME graph the FX [`PositionStore`](super::risk::store::PositionStore) holds,
     /// pushed by the SAME reconcile sites (boot prime + `AuthEdge::reconcile_risk_routing`).
     /// `None` ⇒ no routing: a rates fill books exactly as before with **no** risk-book stamp,

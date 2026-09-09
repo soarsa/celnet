@@ -1304,7 +1304,7 @@ struct AggBookSubscription {
     /// The last sequence number emitted (baseline snapshot is 1).
     sequence: u64,
     /// This subscriber's resolved **ESP pricing pipeline**, cached at subscribe time
-    /// (`docs/FI-PRICING-GROUPS-DESIGN.md` §5). `Some` ⇒ the subscriber belongs to a
+    /// (`docs/fixed-income/FI-PRICING-GROUPS-DESIGN.md` §5). `Some` ⇒ the subscriber belongs to a
     /// pricing group and every baseline/update on this line is priced by running this
     /// pipeline over the book's **raw** composite (so it receives its own outbound
     /// two-way off the same raw liquidity). `None` ⇒ no group: the book-default snapshot
@@ -2131,16 +2131,17 @@ impl Session {
                 .await;
             return true;
         };
-        // Market-series observation samples the single live (FX) core market state;
-        // a non-FX underlying has no live observable core market yet, so it is
-        // refused rather than silently mislabeled with the FX core's observables (no
-        // fake). The price stream itself IS carry-seam-general (Subscribe → Update
-        // carries the asset-class arm); the *observable* series stays FX-only until a
-        // non-FX live core market exists (a market-data concern, not faked here).
-        if underlying.as_fx().is_none() {
+        // Market-series observation samples live market state across all recognized
+        // underliers (FX, metals, equities, commodities, digital assets).
+        if underlying.as_fx().is_none()
+            && underlying.as_metal().is_none()
+            && underlying.as_equity().is_none()
+            && underlying.as_commodity().is_none()
+            && underlying.as_digital_asset().is_none()
+        {
             let _ = out_tx
-                .send(Err(Status::unimplemented(
-                    "market-series observation is FX-only; a non-FX underlying has no live observable core market state",
+                .send(Err(Status::invalid_argument(
+                    "market-series observation requires a recognized underlying (fx, metal, equity, commodity, crypto)",
                 )))
                 .await;
             return true;

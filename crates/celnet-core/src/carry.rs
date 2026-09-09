@@ -413,31 +413,34 @@ pub fn gbsm_carry_greeks(
     let (s, k) = (spot, strike);
 
     let pd1 = norm_pdf(d1);
-    let nd1 = norm_cdf(d1);
-    let nd2 = norm_cdf(d2);
-    let nmd1 = norm_cdf(-d1);
-    let nmd2 = norm_cdf(-d2);
+    let theta_pdf = df * f * pd1 * vol / (2.0 * sqt);
 
-    let price = match opt {
-        OptionType::Call => df * (f * nd1 - k * nd2),
-        OptionType::Put => df * (k * nmd2 - f * nmd1),
-    };
-
-    // Spot delta ∂V/∂S. With F = S·e^{b t}, ∂F/∂S = e^{b t}, and V = df·BS76(F):
-    //   ∂V/∂S = e^{b t}·∂V/∂F = e^{(b−r) t}·Φ(±d1).
-    let delta_spot = match opt {
-        OptionType::Call => fwd_factor * df * nd1,
-        OptionType::Put => fwd_factor * df * (nd1 - 1.0),
-    };
-    // Driftless forward delta ∂V_fwd/∂F = Φ(±d1), where V_fwd = V·e^{r t} is the
-    // undiscounted forward value (F·Φ(d1) − K·Φ(d2) for a call). This is the FX-desk
-    // "forward delta" convention the equity/FX leaves report verbatim; the
-    // commodity/crypto leaves scale it by df in their adapter to report the
-    // DISCOUNTED ∂V/∂F = df·Φ(±d1) their desks use (ADR-0012). The two are the same
-    // Greek of two value functions (undiscounted forward vs discounted premium).
-    let delta_forward = match opt {
-        OptionType::Call => nd1,
-        OptionType::Put => nd1 - 1.0,
+    // Evaluate Φ only for the active option type: exactly 2 transcendental norm_cdf
+    // calls instead of 4. For Call: Φ(d1), Φ(d2). For Put: Φ(-d1), Φ(-d2).
+    // Note: delta_forward for Put is -Φ(-d1), avoiding catastrophic cancellation in deep tails.
+    let (price, delta_spot, delta_forward, theta, carry_rho, charm_first_term) = match opt {
+        OptionType::Call => {
+            let nd1 = norm_cdf(d1);
+            let nd2 = norm_cdf(d2);
+            let p = df * (f * nd1 - k * nd2);
+            let ds = fwd_factor * df * nd1;
+            let dfwd = nd1;
+            let th = -(theta_pdf + (b - r) * s * fwd_factor * df * nd1 + r * k * df * nd2);
+            let crho = t * f * df * nd1;
+            let cf = (b - r) * fwd_factor * df * nd1;
+            (p, ds, dfwd, th, crho, cf)
+        }
+        OptionType::Put => {
+            let nmd1 = norm_cdf(-d1);
+            let nmd2 = norm_cdf(-d2);
+            let p = df * (k * nmd2 - f * nmd1);
+            let ds = -fwd_factor * df * nmd1;
+            let dfwd = -nmd1;
+            let th = -(theta_pdf - (b - r) * s * fwd_factor * df * nmd1 - r * k * df * nmd2);
+            let crho = -t * f * df * nmd1;
+            let cf = -(b - r) * fwd_factor * df * nmd1;
+            (p, ds, dfwd, th, crho, cf)
+        }
     };
 
     // Symmetric across call/put. gamma = e^{2 b t}·df·φ(d1)/(F·σ√t).
@@ -448,32 +451,14 @@ pub fn gbsm_carry_greeks(
     let speed = -gamma / s * (d1 / vsqt + 1.0);
     let zomma = gamma * (d1 * d2 - 1.0) / vol;
 
-    // theta = −∂V/∂T. The cross-multiplied pdf identity F·φ(d1) = K·φ(d2) collapses
-    // the pdf bracket to a POSITIVE term e^{−rT}·F·φ(d1)·σ/(2√T):
-    //   theta_call = −[ e^{−rT}·F·φ(d1)·σ/(2√T) + (b−r)·S e^{(b−r)T}Φ(d1) + r·K e^{−rT}Φ(d2) ].
-    let theta_pdf = df * f * pd1 * vol / (2.0 * sqt);
-    let theta = match opt {
-        OptionType::Call => -(theta_pdf + (b - r) * s * fwd_factor * df * nd1 + r * k * df * nd2),
-        OptionType::Put => -(theta_pdf - (b - r) * s * fwd_factor * df * nmd1 - r * k * df * nmd2),
-    };
-
     // Discount-rho ∂V/∂r at FIXED b. V = e^{−r t}·[F·Φ − K·Φ] with F = S e^{b t}
     // independent of r ⇒ ∂V/∂r = −t·V.
     let discount_rho = -t * price;
-    // Carry-rho ∂V/∂b at FIXED r. Only F = S e^{b t} depends on b: ∂F/∂b = t·F,
-    // ∂V/∂F = df·Φ(±d1) ⇒ ∂V/∂b = t·F·df·Φ(±d1).
-    let carry_rho = match opt {
-        OptionType::Call => t * f * df * nd1,
-        OptionType::Put => -t * f * df * nmd1,
-    };
 
     // charm = ∂(delta_spot)/∂T. ln(F/K) = ln(S/K) + b·T ⇒
     //   ∂d1/∂T = b/(σ√T) + ½σ/√T − d1/(2T).
     let dd1_dt = b / vsqt + 0.5 * vol / sqt - d1 / (2.0 * t);
-    let charm = match opt {
-        OptionType::Call => (b - r) * fwd_factor * df * nd1 + fwd_factor * df * pd1 * dd1_dt,
-        OptionType::Put => (b - r) * fwd_factor * df * (nd1 - 1.0) + fwd_factor * df * pd1 * dd1_dt,
-    };
+    let charm = charm_first_term + fwd_factor * df * pd1 * dd1_dt;
 
     // color = ∂gamma/∂T = gamma·[ (b−r) − 1/(2T) − d1·∂d1/∂T ].
     let color = gamma * ((b - r) - 1.0 / (2.0 * t) - d1 * dd1_dt);

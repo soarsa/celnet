@@ -29,6 +29,8 @@ celnet-risk-normalize.workspace = true
 # a booked exotic re-prices through the real engines without the fleet depending on
 # the heavy `celnet-exotics` pricing crate (arch-program item E).
 celnet-core.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 # The hand-coded, code-disjoint `ExoticLegPricer` the cube's own tests inject —

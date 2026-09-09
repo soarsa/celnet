@@ -40,7 +40,7 @@
 //! `view` floor). The lifecycle writes (`ConfirmCorporateAction` / `ApplyCorporateAction`) require
 //! the dedicated [`Action::Refdata`] capability × [`AssetClass::FixedIncome`] — a narrow
 //! reference-data admin authority held back from the default trader bundle
-//! (`docs/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md` §11). A CA apply additionally
+//! (`docs/fixed-income/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md` §11). A CA apply additionally
 //! *books*, still gated on `Book` at the rates sink.
 
 // `tonic::Status` is the contract's typed error; its size is the wire library's choice

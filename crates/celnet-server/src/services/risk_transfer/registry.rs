@@ -1,6 +1,6 @@
 //! The in-memory **risk-transfer registry**: the append-and-update store of every
 //! [`RiskTransfer`] record with a monotonic id mint and the immutable-audit query
-//! surface (`docs/RISK-TRANSFER-REQUIREMENTS.md` §5, §7). Mirrors the desk
+//! surface (`docs/hedging/RISK-TRANSFER-REQUIREMENTS.md` §5, §7). Mirrors the desk
 //! `DeskRequestStore` shape (an `RwLock<Vec<_>>` + an `AtomicU64` id source).
 //!
 //! The registry holds the pure-domain [`celnet_risk_transfer::RiskTransfer`] value

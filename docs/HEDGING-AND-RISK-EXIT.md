@@ -12,11 +12,11 @@ rather than describing the design as though it were shipped.
 
 | Document | Purpose |
 | --- | --- |
-| [`HEDGING-CONFIGURATION-GUIDE.md`](HEDGING-CONFIGURATION-GUIDE.md) | **Trader-facing**: how to *configure* hedging, tab by tab, in the GUI. |
-| [`AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md`](AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md) | The requirements/design and the cited academic basis for each choice. |
-| [`FI-RISK-ROUTING-REQUIREMENTS.md`](FI-RISK-ROUTING-REQUIREMENTS.md) | How a fill is *routed* into a risk book. |
-| [`RISK-HIERARCHY.md`](RISK-HIERARCHY.md) | The hierarchical risk-aggregation model and limits framework. |
-| [`RISK-TRANSFER-REQUIREMENTS.md`](RISK-TRANSFER-REQUIREMENTS.md) | Moving risk *between* books (a different operation from hedging). |
+| [`HEDGING-CONFIGURATION-GUIDE.md`](hedging/HEDGING-CONFIGURATION-GUIDE.md) | **Trader-facing**: how to *configure* hedging, tab by tab, in the GUI. |
+| [`AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md`](hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md) | The requirements/design and the cited academic basis for each choice. |
+| [`FI-RISK-ROUTING-REQUIREMENTS.md`](fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md) | How a fill is *routed* into a risk book. |
+| [`RISK-HIERARCHY.md`](quant/RISK-HIERARCHY.md) | The hierarchical risk-aggregation model and limits framework. |
+| [`RISK-TRANSFER-REQUIREMENTS.md`](hedging/RISK-TRANSFER-REQUIREMENTS.md) | Moving risk *between* books (a different operation from hedging). |
 
 This document is the connective tissue between them.
 
@@ -175,7 +175,7 @@ measures against — the band, the utilisation, the overflow, and the shed size:
 | --- | --- | --- |
 | `Dv01` (default) | signed net PV01 proxy | first-order rate risk |
 | `NetNotional` / `NetDelta` | signed net face notional | direction-aware size |
-| `GrossNotional` | `Σ\|notional\|` | **turnover brake — never nets down** |
+| `GrossNotional` | `Σ&#124;notional&#124;` | **turnover brake — never nets down** |
 | `NetVega` | `0` on a linear-rates cell | honestly never breaches (rates carry no vega) |
 
 `GrossNotional` behaves fundamentally differently from the others and is worth choosing
@@ -226,8 +226,8 @@ A policy leaf may override the size choice entirely:
 | `HedgeSize` | Magnitude |
 | --- | --- |
 | `Overflow` (default) | hedge to the band edge |
-| `Full` | `\|net_risk\|` — flatten |
-| `Fixed(x)` | `\|x\|`, capped at `\|net_risk\|` (you cannot hedge more than you hold) |
+| `Full` | `&#124;net_risk&#124;` — flatten |
+| `Fixed(x)` | `&#124;x&#124;`, capped at `&#124;net_risk&#124;` (you cannot hedge more than you hold) |
 
 ### 5.3 Worked example
 
@@ -527,8 +527,8 @@ so its signed exposure is exactly the negation of the shed portion.
 
 | Arm | Construction |
 | --- | --- |
-| OIS / IRS / FRA | `notional = \|notional\| × factor`, side flipped |
-| **Bond** | `redemption = \|redemption\| × factor`, side flipped — **the same security sold back** |
+| OIS / IRS / FRA | `notional = &#124;notional&#124; × factor`, side flipped |
+| **Bond** | `redemption = &#124;redemption&#124; × factor`, side flipped — **the same security sold back** |
 
 The bond case deserves its own sentence, because it was long believed to require a duration
 model. It does not. The offsetting leg is the *identical security* — same coupon, maturity,

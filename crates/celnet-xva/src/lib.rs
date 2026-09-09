@@ -53,6 +53,6 @@ pub mod netting;
 pub mod survival;
 
 pub use cva::{XvaInputs, XvaResult, compute_xva};
-pub use exposure::{ExposureConfig, ExposureProfile};
+pub use exposure::{ExposureBucket, ExposureConfig, ExposureProfile};
 pub use netting::{NettedTrade, NettingSet};
 pub use survival::SurvivalCurve;

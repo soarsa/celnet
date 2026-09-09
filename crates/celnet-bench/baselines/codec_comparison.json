@@ -1,0 +1,42 @@
+[
+  {
+    "codec": "Native Rust #[repr(C)] Copy",
+    "iterations": 2000000,
+    "payload_bytes": 168,
+    "encode_ns_per_op": 2.50848975,
+    "decode_ns_per_op": 2.50848975,
+    "round_trip_ns_per_op": 5.0169795,
+    "throughput_million_ops_sec": 199.32311862147336,
+    "zero_alloc": true
+  },
+  {
+    "codec": "SBE Direct-Buffer Flyweight",
+    "iterations": 2000000,
+    "payload_bytes": 176,
+    "encode_ns_per_op": 4.663354,
+    "decode_ns_per_op": 2.398021,
+    "round_trip_ns_per_op": 7.061375,
+    "throughput_million_ops_sec": 141.6154785718079,
+    "zero_alloc": true
+  },
+  {
+    "codec": "Protobuf (prost v3)",
+    "iterations": 2000000,
+    "payload_bytes": 220,
+    "encode_ns_per_op": 71.803146,
+    "decode_ns_per_op": 194.1902705,
+    "round_trip_ns_per_op": 265.99341649999997,
+    "throughput_million_ops_sec": 3.7594915436563077,
+    "zero_alloc": false
+  },
+  {
+    "codec": "JSON (serde_json)",
+    "iterations": 200000,
+    "payload_bytes": 414,
+    "encode_ns_per_op": 621.053335,
+    "decode_ns_per_op": 472.91,
+    "round_trip_ns_per_op": 1093.963335,
+    "throughput_million_ops_sec": 0.9141074184172727,
+    "zero_alloc": false
+  }
+]

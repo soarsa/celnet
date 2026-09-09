@@ -9,8 +9,8 @@
 //! ## Why a broadcast ring (not a work-stealing queue)
 //!
 //! Quote fan-out is **broadcast**: every subscriber must observe *the same*
-//! published sequence — not a partition of it. This is the LMAX-Disruptor
-//! multi-consumer pattern (M. Thompson et al., *Disruptor*, 2011): one producer
+//! published sequence — not a partition of it. Under CelNet's lock-free
+//! multi-consumer architecture: one producer
 //! writes a monotonic sequence into a power-of-two ring; each consumer holds its
 //! **own** read cursor and re-reads the same slots. Consumers never contend with
 //! one another (no shared read cursor), and the producer never waits on a
@@ -54,6 +54,10 @@
 //! and zero-alloc publish* — nothing about NVIDIA or a live cross-DC fabric.
 
 pub(crate) mod mem;
+pub mod multi_lane;
+pub mod padded_ring;
 mod ring;
 
+pub use multi_lane::{MultiLaneBroadcastRing, MultiLaneConsumer, MultiLaneConsumerFactory, MultiLaneProducer};
+pub use padded_ring::{CachePaddedBroadcastRing, CachePaddedConsumer, CachePaddedProducer};
 pub use ring::{BroadcastRing, Consumer, Producer, RecvError};

@@ -1,0 +1,1875 @@
+<!DOCTYPE html>
+<html lang="en" data-appearance="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Celnet — Target API Architecture & Integration Blueprint</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-base: #07090E;
+    --bg-surface: #0D111A;
+    --bg-elevated: #131A26;
+    --bg-overlay: #1A2333;
+    --border-subtle: rgba(255, 255, 255, 0.08);
+    --border-medium: rgba(255, 255, 255, 0.15);
+    --border-strong: rgba(255, 255, 255, 0.28);
+    
+    --brand-coral: #FF7357;
+    --brand-coral-soft: rgba(255, 115, 87, 0.15);
+    --accent-indigo: #6B6BF5;
+    --accent-indigo-soft: rgba(107, 107, 245, 0.15);
+    --status-green: #10B981;
+    --status-green-soft: rgba(16, 185, 129, 0.15);
+    --status-amber: #F59E0B;
+    --status-amber-soft: rgba(245, 158, 11, 0.15);
+    --status-red: #EF4444;
+    --status-red-soft: rgba(239, 68, 68, 0.15);
+    --accent-cyan: #38BDF8;
+    --accent-cyan-soft: rgba(56, 189, 248, 0.15);
+    --accent-purple: #A855F7;
+
+    --text-primary: #F3F4F6;
+    --text-secondary: #9CA3AF;
+    --text-muted: #6B7280;
+    --text-inverse: #030712;
+
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-display: 'Space Grotesk', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+
+    --sidebar-width: 300px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    line-height: 1.65;
+    font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  /* Layout */
+  .app-container {
+    display: flex;
+    min-height: 100vh;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: var(--sidebar-width);
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border-subtle);
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    overflow-y: auto;
+    padding: 28px 20px;
+    z-index: 100;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 32px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .brand-logo {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--brand-coral), var(--accent-indigo));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-family: var(--font-display);
+    color: #fff;
+    font-size: 18px;
+    box-shadow: 0 4px 12px rgba(255, 115, 87, 0.3);
+  }
+
+  .brand-text h1 {
+    font-size: 16px;
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: #fff;
+  }
+
+  .brand-text span {
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .nav-group {
+    margin-bottom: 24px;
+  }
+
+  .nav-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    padding-left: 10px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 6px;
+    margin-bottom: 4px;
+    transition: all 0.15s ease;
+  }
+
+  .nav-item:hover {
+    color: #fff;
+    background: var(--bg-elevated);
+  }
+
+  .nav-item.active {
+    color: #fff;
+    background: var(--accent-indigo-soft);
+    border-left: 3px solid var(--accent-indigo);
+    font-weight: 600;
+  }
+
+  .nav-item .badge {
+    margin-left: auto;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    background: var(--bg-overlay);
+    color: var(--text-muted);
+  }
+
+  /* Main Content */
+  .main-content {
+    margin-left: var(--sidebar-width);
+    flex: 1;
+    padding: 48px 64px 120px;
+    max-width: 1400px;
+  }
+
+  /* Header / Hero */
+  .hero {
+    margin-bottom: 48px;
+    padding-bottom: 36px;
+    border-bottom: 1px solid var(--border-subtle);
+    position: relative;
+  }
+
+  .hero::after {
+    content: "";
+    position: absolute;
+    top: -48px;
+    right: 0;
+    width: 500px;
+    height: 300px;
+    background: radial-gradient(circle, rgba(107, 107, 245, 0.12) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .meta-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px;
+    background: var(--brand-coral-soft);
+    border: 1px solid rgba(255, 115, 87, 0.3);
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--brand-coral);
+    margin-bottom: 18px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .hero h1 {
+    font-family: var(--font-display);
+    font-size: 38px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.2;
+    margin-bottom: 16px;
+    background: linear-gradient(135deg, #FFFFFF 40%, #A5B4FC 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .hero p {
+    font-size: 17px;
+    color: var(--text-secondary);
+    max-width: 900px;
+    line-height: 1.7;
+  }
+
+  .hero-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    margin-top: 32px;
+  }
+
+  .stat-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+
+  .stat-val {
+    font-family: var(--font-display);
+    font-size: 26px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 4px;
+  }
+
+  .stat-val.coral { color: var(--brand-coral); }
+  .stat-val.indigo { color: var(--accent-indigo); }
+  .stat-val.green { color: var(--status-green); }
+  .stat-val.cyan { color: var(--accent-cyan); }
+
+  .stat-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  /* Section Styling */
+  section {
+    margin-bottom: 64px;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .section-num {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent-indigo);
+    background: var(--accent-indigo-soft);
+    padding: 3px 8px;
+    border-radius: 6px;
+  }
+
+  .section-header h2 {
+    font-family: var(--font-display);
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: #fff;
+  }
+
+  .section-desc {
+    font-size: 15px;
+    color: var(--text-secondary);
+    margin-bottom: 28px;
+    max-width: 960px;
+  }
+
+  /* Grid Layouts */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 24px;
+  }
+
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+
+  /* Card */
+  .card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: 24px;
+    transition: transform 0.2s ease, border-color 0.2s ease;
+  }
+
+  .card:hover {
+    border-color: var(--border-medium);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  .card-title {
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 600;
+    color: #fff;
+  }
+
+  .badge-tag {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 6px;
+    text-transform: uppercase;
+  }
+
+  .badge-danger {
+    background: var(--status-red-soft);
+    color: var(--status-red);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+  }
+
+  .badge-success {
+    background: var(--status-green-soft);
+    color: var(--status-green);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+  }
+
+  .badge-warning {
+    background: var(--status-amber-soft);
+    color: var(--status-amber);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+  }
+
+  .badge-indigo {
+    background: var(--accent-indigo-soft);
+    color: var(--accent-indigo);
+    border: 1px solid rgba(107, 107, 245, 0.3);
+  }
+
+  .badge-cyan {
+    background: var(--accent-cyan-soft);
+    color: var(--accent-cyan);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+  }
+
+  /* Comparison Box */
+  .compare-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin: 20px 0;
+  }
+
+  .compare-col {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .compare-col.bad {
+    border-top: 3px solid var(--status-red);
+  }
+
+  .compare-col.good {
+    border-top: 3px solid var(--status-green);
+  }
+
+  .compare-header {
+    padding: 12px 18px;
+    background: var(--bg-elevated);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .compare-header span {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .compare-body {
+    padding: 16px 18px;
+    font-size: 14px;
+  }
+
+  .compare-body ul {
+    list-style: none;
+  }
+
+  .compare-body li {
+    position: relative;
+    padding-left: 22px;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+  }
+
+  .compare-col.bad li::before {
+    content: "✕";
+    position: absolute;
+    left: 0;
+    color: var(--status-red);
+    font-weight: bold;
+  }
+
+  .compare-col.good li::before {
+    content: "✓";
+    position: absolute;
+    left: 0;
+    color: var(--status-green);
+    font-weight: bold;
+  }
+
+  /* Code & Syntax */
+  .code-block {
+    background: #090C14;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    margin: 18px 0;
+    overflow: hidden;
+    font-family: var(--font-mono);
+  }
+
+  .code-header {
+    background: var(--bg-elevated);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .code-title {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .code-lang {
+    font-size: 11px;
+    color: var(--accent-cyan);
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+
+  pre {
+    padding: 18px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #E2E8F0;
+  }
+
+  .keyword { color: #F472B6; font-weight: 600; }
+  .type { color: #38BDF8; }
+  .service { color: #A78BFA; font-weight: 600; }
+  .fn { color: #60A5FA; }
+  .string { color: #34D399; }
+  .comment { color: #64748B; font-style: italic; }
+  .number { color: #FBBF24; }
+  .tag { color: #F87171; }
+
+  /* Tables */
+  .table-wrapper {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    overflow-x: auto;
+    margin: 20px 0;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+    font-size: 13.5px;
+  }
+
+  th {
+    background: var(--bg-elevated);
+    padding: 12px 16px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    vertical-align: top;
+  }
+
+  tr:last-child td {
+    border-bottom: none;
+  }
+
+  tr:hover td {
+    background: rgba(255, 255, 255, 0.02);
+    color: #fff;
+  }
+
+  td code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--bg-overlay);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--accent-cyan);
+  }
+
+  /* Interactive Tabs */
+  .tab-container {
+    margin: 20px 0;
+  }
+
+  .tab-bar {
+    display: flex;
+    gap: 8px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 16px;
+  }
+
+  .tab-btn {
+    background: none;
+    border: none;
+    padding: 10px 16px;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s ease;
+  }
+
+  .tab-btn:hover {
+    color: var(--text-primary);
+  }
+
+  .tab-btn.active {
+    color: var(--brand-coral);
+    border-bottom-color: var(--brand-coral);
+  }
+
+  .tab-pane {
+    display: none;
+  }
+
+  .tab-pane.active {
+    display: block;
+    animation: fadeIn 0.2s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Callouts */
+  .callout {
+    padding: 16px 20px;
+    border-radius: 10px;
+    margin: 20px 0;
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+  }
+
+  .callout-icon {
+    font-size: 20px;
+    line-height: 1;
+  }
+
+  .callout.info {
+    background: var(--accent-indigo-soft);
+    border: 1px solid rgba(107, 107, 245, 0.3);
+    color: #C7D2FE;
+  }
+
+  .callout.warning {
+    background: var(--status-amber-soft);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    color: #FDE68A;
+  }
+
+  .callout.danger {
+    background: var(--status-red-soft);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #FECACA;
+  }
+
+  .callout.success {
+    background: var(--status-green-soft);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #A7F3D0;
+  }
+
+  .callout-body h4 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: #fff;
+  }
+
+  .callout-body p {
+    font-size: 13.5px;
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  /* Architecture Diagram (SVG / Flex) */
+  .arch-diagram {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 14px;
+    padding: 32px;
+    margin: 28px 0;
+  }
+
+  .diagram-layer {
+    background: var(--bg-elevated);
+    border: 1px dashed var(--border-medium);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+  }
+
+  .layer-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent-cyan);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .layer-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+
+  .diagram-node {
+    background: var(--bg-overlay);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 12px 14px;
+    text-align: center;
+    transition: all 0.2s ease;
+  }
+
+  .diagram-node:hover {
+    border-color: var(--accent-indigo);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+
+  .node-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 4px;
+  }
+
+  .node-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .diagram-connector {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 24px;
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+
+  /* Footer */
+  footer {
+    margin-top: 80px;
+    padding-top: 32px;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<div class="app-container">
+
+  <!-- Sidebar Navigation -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">C</div>
+      <div class="brand-text">
+        <h1>CELNET</h1>
+        <span>Target API Architecture</span>
+      </div>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-title">Blueprint Overview</div>
+      <a href="#executive-summary" class="nav-item active">Executive Summary</a>
+      <a href="#structural-critique" class="nav-item">The 6 Anti-Patterns <span class="badge">Critique</span></a>
+      <a href="#design-tenets" class="nav-item">Core Design Tenets</a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-title">Target Services</div>
+      <a href="#service-decomposition" class="nav-item">8 Bounded Services</a>
+      <a href="#valuation-service" class="nav-item">1. ValuationService</a>
+      <a href="#trade-service" class="nav-item">2. TradeService (RFQ)</a>
+      <a href="#stream-service" class="nav-item">3. StreamService 2.0</a>
+      <a href="#marketdata-service" class="nav-item">4. MarketDataService</a>
+      <a href="#risk-service" class="nav-item">5. RiskService</a>
+      <a href="#control-plane" class="nav-item">6-8. Control & Admin</a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-title">Protocols & SDKs</div>
+      <a href="#wire-protocol" class="nav-item">Wire Protocol (gRPC/WS)</a>
+      <a href="#client-sdks" class="nav-item">Client SDK Ergonomics</a>
+      <a href="#migration-roadmap" class="nav-item">Zero-Downtime Cutover</a>
+    </div>
+  </aside>
+
+  <!-- Main Document Body -->
+  <main class="main-content">
+
+    <!-- Hero Header -->
+    <header class="hero">
+      <div class="meta-tag">Master Architectural Determination · Target State</div>
+      <h1>Celnet Target API Architecture &amp; Multi-Asset Integration</h1>
+      <p>
+        A comprehensive review, architectural critique, and definitive redesign of Celnet's client-facing
+        and machine-to-machine API contracts. Unifying FX Options, Linear Fixed Income, Cash Bonds, STIRs,
+        Treasury Futures, Credit Derivatives, and XVA under an elegant, ultra-low-latency, polymorphic surface.
+      </p>
+
+      <div class="hero-stats">
+        <div class="stat-card">
+          <div class="stat-val coral">8</div>
+          <div class="stat-label">Target Bounded Services</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-val indigo">1</div>
+          <div class="stat-label">Universal Pricing Seam</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-val green">100%</div>
+          <div class="stat-label">gRPC / WS JSON Parity</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-val cyan">Rule 9</div>
+          <div class="stat-label">Unversioned Single Contract</div>
+        </div>
+      </div>
+    </header>
+
+    <!-- SECTION 1: Executive Summary -->
+    <section id="executive-summary">
+      <div class="section-header">
+        <span class="section-num">01</span>
+        <h2>Executive Summary &amp; Motivation</h2>
+      </div>
+      <p class="section-desc">
+        Celnet has achieved state-of-the-art numerical performance across 55 modular Rust crates, sub-microsecond
+        pricing kernels, and hardware-accelerated risk engines. However, rapid multi-asset expansion produced
+        functional silos at the network edge: fixed-income pricing and risk were grafted onto parallel RPC verbs,
+        and administrative capabilities congregated into a massive God-service.
+      </p>
+
+      <div class="callout info">
+        <div class="callout-icon">💡</div>
+        <div class="callout-body">
+          <h4>The Core Architectural Objective</h4>
+          <p>
+            Transition Celnet from a collection of asset-specific endpoints into a <strong>Single Cohesive Multi-Asset Platform</strong>.
+            A trader, algorithmic bot, Excel spreadsheet, or institutional FIX client should interact with identical,
+            intuitive primitives whether pricing a EUR/USD 25-delta risk reversal, quoting a 10Y SOFR OIS swap,
+            analyzing a 30Y US Treasury bond yield curve, or simulating joint cross-asset tail risk.
+          </p>
+        </div>
+      </div>
+
+      <div class="arch-diagram">
+        <div class="layer-title"><span>Top-Level System Architecture: Clients to Core</span> <span class="badge-tag badge-cyan">Clean Seams</span></div>
+        
+        <div class="diagram-layer">
+          <div class="layer-title">Client Tier (Zero Asset-Class Branching)</div>
+          <div class="layer-grid">
+            <div class="diagram-node">
+              <div class="node-name">Web GUI Cockpit</div>
+              <div class="node-sub">TypeScript / WS Transport</div>
+            </div>
+            <div class="diagram-node">
+              <div class="node-name">Excel Modern Add-in</div>
+              <div class="node-sub">=CELNET.* Function Suite</div>
+            </div>
+            <div class="diagram-node">
+              <div class="node-name">Institutional Bots</div>
+              <div class="node-sub">Rust &amp; Python SDKs</div>
+            </div>
+            <div class="diagram-node">
+              <div class="node-name">Direct Venues / LPs</div>
+              <div class="node-sub">FIX 4.4 / gRPC Ingest</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="diagram-connector">▼ Unified HTTP/2 gRPC (Protobuf 3) &amp; WebSocket (Strict JSON Mirror) ▼</div>
+
+        <div class="diagram-layer">
+          <div class="layer-title">Edge Services Layer (8 Bounded Domains)</div>
+          <div class="layer-grid">
+            <div class="diagram-node"><div class="node-name">ValuationService</div><div class="node-sub">Pure Math / Greeks</div></div>
+            <div class="diagram-node"><div class="node-name">TradeService</div><div class="node-sub">RFQ / RFS / Exec</div></div>
+            <div class="diagram-node"><div class="node-name">StreamService 2.0</div><div class="node-sub">Multiplexed Pub/Sub</div></div>
+            <div class="diagram-node"><div class="node-name">MarketDataService</div><div class="node-sub">Curves / Surfaces</div></div>
+            <div class="diagram-node"><div class="node-name">RiskService</div><div class="node-sub">Cube / Tail / Limits</div></div>
+            <div class="diagram-node"><div class="node-name">PolicyService</div><div class="node-sub">Routing / Hedging</div></div>
+            <div class="diagram-node"><div class="node-name">OrganizationService</div><div class="node-sub">Desks / Books</div></div>
+            <div class="diagram-node"><div class="node-name">IdentityService</div><div class="node-sub">Auth / RBAC</div></div>
+          </div>
+        </div>
+
+        <div class="diagram-connector">▼ Lockless In-Process Dispatch (Zero Alloc / Zero Copy) ▼</div>
+
+        <div class="diagram-layer">
+          <div class="layer-title">Analytical Core Engines (55 Virtual Crates)</div>
+          <div class="layer-grid">
+            <div class="diagram-node"><div class="node-name">celnet-vanilla / exotics</div><div class="node-sub">Black-Scholes, PDE, MC</div></div>
+            <div class="diagram-node"><div class="node-name">celnet-rates / bond</div><div class="node-sub">Dual-Curve, Cashflows</div></div>
+            <div class="diagram-node"><div class="node-name">celnet-surface</div><div class="node-sub">SABR, SVI, SSVI</div></div>
+            <div class="diagram-node"><div class="node-name">celnet-risk-cube / accel</div><div class="node-sub">Joint VaR / GPU SIMD</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 2: Structural Critique -->
+    <section id="structural-critique">
+      <div class="section-header">
+        <span class="section-num">02</span>
+        <h2>Deep Structural Critique: The 6 Anti-Patterns</h2>
+      </div>
+      <p class="section-desc">
+        A forensic examination of the current API contract (<code class="font-mono">celnet.proto</code>) reveals
+        accumulated technical debt resulting from organic, multi-wave additions. Below is the honest critique
+        of the six primary architectural deficiencies.
+      </p>
+
+      <!-- Critique 1 -->
+      <div class="card" style="margin-bottom: 24px;">
+        <div class="card-header">
+          <div class="card-title">1. Severe Asset-Class Fragmentation on Core Verbs</div>
+          <span class="badge-tag badge-danger">High Blast Radius</span>
+        </div>
+        <p style="color: var(--text-secondary); margin-bottom: 16px;">
+          Rather than treating products polymorphically, the wire contract fractures core calculation and trading
+          operations across parallel RPC methods keyed by asset class:
+        </p>
+
+        <div class="compare-container">
+          <div class="compare-col bad">
+            <div class="compare-header">
+              <span>Current Bifurcated Contract</span>
+              <span class="badge-tag badge-danger">Fragmented</span>
+            </div>
+            <div class="compare-body">
+              <ul>
+                <li><code>Price(PriceRequest)</code> — FX Options only</li>
+                <li><code>PriceRates(RatesPriceRequest)</code> — Linear FI only</li>
+                <li><code>PriceXva(PriceXvaRequest)</code> — CVA/DVA/FVA only</li>
+                <li><code>RequestQuote</code> vs <code>RequestRatesQuote</code></li>
+                <li><code>AggregateRisk</code> vs <code>AggregateRatesRisk</code></li>
+                <li><code>ListPositions</code> vs <code>ListRatesPositions</code></li>
+                <li><code>BookRatesPosition</code> (Options booked via Execution)</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="compare-col good">
+            <div class="compare-header">
+              <span>Target Unified Contract</span>
+              <span class="badge-tag badge-success">Polymorphic</span>
+            </div>
+            <div class="compare-body">
+              <ul>
+                <li><code>Calculate(ValuationRequest)</code> — Universal for all assets</li>
+                <li><code>RequestQuote(QuoteRequest)</code> — One RFQ verb for all</li>
+                <li><code>AggregateRisk(RiskRequest)</code> — Universal roll-up cube</li>
+                <li><code>ListPositions(PositionFilter)</code> — Single position store</li>
+                <li><code>BookPosition(BookRequest)</code> — Standardized booking</li>
+                <li>Adding Credit/Inflation/Crypto requires zero RPC additions</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        <p style="font-size: 13.5px; color: var(--text-muted);">
+          <strong>Consequence:</strong> Every client (GUI, Excel, SDK, CLI) is forced to maintain manual
+          switch statements before calling the server. A trader combining a bond future hedge with a currency option
+          must invoke two distinct services, losing atomicity.
+        </p>
+      </div>
+
+      <!-- Critique 2 -->
+      <div class="card" style="margin-bottom: 24px;">
+        <div class="card-header">
+          <div class="card-title">2. The "God-Service" Anti-Pattern in AuthService</div>
+          <span class="badge-tag badge-danger">Domain Coupling</span>
+        </div>
+        <p style="color: var(--text-secondary); margin-bottom: 16px;">
+          <code>service AuthService</code> currently houses <strong>38 RPC methods</strong>. Because it was the first
+          stateful service created, it became the dumping ground for seven completely unrelated architectural domains:
+        </p>
+
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>RPC Group in AuthService</th>
+                <th>Actual Domain</th>
+                <th>Why It Does Not Belong in Auth</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>ListDesks, CreateDesk, UpdateDesk...</code></td>
+                <td>Organization / Enterprise Hierarchy</td>
+                <td>Trading desk layout is business structure, not session verification.</td>
+              </tr>
+              <tr>
+                <td><code>ListAggregatedBooks, SetPricingControl</code></td>
+                <td>Liquidity / Market Ingest</td>
+                <td>Managing venue quote consolidation has zero connection to credential verification.</td>
+              </tr>
+              <tr>
+                <td><code>ListPricingGroups, UpdatePricingGroupPipeline</code></td>
+                <td>Client Tiering &amp; Distribution</td>
+                <td>Outbound spread markups and inventory skew pipelines are pricing features.</td>
+              </tr>
+              <tr>
+                <td><code>GetRiskRoutingGraph, UpdateRiskRoutingGraph</code></td>
+                <td>Order Execution &amp; Risk Policy</td>
+                <td>Routing fills into hierarchical risk books is a mission-critical trading policy.</td>
+              </tr>
+              <tr>
+                <td><code>GetHedgePolicyGraph, ListHedgeThresholds</code></td>
+                <td>Algorithmic Auto-Hedging</td>
+                <td>Decision trees for internalizing vs warehouse vs market order execution.</td>
+              </tr>
+              <tr>
+                <td><code>InitiateRiskTransfer, AcceptRiskTransfer...</code></td>
+                <td>Risk Governance &amp; Transfers</td>
+                <td>Four-eyes desk-to-desk risk transfer workflow.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Critique 3 -->
+      <div class="card" style="margin-bottom: 24px;">
+        <div class="card-header">
+          <div class="card-title">3. Transport &amp; Streaming Disjointedness</div>
+          <span class="badge-tag badge-warning">Resource Inefficiency</span>
+        </div>
+        <p style="color: var(--text-secondary); margin-bottom: 12px;">
+          While <code>StreamService.StreamSession</code> is a modern bidirectional multiplexed channel for streaming prices,
+          push notifications were implemented as standalone streams:
+        </p>
+        <ul style="padding-left: 20px; color: var(--text-secondary); margin-bottom: 12px;">
+          <li><code>NotificationService.StreamNotifications</code> (Stream 1)</li>
+          <li><code>NotificationService.StreamRiskTransferInbox</code> (Stream 2)</li>
+          <li><code>StreamService.StreamSession</code> (Stream 3)</li>
+        </ul>
+        <p style="font-size: 13.5px; color: var(--text-muted);">
+          <strong>Consequence:</strong> A single GUI or Excel instance opens 3+ persistent HTTP/2 or WebSocket connections.
+          When network switches occur (e.g. laptop roaming or VPN blip), three independent reconnection and resync
+          state machines execute, leading to out-of-order race conditions and wasted socket descriptors.
+        </p>
+      </div>
+
+      <!-- Critique 4, 5, 6 in a 3-card grid -->
+      <div class="grid-3">
+        <div class="card">
+          <div class="card-title" style="margin-bottom: 8px;">4. Asymmetric Taker/Maker Vocab</div>
+          <span class="badge-tag badge-warning" style="margin-bottom: 12px; display:inline-block;">Cognitive Mismatch</span>
+          <p style="font-size: 13.5px; color: var(--text-secondary);">
+            Taker flows use <code>QuoteService</code> (<code>RequestQuote</code> &rarr; <code>AcceptQuote</code> &rarr; returns <code>Execution</code>).
+            Maker desk flows use <code>RfqDeskService</code> (<code>SubmitDeskRequest</code> &rarr; <code>RespondDeskRequest</code> &rarr; returns <code>Deal</code>).
+            Both represent the same trade, but speak conflicting terminologies.
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="margin-bottom: 8px;">5. SurfaceService Misnomer</div>
+          <span class="badge-tag badge-warning" style="margin-bottom: 12px; display:inline-block;">Domain Blurring</span>
+          <p style="font-size: 13.5px; color: var(--text-secondary);">
+            <code>SurfaceService</code> was built for 2D FX volatility smile surfaces. When dual-curve fixed income landed,
+            discount curves were appended: <code>GetCurve</code>, <code>MarkCurve</code>, <code>CurveScenario</code>.
+            Curves are not surfaces; the service is actually a <strong>Market Data Engine</strong>.
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="margin-bottom: 8px;">6. SDK Ergonomics Divergence</div>
+          <span class="badge-tag badge-warning" style="margin-bottom: 12px; display:inline-block;">Parity Gap</span>
+          <p style="font-size: 13.5px; color: var(--text-secondary);">
+            The Rust SDK uses fluent builders (<code>client.pricing().vanilla(...)</code>); the GUI transport manually serializes
+            raw JSON strings; the Excel add-in fractures into <code>=CELNET.PRICE</code> vs <code>=CELNET.RATES</code> vs <code>=CELNET.BOND</code>.
+            No unified client specification exists across languages.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 3: Design Tenets -->
+    <section id="design-tenets">
+      <div class="section-header">
+        <span class="section-num">03</span>
+        <h2>Target Architecture Tenets</h2>
+      </div>
+      <p class="section-desc">
+        To guide the redesign and ensure long-term architectural stability, all target APIs must adhere
+        strictly to the following six engineering laws.
+      </p>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title" style="color: var(--brand-coral);">Tenet I: Rule 9 Law (One Clean Unversioned Contract)</div>
+          <p style="font-size: 13.5px; color: var(--text-secondary); margin-top: 8px;">
+            Zero <code>schema_version</code> fields. Zero semantic negotiation. Every field is strongly typed,
+            every enum is explicit, and protobuf oneof structures default safely. Breaking changes are rejected;
+            evolution is strictly additive.
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="color: var(--accent-indigo);">Tenet II: Complete Transport Mirroring</div>
+          <p style="font-size: 13.5px; color: var(--text-secondary); margin-top: 8px;">
+            Every single gRPC method and message must map 1:1 onto the WebSocket JSON transport.
+            Field names, data structures, and error semantics are byte-identical across gRPC and WS.
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="color: var(--status-green);">Tenet III: Single-Seam Multiplexing</div>
+          <p style="font-size: 13.5px; color: var(--text-secondary); margin-top: 8px;">
+            A client opens exactly <strong>ONE</strong> stateful connection to Celnet. All market data subscriptions,
+            streaming two-way prices, live RFQs, order updates, risk triggers, and administrative alerts
+            multiplex over that single channel.
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="color: var(--accent-cyan);">Tenet IV: Pure vs Stateful Decoupling</div>
+          <p style="font-size: 13.5px; color: var(--text-secondary); margin-top: 8px;">
+            Calculation services (<code>ValuationService</code>) are 100% stateless and side-effect free:
+            caller provides the instrument and market, pricer returns math. Trading and booking services
+            (<code>TradeService</code>, <code>RiskService</code>) are stateful, audited, and strictly journaled.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 4: 8 Bounded Services -->
+    <section id="service-decomposition">
+      <div class="section-header">
+        <span class="section-num">04</span>
+        <h2>The 8 Target Bounded Services</h2>
+      </div>
+      <p class="section-desc">
+        The fragmented landscape is consolidated into <strong>8 cleanly bounded, domain-driven services</strong>.
+        Each service has a single responsibility, explicit capability gates, and clear data ownership.
+      </p>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Service Name</th>
+              <th>Domain Charter</th>
+              <th>Stateless / Stateful</th>
+              <th>Primary Callers</th>
+              <th>Required Capability</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>ValuationService</code></td>
+              <td>Stateless pricing, Greeks (13-Greek options, DV01/PV01 rates, CS01 credit), and valuation adjustments (XVA).</td>
+              <td><span class="badge-tag badge-success">Pure Compute</span></td>
+              <td>All Clients, Pricer, Sim</td>
+              <td><code>Action::Price</code></td>
+            </tr>
+            <tr>
+              <td><code>TradeService</code></td>
+              <td>Unified bilateral RFQ, multi-dealer competition, RFS streams, quote acceptance, and atomic trade execution.</td>
+              <td><span class="badge-tag badge-danger">Stateful (Books)</span></td>
+              <td>Trader GUI, FIX, Bots</td>
+              <td><code>Action::Trade</code></td>
+            </tr>
+            <tr>
+              <td><code>StreamService</code></td>
+              <td>Multiplexed bidirectional pub/sub session for market data, pricing lines, risk triggers, and notifications.</td>
+              <td><span class="badge-tag badge-indigo">Multiplexed Bidi</span></td>
+              <td>GUI Cockpit, Excel, SDK</td>
+              <td><code>Action::Stream</code></td>
+            </tr>
+            <tr>
+              <td><code>MarketDataService</code></td>
+              <td>Vol surfaces, discount curves, survival curves, inflation curves, fixing schedules, and scenario shock grids.</td>
+              <td><span class="badge-tag badge-warning">Versioned Store</span></td>
+              <td>Quants, Desk Traders</td>
+              <td><code>Action::MarketData</code></td>
+            </tr>
+            <tr>
+              <td><code>RiskService</code></td>
+              <td>Position store, hierarchical risk roll-up cube, real-time limit RAG utilization, and joint multi-asset tail risk.</td>
+              <td><span class="badge-tag badge-danger">Stateful (Cube)</span></td>
+              <td>Risk Managers, Desks</td>
+              <td><code>Action::RiskManage</code></td>
+            </tr>
+            <tr>
+              <td><code>PolicyService</code></td>
+              <td>Fill-routing decision graphs, automated hedge exit graphs, warehouse limits, and desk risk transfers.</td>
+              <td><span class="badge-tag badge-indigo">Policy Graph</span></td>
+              <td>Risk Admin, Algorithmic</td>
+              <td><code>Action::Hedge</code></td>
+            </tr>
+            <tr>
+              <td><code>OrganizationService</code></td>
+              <td>Enterprise legal entities, desk assignments, netting books, and counterparty master hierarchies.</td>
+              <td><span class="badge-tag badge-warning">Master Entity</span></td>
+              <td>Operations, Admin</td>
+              <td><code>Action::Administer</code></td>
+            </tr>
+            <tr>
+              <td><code>IdentityService</code></td>
+              <td>Authentication (login/logout), session token issuance, RBAC capability overlays, and user profiles.</td>
+              <td><span class="badge-tag badge-cyan">Auth &amp; Session</span></td>
+              <td>All Users, Gateway</td>
+              <td><code>Public / Admin</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION 5: ValuationService Deep Dive -->
+    <section id="valuation-service">
+      <div class="section-header">
+        <span class="section-num">05</span>
+        <h2>Deep Dive: ValuationService (The Universal Seam)</h2>
+      </div>
+      <p class="section-desc">
+        <code>ValuationService</code> completely retires <code>Price</code>, <code>PriceRates</code>, and <code>PriceXva</code>.
+        It exposes a single, polymorphic, calculation-only endpoint capable of pricing any instrument across all asset classes.
+      </p>
+
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-title">proto/celnet/valuation/v1/valuation.proto</span>
+          <span class="code-lang">protobuf</span>
+        </div>
+        <pre><code><span class="keyword">syntax</span> = <span class="string">"proto3"</span>;
+<span class="keyword">package</span> celnet.valuation.v1;
+
+<span class="keyword">import</span> <span class="string">"celnet/instrument/v1/instrument.proto"</span>;
+<span class="keyword">import</span> <span class="string">"celnet/market/v1/market.proto"</span>;
+
+<span class="comment">// The single calculation RPC for Celnet across ALL asset classes.</span>
+<span class="comment">// Stateless: caller supplies instrument + market context explicitly.</span>
+<span class="service">service</span> <span class="type">ValuationService</span> {
+  <span class="comment">// Calculate fair value, full Greeks vector, and sensitivity ladders.</span>
+  <span class="keyword">rpc</span> <span class="fn">Calculate</span>(<span class="type">ValuationRequest</span>) <span class="keyword">returns</span> (<span class="type">ValuationResponse</span>);
+
+  <span class="comment">// High-throughput batched calculation for portfolio re-valuation.</span>
+  <span class="keyword">rpc</span> <span class="fn">BatchCalculate</span>(<span class="type">BatchValuationRequest</span>) <span class="keyword">returns</span> (<span class="type">BatchValuationResponse</span>);
+}
+
+<span class="keyword">message</span> <span class="type">ValuationRequest</span> {
+  <span class="comment">// Any supported instrument: Vanilla, Exotic, Bond, OIS, Swap, Future, CDS.</span>
+  celnet.instrument.v1.Instrument instrument = <span class="number">1</span>;
+
+  <span class="comment">// Complete market context: Spot, Discount Curve, Vol Surface, Hazard Curve.</span>
+  celnet.market.v1.MarketSnapshot market = <span class="number">2</span>;
+
+  <span class="comment">// Optional calculation parameters (pricing model, MC paths, FD grid size).</span>
+  <span class="keyword">optional</span> <span class="type">ValuationConfig</span> config = <span class="number">3</span>;
+
+  <span class="comment">// Caller correlation token echoed in response.</span>
+  <span class="keyword">optional</span> <span class="type">uint64</span> correlation_id = <span class="number">4</span>;
+}
+
+<span class="keyword">message</span> <span class="type">ValuationResponse</span> {
+  <span class="comment">// Primary valuation measure: PV in base currency, clean price for bonds.</span>
+  <span class="type">double</span> present_value = <span class="number">1</span>;
+
+  <span class="comment">// Secondary instrument-specific handle: e.g. YTM / Par Rate / Fair Strike.</span>
+  <span class="keyword">optional</span> <span class="type">double</span> par_rate_or_yield = <span class="number">2</span>;
+
+  <span class="comment">// 13-Greek vector for non-linear structures (Delta, Gamma, Vega, Theta...).</span>
+  <span class="keyword">optional</span> <span class="type">OptionsGreeks</span> options_greeks = <span class="number">3</span>;
+
+  <span class="comment">// Linear interest rate sensitivity (PV01, DV01, Key-Rate Tenor Ladder).</span>
+  <span class="keyword">optional</span> <span class="type">RateSensitivities</span> rate_sensitivities = <span class="number">4</span>;
+
+  <span class="comment">// Credit spread sensitivities (CS01, Jump-to-Default).</span>
+  <span class="keyword">optional</span> <span class="type">CreditSensitivities</span> credit_sensitivities = <span class="number">5</span>;
+
+  <span class="comment">// Monte Carlo standard error (absent for analytical / PDE closed-form).</span>
+  <span class="keyword">optional</span> <span class="type">double</span> price_std_error = <span class="number">6</span>;
+
+  <span class="comment">// Execution telemetry for transparency.</span>
+  <span class="type">uint32</span> compute_nanos = <span class="number">7</span>;
+  <span class="type">string</span> model_used = <span class="number">8</span>;
+  <span class="keyword">optional</span> <span class="type">uint64</span> correlation_id = <span class="number">9</span>;
+}</code></pre>
+      </div>
+
+      <div class="callout success">
+        <div class="callout-icon">✨</div>
+        <div class="callout-body">
+          <h4>Why This Design is SOTA</h4>
+          <p>
+            When pricing an FX option, <code>options_greeks</code> is populated; when pricing a bond or OIS swap,
+            <code>rate_sensitivities</code> is populated; when pricing a hybrid or cross-asset product,
+            <strong>both</strong> populate seamlessly. The caller never changes their network stub.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 6: TradeService Deep Dive -->
+    <section id="trade-service">
+      <div class="section-header">
+        <span class="section-num">06</span>
+        <h2>Deep Dive: TradeService (Harmonized RFQ &amp; Execution)</h2>
+      </div>
+      <p class="section-desc">
+        <code>TradeService</code> resolves the Taker/Maker terminology collision by creating a single,
+        symmetric workflow. Whether trading on client requests or institutional inter-dealer liquidity,
+        the domain model uses unified concepts: <code>QuoteIntent</code> &rarr; <code>Quote</code> &rarr; <code>Execution</code>.
+      </p>
+
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-title">proto/celnet/trade/v1/trade.proto</span>
+          <span class="code-lang">protobuf</span>
+        </div>
+        <pre><code><span class="service">service</span> <span class="type">TradeService</span> {
+  <span class="comment">// 1. Taker requests a two-way tradable quote (single or multi-dealer).</span>
+  <span class="keyword">rpc</span> <span class="fn">RequestQuote</span>(<span class="type">QuoteRequest</span>) <span class="keyword">returns</span> (<span class="type">Quote</span>);
+  <span class="keyword">rpc</span> <span class="fn">RequestMultiDealerQuote</span>(<span class="type">QuoteRequest</span>) <span class="keyword">returns</span> (<span class="type">MultiDealerQuote</span>);
+
+  <span class="comment">// 2. Maker desk responds to an incoming client quote request.</span>
+  <span class="keyword">rpc</span> <span class="fn">RespondQuote</span>(<span class="type">QuoteResponse</span>) <span class="keyword">returns</span> (<span class="type">Quote</span>);
+
+  <span class="comment">// 3. Taker accepts a quote within the last-look window -> atomic execution.</span>
+  <span class="keyword">rpc</span> <span class="fn">ExecuteQuote</span>(<span class="type">ExecuteQuoteRequest</span>) <span class="keyword">returns</span> (<span class="type">ExecutionReport</span>);
+
+  <span class="comment">// 4. Either party declines / passes on the quote.</span>
+  <span class="keyword">rpc</span> <span class="fn">RejectQuote</span>(<span class="type">RejectQuoteRequest</span>) <span class="keyword">returns</span> (<span class="type">TradeAck</span>);
+
+  <span class="comment">// 5. Query active trades & blotter deals with entitlement filtering.</span>
+  <span class="keyword">rpc</span> <span class="fn">ListDeals</span>(<span class="type">ListDealsRequest</span>) <span class="keyword">returns</span> (<span class="type">ListDealsResponse</span>);
+}</code></pre>
+      </div>
+    </section>
+
+    <!-- SECTION 7: StreamService 2.0 -->
+    <section id="stream-service">
+      <div class="section-header">
+        <span class="section-num">07</span>
+        <h2>StreamService 2.0: Single-Seam Multiplexing</h2>
+      </div>
+      <p class="section-desc">
+        All push notifications, market data streams, order lifecycle events, and inbox updates are collapsed
+        into <strong>one persistent bidirectional channel</strong>. Clients manage a single connection with
+        granular topic subscriptions.
+      </p>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Channel Topic</th>
+              <th>Payload Content</th>
+              <th>Update Frequency</th>
+              <th>Replaces Legacy Mechanism</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>TOPIC_PRICING_LINE</code></td>
+              <td>Continuous two-way executable quotes with Greeks for structures.</td>
+              <td>Sub-millisecond (tick-driven)</td>
+              <td>Legacy StreamSession lines</td>
+            </tr>
+            <tr>
+              <td><code>TOPIC_AGGREGATED_BOOK</code></td>
+              <td>Consolidated multi-dealer top of book &amp; LP depth.</td>
+              <td>5ms conflated ticks</td>
+              <td>AggregatedBookStream</td>
+            </tr>
+            <tr>
+              <td><code>TOPIC_ORDER_LIFECYCLE</code></td>
+              <td>Inbound RFQs, dealer responses, fill confirmations, deal bookings.</td>
+              <td>Event-driven (instant)</td>
+              <td>RfqDeskService &amp; NotificationService</td>
+            </tr>
+            <tr>
+              <td><code>TOPIC_RISK_TRIGGER</code></td>
+              <td>Limit utilization warnings, RAG status changes, hard-breach alerts.</td>
+              <td>Event-driven (instant)</td>
+              <td>NotificationService Alerts</td>
+            </tr>
+            <tr>
+              <td><code>TOPIC_DESK_INBOX</code></td>
+              <td>Pending risk transfer requests awaiting trader action.</td>
+              <td>State change (instant)</td>
+              <td>StreamRiskTransferInbox</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-title">Client WebSocket Multiplexing Frame Example</span>
+          <span class="code-lang">json</span>
+        </div>
+        <pre><code>{
+  <span class="keyword">"action"</span>: <span class="string">"subscribe"</span>,
+  <span class="keyword">"subscription_id"</span>: <span class="number">1042</span>,
+  <span class="keyword">"topic"</span>: <span class="string">"TOPIC_PRICING_LINE"</span>,
+  <span class="keyword">"instrument"</span>: {
+    <span class="keyword">"kind"</span>: <span class="string">"bond"</span>,
+    <span class="keyword">"isin"</span>: <span class="string">"US91282CJZ59"</span>,
+    <span class="keyword">"settlement_date"</span>: <span class="string">"2026-09-05"</span>
+  },
+  <span class="keyword">"throttle_ms"</span>: <span class="number">50</span>
+}</code></pre>
+      </div>
+    </section>
+
+    
+    <!-- SECTION: MarketDataService Deep Dive -->
+    <section id="marketdata-service">
+      <div class="section-header">
+        <span class="section-num">08</span>
+        <h2>Deep Dive: MarketDataService (Unified Curves &amp; Surfaces)</h2>
+      </div>
+      <p class="section-desc">
+        <code>MarketDataService</code> retires the options-centric misnomer <code>SurfaceService</code>. It provides
+        a unified market data authority for volatility surfaces, dual-bootstrapped discount curves, credit survival curves,
+        inflation breakevens, and cross-asset scenario shock grids.
+      </p>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Market Data Object</th>
+              <th>Supported Mathematical Models</th>
+              <th>Calibrator Crate</th>
+              <th>Primary RPCs</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Volatility Surface</strong></td>
+              <td>Vanna-Volga (Market-Hedge), SABR, SVI, SSVI, eSSVI</td>
+              <td><code>celnet-surface</code></td>
+              <td><code>GetVolSurface, MarkVolSurface</code></td>
+            </tr>
+            <tr>
+              <td><strong>Discount &amp; Index Curves</strong></td>
+              <td>Dual OIS/SOFR, Monotone-Convex, Log-Linear, Turn adjustments</td>
+              <td><code>celnet-rates</code></td>
+              <td><code>GetDiscountCurve, MarkDiscountCurve</code></td>
+            </tr>
+            <tr>
+              <td><strong>Credit Survival Curve</strong></td>
+              <td>ISDA Standard Model Hazard Rate, Piecewise-constant default intensity</td>
+              <td><code>celnet-credit</code></td>
+              <td><code>GetSurvivalCurve, MarkSurvivalCurve</code></td>
+            </tr>
+            <tr>
+              <td><strong>Inflation Curve</strong></td>
+              <td>Zero-Coupon (ZCIS), Year-on-Year (YYIS), Seasonal Adjustment</td>
+              <td><code>celnet-inflation</code></td>
+              <td><code>GetInflationCurve, MarkInflationCurve</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-title">proto/celnet/marketdata/v1/marketdata.proto</span>
+          <span class="code-lang">protobuf</span>
+        </div>
+        <pre><code><span class="service">service</span> <span class="type">MarketDataService</span> {
+  <span class="comment">// Query calibrated market objects by identifier and timestamp.</span>
+  <span class="keyword">rpc</span> <span class="fn">GetMarketObject</span>(<span class="type">GetMarketObjectRequest</span>) <span class="keyword">returns</span> (<span class="type">MarketObject</span>);
+
+  <span class="comment">// Mark/recalibrate a surface or curve from live broker quote sets.</span>
+  <span class="keyword">rpc</span> <span class="fn">MarkMarketObject</span>(<span class="type">MarkMarketObjectRequest</span>) <span class="keyword">returns</span> (<span class="type">MarkMarketObjectResponse</span>);
+
+  <span class="comment">// Cross-asset scenario grid: parallel, spot, vol, and pillar shocks.</span>
+  <span class="keyword">rpc</span> <span class="fn">Scenario</span>(<span class="type">ScenarioRequest</span>) <span class="keyword">returns</span> (<span class="type">ScenarioResponse</span>);
+
+  <span class="comment">// Enumerate registered curves, surfaces, and benchmark calendars.</span>
+  <span class="keyword">rpc</span> <span class="fn">ListDefinitions</span>(<span class="type">ListDefinitionsRequest</span>) <span class="keyword">returns</span> (<span class="type">ListDefinitionsResponse</span>);
+}</code></pre>
+      </div>
+    </section>
+
+    <!-- SECTION: RiskService Deep Dive -->
+    <section id="risk-service">
+      <div class="section-header">
+        <span class="section-num">09</span>
+        <h2>Deep Dive: RiskService (Universal Cube &amp; Tail Engine)</h2>
+      </div>
+      <p class="section-desc">
+        <code>RiskService</code> manages the enterprise position store, runs real-time hierarchical risk roll-ups,
+        monitors RAG limits, and calculates joint multi-asset tail risk (VaR / Expected Shortfall).
+      </p>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title" style="color: var(--accent-indigo);">1. Universal Position Store</div>
+          <p style="font-size: 13.5px; color: var(--text-secondary); margin-top: 8px;">
+            Positions are no longer segregated by asset class. Every position is an atomic fact carrying an
+            <code>Instrument</code>, <code>Quantity</code>, <code>BookId</code>, <code>TraderId</code>, and
+            <code>AttributionRecord</code>. A single <code>ListPositions</code> query returns the complete firm inventory.
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="color: var(--brand-coral);">2. Server-Side Aggregation Cube</div>
+          <p style="font-size: 13.5px; color: var(--text-secondary); margin-top: 8px;">
+            Clients never sum risk numbers locally. The server prunes positions by principal entitlements, groups by
+            organizational dimension (Desk, Book, Trader, Counterparty), converts to a common <code>ReportingNumeraire</code>,
+            and re-derives non-additive measures (VaR, ES, FRTB curvature).
+          </p>
+        </div>
+      </div>
+
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-title">proto/celnet/risk/v1/risk.proto</span>
+          <span class="code-lang">protobuf</span>
+        </div>
+        <pre><code><span class="service">service</span> <span class="type">RiskService</span> {
+  <span class="comment">// 1. Query open positions across ALL asset classes.</span>
+  <span class="keyword">rpc</span> <span class="fn">ListPositions</span>(<span class="type">ListPositionsRequest</span>) <span class="keyword">returns</span> (<span class="type">ListPositionsResponse</span>);
+
+  <span class="comment">// 2. Hierarchical risk aggregation roll-up tree in reporting numeraire.</span>
+  <span class="keyword">rpc</span> <span class="fn">AggregateRisk</span>(<span class="type">AggregateRiskRequest</span>) <span class="keyword">returns</span> (<span class="type">AggregateRiskResponse</span>);
+
+  <span class="comment">// 3. Drill risk tree node down to child sub-nodes and contributing positions.</span>
+  <span class="keyword">rpc</span> <span class="fn">DrillRisk</span>(<span class="type">DrillRiskRequest</span>) <span class="keyword">returns</span> (<span class="type">DrillRiskResponse</span>);
+
+  <span class="comment">// 4. Read real-time limit utilization (RAG status, soft/hard breach alerts).</span>
+  <span class="keyword">rpc</span> <span class="fn">LimitStatus</span>(<span class="type">LimitStatusRequest</span>) <span class="keyword">returns</span> (<span class="type">LimitStatusResponse</span>);
+
+  <span class="comment">// 5. True joint multi-asset tail risk: aligned FX/Rate/Credit shock scenarios.</span>
+  <span class="keyword">rpc</span> <span class="fn">CombinedTailRisk</span>(<span class="type">CombinedTailRiskRequest</span>) <span class="keyword">returns</span> (<span class="type">CombinedTailRiskResponse</span>);
+}</code></pre>
+      </div>
+    </section>
+
+    <!-- SECTION: Control & Admin Services Deep Dive -->
+    <section id="control-plane">
+      <div class="section-header">
+        <span class="section-num">10</span>
+        <h2>Deep Dive: Control Plane (Policy, Organization, Identity)</h2>
+      </div>
+      <p class="section-desc">
+        The massive 38-RPC <code>AuthService</code> is decomposed into three high-cohesion, bounded-context services,
+        separating operational policies from enterprise structure and security identity.
+      </p>
+
+      <div class="grid-3">
+        <div class="card">
+          <div class="card-title" style="color: var(--accent-indigo);">PolicyService</div>
+          <span class="badge-tag badge-indigo" style="margin: 8px 0;">Algorithmic Rules</span>
+          <p style="font-size: 13px; color: var(--text-secondary);">
+            Owns execution routing and auto-hedging decision graphs:
+          </p>
+          <ul style="font-size: 12.5px; color: var(--text-muted); margin-top: 8px; padding-left: 16px;">
+            <li><code>GetRiskRoutingGraph / Update</code></li>
+            <li><code>GetHedgePolicyGraph / Update</code></li>
+            <li><code>ListHedgeThresholds / Update</code></li>
+            <li><code>InitiateRiskTransfer / Accept</code></li>
+            <li><code>ListDecisionJournal</code></li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="color: var(--accent-cyan);">OrganizationService</div>
+          <span class="badge-tag badge-cyan" style="margin: 8px 0;">Enterprise Master</span>
+          <p style="font-size: 13px; color: var(--text-secondary);">
+            Owns corporate structure and trading accounting books:
+          </p>
+          <ul style="font-size: 12.5px; color: var(--text-muted); margin-top: 8px; padding-left: 16px;">
+            <li><code>ListDesks / Create / Update</code></li>
+            <li><code>ListEntities / Create / Update</code></li>
+            <li><code>ListBooks / Create / Update</code></li>
+            <li><code>ListCounterparties / Upsert</code></li>
+            <li><code>ListPricingGroups / Update</code></li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="color: var(--status-green);">IdentityService</div>
+          <span class="badge-tag badge-success" style="margin: 8px 0;">Auth &amp; RBAC</span>
+          <p style="font-size: 13px; color: var(--text-secondary);">
+            Owns authentication tokens and capability permissions:
+          </p>
+          <ul style="font-size: 12.5px; color: var(--text-muted); margin-top: 8px; padding-left: 16px;">
+            <li><code>Login / Logout</code></li>
+            <li><code>ListUsers / Create / Update</code></li>
+            <li><code>ResetPassword</code></li>
+            <li><code>GetUserCapabilities / Set</code></li>
+            <li><code>GetRoleCapabilities / Set</code></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 8: Wire Protocol & Parity -->
+    <section id="wire-protocol">
+      <div class="section-header">
+        <span class="section-num">08</span>
+        <h2>Wire Protocol &amp; Complete Transport Mirroring</h2>
+      </div>
+      <p class="section-desc">
+        Celnet guarantees byte-for-byte semantic parity between HTTP/2 gRPC and the WebSocket JSON mirror.
+        The browser Web GUI, Python quants, and Rust microservices see identical message schemas.
+      </p>
+
+      <div class="tab-container">
+        <div class="tab-bar">
+          <button class="tab-btn active" onclick="switchTab(event, 'tab-proto')">Protobuf 3 (gRPC)</button>
+          <button class="tab-btn" onclick="switchTab(event, 'tab-ws-json')">WebSocket (JSON Mirror)</button>
+          <button class="tab-btn" onclick="switchTab(event, 'tab-rust')">Rust Client SDK</button>
+          <button class="tab-btn" onclick="switchTab(event, 'tab-ts')">TypeScript GUI Client</button>
+          <button class="tab-btn" onclick="switchTab(event, 'tab-excel')">Excel Add-In</button>
+        </div>
+
+        <!-- Tab: Protobuf -->
+        <div id="tab-proto" class="tab-pane active">
+          <div class="code-block">
+            <pre><code><span class="comment">// Example: Polymorphic Instrument Definition</span>
+<span class="keyword">message</span> <span class="type">Instrument</span> {
+  <span class="type">string</span> symbol = <span class="number">1</span>;
+  <span class="type">AssetClass</span> asset_class = <span class="number">2</span>;
+
+  <span class="keyword">oneof</span> definition {
+    <span class="type">VanillaOption</span> vanilla = <span class="number">10</span>;
+    <span class="type">BarrierOption</span> barrier = <span class="number">11</span>;
+    <span class="type">AsianOption</span> asian = <span class="number">12</span>;
+    <span class="type">TarfOption</span> tarf = <span class="number">13</span>;
+    <span class="type">OisSwap</span> ois = <span class="number">20</span>;
+    <span class="type">CashBond</span> cash_bond = <span class="number">21</span>;
+    <span class="type">BondFuture</span> bond_future = <span class="number">22</span>;
+    <span class="type">CreditDefaultSwap</span> cds = <span class="number">30</span>;
+  }
+}</code></pre>
+          </div>
+        </div>
+
+        <!-- Tab: WebSocket JSON -->
+        <div id="tab-ws-json" class="tab-pane">
+          <div class="code-block">
+            <pre><code>{
+  <span class="keyword">"service"</span>: <span class="string">"ValuationService"</span>,
+  <span class="keyword">"method"</span>: <span class="string">"Calculate"</span>,
+  <span class="keyword">"payload"</span>: {
+    <span class="keyword">"instrument"</span>: {
+      <span class="keyword">"symbol"</span>: <span class="string">"EURUSD-25D-RR"</span>,
+      <span class="keyword">"asset_class"</span>: <span class="string">"FX_OPTIONS"</span>,
+      <span class="keyword">"vanilla"</span>: {
+        <span class="keyword">"pair"</span>: <span class="string">"EURUSD"</span>,
+        <span class="keyword">"expiry"</span>: <span class="string">"2026-12-18T10:00:00Z"</span>,
+        <span class="keyword">"strike"</span>: <span class="number">1.0850</span>,
+        <span class="keyword">"call_put"</span>: <span class="string">"CALL"</span>
+      }
+    },
+    <span class="keyword">"market"</span>: {
+      <span class="keyword">"spot"</span>: <span class="number">1.0782</span>,
+      <span class="keyword">"vol_surface_ref"</span>: <span class="string">"EURUSD.LIVE.20260903"</span>
+    }
+  }
+}</code></pre>
+          </div>
+        </div>
+
+        <!-- Tab: Rust SDK -->
+        <div id="tab-rust" class="tab-pane">
+          <div class="code-block">
+            <pre><code><span class="comment">// Rust Fluent Client Usage</span>
+<span class="keyword">let</span> client = <span class="type">CelnetClient</span>::<span class="fn">connect</span>(<span class="string">"https://127.0.0.1:9090"</span>).<span class="keyword">await</span>?;
+
+<span class="comment">// 1. Universal Valuation (Options)</span>
+<span class="keyword">let</span> valuation = client.<span class="fn">valuation</span>()
+    .<span class="fn">calculate</span>(Instrument::<span class="fn">vanilla_call</span>(<span class="string">"EURUSD"</span>, <span class="number">1.0850</span>, expiry))
+    .<span class="fn">with_market</span>(live_market)
+    .<span class="keyword">await</span>?;
+
+<span class="comment">// 2. Universal Valuation (Fixed Income - identical method!)</span>
+<span class="keyword">let</span> bond_val = client.<span class="fn">valuation</span>()
+    .<span class="fn">calculate</span>(Instrument::<span class="fn">us_treasury</span>(<span class="string">"US91282CJZ59"</span>))
+    .<span class="fn">with_curve</span>(sofr_curve)
+    .<span class="keyword">await</span>?;</code></pre>
+          </div>
+        </div>
+
+        <!-- Tab: TS Client -->
+        <div id="tab-ts" class="tab-pane">
+          <div class="code-block">
+            <pre><code><span class="comment">// TypeScript / GUI Cockpit Usage</span>
+<span class="keyword">import</span> { <span class="type">CelnetClient</span> } <span class="keyword">from</span> <span class="string">'@celnet/client'</span>;
+
+<span class="keyword">const</span> celnet = <span class="keyword">new</span> <span class="type">CelnetClient</span>({ url: <span class="string">'wss://app.celnet.io/ws'</span> });
+<span class="keyword">await</span> celnet.<span class="fn">connect</span>();
+
+<span class="comment">// Streaming subscription over single multiplexed session</span>
+<span class="keyword">const</span> sub = celnet.<span class="fn">stream</span>().<span class="fn">subscribePricingLine</span>({
+  instrument: { kind: <span class="string">'bond'</span>, isin: <span class="string">'US91282CJZ59'</span> },
+  onSnapshot: (snap) => console.<span class="fn">log</span>(<span class="string">'Opening price:'</span>, snap.price),
+  onUpdate: (upd) => console.<span class="fn">log</span>(<span class="string">'Tick delta:'</span>, upd.deltaPrice),
+});</code></pre>
+          </div>
+        </div>
+
+        <!-- Tab: Excel -->
+        <div id="tab-excel" class="tab-pane">
+          <div class="code-block">
+            <pre><code><span class="comment">// Modern Excel Add-in Functions</span>
+=CELNET.PRICE("EURUSD-25D-RR", A1:B10)           // Options
+=CELNET.PRICE("US91282CJZ59", "USD-SOFR-OIS")   // Cash Treasury Bond
+=CELNET.DV01("USD-OIS-10Y", "USD-SOFR")         // Linear Interest Rate Risk
+=CELNET.TAILRISK("DESK-NY-RATES", 0.99, "1d")   // Joint Multi-Asset VaR</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    
+    <!-- SECTION: Client SDK Ergonomics -->
+    <section id="client-sdks">
+      <div class="section-header">
+        <span class="section-num">12</span>
+        <h2>Client SDK Ergonomics &amp; Cross-Language Architecture</h2>
+      </div>
+      <p class="section-desc">
+        Celnet delivers an identical developer experience across Rust, TypeScript, Python, and Excel.
+        All SDKs wrap the single wire contract with ergonomic, type-safe, fluent builders.
+      </p>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title">Rust Client SDK (<code>celnet-client</code>)</div>
+          <p style="font-size: 13.5px; color: var(--text-secondary); margin-top: 8px;">
+            Zero-allocation async client with connection pooling, channel multiplexing, and automatic
+            heartbeat monitoring.
+          </p>
+          <div class="code-block" style="margin-top: 12px;">
+            <pre><code><span class="comment">// Rust: Pricing & Trading</span>
+<span class="keyword">let</span> quote = client.<span class="fn">trade</span>()
+    .<span class="fn">request_quote</span>(Instrument::<span class="fn">sofr_ois_swap</span>(<span class="string">"10Y"</span>, <span class="number">0.0385</span>))
+    .<span class="fn">notional</span>(<span class="number">25_000_000.0</span>)
+    .<span class="keyword">await</span>?;
+
+<span class="keyword">let</span> execution = client.<span class="fn">trade</span>().<span class="fn">execute_quote</span>(quote.quote_id).<span class="keyword">await</span>?;</code></pre>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Python Quant SDK (<code>celnet-py</code>)</div>
+          <p style="font-size: 13.5px; color: var(--text-secondary); margin-top: 8px;">
+            Asynchronous client designed for quants, Jupyter notebooks, and algorithmic research with native
+            Pandas DataFrame exports.
+          </p>
+          <div class="code-block" style="margin-top: 12px;">
+            <pre><code><span class="comment"># Python: Scenario Shock Grid</span>
+<span class="keyword">import</span> celnet
+
+client = celnet.connect(<span class="string">"localhost:9090"</span>)
+grid = client.market_data.scenario(
+    instrument=celnet.Option.strangle(<span class="string">"EURUSD"</span>, <span class="string">"1M"</span>),
+    spot_shocks=[-0.05, 0.0, 0.05],
+    vol_shocks=[-0.02, 0.0, 0.02]
+).to_dataframe()</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 9: Migration Strategy -->
+    <section id="migration-roadmap">
+      <div class="section-header">
+        <span class="section-num">09</span>
+        <h2>Zero-Downtime Migration &amp; Cutover Strategy</h2>
+      </div>
+      <p class="section-desc">
+        To adhere to CLAUDE.md guardrails and avoid breaking existing production tests, the transition
+        will follow an orderly 4-stage migration:
+      </p>
+
+      <div class="compare-container">
+        <div class="compare-col good">
+          <div class="compare-header">
+            <span>Phase 1: Additive Schema Layer (Zero Breakage)</span>
+            <span class="badge-tag badge-success">Safe</span>
+          </div>
+          <div class="compare-body">
+            <ul>
+              <li>Add <code>ValuationService</code> and <code>TradeService</code> to <code>celnet.proto</code>.</li>
+              <li>Wire internal dispatch in <code>celnet-server</code> directly to the existing pricing engines.</li>
+              <li>Legacy RPCs (<code>Price</code>, <code>PriceRates</code>) remain fully functional as thin pass-through adapters.</li>
+              <li>All existing tests (168 GUI, 122 Excel, 816 Rust) remain 100% green.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="compare-col good">
+          <div class="compare-header">
+            <span>Phase 2: Client Transport Migration</span>
+            <span class="badge-tag badge-cyan">Client Update</span>
+          </div>
+          <div class="compare-body">
+            <ul>
+              <li>Update Rust SDK (<code>celnet-client</code>) to prefer the unified <code>ValuationService</code>.</li>
+              <li>Update GUI transport (<code>transport.ts</code>) to stream via <code>StreamService 2.0</code>.</li>
+              <li>Consolidate Excel functions to <code>=CELNET.PRICE</code>.</li>
+              <li>Verify live GUI and Excel suites under <code>CELNET_ACCESS_MODE=enforce</code>.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="compare-container">
+        <div class="compare-col good">
+          <div class="compare-header">
+            <span>Phase 3: Administrative Decomposition</span>
+            <span class="badge-tag badge-indigo">Domain Cleanup</span>
+          </div>
+          <div class="compare-body">
+            <ul>
+              <li>Decompose <code>AuthService</code> into <code>PolicyService</code>, <code>OrganizationService</code>, and <code>IdentityService</code>.</li>
+              <li>Migrate administrative GUI panels (LP Panel, Hedging Workspace, Risk Transfer Inbox).</li>
+              <li>Update permission audit log and decision journal.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="compare-col good">
+          <div class="compare-header">
+            <span>Phase 4: Deprecation Retirement (Rule 9 Cleanliness)</span>
+            <span class="badge-tag badge-success">Complete</span>
+          </div>
+          <div class="compare-body">
+            <ul>
+              <li>Retire legacy adapter shims once all clients speak the unified contract.</li>
+              <li>Verify zero dead code and zero compiler warnings with <code>cargo clippy -D warnings</code>.</li>
+              <li>Celebrate a pristine, SOTA, unified multi-asset API!</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+      <div>
+        <strong>Celnet Target Architecture Determination</strong> · Authored for Operator Review
+      </div>
+      <div>
+        Confidential · Celer Technologies &amp; Celnet Quantitative Engineering
+      </div>
+    </footer>
+
+  </main>
+</div>
+
+<script>
+  function switchTab(evt, tabId) {
+    const parent = evt.target.closest('.tab-container');
+    parent.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    parent.querySelectorAll('.tab-pane').forEach(pane => pane.classList.remove('active'));
+    
+    evt.target.classList.add('active');
+    document.getElementById(tabId).classList.add('active');
+  }
+
+  // Smooth scroll tracking
+  window.addEventListener('DOMContentLoaded', () => {
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const id = entry.target.getAttribute('id');
+          document.querySelectorAll('.sidebar .nav-item').forEach(item => {
+            if (item.getAttribute('href') === `#${id}`) {
+              item.classList.add('active');
+            } else {
+              item.classList.remove('active');
+            }
+          });
+        }
+      });
+    }, { rootMargin: '-20% 0px -70% 0px' });
+
+    document.querySelectorAll('section').forEach(section => {
+      observer.observe(section);
+    });
+  });
+</script>
+
+</body>
+</html>

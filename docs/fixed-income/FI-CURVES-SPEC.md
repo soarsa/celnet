@@ -54,7 +54,7 @@ retrospective (in-arrears) payment, geometric compounding, and the need to **spl
 realised segment with a projected segment** when calibrating to futures (findings §1.3 —
 [Mathema](https://help.mathema.com.cn/latest/docs/fixedincome/sofr_curve),
 [Quantifi](https://www.quantifisolutions.com/tackling-interest-rate-curve-construction-complexity/)).
-The compounded-RFR accrual mechanics live in [`FI-CONVENTIONS.md`](./FI-CONVENTIONS.md) §4.
+The compounded-RFR accrual mechanics live in [`FI-CONVENTIONS.md`](FI-CONVENTIONS.md) §4.
 
 ---
 
@@ -151,7 +151,7 @@ detects a cyclic graph (basis/XCCY).
   instruments with a smoothness penalty (findings §4.2).
 - **Exact pillar Jacobians** via AD/dual numbers give fast, exact key-rate risk (findings §4.2). The
   reference engines (rateslib/ORE) do this, but they are **reference reading / oracles only** — never
-  dependencies (see [`FI-VERIFICATION-CONTRACT.md`](./FI-VERIFICATION-CONTRACT.md) and findings §5).
+  dependencies (see [`FI-VERIFICATION-CONTRACT.md`](FI-VERIFICATION-CONTRACT.md) and findings §5).
 
 P0 is **deterministic curve math**: discounted-cashflow + root-find (bootstrap) + bump (risk). The
 *only* stochastic input in P0 is the STIR-futures convexity adjustment (§6.3) (findings §4.1).
@@ -208,10 +208,10 @@ shipping v1 posture.
 - **Convexity**: deterministic STIR placeholder (pending Q11), vol-model-driven later.
 
 **Out of P0 (flagged):** swaption/cap vol, SABR/Bachelier/Hull-White, credit/CDS, inflation, full
-multi-CSA — see [`FI-ARCHITECTURE.md`](./FI-ARCHITECTURE.md) §"later: `celnet-rates-vol`" and findings §C.
+multi-CSA — see [`FI-ARCHITECTURE.md`](FI-ARCHITECTURE.md) §"later: `celnet-rates-vol`" and findings §C.
 
 **Oracle:** every curve number is validated against **QuantLib (primary) + ORE (risk/FRTB)** plus an
-engine-agnostic structural identity — see [`FI-VERIFICATION-CONTRACT.md`](./FI-VERIFICATION-CONTRACT.md).
+engine-agnostic structural identity — see [`FI-VERIFICATION-CONTRACT.md`](FI-VERIFICATION-CONTRACT.md).
 
 ---
 

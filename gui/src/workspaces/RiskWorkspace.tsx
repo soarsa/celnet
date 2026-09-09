@@ -12,7 +12,7 @@
  * under a fixed-income license and an FX desk never sees a lens it cannot use;
  * when the derived lens's class is not viewable, the honest empty-state is shown.
  *
- * FI "Book" → "Risk" CONSOLIDATION (docs/FI-BOOK-CONCEPTS.md): the redundant
+ * FI "Book" → "Risk" CONSOLIDATION (docs/fixed-income/FI-BOOK-CONCEPTS.md): the redundant
  * Fixed-Income "Book" rail entry is REMOVED (its FI "Aggregate Risk" lens rendered
  * the SAME `RatesRiskPanel` this workspace shows at its rates lens). Its
  * position-ledger surfaces (Positions · Quotes · Deals) are NOT tabs of THIS

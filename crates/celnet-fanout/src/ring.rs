@@ -355,8 +355,7 @@ impl<T: Copy + Default + Send> Consumer<T> {
     /// the count written (`out[..n]`). **Zero-allocation** (the caller owns the
     /// buffer) and lock-free.
     ///
-    /// This is the broadcast-ring analogue of the LMAX-Disruptor *batch* receive
-    /// (M. Thompson et al., *Disruptor*, 2011 §4 "batching effect"): a consumer
+    /// This is the high-performance broadcast-ring batch receive optimization: a consumer
     /// that has fallen behind amortises its per-item dispatch by draining a run
     /// in one call instead of one `try_recv` per item, which is the dominant win
     /// when a single producer outruns a fan-out consumer. Each element still goes

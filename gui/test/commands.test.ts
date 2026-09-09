@@ -714,7 +714,7 @@ describe("navigation gating — workspaceAccessible (slice 5c / #6 per-workspace
       }
     });
 
-    // Per-feature rail visibility (docs/PERMISSIONS-GRANULAR-REVIEW.md §4): a row with
+    // Per-feature rail visibility (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4): a row with
     // a viewCap is visible ONLY to a holder of that fine-grained capability. The
     // consolidated aliases (`riskbooks`/`riskrouting`→`riskdashboard`,
     // `tiering`→`pricinggroups`) have NO rail row of their own yet gate IDENTICALLY to
@@ -839,7 +839,7 @@ describe("navigation gating — workspaceAccessible (slice 5c / #6 per-workspace
       }
     });
 
-    // Delegable ADMIN-domain surfaces (docs/PERMISSIONS-GRANULAR-REVIEW.md §4): each
+    // Delegable ADMIN-domain surfaces (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4): each
     // is reachable by a SIGNED-IN holder of its fine-grained viewCap WITHOUT the
     // coarse isAdmin flag — and the Administration tab follows.
     it("a signed-in manage_liquidity·FI holder reaches Connections (delegated off isAdmin)", () => {

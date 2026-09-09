@@ -46,6 +46,15 @@ pub enum ModelKind {
     /// advertises this kind so the registry routes rates work to it, exactly as a
     /// [`ModelKind::Pricing`] model serves the option analytic arm.
     RatesPricing,
+    /// Prices exotic and path-dependent derivatives (Barriers, Asians, Cliquets, Baskets)
+    /// — implements [`crate::ExoticPricingModel`].
+    ExoticPricing,
+    /// Prices multi-underlying derivatives over correlation matrices (Baskets, Quantos, Rainbows).
+    MultiAssetPricing,
+    /// Algorithmic order execution and smart order routing policy.
+    AlgoExecution,
+    /// Pluggable non-additive risk capital aggregator (FRTB-SbM, ISDA SIMM, Expected Shortfall).
+    NonAdditiveRisk,
 }
 
 /// Which Greeks a [`crate::PricingModel`] is able to produce, advertised up

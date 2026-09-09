@@ -25,6 +25,13 @@ enum Subject {
     Pair(CcyPair),
     /// A single settlement currency (all tenors of the rates book co-resident).
     Currency(Ccy),
+    /// A cross-currency basis book (e.g. EUR/USD basis vs USD SOFR reference ccy).
+    Basis {
+        base_pair: CcyPair,
+        reference_ccy: Ccy,
+    },
+    /// A multi-asset risk netting group identifier.
+    NettingGroup(u64),
 }
 
 impl Subject {
@@ -36,6 +43,9 @@ impl Subject {
     /// ASCII bytes into bits `0..24` and sets bit 63 — a region no pair lane can
     /// reach (a pair uses at most bit 47) — so a currency subject never collides
     /// with any pair, in particular `USD` never aliases the self-pair `USDUSD`.
+    ///
+    /// Cross-currency basis sets bit 62, and multi-asset netting groups set bit 61,
+    /// ensuring non-overlapping bit-regions across all subject types.
     fn lane(self) -> u64 {
         match self {
             Subject::Pair(pair) => {
@@ -51,6 +61,24 @@ impl Subject {
             Subject::Currency(ccy) => {
                 let c = ccy.as_str().as_bytes();
                 (1u64 << 63) | (u64::from(c[0]) << 16) | (u64::from(c[1]) << 8) | u64::from(c[2])
+            }
+            Subject::Basis {
+                base_pair,
+                reference_ccy,
+            } => {
+                let b = base_pair.base.as_str().as_bytes();
+                let q = base_pair.quote.as_str().as_bytes();
+                let r = reference_ccy.as_str().as_bytes();
+                (1u64 << 62)
+                    | (u64::from(b[0]) << 40)
+                    | (u64::from(b[1]) << 32)
+                    | (u64::from(q[0]) << 24)
+                    | (u64::from(q[1]) << 16)
+                    | (u64::from(r[0]) << 8)
+                    | u64::from(r[1])
+            }
+            Subject::NettingGroup(group_id) => {
+                (1u64 << 61) | (group_id & 0x1FFF_FFFF_FFFF_FFFF)
             }
         }
     }
@@ -105,6 +133,29 @@ impl PartitionKey {
         }
     }
 
+    /// A cross-currency basis key — co-locating basis curves and legs.
+    #[must_use]
+    pub const fn basis(base_pair: CcyPair, reference_ccy: Ccy) -> Self {
+        Self {
+            subject: Subject::Basis {
+                base_pair,
+                reference_ccy,
+            },
+            tenant: None,
+            book: None,
+        }
+    }
+
+    /// A multi-asset risk netting group key.
+    #[must_use]
+    pub const fn netting_group(group_id: u64) -> Self {
+        Self {
+            subject: Subject::NettingGroup(group_id),
+            tenant: None,
+            book: None,
+        }
+    }
+
     /// Sub-shard this key by tenant.
     #[must_use]
     pub const fn with_tenant(mut self, tenant: TenantId) -> Self {
@@ -125,7 +176,7 @@ impl PartitionKey {
     pub const fn ccy_pair(&self) -> Option<CcyPair> {
         match self.subject {
             Subject::Pair(pair) => Some(pair),
-            Subject::Currency(_) => None,
+            _ => None,
         }
     }
 
@@ -135,7 +186,28 @@ impl PartitionKey {
     pub const fn ccy(&self) -> Option<Ccy> {
         match self.subject {
             Subject::Currency(ccy) => Some(ccy),
-            Subject::Pair(_) => None,
+            _ => None,
+        }
+    }
+
+    /// The cross-currency basis pair and reference currency, if applicable.
+    #[must_use]
+    pub const fn basis_info(&self) -> Option<(CcyPair, Ccy)> {
+        match self.subject {
+            Subject::Basis {
+                base_pair,
+                reference_ccy,
+            } => Some((base_pair, reference_ccy)),
+            _ => None,
+        }
+    }
+
+    /// The netting group identifier, if applicable.
+    #[must_use]
+    pub const fn netting_group_id(&self) -> Option<u64> {
+        match self.subject {
+            Subject::NettingGroup(id) => Some(id),
+            _ => None,
         }
     }
 
@@ -275,5 +347,25 @@ mod tests {
         acc = fold64(acc, tagged(None));
         acc = fold64(acc, tagged(None));
         assert_eq!(PartitionKey::pair(eurusd()).digest(), acc);
+    }
+
+    #[test]
+    fn basis_and_netting_group_round_trip_and_distinction() {
+        let basis_k = PartitionKey::basis(eurusd(), Ccy::USD).with_tenant(TenantId(1));
+        assert_eq!(basis_k.basis_info(), Some((eurusd(), Ccy::USD)));
+        assert_eq!(basis_k.ccy_pair(), None);
+        assert_eq!(basis_k.ccy(), None);
+        assert_eq!(basis_k.netting_group_id(), None);
+
+        let net_k = PartitionKey::netting_group(42).with_book(BookId(10));
+        assert_eq!(net_k.netting_group_id(), Some(42));
+        assert_eq!(net_k.basis_info(), None);
+
+        // Deterministic and non-colliding across all variants
+        assert_eq!(basis_k.digest(), basis_k.digest());
+        assert_eq!(net_k.digest(), net_k.digest());
+        assert_ne!(basis_k.digest(), net_k.digest());
+        assert_ne!(basis_k.digest(), PartitionKey::pair(eurusd()).digest());
+        assert_ne!(basis_k.digest(), PartitionKey::currency(Ccy::USD).digest());
     }
 }

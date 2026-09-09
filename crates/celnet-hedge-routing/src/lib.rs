@@ -10,7 +10,7 @@
 //! a threshold, then back-to-back"* — is expressed exactly like a risk-routing
 //! graph: an `IF <risk-field> <op> <value> THEN <exit-action>` decision tree the
 //! trader builds in the same editor. This crate is workstream §10.1 of
-//! `docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` — the pure foundation
+//! `docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` — the pure foundation
 //! the server control loop, proto/WS, and GUI layers build on. It has **no**
 //! server, proto, or wire dependency.
 //!

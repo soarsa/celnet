@@ -14,9 +14,10 @@
 use std::sync::Arc;
 
 use celnet_proto::pricing_service_server::PricingService;
+use celnet_proto::valuation_service_server::ValuationService;
 use celnet_proto::{
     PriceRequest, PriceResponse, PriceXvaRequest, PriceXvaResponse, RatesPriceRequest,
-    RatesPriceResponse,
+    RatesPriceResponse, ValuationRequest, ValuationResponse,
 };
 use tonic::{Request, Response, Status};
 
@@ -197,3 +198,49 @@ impl PricingService for PricingEdge {
         }))
     }
 }
+
+#[tonic::async_trait]
+impl ValuationService for PricingEdge {
+    async fn calculate(
+        &self,
+        request: Request<ValuationRequest>,
+    ) -> Result<Response<ValuationResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let req_id = req.request_id.clone();
+        let corr_id = req.correlation_id;
+
+        let payload = req.payload.ok_or_else(|| {
+            Status::invalid_argument("missing `payload` in ValuationRequest")
+        })?;
+
+        match payload {
+            celnet_proto::valuation_request::Payload::Options(opts_req) => {
+                let resp = self.price(Request::new(opts_req)).await?.into_inner();
+                Ok(Response::new(ValuationResponse {
+                    request_id: req_id,
+                    correlation_id: corr_id,
+                    payload: Some(celnet_proto::valuation_response::Payload::Options(resp)),
+                }))
+            }
+            celnet_proto::valuation_request::Payload::Rates(rates_req) => {
+                let resp = self.price_rates(Request::new(rates_req)).await?.into_inner();
+                Ok(Response::new(ValuationResponse {
+                    request_id: req_id,
+                    correlation_id: corr_id,
+                    payload: Some(celnet_proto::valuation_response::Payload::Rates(resp)),
+                }))
+            }
+            celnet_proto::valuation_request::Payload::Xva(xva_req) => {
+                let resp = self.price_xva(Request::new(xva_req)).await?.into_inner();
+                Ok(Response::new(ValuationResponse {
+                    request_id: req_id,
+                    correlation_id: corr_id,
+                    payload: Some(celnet_proto::valuation_response::Payload::Xva(resp)),
+                }))
+            }
+        }
+    }
+}
+

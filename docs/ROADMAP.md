@@ -20,52 +20,43 @@
 
 ---
 
-## 1. Workspace Layout (created in P0, then frozen-by-section)
+## 1. Workspace Layout (64 crates)
 
 ```
 celnet/
 ├─ Cargo.toml                      # [workspace] virtual manifest; workspace.dependencies + workspace.lints
 ├─ Cargo.lock                      # committed
-├─ rust-toolchain.toml             # pinned stable; pinned nightly only for fuzz job
+├─ rust-toolchain.toml             # pinned stable (1.96.0); pinned nightly only for fuzz job
 ├─ deny.toml                       # cargo-deny: advisories+licenses+bans+sources
-├─ supply-chain/                   # cargo-vet config + audits
-├─ CLAUDE.md                       # the LEDGER (see §7)
-├─ docs/
-│  ├─ ROADMAP.md                   # this file
-│  ├─ INTERFACES.md                # frozen-interface registry + semver tags
-│  └─ CONVENTIONS.md               # FX convention spec (delta/ATM/premium/cut/daycount)
-└─ crates/
-   # ── SHARED INTERFACE LAYER (freeze FIRST — see §3) ──
-   ├─ celnet-types/                 # POD value types: Ccy, CcyPair, Tenor, Money, Rate, Vol, Delta, scalar policy
-   ├─ celnet-core/                  # pure-domain TRAITS + math primitives (zero IO, zero framework deps)
-   ├─ celnet-proto/                 # single current wire contract (prost 0.13 / tonic 0.12); NO version field
-   ├─ celnet-plugin-api/            # SDK: PricingModel/PricingBackend traits + WIT world
-   # ── ENGINE / IMPLEMENTATION LAYER ──
-   ├─ celnet-conventions/           # FX conventions config: per-(pair,tenor) delta/ATM/premium/cut/daycount
-   ├─ celnet-calendar/              # holiday calendars, spot lag, delivery, modified-following, EOM
-   ├─ celnet-vanilla/               # Garman-Kohlhagen, full Greek set, strike<->delta solver
-   ├─ celnet-surface/               # vol-surface construction: VV, SABR, SVI/SSVI, broker->smile fly
-   ├─ celnet-exotics/               # barriers/touches/DNT/digitals (VV), LSV, PDE + MC engines
-   ├─ celnet-gpu/                   # wgpu/WGSL backend + f64 CPU reconciliation; PricingBackend impls
-   ├─ celnet-engine/                # stateful low-latency service; hot path; hot-upgrade handoff
-   ├─ celnet-integration/           # Celer estate + vendor FX-options marketdata adapters; multi-source aggregation
-   ├─ celnet-server/                # thin binary: gRPC edge (tokio + tonic); WS mirror designed
-   ├─ celnet-cli/                   # thin binary: admin/diagnostics
-   ├─ celnet-client/               # typed async Rust SDK over the wire contract
-   ├─ celnet-observability/        # telemetry rings + drain + HdrHistogram + metrics + audit
-   ├─ celnet-golden/               # frozen QuantLib 1.42.1 reference tables (oracle + generator)
-   ├─ celnet-testkit/              # invariant assertions, proptest strategies, fixtures
-   └─ celnet-bench/                # divan latency/throughput suites + committed baseline
+├─ CLAUDE.md                       # the LEDGER & operational guardrails
+├─ docs/                           # documentation corpus & reference libraries
+├─ excel/                          # Excel Custom Functions Add-in
+├─ gui/                            # React high-density trading studio cockpit
+├─ python/                         # Python high-performance SDK & dynamic runtime
+└─ crates/                         # 64 crates (Layer 0–9, flat virtual manifest)
+   ├─ celnet-types/  celnet-core/  celnet-proto/  celnet-plugin-api/  celnet-plugin-host/
+   ├─ celnet-conventions/  celnet-calendar/  celnet-vanilla/  celnet-equity-vanilla/
+   ├─ celnet-commodity-vanilla/  celnet-crypto-vanilla/  celnet-linear/  celnet-surface/
+   ├─ celnet-exotics/  celnet-heston/  celnet-qmc/  celnet-gpu/  celnet-risk-accel/
+   ├─ celnet-rates/  celnet-bond/  celnet-rates-risk/  celnet-rates-exotics/  celnet-refdata/
+   ├─ celnet-refstore/  celnet-corpactions/  celnet-margin/  celnet-xva/  celnet-algo/
+   ├─ celnet-engine/  celnet-journal/  celnet-replog/  celnet-fanout/  celnet-shm/  celnet-sbe/
+   ├─ celnet-exchange-codecs/  celnet-fix/  celnet-risk-normalize/  celnet-risk-cube/  celnet-risk-fleet/
+   ├─ celnet-router/  celnet-limits/  celnet-entitlements/  celnet-risk-routing/  celnet-risk-transfer/
+   ├─ celnet-hedge-routing/  celnet-acceptance/  celnet-tiering/  celnet-aggregation/  celnet-rfq/
+   ├─ celnet-upgrade/  celnet-license/  celnet-server/  celnet-cli/  celnet-client/  celnet-c-api/
+   ├─ celnet-observability/  celnet-golden/  celnet-parity/  celnet-analytics/  celnet-lp-sim/
+   ├─ celnet-cme-sim/  celnet-testkit/  celnet-integration/  celnet-bench/
 ```
 
-> `celnet-plugin-host` (the tiered host: Tier-0 native registry + Tier-2 **wasmi** fuel-metered
-> sandbox) is **built** behind the frozen `celnet-plugin-api` contract — wasmtime was rejected
-> for open 2026 RustSec advisories (see `docs/PLUGIN-HOST-ALT.md` / WS-G below).
-> See `docs/INTERFACES.md` and `docs/ARCHITECTURE.md` §2/§6.
+> The workspace has evolved through cross-asset, fixed-income/rates, liquidity composite,
+> execution algorithms, ULL messaging/SBE/SHM, Multi-Raft consensus, and dynamic capability
+> licensing into **64 crates** (detailed in `docs/ARCHITECTURE.md` §2 and `docs/INTERFACES.md`).
 
 **Dependency direction (must never invert):**
-`celnet-types` ← `celnet-core` ← {`celnet-conventions`, `celnet-calendar`, `celnet-vanilla`, `celnet-surface`, `celnet-exotics`, `celnet-gpu`} ← `celnet-engine` ← {`celnet-server`, `celnet-cli`}.
-`celnet-proto` and `celnet-plugin-api` depend only on `celnet-types` (+ `celnet-core` traits for the plugin API). `celnet-plugin-host` depends on `celnet-plugin-api`. `celnet-integration` depends on `celnet-proto` + `celnet-core`.
+`celnet-types` ← `celnet-core` ← {leaf domain crates} ← `celnet-engine` ← {`celnet-server`, `celnet-cli`}.
+`celnet-proto` depends only on `celnet-types`. `celnet-plugin-api` depends only on `celnet-types` (+ `celnet-core` traits).
+No cyclic dependencies. Single unversioned contract across all surfaces (Rule 9).
 
 ---
 
@@ -441,7 +432,7 @@ A stream is **DONE** only when, on its owned crates:
 > designs** — writing a fresh spec for a built feature creates a second, drifting source of truth
 > (guardrail 10). Every "already exists" claim in both docs is `file:line`-cited from code that was
 > read, not inferred.
-> - `docs/CORPORATE-ACTION-MONITOR-GAP-ANALYSIS.md` — **stages 1–3 of the source pipeline and 3 of
+> - [`docs/archive/audits/CORPORATE-ACTION-MONITOR-GAP-ANALYSIS.md`](archive/audits/CORPORATE-ACTION-MONITOR-GAP-ANALYSIS.md) — **stages 1–3 of the source pipeline and 3 of
 >   its 4 event families are already built** (`celnet-corpactions` CAEV model + hand-verified effect
 >   math; `celnet-refstore` journal-backed bitemporal golden store with the vendor-neutral
 >   `CorpActionSource` port; `CorporateActionsService` + GUI workspace). **7 real gaps**, headed by
@@ -451,9 +442,9 @@ A stream is **DONE** only when, on its owned crates:
 >   YTW/YTC anchor switch (and no static call/put schedule to switch onto), no pool factor in the
 >   pricing crates, no consent-fee event shape, no valuation of an exchange target, no
 >   per-instrument quote lock (only the firm-wide two-boolean `PricingControl`), no ex-date-aware
->   accrued. Phases **CA-P1…CA-P7**. Amends `BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md`
+>   accrued. Phases **CA-P1…CA-P7**. Amends [`docs/fixed-income/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md`](fixed-income/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md)
 >   (whose "No code yet" status and P1–P5 phase list are now corrected in place).
-> - `docs/INVENTORY-SKEW-ENGINE-GAP-ANALYSIS.md` — **4 of 5 components, both operational modes and
+> - [`docs/hedging/INVENTORY-SKEW-ENGINE-GAP-ANALYSIS.md`](hedging/INVENTORY-SKEW-ENGINE-GAP-ANALYSIS.md) — **4 of 5 components, both operational modes and
 >   half a guardrail are already live**: `celnet-tiering`'s `FeaturePipeline` *is* the spec's layer
 >   between core pricing and distribution, applied on ESP (`aggregation.rs:1334`) **and** RFQ
 >   (`:1193`); `InventorySkew` is Mode A over live `InventorySource` inventory; `PricingFeature::Axe`
@@ -498,6 +489,24 @@ A stream is **DONE** only when, on its owned crates:
 > (SK-P6 post-fill fade, given the existing 5 ms repricing loop) or **candidate out-of-scope**
 > (CA-P7 component valuation, which needs a cash-equity instrument type and price source that do
 > not exist).
+>
+> ### Production Remediation Status (September 2026 — BUILT & VERIFIED)
+> All recommended build-order items and essential operational controls are **fully implemented and verified**:
+> - **SK-P1 (Dynamic Anti-Arb Skew Cap)**: Built in `celnet-tiering` with $|s| \le \min(s_{\max}, \lambda \cdot h)$.
+>   Verified in `tests/tiering.rs` and `tests/feature_pipeline.rs`. Eliminates through-mid quotes.
+> - **SK-P2 (Limit-Utilization Inventory Skew)**: Built in `celnet-tiering` with $u = q / \text{limit\_cap}$
+>   and power damping, resolving the auto-hedging double-count hazard.
+> - **CA-G6 (Lock-Free Quote Lock)**: Built in `celnet-server::PricingControl` using `arc_swap::ArcSwap`
+>   for zero-alloc, wait-free loads on the pricing tick loop, wired to FIX/RFS quote emission and streaming.
+> - **CA-P1/CA-P2 (Pool Factor & Corporate Actions)**: Built in `celnet-bond` (`Bond.pool_factor`,
+>   `CashflowSchedule` scaling) and wired to `BondDef` in `reference_data.rs` and `aggregation.rs`.
+> - **RFS Futures Streaming**: Built in `celnet-fix` with `SEC_TYPE_FUT` and `PRODUCT_FUT`, wired to
+>   `celnet-server` RFS lines and `NewOrderSingle` execution.
+> - **Notification SDK Parity**: Built in `celnet-client` and `celnet-cli` with wire tag 7
+>   `MANUAL_INTERVENTION_REQUIRED` and exhaustive pattern matching.
+>
+> See `docs/architecture/CELNET-PRODUCTION-GRADE-ARCHITECTURE-REVIEW-AND-IMPLEMENTATION.md` and
+> `docs/CELNET-PRODUCTION-GRADE-ARCHITECTURE-REVIEW-AND-IMPLEMENTATION.html`.
 
 ---
 

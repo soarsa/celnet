@@ -2,7 +2,7 @@
  * Pure helpers for the outbound price-tiering config (FI-TIERING phase 3): the
  * option vocabularies + human labels the editor renders, sensible defaults for a
  * freshly enabled config, and the client-side validator that MIRRORS the server's
- * `celnet-tiering` guardrail invariants (see `docs/FI-TIERING-RESEARCH.md` §4/§5).
+ * `celnet-tiering` guardrail invariants (see `docs/fixed-income/FI-TIERING-RESEARCH.md` §4/§5).
  *
  * No React, no transport — so the Shell, the editor, and the vitest suite share
  * one source of truth. The server still enforces every invariant authoritatively;
@@ -73,7 +73,7 @@ export const TIERING_STRATEGY_KIND_HINT: Record<TieringStrategyKind, string> = {
  * {@link TieringStrategyMeta.docHref} deep-links to its own "how to use" heading.
  */
 const TIERING_DOCS_BASE =
-  "https://github.com/soarsa/celnet/blob/main/docs/FI-TIERING-RESEARCH.md";
+  "https://github.com/soarsa/celnet/blob/main/docs/fixed-income/FI-TIERING-RESEARCH.md";
 
 /** User-facing "how to use it" metadata surfaced per strategy in the editor. */
 export interface TieringStrategyMeta {
@@ -87,7 +87,7 @@ export interface TieringStrategyMeta {
 
 /**
  * Per-strategy documentation registry: the title, a one-line purpose, and a link
- * to the "how to use" section of `docs/FI-TIERING-RESEARCH.md`. The editor renders
+ * to the "how to use" section of `docs/fixed-income/FI-TIERING-RESEARCH.md`. The editor renders
  * a help affordance per strategy from this table so a user can learn each one.
  */
 export const TIERING_STRATEGY_META: Record<TieringStrategyKind, TieringStrategyMeta> = {
@@ -305,7 +305,7 @@ export interface PreviewTwoWay {
 /**
  * The canonical worked-example raw composite: LP bid 99.50 / offer 99.60 (mid
  * 99.55, market spread 0.10). Flat ±25 price-bps tiering turns it into 99.30 /
- * 99.80 — the reference example in `docs/FI-TIERING-RESEARCH.md` §1/§9.
+ * 99.80 — the reference example in `docs/fixed-income/FI-TIERING-RESEARCH.md` §1/§9.
  */
 export const TIERING_PREVIEW_RAW: PreviewTwoWay = { bid: 99.5, offer: 99.6 };
 

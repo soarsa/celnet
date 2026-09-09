@@ -1,7 +1,7 @@
 //! The dedicated server→client **risk-transfer inbox push channel**: the desk /
 //! trader on the receiving end of a `Pending` desk-to-desk / trader-to-trader
 //! transfer learns of it the instant it lands (or is withdrawn / decided), without
-//! polling — the four-eyes counterparty side of `docs/RISK-TRANSFER-REQUIREMENTS.md`
+//! polling — the four-eyes counterparty side of `docs/hedging/RISK-TRANSFER-REQUIREMENTS.md`
 //! §9.2.
 //!
 //! # Design (CLAUDE.md §11: bounded-queue offload, never stall a publisher)

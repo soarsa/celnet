@@ -9,8 +9,7 @@
 //!
 //! # Model
 //!
-//! The outbound two-way, per the inventory-control market-making lineage
-//! (Avellaneda–Stoikov / Guéant–Lehalle; Bergault et al.), is
+//! The outbound two-way, following optimal inventory-control market making:
 //!
 //! ```text
 //! bid   = mid − h − s      (h = half-spread ≥ 0,  s = skew, signed)
@@ -21,9 +20,7 @@
 //! vs profit; grows with vol and size, ~constant in inventory) and the **skew
 //! `s`** (inventory risk; ~linear in the signed position `q`, clamped). A dealer
 //! **long** inventory skews the whole two-way **down** (`s > 0`) to shed risk.
-//!
-//! Full methodology, citations, and the bond bps convention are in
-//! `docs/FI-TIERING-RESEARCH.md`. Real desks use clamped linear heuristics
+//! `docs/fixed-income/FI-TIERING-RESEARCH.md`. Real desks use clamped linear heuristics
 //! rather than solving the HJB — that is what this engine implements.
 //!
 //! # Seam

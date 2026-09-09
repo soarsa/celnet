@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 /// One `(book × instrument)` risk state's values for every routable field. The
 /// input to a hedge-policy graph walk
-/// (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §5.2).
+/// (`docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §5.2).
 ///
 /// Signed risk (`net_dv01`, `net_notional`, …) keeps its sign so a rule may branch
 /// on direction; the band/budget fields (`threshold`, `utilization`, `overflow`,

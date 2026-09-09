@@ -52,7 +52,7 @@ pub enum StrategySpec {
         /// Spread Scale Factor `f` (`≥ 0`) — the widening gain on `Dₙ/e`.
         spread_scale_factor: f64,
     },
-    // Phase 3+ (docs/FI-TIERING-RESEARCH.md §5): VolatilityScale, SizeLadder,
+    // Phase 3+ (docs/fixed-income/FI-TIERING-RESEARCH.md §5): VolatilityScale, SizeLadder,
     // ToxicityWiden, ClientTierBase — added here as additional variants behind
     // the same TieringStrategy seam without breaking this contract.
 }

@@ -86,7 +86,7 @@ single fixing (findings §2.2 —
 [ARRC Users Guide to SOFR](https://www.newyorkfed.org/medialibrary/Microsites/arrc/files/2021/users-guide-to-sofr2021-update.pdf)).
 Day-basis is ACT/360 for USD/EUR, ACT/365F for GBP-SONIA. The schema therefore also carries
 `compounding: Compounded | Averaged`. (The pricing-side accrual lives in `celnet-rates::rfr`; see
-[`FI-CURVES-SPEC.md`](./FI-CURVES-SPEC.md) §2 and [`FI-ARCHITECTURE.md`](./FI-ARCHITECTURE.md).)
+[`FI-CURVES-SPEC.md`](FI-CURVES-SPEC.md) §2 and [`FI-ARCHITECTURE.md`](FI-ARCHITECTURE.md).)
 
 ---
 
@@ -176,7 +176,7 @@ Mirroring the FX "pair universe" table ([`../CONVENTIONS.md`](../CONVENTIONS.md)
 
 **Verification:** convention resolution is validated structurally (resolved convention matches the
 published ISDA/ICMA/central-bank standard) and against QuantLib's day-count/calendar implementations
-— see [`FI-VERIFICATION-CONTRACT.md`](./FI-VERIFICATION-CONTRACT.md). This mirrors the FX
+— see [`FI-VERIFICATION-CONTRACT.md`](FI-VERIFICATION-CONTRACT.md). This mirrors the FX
 `pair_universe.rs` parity proof ([`../CONVENTIONS.md`](../CONVENTIONS.md)).
 
 ---

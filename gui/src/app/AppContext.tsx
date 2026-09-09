@@ -43,6 +43,7 @@ import { ASSET_UNDERLIERS } from "../data/assetUniverse";
 import type { AssetClass } from "../products/types";
 import { useStreamSession, type StreamApi } from "../hooks/useStreamSession";
 import { useAuth, type AuthApi } from "../hooks/useAuth";
+import { getFdc3Agent, instrumentToFdc3, fdc3ToInstrument } from "../lib/fdc3";
 import {
   currentLevel,
   FIRM_SCOPE_ROOT,
@@ -68,45 +69,12 @@ import {
   workspaceAccessible,
   workspaceDomains,
   type Domain,
+  type WorkspaceId,
 } from "../lib/commands";
 import type { Density } from "../design/density";
 
-// fe-fi-migration #6: the single class-parametric WorkspaceId set (the FX/FI
-// duplicate rows collapsed into one capability row each). Mirrors
-// `commands.WorkspaceId` exactly.
-export type WorkspaceId =
-  | "ticket"
-  | "stream"
-  | "surface"
-  | "risk"
-  | "book"
-  | "quoting"
-  | "fistreaming"
-  | "aggbook"
-  | "tiering"
-  | "riskbooks"
-  | "riskdashboard"
-  | "filedgers"
-  | "riskrouting"
-  | "hedgeflow"
-  | "hedging"
-  | "acceptance"
-  | "risktransfer"
-  | "transferinbox"
-  | "transferaudit"
-  | "xva"
-  | "excel"
-  | "clientflow"
-  | "latencyops"
-  | "streetliquidity"
-  | "eventtrace"
-  | "connections"
-  | "liquidity"
-  | "admin"
-  | "permissions"
-  | "pricinggroups"
-  | "corpactions"
-  | "refdata";
+// Single canonical WorkspaceId defined in lib/commands.ts.
+export type { WorkspaceId };
 
 // Re-export the scope vocabulary from its owning module so existing consumers
 // (riskView, riskScope tests) import it from AppContext unchanged — the types now
@@ -687,6 +655,11 @@ export function AppProvider({
       path[path.length - 1] = { level: "pair", label };
       return { path, groupBy: s.groupBy };
     });
+    try {
+      getFdc3Agent().broadcast(instrumentToFdc3(`${pair.base}/${pair.quote}`));
+    } catch {
+      // non-fatal in headless / test envs
+    }
   };
 
   // Favourites are keyed by the universe id — pairs and non-FX underliers share
@@ -723,6 +696,11 @@ export function AppProvider({
       path[path.length - 1] = { level: "pair", label: row.label };
       return { path, groupBy: s.groupBy };
     });
+    try {
+      getFdc3Agent().broadcast(instrumentToFdc3(row.label));
+    } catch {
+      // non-fatal
+    }
   }, []);
 
   const clearTicketTarget = useCallback(() => setTicketTarget(null), []);

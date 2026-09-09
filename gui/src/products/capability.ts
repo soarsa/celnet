@@ -6,7 +6,7 @@
  * request rather than meeting a server error after it.
  *
  * It mirrors the authoritative boundary documented in
- * `docs/EXCEL-INTEGRATION.md §3.3.1` and enforced identically on the other side of
+ * `docs/clients/EXCEL-INTEGRATION.md §3.3.1` and enforced identically on the other side of
  * the one contract: the server's `price_cross_asset` (crates/celnet-server) and the
  * Excel build-time guard (`excel/src/functions/instrumentSpec.ts`) both refuse a
  * cross-asset exotic. The dim REASON surfaced here is the same honest sentence those

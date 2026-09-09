@@ -9,7 +9,7 @@ The integration is built as **traits and adapters, exercised in-repo against rea
 ![The Celer trade lifecycle with Celnet as the FX-options pricing system-of-record](../assets/celnet-capabilities/fig-09-celer-lifecycle.png)
 *Figure 9 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Celnet in the Celer trade lifecycle. Celnet supplies price, Greeks and surface into the price path and option risk into the risk/position path; the surrounding Celer services own routing, credit, execution, clearing and the net-position truth source. The estate hops shown are the designed integration map; in-repo the seams are exercised against loopback adapters.*
 
-### 12.1 Where Celnet plugs in
+## 12.1 Where Celnet plugs in
 
 The Celer estate runs two complementary flows, and Celnet contributes to each at exactly the point where option intelligence is needed.
 
@@ -25,7 +25,7 @@ The Celer estate runs two complementary flows, and Celnet contributes to each at
 | Pre-trade risk | Credit & limit gate | Option risk sensitivities + FRTB-SA capital for accurate exposure |
 | Position manager | Net position & P&L truth | Option Greeks and marked-surface valuation, server-aggregated |
 
-### 12.2 The integration edge
+## 12.2 The integration edge
 
 Celnet meets the estate through a small, well-defined set of connectors, every one a real, shipping component (`crates/celnet-fix/`, `crates/celnet-integration/`).
 
@@ -37,7 +37,7 @@ Celnet meets the estate through a small, well-defined set of connectors, every o
 
 **Vendor-feed normalization, blend & divergence** (`celnet-integration/src/{normalize,vendor,aggregate,divergence}.rs`). A normalization layer maps heterogeneous upstream quotes into Celnet's canonical observables, blends multiple sources with staleness weighting, and surfaces divergence between them — gating out a stale or mispriced feed rather than silently averaging it. The blend/staleness/divergence **algorithm** is built and gated in-repo; live multi-vendor quote **values** are an integration/deploy target, not in-repo data.
 
-### 12.3 Three deployment modes, one codebase
+## 12.3 Three deployment modes, one codebase
 
 Integration depth is a configuration choice, not a fork. Three seam traits — the **market-data source** (`MarketDataSource`), the **price sink** (`PriceSink` / `DistributorEgress`), and the order/execution adapter — are swapped to move Celnet along a spectrum from fully self-contained to fully estate-native. The engine core never names a transport: it is handed an `impl MarketDataSource` and an `impl PriceSink`, and the `EdgeBuilder` picks the concrete adapters for the chosen `DeploymentMode` (`celnet-integration/src/deployment.rs`). Migration between modes is a reversible adapter swap, never a rewrite.
 
@@ -52,13 +52,13 @@ Integration depth is a configuration choice, not a fork. Three seam traits — t
 
 **What is built in-repo vs proven at deploy.** The **Standalone** mode is fully real and gate-tested in-crate (its `StandaloneSource`/`StandaloneSink` adapters record and replay every update). The **CelerIntegrated** and **Hybrid** modes are wired through the *same* `MarketDataSource`/`PriceSink` seam, exercised in-repo against a **real loopback server and sink** — proving the framing, the governed-egress conflation, and the resync contract. The **estate-native binding itself** — the JVM distributor sidecar handshake, mailbox calibration, and live quote-feed entitlement — is the **designed** estate integration: it slots in behind the already-built seam and is **proven at deploy against the running estate**, never claimed as a live in-repo capability. Because each mode is just a different binding of the same seam traits, a desk can start Standalone, prove the platform, and migrate deeper into the estate at its own pace as the deploy-gated binding is brought up.
 
-### 12.4 Adaptable by design
+## 12.4 Adaptable by design
 
 The same market-data seam that ingests the Celer distributor ingests external products and feeds. Celnet's normalization layer is a vendor-neutral **data-shape adapter** built to adapt to the venues and terminals a desk already runs — for example **Fenics**, **Bloomberg**, **Refinitiv** and **EBS**, which are integration/adapter targets, not live connections. Each is brought in as an adapter behind the seam that maps its quotes into the canonical observable set driving quote assembly, surface marking and live trend series. New sources are added as adapters behind the seam, so onboarding a feed is an integration, not a re-engineering of the pricing core.
 
 The throughline across all of this is the platform's single principle: one clean contract, consumed identically everywhere. Whether Celnet runs Standalone or wired into the full Celer lifecycle, the price the order path sees, the risk the position manager books, and the number on the trader's screen are the same value from the same source.
 
-### 12.5 Honest boundary
+## 12.5 Honest boundary
 
 The **entire live JVM Celer estate lifecycle** — the distributor sidecar / FX_OPTION mailbox / inferred estate hops / tenant overlays — is **deploy/live-gated; in-repo has the seams and adapters only.** What is proven in-repo is the seam contract itself: the `DeploymentMode` adapter swap, the FIX 4.4 acceptor/initiator over a loopback socket, the governed egress conflation, the resilient resync, and the vendor normalization/blend/divergence **algorithm**. The live estate binding (sidecar handshake, mailbox calibration, quote-feed entitlement) and **live multi-vendor quote values** are integration/deploy targets, proven against the running estate at deploy — never asserted as live in this repository.
 

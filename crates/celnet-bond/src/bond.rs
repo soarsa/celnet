@@ -22,6 +22,7 @@ pub struct Bond {
     frequency: PaymentFrequency,
     day_count: AccrualBasis,
     redemption: f64,
+    pool_factor: f64,
 }
 
 /// Failure modes of bond construction and analytics.
@@ -41,6 +42,8 @@ pub enum BondError {
     YieldOutOfRange,
     /// The yield solve did not converge within the iteration cap.
     YieldDidNotConverge,
+    /// The pool factor is not finite or not in `(0, 1]`.
+    InvalidPoolFactor,
 }
 
 impl core::fmt::Display for BondError {
@@ -59,6 +62,7 @@ impl core::fmt::Display for BondError {
             Self::YieldDidNotConverge => {
                 "the yield solve did not converge within the iteration cap"
             }
+            Self::InvalidPoolFactor => "the pool factor must be finite and in (0, 1]",
         };
         f.write_str(msg)
     }
@@ -99,7 +103,32 @@ impl Bond {
             frequency,
             day_count,
             redemption,
+            pool_factor: 1.0,
         })
+    }
+
+    /// Assemble a bond with an explicit `pool_factor` (e.g. following a pro-rata corporate action).
+    ///
+    /// # Errors
+    /// Returns [`BondError::InvalidPoolFactor`] if `pool_factor ∉ (0, 1]` or is non-finite.
+    pub fn with_pool_factor(mut self, pool_factor: f64) -> Result<Self, BondError> {
+        if !(pool_factor.is_finite() && pool_factor > 0.0 && pool_factor <= 1.0) {
+            return Err(BondError::InvalidPoolFactor);
+        }
+        self.pool_factor = pool_factor;
+        Ok(self)
+    }
+
+    /// The pool factor of the bond, defaulting to `1.0`.
+    #[must_use]
+    pub fn pool_factor(&self) -> f64 {
+        self.pool_factor
+    }
+
+    /// The effective redemption amount taking the pool factor into account: `redemption * pool_factor`.
+    #[must_use]
+    pub fn effective_redemption(&self) -> f64 {
+        self.redemption * self.pool_factor
     }
 
     /// The settlement date (the valuation date and the curve reference date).
@@ -207,5 +236,47 @@ mod tests {
             100.0,
         );
         assert!(b.is_ok());
+    }
+
+    #[test]
+    fn pool_factor_validation_and_scaling() {
+        let b = Bond::new(
+            d(2025, Month::June, 16),
+            d(2030, Month::June, 16),
+            0.05,
+            PaymentFrequency::SemiAnnual,
+            AccrualBasis::Act365Fixed,
+            100.0,
+        )
+        .expect("valid bond");
+        assert_eq!(b.pool_factor(), 1.0);
+        assert_eq!(b.effective_redemption(), 100.0);
+
+        // Rejection of invalid factors
+        assert_eq!(
+            b.with_pool_factor(0.0).unwrap_err(),
+            BondError::InvalidPoolFactor
+        );
+        assert_eq!(
+            b.with_pool_factor(-0.5).unwrap_err(),
+            BondError::InvalidPoolFactor
+        );
+        assert_eq!(
+            b.with_pool_factor(1.05).unwrap_err(),
+            BondError::InvalidPoolFactor
+        );
+        assert_eq!(
+            b.with_pool_factor(f64::NAN).unwrap_err(),
+            BondError::InvalidPoolFactor
+        );
+
+        // Valid factor scaling
+        let b_partial = b.with_pool_factor(0.70).expect("valid pool factor");
+        assert_eq!(b_partial.pool_factor(), 0.70);
+        assert_eq!(b_partial.effective_redemption(), 70.0);
+
+        let p_full = crate::price::dirty_price(&b, celnet_types::Rate(0.05)).expect("price");
+        let p_part = crate::price::dirty_price(&b_partial, celnet_types::Rate(0.05)).expect("price");
+        assert!((p_part - p_full * 0.70).abs() < 1e-10);
     }
 }

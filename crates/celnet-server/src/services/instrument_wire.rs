@@ -248,6 +248,7 @@ fn family_from_wire(def: &WireDefinition) -> Result<InstrumentFamily, Status> {
             maturity_date: require_date(b.maturity_date, "bond maturity_date")?,
             redemption: b.redemption,
             calendars: trimmed(&b.calendars),
+            pool_factor: None,
         }),
         WireDefinition::BondFuture(f) => InstrumentFamily::BondFuture(BondFutureDef {
             contract_code: f.contract_code.trim().to_string(),

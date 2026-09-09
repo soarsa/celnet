@@ -2,7 +2,7 @@
  * Cross-asset capability-matrix contract test. The matrix (`capability.ts`) is the
  * single executable source for "which product arm prices on which asset class" that
  * the discovery layer + class-aware analytics + Excel port all read; this gate pins
- * it to the authoritative boundary (docs/EXCEL-INTEGRATION.md §3.3.1 = the server's
+ * it to the authoritative boundary (docs/clients/EXCEL-INTEGRATION.md §3.3.1 = the server's
  * `price_cross_asset` + the Excel build-time guard): FX/METAL price all 24 arms;
  * equity/commodity/crypto price only vanilla + perpetual + listed-future-option.
  */

@@ -7,7 +7,7 @@
 //!
 //! Provenance: the bond bps convention (price bps vs duration-consistent yield
 //! bps via `Δprice ≈ −ModDur·Δyield·price`) is documented in
-//! `docs/FI-TIERING-RESEARCH.md` §3.
+//! `docs/fixed-income/FI-TIERING-RESEARCH.md` §3.
 
 use crate::QuoteCtx;
 use serde::{Deserialize, Serialize};

@@ -18,7 +18,7 @@
  * drained / dropped / observed gaps / tick frequency.
  *
  * Read-only and gated on `view_analytics` — the tab, its rail entry and the query are
- * all hidden/denied without it (docs/PERMISSIONS-GRANULAR-REVIEW.md).
+ * all hidden/denied without it (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md).
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";

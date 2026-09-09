@@ -3,14 +3,13 @@
 //! One trait, N strategies, composed additively by [`crate::quote`]. Phase 1
 //! ships [`FlatMarkup`] and [`InventorySkew`]; the remaining four (volatility
 //! scale, size ladder, toxicity widen, per-client tier base — see
-//! `docs/FI-TIERING-RESEARCH.md` §5) slot in behind the same trait without
+//! `docs/fixed-income/FI-TIERING-RESEARCH.md` §5) slot in behind the same trait without
 //! changing this interface.
 //!
-//! Provenance: the half-spread `h` (fill-frequency vs profit) and skew `s`
+//! Architecture: the half-spread `h` (fill-frequency vs profit) and skew `s`
 //! (inventory control, ~linear in `q`, clamped) are the two functionally
-//! distinct knobs of the inventory-control market-making lineage
-//! (Avellaneda–Stoikov / Guéant–Lehalle; Bergault et al., arXiv:1810.04383);
-//! real desks use clamped linear heuristics rather than solving the HJB.
+//! distinct knobs of the inventory-control market-making engine;
+//! real desks use clamped linear heuristics rather than solving continuous stochastic controls.
 
 use crate::{QuoteCtx, SpreadSkew, SpreadUnit};
 
@@ -125,10 +124,11 @@ impl TieringStrategy for InventorySkew {
             .unit
             .to_price_offset(self.half_spread, ctx)
             .expect(PRECHECKED);
-        // Linear-in-inventory skew, clamped in magnitude space, then converted
+        // Linear-in-inventory (or limit-utilization when present) skew, clamped in magnitude space, then converted
         // (conversion is sign-preserving so the clamp bounds hold in price space).
         let cap = self.s_max.abs();
-        let skew_magnitude = (self.kappa * ctx.inventory).clamp(-cap, cap);
+        let input = ctx.inventory_utilization.unwrap_or(ctx.inventory);
+        let skew_magnitude = (self.kappa * input).clamp(-cap, cap);
         let skew = self
             .unit
             .to_price_offset(skew_magnitude, ctx)
@@ -151,7 +151,7 @@ impl TieringStrategy for InventorySkew {
 /// Purely arithmetic: the caller owns the per-(book, instrument) `Sₙ₋₁` state and
 /// feeds the returned `Sₙ` into [`QuoteCtx::with_smoothed_spread`]. Provenance: a
 /// standard exponentially-weighted moving average / first-order IIR low-pass filter
-/// (see `docs/FI-TIERING-RESEARCH.md` — Scaled Smoothed Spread).
+/// (see `docs/fixed-income/FI-TIERING-RESEARCH.md` — Scaled Smoothed Spread).
 #[must_use]
 pub fn smooth(prev: Option<f64>, raw: f64, w: f64) -> f64 {
     match prev {
@@ -187,7 +187,7 @@ pub fn smooth(prev: Option<f64>, raw: f64, w: f64) -> f64 {
 /// Output Spread `m` (`h = m/2`); the layer that detected the missing observed level
 /// marks that line **indicative**.
 ///
-/// Provenance: `docs/FI-TIERING-RESEARCH.md` — Scaled Smoothed Spread (source spec
+/// Provenance: `docs/fixed-income/FI-TIERING-RESEARCH.md` — Scaled Smoothed Spread (source spec
 /// `CTMAINDOC-Scaled Smoothed Spread Tiering`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScaledSmoothedSpread {

@@ -1,6 +1,6 @@
 //! Celnet **entitlements**: the principal model + server-side pre-aggregation
 //! pruning predicate (`docs/RISK-HIERARCHY.md` §2.6/§4,
-//! `docs/EXPERIENCE-ARCHITECTURE.md` P2-8/§3).
+//! `docs/clients/EXPERIENCE-ARCHITECTURE.md` P2-8/§3).
 //!
 //! # What this crate is
 //!
@@ -75,7 +75,7 @@
 //!
 //! The server-side-pruning-before-aggregation mechanism and the deny-wins
 //! information-barrier semantics follow `docs/RISK-HIERARCHY.md` §2.6/§4; the
-//! grant-all default mirrors `docs/EXPERIENCE-ARCHITECTURE.md` §3. Provenance is in
+//! grant-all default mirrors `docs/clients/EXPERIENCE-ARCHITECTURE.md` §3. Provenance is in
 //! doc comments only; no method/person/vendor name appears in any identifier
 //! (guardrail #8).
 

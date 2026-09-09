@@ -2,12 +2,10 @@
 
 > **Renumbered 2026-07-01:** was ADR-0012; the number collided with ADR-0012 (unified gBSM kernel, the canonical/heavily-referenced decision). Moved to the next free number. Prior references to "ADR-0012" meaning fixed income now read ADR-0018.
 
-- **Status:** Proposed (2026-06-30)
+- **Status:** Accepted & Implemented (2026-07-01; celnet-bond and rates leaves landed on main).
 - **Relates to:** ADR-0008 (multi-asset carry / asset-class routing), ADR-0010 (FI rates
-  onto the carry seam), ADR-0007 (one unversioned contract).
+  onto the carry seam), ADR-0007 (one unversioned contract), ADR-0020 (central contract).
 - **Context doc:** `docs/FI-PRICING-ENGINE-DESIGN.md`.
-- **Branch:** drafted on `feature/fi-reference-data`. Decision targets `main`'s pricing
-  core; promote when the FI pricing work is scheduled.
 
 ## Context
 

@@ -1,5 +1,5 @@
 //! Celnet convention canonicalization + common-numeraire conversion
-//! (`docs/RISK-HIERARCHY.md` §2.2/§2.3, `docs/EXPERIENCE-ARCHITECTURE.md` P2-6).
+//! (`docs/RISK-HIERARCHY.md` §2.2/§2.3, `docs/clients/EXPERIENCE-ARCHITECTURE.md` P2-6).
 //!
 //! # Why this crate exists
 //!

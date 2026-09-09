@@ -2,7 +2,7 @@
 
 Decisions only the business can make, surfaced by (and to be expanded by) the research agent.
 Resolve these to lock phasing before any implementation. See
-[`FIXED-INCOME-RESEARCH-BRIEF.md`](./FIXED-INCOME-RESEARCH-BRIEF.md) §9.
+[`FIXED-INCOME-RESEARCH-BRIEF.md`](FIXED-INCOME-RESEARCH-BRIEF.md) §9.
 
 ## Locked build direction (operator, 2026-06-22)
 
@@ -16,8 +16,8 @@ These are settled — the research agent's `FI-ARCHITECTURE.md` must target them
 - **D2 — GUI asset-class layer.** ✅ **RESOLVED / LANDED** (`fe-fi-migration`, `33d9a0a` / `fd18594`):
   instead of a top-level Options-vs-FI tab strip, the split was **collapsed into one class-parametric
   rail** — asset class chosen by scope + license, FI reached as *lenses* of the shared workspaces
-  (Ticket/Market Data/Risk/Book). "FI integrated, not a peer." See [`FI-STATUS.md`](./FI-STATUS.md)
-  slice F and [`FI-ARCHITECTURE.md`](./FI-ARCHITECTURE.md) §4.
+  (Ticket/Market Data/Risk/Book). "FI integrated, not a peer." See [`FI-STATUS.md`](FI-STATUS.md)
+  slice F and [`FI-ARCHITECTURE.md`](FI-ARCHITECTURE.md) §4.
 
 ## Locked P0 scope (operator, 2026-06-25 — REVISED; supersedes the 2026-06-23 full-breadth lock)
 
@@ -66,7 +66,7 @@ narrower core first, then the deferred lanes:
   tab; click-through deep-links to the RFQ ticket; per-desk/per-counterparty-tier mute + threshold;
   honour OS Do-Not-Disturb; **degrade to the in-app toast + `aria-live`** when notification
   permission is denied. Asset-class-agnostic; full requirement in
-  [`../GUI-EXPERIENCE-DESIGN.md`](../GUI-EXPERIENCE-DESIGN.md) §3 row 14. (Recorded here because the
+  [`../GUI-EXPERIENCE-DESIGN.md`](../clients/GUI-EXPERIENCE-DESIGN.md) §3 row 14. (Recorded here because the
   FI RFQ surface is the active lane; not an FI-only decision.)
 
 **Vol-detail decisions (Q14–Q18) are unchanged as locked _design_ choices, but now belong to the

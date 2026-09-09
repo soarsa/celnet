@@ -24,6 +24,7 @@
 
 import { CAPABILITY_ASSETS, type CapabilityAction, type CapabilityAsset } from "../data/contract";
 import type { Command } from "../components/CommandPalette";
+export type { Command };
 
 /**
  * Workspace ids the rail exposes (kept in sync with `AppContext.WorkspaceId`).
@@ -72,7 +73,13 @@ export type WorkspaceId =
   | "permissions"
   | "pricinggroups"
   | "corpactions"
-  | "refdata";
+  | "refdata"
+  | "studio_markets"
+  | "studio_pricing"
+  | "studio_distribution"
+  | "studio_blotter"
+  | "studio_risk"
+  | "studio_policy";
 
 /** A logical grouping of related commands (sections the cheatsheet + palette use). */
 export type CommandGroup = "Global" | "Workspace" | "Scope" | "Action";
@@ -156,7 +163,7 @@ export interface CommandMeta {
  *   • ADMIN/ops rows list NONE — gated by `isAdmin`, with no license concept.
  *   • MANAGEMENT rows carry a fine-grained `viewCap` (Risk Portfolios/Routing/
  *     Dashboard → `risk_manage·FI`; Pricing (groups + tiering) → `manage_pricing·FI`):
- *     visible ONLY to a holder of that capability (docs/PERMISSIONS-GRANULAR-REVIEW.md
+ *     visible ONLY to a holder of that capability (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md
  *     §4). They still declare their served asset for domain-tab placement.
  * The rail is driven by scope/underlier + license, NOT by an FX/FI domain tab.
  */
@@ -178,7 +185,7 @@ export const RAIL: readonly {
    * A one-line rail subtitle saying what THIS surface IS — the at-a-glance
    * disambiguation for rows a trader otherwise confuses (the "Risk" vs "Book" vs
    * "Risk Portfolios" vs "Risk Dashboard" vs "Agg Book" family; see
-   * docs/FI-BOOK-CONCEPTS.md). Rendered under the label in the rail and folded into
+   * docs/fixed-income/FI-BOOK-CONCEPTS.md). Rendered under the label in the rail and folded into
    * the hover tooltip. Optional — rows that are already self-explanatory omit it.
    */
   subtitle?: string;
@@ -186,7 +193,7 @@ export const RAIL: readonly {
   assets: readonly CapabilityAsset[];
   /**
    * The FINE-GRAINED capability that makes this rail entry VISIBLE at all
-   * (docs/PERMISSIONS-GRANULAR-REVIEW.md §4). When present, {@link workspaceAccessible}
+   * (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4). When present, {@link workspaceAccessible}
    * gates the whole surface on `auth.can(viewCap.action, viewCap.asset)` — a user
    * without it never sees the entry (not merely a disabled control). Used for the FI
    * management surfaces (Risk Portfolios/Routing/Dashboard → `risk_manage·FI`;
@@ -210,7 +217,7 @@ export const RAIL: readonly {
   // FI aggregated-book live composite view (ADR-0022): consolidated best bid/offer
   // across a book's inbound liquidity members — a single-asset FI read surface.
   { id: "aggbook", glyph: "◫", label: "Agg Book", subtitle: "LP-aggregated prices", section: "markets", assets: ["fixed_income"] },
-  // FI Risk (docs/FI-RISK-ROUTING-REQUIREMENTS.md): the CONSOLIDATED risk surface — ONE
+  // FI Risk (docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md): the CONSOLIDATED risk surface — ONE
   // rail entry, "Risk", whose workspace is a tabbed shell over FIVE sibling views that
   // were previously separate rail destinations (mirroring the Risk Portfolios→Risk
   // Dashboard, Pricing Groups+Tiering→Pricing and Transfers→Risk Transfer merges):
@@ -222,13 +229,13 @@ export const RAIL: readonly {
   //   • "Acceptance" — the incoming-lift accept/reject rule builder (former
   //     "Acceptance" row → `acceptance` alias);
   //   • "Positions" / "Quotes" / "Deals" — the FI position-ledger views folded in from
-  //     the old FI "Book" (docs/FI-BOOK-CONCEPTS.md), now TOP-LEVEL tabs of this host
+  //     the old FI "Book" (docs/fixed-income/FI-BOOK-CONCEPTS.md), now TOP-LEVEL tabs of this host
   //     (previously nested a level deeper inside a "Scenario" tab, which — with the FI
   //     netted rates scenario-risk surface — is REMOVED). The cross-asset `risk`
   //     scenario grid STAYS an FX-rail row, only WITHDRAWN from the FI rail ({@link
   //     DOMAIN_RAIL_EXCLUDED}, like the FI "Book" fold).
   // Single-asset FI, gated at the rail on the granular `risk_manage·FI` capability
-  // (docs/PERMISSIONS-GRANULAR-REVIEW.md §4) — a firm risk-control function distinct
+  // (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4) — a firm risk-control function distinct
   // from super-admin, so a risk lead sees + edits it WITHOUT full Administer. Each TAB
   // keeps its ORIGINAL capability gate independently (Dashboard/Portfolios/Routing →
   // `risk_manage`, Acceptance → `manage_acceptance`, Positions/Quotes/Deals → `view`),
@@ -237,7 +244,7 @@ export const RAIL: readonly {
   // retired `riskbooks` / `riskrouting` / `acceptance` ids stay valid deep-links
   // resolving to this host (see {@link CONSOLIDATED_WORKSPACE_ALIAS}) — no rail row of
   // their own. USER-FACING name "Risk"; the wire type stays `RiskBookDef` (UI-only
-  // rename — see docs/FI-BOOK-CONCEPTS.md).
+  // rename — see docs/fixed-income/FI-BOOK-CONCEPTS.md).
   // Firm-wide risk management, hoisted to its own top-level tab ({@link RISK_WORKSPACES}).
   // Cross-asset now that a portfolio declares the franchise it buckets, so it serves BOTH
   // classes and its viewCap is an any-of over both — `risk_manage` on EITHER reveals the
@@ -256,7 +263,7 @@ export const RAIL: readonly {
   // demands. That is the point of the split — the ledgers stop being gated behind a
   // risk-management capability a booking trader has no reason to hold.
   { id: "filedgers", glyph: "≣", label: "Book", subtitle: "Positions · quotes · client & hedge blotters", section: "risk", assets: ["fixed_income"] },
-  // Auto-Hedging (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md): the
+  // Auto-Hedging (docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md): the
   // trader-composed EXIT-POLICY graph (internalise below the threshold, hedge the
   // overflow above), the warehouse-threshold config, and the live hedge monitor.
   // Rail-gated on the NARROW `hedge` capability × FI — authoring a hedge policy is
@@ -279,7 +286,7 @@ export const RAIL: readonly {
   // deep-link resolving to that host (see {@link CONSOLIDATED_WORKSPACE_ALIAS}); the
   // TAB keeps its narrow `manage_acceptance·FI` gate internally, while reaching the
   // host row itself follows the host's `risk_manage·FI` viewCap.
-  // FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md): the MANUAL move of
+  // FI Risk transfer (docs/hedging/RISK-TRANSFER-REQUIREMENTS.md): the MANUAL move of
   // EXISTING risk between risk portfolios — the complement to routing (which
   // auto-assigns NEW fills). CONSOLIDATED into ONE rail row: a tabbed shell hosting
   // the "Risk Transfer" initiate ticket (default), an "Inbox" tab (approve incoming
@@ -310,11 +317,11 @@ export const RAIL: readonly {
   // the LP price composite (Agg Book) nor a risk-management bucket (Risk Portfolios).
   // FX-TAB ONLY: under Fixed Income this row is dropped ({@link DOMAIN_RAIL_EXCLUDED})
   // — the FI ledger (Positions + Deals + Quotes) is folded into the FI "Risk" surface
-  // as tabs (docs/FI-BOOK-CONCEPTS.md). It still serves both assets (reachability /
+  // as tabs (docs/fixed-income/FI-BOOK-CONCEPTS.md). It still serves both assets (reachability /
   // license / ⌘N unchanged); only its FI rail membership is withdrawn.
   { id: "book", glyph: "▤", label: "Book", subtitle: "Positions · deals · P&L", section: "risk", assets: CAPABILITY_ASSETS },
   { id: "quoting", glyph: "⇌", label: "Quoting", subtitle: "RFQ / IOI desk inbox", section: "markets", assets: ["fixed_income"] },
-  // Corporate Actions (docs/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md):
+  // Corporate Actions (docs/fixed-income/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md):
   // the bond CA inbox + the effective post-CA instrument schedule viewer. A single-
   // asset FI reference-data surface. NOT admin-gated and carries NO `viewCap`: the
   // CA-inbox + schedule READS sit on the `view·FI` floor (any FI viewer sees the
@@ -346,7 +353,7 @@ export const RAIL: readonly {
   { id: "eventtrace", glyph: "⛓", label: "Event Trace", subtitle: "Price→order→risk→hedge timeline", section: "analytics", assets: CAPABILITY_ASSETS },
   // Administration / ops — the Administration DOMAIN tab, no license concept. These
   // four surfaces carry an explicit `viewCap` so they are DELEGABLE off the coarse
-  // `isAdmin` flag (docs/PERMISSIONS-GRANULAR-REVIEW.md §4): a signed-in holder of
+  // `isAdmin` flag (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4): a signed-in holder of
   // the surface's fine-grained capability reaches it WITHOUT full admin, while an
   // admin (grant_all) still sees all. The anonymous/pre-login session (permissive
   // `can`) is kept OUT — admin surfaces are deny-by-default there — by the
@@ -364,7 +371,7 @@ export const RAIL: readonly {
   // Pricing is a Fixed-Income CLIENT-PRICING surface, not identity admin: it lives on
   // the FI tab (assets: fixed_income) and gates rail visibility + edits on
   // `manage_pricing·FI`, so the FI pricing desk sees and edits it WITHOUT full
-  // Administer (docs/PERMISSIONS-GRANULAR-REVIEW.md §4). It is the CONSOLIDATED pricing
+  // Administer (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4). It is the CONSOLIDATED pricing
   // surface: a tabbed shell hosting the "Pricing Groups" feature-pipeline builder
   // (default) AND a "Tiering" tab (the session→pricing-group roster, formerly the
   // separate "Tiering" row, now folded in as a tab — mirroring the Risk Dashboard
@@ -449,6 +456,16 @@ export const CONSOLIDATED_ALIAS_ENTRIES: readonly (readonly [WorkspaceId, Worksp
  * longer splits by asset class.
  */
 export function workspaceAssets(id: WorkspaceId): readonly CapabilityAsset[] {
+  if (
+    id === "studio_markets" ||
+    id === "studio_pricing" ||
+    id === "studio_distribution" ||
+    id === "studio_blotter" ||
+    id === "studio_risk" ||
+    id === "studio_policy"
+  ) {
+    return ["fx_options", "fixed_income"];
+  }
   const resolved = CONSOLIDATED_WORKSPACE_ALIAS[id] ?? id;
   const entry = RAIL.find((r) => r.id === resolved);
   if (!entry) {
@@ -497,7 +514,7 @@ export interface NavAuth {
 
 /**
  * The members of the Administration DOMAIN — the four ops/admin surfaces. Each now
- * carries a `viewCap` so it is DELEGABLE (docs/PERMISSIONS-GRANULAR-REVIEW.md §4):
+ * carries a `viewCap` so it is DELEGABLE (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4):
  * a signed-in holder of the surface's fine-grained capability reaches it without the
  * coarse `isAdmin` flag, while an admin (grant_all) still sees all. This set no
  * longer means "isAdmin-only"; it now marks (a) the surfaces whose delegation is
@@ -566,7 +583,7 @@ export const RISK_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>([
  *
  * The Fixed-Income "Book" (position ledger) is folded INTO the Fixed-Income "Risk"
  * surface: its Deals + Positions (+ Quotes) become tabs of `RiskWorkspace` under
- * Fixed Income (docs/FI-BOOK-CONCEPTS.md), so the redundant Book rail entry is
+ * Fixed Income (docs/fixed-income/FI-BOOK-CONCEPTS.md), so the redundant Book rail entry is
  * dropped from the FI rail — while it STAYS on FX Options, where Risk and Book
  * remain separate surfaces. Crucially the row keeps serving BOTH asset classes:
  * `workspaceAssets("book")`, `workspaceAccessible`, the license three-state and the
@@ -630,7 +647,7 @@ export const WORKSPACE_CAPABILITY: Partial<Record<WorkspaceId, CapabilityAction>
  * and the AppContext redirect so no path can strand a user on a hidden workspace.
  */
 export function workspaceAccessible(id: WorkspaceId, auth: NavAuth): boolean {
-  // Per-feature visibility wins (docs/PERMISSIONS-GRANULAR-REVIEW.md §4.1): a row
+  // Per-feature visibility wins (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4.1): a row
   // with a `viewCap` is visible ONLY to a holder of that fine-grained capability
   // (admin holds `grant_all`; `can` is permissive signed-out). This is what hides
   // the FI management surfaces (Risk Portfolios/Routing/Dashboard, Pricing groups +

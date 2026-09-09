@@ -1,7 +1,7 @@
 //! Composition pipeline and guardrails.
 //!
 //! Sums the enabled strategies' contributions, applies the guardrail clamps in
-//! the fixed order of `docs/FI-TIERING-RESEARCH.md` §4, forms the two-way, and
+//! the fixed order of `docs/fixed-income/FI-TIERING-RESEARCH.md` §4, forms the two-way, and
 //! enforces the anti-cross invariant last. Guardrails are engineering
 //! invariants (min/max half-spread, max skew, min tradeable spread, stale-input
 //! handling) — the safety net that keeps the outbound book strictly two-sided
@@ -9,6 +9,12 @@
 
 use crate::{QuoteCtx, TieringStrategy, TwoWay};
 use serde::{Deserialize, Serialize};
+
+/// Guardrail bounds, expressed as absolute **price offsets** (points), so they
+/// are independent of any strategy's spread unit and act as pure price-space
+const fn default_lambda_skew_ratio() -> f64 {
+    1.0
+}
 
 /// Guardrail bounds, expressed as absolute **price offsets** (points), so they
 /// are independent of any strategy's spread unit and act as pure price-space
@@ -27,10 +33,15 @@ pub struct Guardrails {
     /// which — since `offer − bid = 2h` is skew-invariant — also guarantees
     /// `bid < offer`.
     pub spread_floor: f64,
+    /// Dynamic anti-arbitrage skew ratio `lambda_skew_ratio` in `[0.0, 1.0]`.
+    /// Enforces that `|s| ≤ min(s_max, lambda * h)` so that `offer ≥ mid` and `bid ≤ mid`,
+    /// preventing through-mid quoting. Defaults to 1.0.
+    #[serde(default = "default_lambda_skew_ratio")]
+    pub lambda_skew_ratio: f64,
 }
 
 impl Guardrails {
-    /// Construct guardrails.
+    /// Construct guardrails with default dynamic anti-arbitrage ratio (`lambda_skew_ratio = 1.0`).
     #[must_use]
     pub fn new(h_min: f64, h_max: f64, s_max: f64, spread_floor: f64) -> Self {
         Self {
@@ -38,23 +49,44 @@ impl Guardrails {
             h_max,
             s_max,
             spread_floor,
+            lambda_skew_ratio: 1.0,
+        }
+    }
+
+    /// Construct guardrails with an explicit dynamic anti-arbitrage ratio `lambda_skew_ratio`.
+    #[must_use]
+    pub fn with_lambda(
+        h_min: f64,
+        h_max: f64,
+        s_max: f64,
+        spread_floor: f64,
+        lambda_skew_ratio: f64,
+    ) -> Self {
+        Self {
+            h_min,
+            h_max,
+            s_max,
+            spread_floor,
+            lambda_skew_ratio,
         }
     }
 
     /// Validate the bounds are internally consistent and finite. A valid config
-    /// requires `0 ≤ h_min ≤ h_max`, `s_max ≥ 0`, `spread_floor > 0`, and
-    /// `h_max ≥ spread_floor/2` (so the min-spread floor never contradicts the
-    /// max half-spread cap).
+    /// requires `0 ≤ h_min ≤ h_max`, `s_max ≥ 0`, `spread_floor > 0`,
+    /// `h_max ≥ spread_floor/2`, and `0.0 ≤ lambda_skew_ratio ≤ 1.0`.
     pub fn validate(&self) -> Result<(), Suppressed> {
         let finite = self.h_min.is_finite()
             && self.h_max.is_finite()
             && self.s_max.is_finite()
-            && self.spread_floor.is_finite();
+            && self.spread_floor.is_finite()
+            && self.lambda_skew_ratio.is_finite();
         let consistent = self.h_min >= 0.0
             && self.h_max >= self.h_min
             && self.s_max >= 0.0
             && self.spread_floor > 0.0
-            && self.h_max >= self.spread_floor / 2.0;
+            && self.h_max >= self.spread_floor / 2.0
+            && self.lambda_skew_ratio >= 0.0
+            && self.lambda_skew_ratio <= 1.0;
         if finite && consistent {
             Ok(())
         } else {
@@ -130,7 +162,7 @@ impl Suppressed {
 
 /// Compose `strategies` over `ctx` and produce the guarded outbound two-way.
 ///
-/// Pipeline (per `docs/FI-TIERING-RESEARCH.md` §4):
+/// Pipeline (per `docs/fixed-income/FI-TIERING-RESEARCH.md` §4):
 /// 1. Reject a non-finite mid; validate the guardrails.
 /// 2. If stale, apply [`StalePolicy`] (suppress, or widen to `h_max`).
 /// 3. Pre-validate every strategy's unit conversion against the context.
@@ -197,8 +229,10 @@ fn finalize(
     // Min tradeable spread: floor the half-spread so offer − bid = 2h ≥ spread_floor.
     let half_spread = half_spread.max(guards.spread_floor / 2.0);
     // Anti-cross LAST: re-clamp skew after the floor so extreme inventory cannot
-    // push a side past the guardrail cap.
-    let skew = skew.clamp(-guards.s_max, guards.s_max);
+    // push a side past the guardrail cap or through mid.
+    // Dynamic anti-arbitrage cap: |s| <= min(s_max, lambda * h).
+    let dynamic_cap = guards.s_max.min(guards.lambda_skew_ratio * half_spread);
+    let skew = skew.clamp(-dynamic_cap, dynamic_cap);
 
     let bid = mid - half_spread - skew;
     let offer = mid + half_spread - skew;

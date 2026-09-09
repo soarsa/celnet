@@ -205,6 +205,129 @@ impl Priceable for RatesOisEngine {
     }
 }
 
+/// The per-request context a [`RatesIrsEngine`] prices against: calibrating quotes,
+/// reference anchor date, and the decoded vanilla IRS instrument.
+pub(crate) struct RatesIrsCtx<'a> {
+    pub(crate) quotes: &'a [OisQuote],
+    pub(crate) reference: Date,
+    pub(crate) irs: &'a celnet_proto::VanillaIrsInstrument,
+}
+
+/// The linear-rates **vanilla IRS** leaf re-seated onto the unified contract. Its
+/// `price` is byte-identical to [`super::price_irs`]; its `risk` lifts the scalar
+/// `{pv, pv01, dv01}` into the additive [`RiskMeasure::RateLadder`].
+pub(crate) struct RatesIrsEngine;
+
+impl Priceable for RatesIrsEngine {
+    type Market<'a> = ResolvedMarket<'a, RatesConventions>;
+    type Ctx<'a> = RatesIrsCtx<'a>;
+    type Priced = RatesPricingResult;
+    type Error = RatesPriceError;
+
+    fn price(
+        &self,
+        _market: &ResolvedMarket<'_, RatesConventions>,
+        ctx: &RatesIrsCtx<'_>,
+    ) -> Result<RatesPricingResult, RatesPriceError> {
+        price_irs(ctx.irs, ctx.quotes, ctx.reference)
+    }
+
+    fn risk(
+        &self,
+        market: &ResolvedMarket<'_, RatesConventions>,
+        ctx: &RatesIrsCtx<'_>,
+    ) -> Result<RiskMeasure, RatesPriceError> {
+        let priced = <Self as Priceable>::price(self, market, ctx)?;
+        Ok(RiskMeasure::RateLadder(RateLadder::new(
+            priced.pv,
+            priced.pv01,
+            priced.dv01,
+        )))
+    }
+}
+
+/// The per-request context a [`RatesFraEngine`] prices against: calibrating quotes,
+/// reference anchor date, and the decoded FRA instrument.
+pub(crate) struct RatesFraCtx<'a> {
+    pub(crate) quotes: &'a [OisQuote],
+    pub(crate) reference: Date,
+    pub(crate) fra: &'a celnet_proto::FraInstrument,
+}
+
+/// The linear-rates **FRA** leaf re-seated onto the unified contract. Its `price` is
+/// byte-identical to [`super::price_fra`]; its `risk` lifts the scalar `{pv, pv01, dv01}`
+/// into the additive [`RiskMeasure::RateLadder`].
+pub(crate) struct RatesFraEngine;
+
+impl Priceable for RatesFraEngine {
+    type Market<'a> = ResolvedMarket<'a, RatesConventions>;
+    type Ctx<'a> = RatesFraCtx<'a>;
+    type Priced = RatesPricingResult;
+    type Error = RatesPriceError;
+
+    fn price(
+        &self,
+        _market: &ResolvedMarket<'_, RatesConventions>,
+        ctx: &RatesFraCtx<'_>,
+    ) -> Result<RatesPricingResult, RatesPriceError> {
+        price_fra(ctx.fra, ctx.quotes, ctx.reference)
+    }
+
+    fn risk(
+        &self,
+        market: &ResolvedMarket<'_, RatesConventions>,
+        ctx: &RatesFraCtx<'_>,
+    ) -> Result<RiskMeasure, RatesPriceError> {
+        let priced = <Self as Priceable>::price(self, market, ctx)?;
+        Ok(RiskMeasure::RateLadder(RateLadder::new(
+            priced.pv,
+            priced.pv01,
+            priced.dv01,
+        )))
+    }
+}
+
+/// The per-request context a [`RatesBondInstrumentEngine`] prices against: calibrating quotes,
+/// reference anchor date, and the wire bond instrument.
+pub(crate) struct RatesBondInstrumentCtx<'a> {
+    pub(crate) quotes: &'a [OisQuote],
+    pub(crate) reference: Date,
+    pub(crate) bond: &'a celnet_proto::BondInstrument,
+}
+
+/// The linear-rates **wire BondInstrument** leaf re-seated onto the unified contract.
+/// Its `price` is byte-identical to [`super::price_bond_instrument`]; its `risk` lifts
+/// `{pv, pv01, dv01}` into [`RiskMeasure::RateLadder`].
+pub(crate) struct RatesBondInstrumentEngine;
+
+impl Priceable for RatesBondInstrumentEngine {
+    type Market<'a> = ResolvedMarket<'a, RatesConventions>;
+    type Ctx<'a> = RatesBondInstrumentCtx<'a>;
+    type Priced = RatesPricingResult;
+    type Error = RatesPriceError;
+
+    fn price(
+        &self,
+        _market: &ResolvedMarket<'_, RatesConventions>,
+        ctx: &RatesBondInstrumentCtx<'_>,
+    ) -> Result<RatesPricingResult, RatesPriceError> {
+        price_bond_instrument(ctx.bond, ctx.quotes, ctx.reference)
+    }
+
+    fn risk(
+        &self,
+        market: &ResolvedMarket<'_, RatesConventions>,
+        ctx: &RatesBondInstrumentCtx<'_>,
+    ) -> Result<RiskMeasure, RatesPriceError> {
+        let priced = <Self as Priceable>::price(self, market, ctx)?;
+        Ok(RiskMeasure::RateLadder(RateLadder::new(
+            priced.pv,
+            priced.pv01,
+            priced.dv01,
+        )))
+    }
+}
+
 /// The per-request context a [`BondEngine`] prices against: the bond and the
 /// discount curve to price it off.
 pub(crate) struct BondCtx<'a> {
@@ -324,14 +447,34 @@ pub fn price_rates_via_contract(
             };
             <RatesOisEngine as Priceable>::price(&RatesOisEngine, &market, &ctx)
         }
-        // The IRS / FRA / cash-bond arms share the identical established pricing
-        // bodies as the dispatch path (`super::price_*`, which wrap the
-        // `celnet-rates` / `celnet-bond` engines verbatim); a dedicated `Priceable`
-        // contract engine is the OIS/bond risk-leaf seam only. Delegating here keeps
-        // this contract entry byte-identical to `super::price_rates` for every arm.
-        rates_instrument::Instrument::Irs(irs) => price_irs(irs, &quotes, reference),
-        rates_instrument::Instrument::Fra(fra) => price_fra(fra, &quotes, reference),
-        rates_instrument::Instrument::Bond(bond) => price_bond_instrument(bond, &quotes, reference),
+        rates_instrument::Instrument::Irs(irs) => {
+            let ctx = RatesIrsCtx {
+                quotes: &quotes,
+                reference,
+                irs,
+            };
+            <RatesIrsEngine as Priceable>::price(&RatesIrsEngine, &market, &ctx)
+        }
+        rates_instrument::Instrument::Fra(fra) => {
+            let ctx = RatesFraCtx {
+                quotes: &quotes,
+                reference,
+                fra,
+            };
+            <RatesFraEngine as Priceable>::price(&RatesFraEngine, &market, &ctx)
+        }
+        rates_instrument::Instrument::Bond(bond) => {
+            let ctx = RatesBondInstrumentCtx {
+                quotes: &quotes,
+                reference,
+                bond,
+            };
+            <RatesBondInstrumentEngine as Priceable>::price(
+                &RatesBondInstrumentEngine,
+                &market,
+                &ctx,
+            )
+        }
     }
 }
 
@@ -357,8 +500,10 @@ pub fn price_bond_via_contract(bond: &Bond, curve: &Curve) -> Result<BondPriced,
 mod tests {
     use super::*;
     use celnet_proto::{
-        BrokenDate, CurveSet, OisInstrument, OisPillar, PillarTenor, RatesInstrument, Side,
-        pillar_tenor,
+        AccrualBasis as WireAccrualBasis, BondInstrument, BrokenDate, CurveSet,
+        DayCount as WireDayCount, FraInstrument, OisInstrument, OisPillar,
+        PaymentFrequency as WirePaymentFrequency, PillarTenor, RatesInstrument, Side,
+        VanillaIrsInstrument, pillar_tenor,
     };
     use celnet_rates::{PaymentFrequency, ois_risk, usd_sofr_ois_schedule};
     use celnet_types::{Rate, Time};
@@ -656,4 +801,132 @@ mod tests {
         assert_eq!(pay.pv.to_bits(), (-recv.pv).to_bits());
         assert_eq!(pay.dv01.to_bits(), (-recv.dv01).to_bits());
     }
+
+    fn irs_request(tenor: u32, fixed_rate: f64, notional: f64, side: Side) -> RatesPriceRequest {
+        RatesPriceRequest {
+            request_id: 1,
+            curve_set: Some(curve_set()),
+            instrument: Some(RatesInstrument {
+                instrument: Some(rates_instrument::Instrument::Irs(VanillaIrsInstrument {
+                    tenor_years: tenor,
+                    fixed_rate,
+                    notional,
+                    side: side as i32,
+                    fixed_frequency: WirePaymentFrequency::SemiAnnual as i32,
+                    fixed_day_count: WireDayCount::Act360 as i32,
+                    float_frequency: WirePaymentFrequency::Quarterly as i32,
+                    float_day_count: WireDayCount::Act360 as i32,
+                })),
+            }),
+            correlation_id: None,
+        }
+    }
+
+    fn fra_request(
+        start_months: u32,
+        end_months: u32,
+        fixed_rate: f64,
+        notional: f64,
+        side: Side,
+    ) -> RatesPriceRequest {
+        RatesPriceRequest {
+            request_id: 1,
+            curve_set: Some(curve_set()),
+            instrument: Some(RatesInstrument {
+                instrument: Some(rates_instrument::Instrument::Fra(FraInstrument {
+                    start_months,
+                    end_months,
+                    fixed_rate,
+                    notional,
+                    side: side as i32,
+                    accrual_basis: WireAccrualBasis::Act360 as i32,
+                })),
+            }),
+            correlation_id: None,
+        }
+    }
+
+    fn bond_request(
+        coupon_rate: f64,
+        maturity: (i32, u32, u32),
+        redemption: f64,
+        side: Side,
+    ) -> RatesPriceRequest {
+        RatesPriceRequest {
+            request_id: 1,
+            curve_set: Some(curve_set()),
+            instrument: Some(RatesInstrument {
+                instrument: Some(rates_instrument::Instrument::Bond(BondInstrument {
+                    coupon_rate,
+                    coupon_frequency: WirePaymentFrequency::SemiAnnual as i32,
+                    day_count: WireAccrualBasis::Thirty360BondBasis as i32,
+                    maturity_date: Some(BrokenDate {
+                        year: maturity.0,
+                        month: maturity.1,
+                        day: maturity.2,
+                    }),
+                    redemption,
+                    side: side as i32,
+                    ..Default::default()
+                })),
+            }),
+            correlation_id: None,
+        }
+    }
+
+    /// THE IRS GATE: pricing an IRS through the central contract
+    /// ([`price_rates_via_contract`]) is `to_bits`-identical to the established
+    /// [`super::price_rates`] dispatch path — PV, par, PV01, DV01, and key-rate ladder.
+    #[test]
+    fn irs_via_contract_is_byte_identical() {
+        for &(tenor, fixed, notional) in &[
+            (5u32, 0.04, 100_000_000.0),
+            (10, 0.042, 50_000_000.0),
+            (2, 0.038, 25_000_000.0),
+        ] {
+            for side in [Side::Sell, Side::Buy] {
+                let req = irs_request(tenor, fixed, notional, side);
+                let want = super::super::price_rates(&req).expect("dispatch path prices");
+                let got = price_rates_via_contract(&req).expect("contract path prices");
+                assert_result_bit_identical(&got, &want);
+            }
+        }
+    }
+
+    /// THE FRA GATE: pricing a FRA through the central contract
+    /// ([`price_rates_via_contract`]) is `to_bits`-identical to the established
+    /// [`super::price_rates`] dispatch path.
+    #[test]
+    fn fra_via_contract_is_byte_identical() {
+        for &(start, end, fixed, notional) in &[
+            (3u32, 6u32, 0.042, 100_000_000.0),
+            (6, 12, 0.041, 50_000_000.0),
+            (1, 4, 0.043, 25_000_000.0),
+        ] {
+            for side in [Side::Sell, Side::Buy] {
+                let req = fra_request(start, end, fixed, notional, side);
+                let want = super::super::price_rates(&req).expect("dispatch path prices");
+                let got = price_rates_via_contract(&req).expect("contract path prices");
+                assert_result_bit_identical(&got, &want);
+            }
+        }
+    }
+
+    /// THE BOND INSTRUMENT GATE: pricing a bond through the central contract
+    /// ([`price_rates_via_contract`]) is `to_bits`-identical to [`super::price_rates`].
+    #[test]
+    fn bond_instrument_via_contract_is_byte_identical() {
+        for &(coupon, maturity, redemption) in &[
+            (0.045, (2031, 6, 25), 100.0),
+            (0.06, (2036, 6, 25), 100.0),
+        ] {
+            for side in [Side::Sell, Side::Buy] {
+                let req = bond_request(coupon, maturity, redemption, side);
+                let want = super::super::price_rates(&req).expect("dispatch path prices");
+                let got = price_rates_via_contract(&req).expect("contract path prices");
+                assert_result_bit_identical(&got, &want);
+            }
+        }
+    }
 }
+

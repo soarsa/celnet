@@ -51,7 +51,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use celnet_replog::{BookState, BookUpdate, LogEntry, RaftConfig, RaftNode};
+use celnet_replog::{BookState, BookUpdate, LogEntry, QuorumPolicy, RaftConfig, RaftNode};
 
 /// Hard wall-clock deadline — nothing here may hang. Sized generously for the
 /// heaviest snapshot+failover workflow (multiple elections at 400–800ms each +
@@ -75,6 +75,7 @@ fn cfg() -> RaftConfig {
         election_max: Duration::from_millis(800),
         heartbeat: Duration::from_millis(40),
         io_timeout: Duration::from_secs(2),
+        quorum_policy: QuorumPolicy::Majority,
     }
 }
 

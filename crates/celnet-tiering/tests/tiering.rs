@@ -75,11 +75,12 @@ fn price_bps_and_percent_conversions() {
 // ── Oracle 3: inventory-skew direction + magnitude ──────────────────────────
 #[test]
 fn inventory_skew_direction_and_magnitude() {
-    // Base h = 0.10, κ = 0.01 price points per unit inventory, strategy cap 1.0.
-    let inv = InventorySkew::new(0.10, 0.01, 1.0, SpreadUnit::PricePoints);
+    // Base h = 1.0, κ = 0.01 price points per unit inventory, strategy cap 1.0.
+    // h = 1.0 ensures skew of 0.20 is within the dynamic anti-arbitrage cap (0.20 <= h).
+    let inv = InventorySkew::new(1.0, 0.01, 1.0, SpreadUnit::PricePoints);
     let guards = wide_guards();
 
-    // Flat (q = 0): symmetric around mid = 100 → 99.90 / 100.10, no skew.
+    // Flat (q = 0): symmetric around mid = 100 → 99.00 / 101.00, no skew.
     let flat = quote(
         &[&inv],
         &QuoteCtx::new(100.0).with_inventory(0.0),
@@ -87,8 +88,8 @@ fn inventory_skew_direction_and_magnitude() {
         StalePolicy::Suppress,
     )
     .unwrap();
-    assert!((flat.bid - 99.90).abs() < EPS);
-    assert!((flat.offer - 100.10).abs() < EPS);
+    assert!((flat.bid - 99.00).abs() < EPS);
+    assert!((flat.offer - 101.00).abs() < EPS);
 
     // Long (q = +20): skew = clamp(0.01·20, ±1) = 0.20 → BOTH sides down 0.20.
     let long = quote(
@@ -98,10 +99,10 @@ fn inventory_skew_direction_and_magnitude() {
         StalePolicy::Suppress,
     )
     .unwrap();
-    assert!((long.bid - 99.70).abs() < EPS, "bid = {}", long.bid);
-    assert!((long.offer - 99.90).abs() < EPS, "offer = {}", long.offer);
-    // Spread unchanged (skew is spread-invariant): still 2h = 0.20.
-    assert!((long.offer - long.bid - 0.20).abs() < EPS);
+    assert!((long.bid - 98.80).abs() < EPS, "bid = {}", long.bid);
+    assert!((long.offer - 100.80).abs() < EPS, "offer = {}", long.offer);
+    // Spread unchanged (skew is spread-invariant): still 2h = 2.00.
+    assert!((long.offer - long.bid - 2.00).abs() < EPS);
 
     // Short (q = −20): skew = −0.20 → BOTH sides up 0.20.
     let short = quote(
@@ -111,14 +112,14 @@ fn inventory_skew_direction_and_magnitude() {
         StalePolicy::Suppress,
     )
     .unwrap();
-    assert!((short.bid - 100.10).abs() < EPS, "bid = {}", short.bid);
+    assert!((short.bid - 99.20).abs() < EPS, "bid = {}", short.bid);
     assert!(
-        (short.offer - 100.30).abs() < EPS,
+        (short.offer - 101.20).abs() < EPS,
         "offer = {}",
         short.offer
     );
 
-    // Extreme long clamps at the strategy cap s_max = 1.0 (0.01·1000 = 10 → 1.0).
+    // Extreme long clamps at strategy cap s_max = 1.0 (0.01·1000 = 10 → 1.0).
     let extreme = quote(
         &[&inv],
         &QuoteCtx::new(100.0).with_inventory(1000.0),
@@ -126,12 +127,27 @@ fn inventory_skew_direction_and_magnitude() {
         StalePolicy::Suppress,
     )
     .unwrap();
-    assert!((extreme.bid - 98.90).abs() < EPS, "bid = {}", extreme.bid);
+    assert!((extreme.bid - 98.00).abs() < EPS, "bid = {}", extreme.bid);
     assert!(
-        (extreme.offer - 99.10).abs() < EPS,
+        (extreme.offer - 100.00).abs() < EPS,
         "offer = {}",
         extreme.offer
     );
+
+    // Dynamic anti-arbitrage cap (SK-P1): when h = 0.10 and requested skew = 0.20,
+    // the dynamic cap clamps |s| <= min(s_max, lambda * h) = 0.10, preventing through-mid quoting.
+    let tight_inv = InventorySkew::new(0.10, 0.01, 1.0, SpreadUnit::PricePoints);
+    let tight_quote = quote(
+        &[&tight_inv],
+        &QuoteCtx::new(100.0).with_inventory(20.0),
+        &guards,
+        StalePolicy::Suppress,
+    )
+    .unwrap();
+    assert!((tight_quote.bid - 99.80).abs() < EPS, "bid = {}", tight_quote.bid);
+    assert!((tight_quote.offer - 100.00).abs() < EPS, "offer = {}", tight_quote.offer);
+    assert!(tight_quote.offer >= 100.0 - EPS, "offer must never trade through mid");
+    assert!(tight_quote.bid <= 100.0 + EPS, "bid must never trade through mid");
 }
 
 // ── Guardrail clamps ────────────────────────────────────────────────────────
@@ -364,6 +380,62 @@ fn scaled_smoothed_config_round_trip_and_weight() {
         stale_policy: StalePolicy::Suppress,
     };
     assert_eq!(flat_only.smoothing_weight(), None);
+}
+
+// ── Acceptance test (§4.1): yield-bps sign equivalence + utilization skew ───
+#[test]
+fn yield_bps_long_inventory_cheapens_offer_and_short_keener_bid() {
+    // 5y bond trading around 100.0 with modified duration 4.5.
+    // DV01 = 4.5 * 100 / 10000 = 0.045 price points per bp of yield.
+    let mid = 100.0;
+    let mod_dur = 4.5;
+    let base_h_yield_bps = 5.0; // 5 bps half-spread
+    let kappa = 0.1; // 0.1 yield bp per unit of inventory
+    let s_max = 10.0; // max 10 yield bps skew
+    let inv = InventorySkew::new(base_h_yield_bps, kappa, s_max, SpreadUnit::YieldBps);
+    let guards = Guardrails::new(0.0, 5.0, 2.0, 0.01);
+
+    // 1. Flat inventory (q = 0): symmetric around mid
+    let ctx_flat = QuoteCtx::new(mid).with_mod_duration(mod_dur).with_inventory(0.0);
+    let tw_flat = quote(&[&inv], &ctx_flat, &guards, StalePolicy::Suppress).unwrap();
+    let expected_h_px = base_h_yield_bps * (mod_dur * mid / 10000.0); // 5 * 0.045 = 0.225
+    assert!((tw_flat.bid - (mid - expected_h_px)).abs() < EPS);
+    assert!((tw_flat.offer - (mid + expected_h_px)).abs() < EPS);
+
+    // 2. Long inventory (q = +20): positive yield skew (higher yield = lower price)
+    // Both sides shift DOWN, meaning offer is cheaper (to attract buyers / shed inventory)
+    let ctx_long = QuoteCtx::new(mid).with_mod_duration(mod_dur).with_inventory(20.0);
+    let tw_long = quote(&[&inv], &ctx_long, &guards, StalePolicy::Suppress).unwrap();
+    assert!(tw_long.offer < tw_flat.offer, "long position MUST cheapen offer: {} < {}", tw_long.offer, tw_flat.offer);
+    assert!(tw_long.bid < tw_flat.bid, "long position MUST lower bid: {} < {}", tw_long.bid, tw_flat.bid);
+
+    // 3. Short inventory (q = -20): negative yield skew (lower yield = higher price)
+    // Both sides shift UP, meaning bid is keener (to attract sellers / buy back inventory)
+    let ctx_short = QuoteCtx::new(mid).with_mod_duration(mod_dur).with_inventory(-20.0);
+    let tw_short = quote(&[&inv], &ctx_short, &guards, StalePolicy::Suppress).unwrap();
+    assert!(tw_short.bid > tw_flat.bid, "short position MUST raise bid: {} > {}", tw_short.bid, tw_flat.bid);
+    assert!(tw_short.offer > tw_flat.offer, "short position MUST raise offer: {} > {}", tw_short.offer, tw_flat.offer);
+
+    // 4. Spread invariance: 2h is invariant under skew
+    assert!(((tw_long.offer - tw_long.bid) - (tw_flat.offer - tw_flat.bid)).abs() < EPS);
+    assert!(((tw_short.offer - tw_short.bid) - (tw_flat.offer - tw_flat.bid)).abs() < EPS);
+}
+
+#[test]
+fn utilization_based_skew_reproduces_limit_fraction() {
+    // Inventory skew with base h = 10.0 PriceBps, kappa = 5.0 bps per 100% utilization (u = 1.0)
+    let mid = 100.0;
+    let inv = InventorySkew::new(10.0, 5.0, 10.0, SpreadUnit::PriceBps);
+    let guards = wide_guards();
+
+    // With +75% limit utilization (u = +0.75): skew = 5.0 * 0.75 = 3.75 bps = 0.0375 price points (<= h = 0.10)
+    let ctx_util = QuoteCtx::new(mid).with_inventory(50_000_000.0).with_inventory_utilization(0.75);
+    let tw = quote(&[&inv], &ctx_util, &guards, StalePolicy::Suppress).unwrap();
+
+    let h_px = 0.10; // 10 bps on mid 100 = 0.10
+    let s_px = 0.0375; // 3.75 bps on mid 100 = 0.0375
+    assert!((tw.bid - (mid - h_px - s_px)).abs() < EPS);
+    assert!((tw.offer - (mid + h_px - s_px)).abs() < EPS);
 }
 
 // ── Property test: the anti-cross invariant holds for ANY config ────────────

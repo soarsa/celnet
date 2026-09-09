@@ -1,10 +1,8 @@
 # ADR-0010 — Converge FI rates onto the carry seam as a term-structure
 
-- **Status:** Proposed / Accepted as a **design direction** (2026-06-28). **NOT yet implemented.**
-  Records the intended convergence; the flat-carry path remains authoritative until the
-  curve trait lands. Extends ADR-0008 (multi-asset carry architecture, deliverable
-  `carry-seam`) and honours ADR-0007 (one unversioned contract) and CLAUDE.md
-  guardrails #8/#9/#10/#11.
+- **Status:** Superseded by ADR-0018 and ADR-0020 (Central Cross-Asset Pricing/Risk Contract).
+  The convergence of fixed income rates onto the central contract is realized via
+  `celnet-core::contract` (`Priceable`/`MarketResolver`/`RiskMeasure`) and `celnet-bond`.
 - **Aligns with:** master-plan items A (carry-seam-to-edge), C (`price_instrument` →
   `ProductEngine`), E (risk-cube `RepriceFn`), F (shared carry→sensitivity mapper).
   See `docs/plan/NEXT-ARCHITECTURE-IMPLEMENTATION.md`.

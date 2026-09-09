@@ -1,6 +1,6 @@
 //! **Auto-hedging / risk-internalisation** (Phase B) — the server-side engine + wire
 //! bridge that turns a book's warehoused-risk state into an exit decision, off the pinned
-//! pricing core (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md`).
+//! pricing core (`docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md`).
 //!
 //! - [`engine`] — the [`AutoHedgeEngine`]: resolves the trader's `HedgeGraph` to an
 //!   [`ExitAction`](celnet_hedge_routing::ExitAction), sizes + nets the shed against the

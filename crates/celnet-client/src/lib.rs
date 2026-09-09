@@ -178,11 +178,30 @@ pub use vocab::{
 pub use celnet_types::{
     Ccy, CommodityRef, CryptoPair, EquityRef, SettlementStyle, Symbol, Underlying,
 };
+pub use celnet_proto::{
+    AlgoOrderResponse, AlgoOrderStatus, AlgoPeggingStyle, AlgoStrategyType, AttestationRequest,
+    AttestationResponse, ChaosTestRequest, ChaosTestResponse, ChaosType, ChildSliceDto,
+    ChildSliceStatus, ClearedPositionDto, ClusterTopologyRequest, ClusterTopologyResponse,
+    ExportCdmRequest, ExportCdmResponse, GetAlgoOrderRequest, LicenseCapabilityRequest,
+    LicenseCapabilityResponse, ListAlgoOrdersRequest, ListAlgoOrdersResponse,
+    MarginCalculationRequest, MarginCalculationResponse, MarginProductFamily, NodeLifecycleStatus,
+    NodeMemberDto, OptimalLiquidationConfigDto, PreTradeMarginOutcome, PreTradeMarginRequest,
+    PreTradeMarginResponse, RecordAlgoFillRequest, ScaleDownNodeRequest, ScaleNodeResponse,
+    ScaleUpNodeRequest, SubmitAlgoOrderRequest, TwinValidationRequest, TwinValidationResponse,
+    TwapConfigDto, UpgradeStatusRequest, UpgradeStatusResponse, ValuationRequest,
+    ValuationResponse,
+};
 
+use celnet_proto::algo_execution_service_client::AlgoExecutionServiceClient;
+use celnet_proto::auth_service_client::AuthServiceClient;
+use celnet_proto::cluster_service_client::ClusterServiceClient;
+use celnet_proto::margin_service_client::MarginServiceClient;
 use celnet_proto::pricing_service_client::PricingServiceClient;
 use celnet_proto::quote_service_client::QuoteServiceClient;
 use celnet_proto::risk_service_client::RiskServiceClient;
 use celnet_proto::surface_service_client::SurfaceServiceClient;
+use celnet_proto::trade_service_client::TradeServiceClient;
+use celnet_proto::valuation_service_client::ValuationServiceClient;
 use celnet_proto::{
     GetSmileRequest, MarkSurfaceRequest, PriceRequest, QuoteAccept, QuoteReject, QuoteRequest,
     RatesInstrument, RatesPriceRequest, ScenarioRequest,
@@ -270,6 +289,28 @@ impl Client {
     pub fn with_session_token(mut self, token: impl Into<String>) -> Self {
         self.session_token = Some(token.into());
         self
+    }
+
+    /// Log in via `AuthService.Login` using `email` and `password`, setting the issued
+    /// session token on this client and returning it.
+    pub async fn login(
+        &mut self,
+        email: impl Into<String>,
+        password: impl Into<String>,
+    ) -> ClientResult<String> {
+        let mut auth =
+            celnet_proto::auth_service_client::AuthServiceClient::new(self.channel.clone());
+        let resp = auth
+            .login(celnet_proto::LoginRequest {
+                email: email.into(),
+                password: password.into(),
+                correlation_id: None,
+            })
+            .await?
+            .into_inner();
+        let token = resp.session_token;
+        self.session_token = Some(token.clone());
+        Ok(token)
     }
 
     /// Pin the entitlement `principal` the stream session's opening `Authenticate`
@@ -373,6 +414,20 @@ impl Client {
             conventions,
             price_std_error: resp.price_std_error,
         })
+    }
+
+    /// Universal valuation calculation across any asset class via `ValuationService`.
+    ///
+    /// The target polymorphic valuation RPC: evaluates options, rates, bonds, or XVA
+    /// through a single unified service endpoint.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure or an unsupported payload.
+    pub async fn calculate(&self, request: ValuationRequest) -> ClientResult<ValuationResponse> {
+        let mut svc = ValuationServiceClient::new(self.channel.clone());
+        let resp = svc.calculate(request).await?.into_inner();
+        Ok(resp)
     }
 
     /// Price a linear interest-rate instrument (a USD-SOFR OIS) against a
@@ -516,6 +571,36 @@ impl Client {
             .result
             .ok_or(ClientError::MissingField("RatesPriceResponse.result"))?;
         Ok(rates::RatesPriced::from_wire(result))
+    }
+
+    /// Price an XVA netting set (CVA, DVA, FVA, total adjustment) via the
+    /// `PricingService.PriceXva` wire RPC.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn price_xva(
+        &self,
+        request: celnet_proto::PriceXvaRequest,
+    ) -> ClientResult<celnet_proto::PriceXvaResponse> {
+        let mut svc = PricingServiceClient::new(self.channel.clone());
+        let resp = svc.price_xva(request).await?.into_inner();
+        Ok(resp)
+    }
+
+    /// Request a tradeable two-way quote for a fixed-income instrument (OIS, IRS, FRA, cash bond)
+    /// via the `QuoteService.RequestRatesQuote` wire RPC.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn rfq_rates(
+        &self,
+        request: celnet_proto::RatesQuoteRequest,
+    ) -> ClientResult<celnet_proto::RatesQuote> {
+        let mut svc = QuoteServiceClient::new(self.channel.clone());
+        let resp = svc.request_rates_quote(request).await?.into_inner();
+        Ok(resp)
     }
 
     // ---- surface ----------------------------------------------------------
@@ -1065,6 +1150,287 @@ impl Client {
             self.principal.as_ref(),
         )
         .await
+    }
+
+    // ---- margin service ----------------------------------------------------
+
+    /// Calculate portfolio clearing initial margin (SPAN 2 / SIMM filtered historical simulation).
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn calculate_margin(
+        &self,
+        request: MarginCalculationRequest,
+    ) -> ClientResult<MarginCalculationResponse> {
+        let mut svc = MarginServiceClient::new(self.channel.clone());
+        let resp = svc.calculate_margin(request).await?.into_inner();
+        Ok(resp)
+    }
+
+    /// Simulate pre-trade margin impact and credit headroom checks.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn simulate_pre_trade_margin(
+        &self,
+        request: PreTradeMarginRequest,
+    ) -> ClientResult<PreTradeMarginResponse> {
+        let mut svc = MarginServiceClient::new(self.channel.clone());
+        let resp = svc.simulate_pre_trade(request).await?.into_inner();
+        Ok(resp)
+    }
+
+    // ---- algo execution service --------------------------------------------
+
+    /// Submit a new algorithmic parent order (TWAP, VWAP, or Almgren-Chriss Optimal Liquidation).
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn submit_algo_order(
+        &self,
+        request: SubmitAlgoOrderRequest,
+    ) -> ClientResult<AlgoOrderResponse> {
+        let mut svc = AlgoExecutionServiceClient::new(self.channel.clone());
+        let resp = svc.submit_algo_order(request).await?.into_inner();
+        Ok(resp)
+    }
+
+    /// Fetch the real-time execution status and child slice breakdown of an algorithmic order.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn get_algo_order(
+        &self,
+        parent_order_id: impl Into<String>,
+    ) -> ClientResult<AlgoOrderResponse> {
+        let mut svc = AlgoExecutionServiceClient::new(self.channel.clone());
+        let resp = svc
+            .get_algo_order(GetAlgoOrderRequest {
+                parent_order_id: parent_order_id.into(),
+            })
+            .await?
+            .into_inner();
+        Ok(resp)
+    }
+
+    /// Record a fill against a child slice of an algorithmic parent order.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn record_algo_fill(
+        &self,
+        request: RecordAlgoFillRequest,
+    ) -> ClientResult<AlgoOrderResponse> {
+        let mut svc = AlgoExecutionServiceClient::new(self.channel.clone());
+        let resp = svc.record_algo_fill(request).await?.into_inner();
+        Ok(resp)
+    }
+
+    /// List active and completed algorithmic parent orders.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn list_algo_orders(
+        &self,
+        symbol_filter: impl Into<String>,
+    ) -> ClientResult<ListAlgoOrdersResponse> {
+        let mut svc = AlgoExecutionServiceClient::new(self.channel.clone());
+        let resp = svc
+            .list_algo_orders(ListAlgoOrdersRequest {
+                symbol_filter: symbol_filter.into(),
+            })
+            .await?
+            .into_inner();
+        Ok(resp)
+    }
+
+    // ---- cluster & upgrade service -----------------------------------------
+
+    /// Query the autonomous cluster topology, active consensus generation, and node membership.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn get_cluster_topology(
+        &self,
+        cluster_id: impl Into<String>,
+    ) -> ClientResult<ClusterTopologyResponse> {
+        let mut svc = ClusterServiceClient::new(self.channel.clone());
+        let resp = svc
+            .get_cluster_topology(ClusterTopologyRequest {
+                cluster_id: cluster_id.into(),
+            })
+            .await?
+            .into_inner();
+        Ok(resp)
+    }
+
+    /// Scale up a node in the cluster with automatic joint-consensus reconfiguration.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn scale_up_node(
+        &self,
+        node_id: impl Into<String>,
+        endpoint: impl Into<String>,
+    ) -> ClientResult<ScaleNodeResponse> {
+        let mut svc = ClusterServiceClient::new(self.channel.clone());
+        let resp = svc
+            .scale_up_node(ScaleUpNodeRequest {
+                node_id: node_id.into(),
+                endpoint: endpoint.into(),
+            })
+            .await?
+            .into_inner();
+        Ok(resp)
+    }
+
+    /// Scale down / drain a node in the cluster with zero in-flight trade drop.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn scale_down_node(
+        &self,
+        node_id: impl Into<String>,
+        force_immediate: bool,
+    ) -> ClientResult<ScaleNodeResponse> {
+        let mut svc = ClusterServiceClient::new(self.channel.clone());
+        let resp = svc
+            .scale_down_node(ScaleDownNodeRequest {
+                node_id: node_id.into(),
+                force_immediate,
+            })
+            .await?
+            .into_inner();
+        Ok(resp)
+    }
+
+    /// Query hot zero-downtime upgrade status and bit-exact twin comparison metrics.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn get_upgrade_status(&self) -> ClientResult<UpgradeStatusResponse> {
+        let mut svc = ClusterServiceClient::new(self.channel.clone());
+        let resp = svc
+            .get_upgrade_status(UpgradeStatusRequest {})
+            .await?
+            .into_inner();
+        Ok(resp)
+    }
+
+    /// Trigger bit-exact shadow twin validation on baseline vs candidate calculation outputs.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn trigger_twin_validation(
+        &self,
+        baseline_prices: Vec<f64>,
+        candidate_prices: Vec<f64>,
+        max_allowed_ulp: u64,
+    ) -> ClientResult<TwinValidationResponse> {
+        let mut svc = ClusterServiceClient::new(self.channel.clone());
+        let resp = svc
+            .trigger_twin_validation(TwinValidationRequest {
+                baseline_prices,
+                candidate_prices,
+                max_allowed_ulp,
+            })
+            .await?
+            .into_inner();
+        Ok(resp)
+    }
+
+    /// Execute a simulated chaos resilience test against the cluster (partition, leader kill, stress).
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn execute_chaos_test(
+        &self,
+        chaos_type: ChaosType,
+        target_nodes: Vec<String>,
+        duration_ms: u32,
+    ) -> ClientResult<ChaosTestResponse> {
+        let mut svc = ClusterServiceClient::new(self.channel.clone());
+        let resp = svc
+            .execute_chaos_test(ChaosTestRequest {
+                chaos_type: chaos_type as i32,
+                target_nodes,
+                duration_ms,
+            })
+            .await?
+            .into_inner();
+        Ok(resp)
+    }
+
+    // ---- CDM trade export --------------------------------------------------
+
+    /// Export a booked trade as an ISDA Common Domain Model (CDM 2026) JSON structure.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn export_cdm(
+        &self,
+        execution_id: u64,
+        issuer_lei: impl Into<String>,
+        client_id: impl Into<String>,
+    ) -> ClientResult<ExportCdmResponse> {
+        let mut svc = TradeServiceClient::new(self.channel.clone());
+        let resp = svc
+            .export_cdm(ExportCdmRequest {
+                execution_id,
+                issuer_lei: issuer_lei.into(),
+                client_id: client_id.into(),
+            })
+            .await?
+            .into_inner();
+        Ok(resp)
+    }
+
+    // ---- hardware attestation & license capabilities ------------------------
+
+    /// Verify hardware TPM 2.0 PCR attestation quote and certificate chain.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn verify_attestation(
+        &self,
+        request: AttestationRequest,
+    ) -> ClientResult<AttestationResponse> {
+        let mut svc = AuthServiceClient::new(self.channel.clone());
+        let resp = svc.verify_attestation(request).await?.into_inner();
+        Ok(resp)
+    }
+
+    /// Dynamically inspect institutional capability token license and tenant constraints.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure.
+    pub async fn get_license_capabilities(
+        &self,
+        token: impl Into<String>,
+    ) -> ClientResult<LicenseCapabilityResponse> {
+        let mut svc = AuthServiceClient::new(self.channel.clone());
+        let resp = svc
+            .get_license_capabilities(LicenseCapabilityRequest {
+                token: token.into(),
+            })
+            .await?
+            .into_inner();
+        Ok(resp)
     }
 }
 

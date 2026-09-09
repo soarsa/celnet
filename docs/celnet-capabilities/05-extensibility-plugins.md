@@ -9,7 +9,7 @@ This is the edge the deep-catalogue incumbents structurally lack: a desk extends
 ![Tiered plugin host — one frozen contract; the native and WebAssembly tiers ship today, with signed-shared-object and OS-sandbox tiers designed to slot in behind the same contract.](../assets/celnet-capabilities/fig-05-plugin-tiers.png)
 *Fig 5 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The Open Quant SDK is a single frozen contract; the host routes a registered model to the tier its trust level warrants. The native (Tier-0) and WebAssembly-sandbox (Tier-2) tiers are shipped and gated today; the signed-shared-object and OS-sandbox tiers are designed and seamed behind the identical contract, proven at deploy.*
 
-### 5.1 The Open Quant SDK — one contract, any model
+## 5.1 The Open Quant SDK — one contract, any model
 
 The SDK (`celnet-plugin-api`) is a small, stable set of Rust traits describing the three things a model can be, plus the metadata and discovery that let the engine route to it without hard-wiring (`crates/celnet-plugin-api/src/{pricing,smile,calibration,descriptor,registry}.rs`):
 
@@ -23,7 +23,7 @@ The SDK (`celnet-plugin-api`) is a small, stable set of Rust traits describing t
 
 Because the contract is **frozen and unversioned**, a model written against it today keeps working as Celnet evolves — there is exactly one current contract, never an N/N-1 negotiation. A registered model is indistinguishable, at the call site, from a built-in one: the host registry is **tier-blind** (`crates/celnet-plugin-host/src/registry.rs` — `register_native`/`register_wasm`/`load_wasm` all land behind one `model(id)` lookup), so the engine routes a private smile model or a bespoke pricer through the same path that serves the standard catalogue. The desk's quants do not reach the catalogue *through* the SDK — the catalogue is shipped core — they use the SDK to extend it with bespoke and structured products the firm wants to keep private.
 
-### 5.2 The tiered host — performance and isolation, never one or the other
+## 5.2 The tiered host — performance and isolation, never one or the other
 
 Not every model carries the same trust. A house model authored by the firm's own quants wants native speed; a model under evaluation, or one carrying third-party code, wants containment. The plugin host (`celnet-plugin-host`) is designed as a ladder of tiers behind the **same** contract, so the choice is a routing decision, not a rewrite. **The in-repo host ships the native and WebAssembly tiers; the signed-shared-object and OS-sandbox tiers are designed to slot in behind the same frozen contract** (`docs/PLUGIN-HOST-ALT.md` §3.4 / §3.5).
 
@@ -50,7 +50,7 @@ The sandbox is hardened beyond capability-denial alone:
 
 Four work-stream gates (WS-G) prove these properties, exercised by 20 tests in `crates/celnet-plugin-host/tests/sandbox.rs`: **capability-denial** (an unknown import fails to load), **fuel-exhaustion bounded** (a runaway guest traps within budget and does not hang, verified including the `(start)` path), **replay bit-identity** (below), and **Tier-0 == Tier-2 interchangeability** (a native model and its Wasm twin agree to the last bit through one tier-blind registry). A guest's own domain rejection surfaces as a model error, not a sandbox fault — so a Tier-2 verdict is indistinguishable from a Tier-0 one.
 
-### 5.3 Determinism, replay, and the arbitrage self-check
+## 5.3 Determinism, replay, and the arbitrage self-check
 
 Determinism is a platform guarantee, not a hope. A single Tier-2 model produces **bit-identical** results on replay — the same inputs reproduce the same outputs to the last bit (`f64::to_bits`-equal, including any canonicalised NaN), run after run, on every platform wasmi runs on — which is what makes plugin-priced trades auditable and reproducible across the firm. The host carries a deterministic replay harness (`crates/celnet-plugin-host/src/replay.rs`) that replays a fixed market snapshot through a model and asserts bit-identity across runs; the same fuel budget interrupts at the same instruction, so even a near-budget model replays identically. Cross-platform identity additionally requires the guest's transcendentals to be the platform-independent `rust-lang/libm` ones — which is precisely why the host exposes them as capabilities rather than letting the guest reach for an FPU intrinsic.
 
@@ -58,7 +58,7 @@ Bit-identity *between* a native and a Wasm implementation of the same pricer is 
 
 A smile model loaded through the SDK is held to the same standard as the built-ins: a **static (butterfly) no-arbitrage self-check** is built into the `SmileModel` trait (`crates/celnet-plugin-api/src/smile.rs` — a model-free density-positivity test over the strike grid, in the spirit of the Carr-Madan call-spread conditions). A plugin therefore cannot quietly publish an arbitrageable surface; an arbitrageable grid is rejected with a typed error.
 
-### 5.4 What it means for the desk
+## 5.4 What it means for the desk
 
 - **Private IP stays private.** Proprietary pricers and smiles run *inside* Celnet's engine — sandboxed, deterministic, hot-loadable — and the source never leaves the firm.
 - **Model evolution without downtime.** New or revised models load into the running engine and inherit Celnet's zero-downtime, blue-green state handoff; there is no rebuild-and-redeploy of the platform to ship a model change.

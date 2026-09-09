@@ -9,7 +9,7 @@ What runs over that contract is the *full* product catalogue — vanilla, the co
 ![API-first client parity: one contract, every surface](../assets/celnet-capabilities/fig-02-api-first-parity.png)
 *Figure 9.1 ([index](../CELNET-CAPABILITIES.md#figure-index)) — One contract, every surface. The GUI, Rust SDK, CLI, and Excel add-in are peers over the same five service families (Pricing / Quote / StreamSession / Risk / Surface); a value is identical wherever it is read, across both the binary gRPC edge and the byte-identical WebSocket JSON mirror.*
 
-### 9.1 The five service families
+## 9.1 The five service families
 
 The contract (`crates/celnet-proto/proto/celnet.proto:2447-2504`) is organised into **five gRPC services** that map directly to how a desk works: get a price, run an RFQ lifecycle, stream live markets, query firm-scale risk, and mark surfaces. One row per service, every RPC enumerated:
 
@@ -30,7 +30,7 @@ The contract (`crates/celnet-proto/proto/celnet.proto:2447-2504`) is organised i
 
 Aggregation, common-numeraire conversion, non-additive re-derivation, entitlement pruning, and limit RAG are all the server's job (`celnet-risk-cube` / `-normalize` / `-limits` / `-entitlements`) — a client never loops positions and sums.
 
-#### The unified `Instrument` — one vocabulary, every product
+### The unified `Instrument` — one vocabulary, every product
 
 A **single `Instrument` type** runs through Pricing, Quote, Stream, and Scenario — the same instrument vocabulary describes a vanilla, a digital, a barrier, a TARF, a basket, or an American option, so the contract does not fork by product. The product payoff is a `oneof product` (`celnet.proto:1016-1062`) with **19 arms**; each Monte-Carlo-priced arm carries an honest `price_std_error` and is **never** presented as machine-precision.
 
@@ -66,11 +66,11 @@ A **single `Instrument` type** runs through Pricing, Quote, Stream, and Scenario
 
 `PriceResponse.price_std_error` (field 7) and `Quote.price_std_error` (field 12) are presence-tracked: **set only for Monte-Carlo-priced products** (TARF, accumulator, discrete lookback, clamped cliquet, basket, LSM American), **absent for closed-form products whose price is exact**. The contract surfaces MC uncertainty so a client never mistakes an MC estimate for closed-form precision — the same disclosure crosses gRPC, the WS mirror, the SDK, the CLI, and Excel. (XVA is **internal-only**: CVA/DVA/FVA over synthetic netting sets is computed in `celnet-xva` and has **no client or wire surface** — it is deliberately not an API capability.)
 
-### 9.2 Surface-version pinning
+## 9.2 Surface-version pinning
 
 Pricing and risk are only reproducible if everyone agrees on the surface. Every marked surface is deposited under a fresh **surface version** (`surface_version`), and any pricing, RFQ, or stream request can **pin** to a specific version through the `Pin` resolver. An unknown version is **rejected** — never silently resolved to the live surface — so a quote, a risk report, and a re-priced ticket all reference the identical calibrated smile, and "what surface did this price come from?" always has a single, exact answer. `surface_version` is a *data* field, echoed on `PriceResponse` / `Quote` / `Heartbeat`, never an API version.
 
-### 9.3 The multiplex StreamSession, market-series feed, and click-to-trade
+## 9.3 The multiplex StreamSession, market-series feed, and click-to-trade
 
 The StreamSession is a single bidirectional channel that fans out to many subscriptions. The client sends `ClientStreamMessage` (`Subscribe` / `Modify` / `Unsubscribe` / `Resync` / `Execute` / `Heartbeat` / `MarketSeriesSubscribe`); the server returns `ServerStreamMessage` (`Snapshot` / `Update` / `Heartbeat` / `StreamEnd` / `Executed` / `StreamReject` / market-series frames). Each price subscription follows a clean lifecycle — **Subscribe → Snapshot → Update(seq) → Heartbeat** — with monotonic sequence numbers so a client can detect a gap and issue **Resync** to re-baseline, and an in-place **Modify** that re-bases a subscription (new strike, notional, or tenor) with a fresh Snapshot, without tearing it down.
 
@@ -94,11 +94,11 @@ The trader sees this as a single confident gesture: click a streamed price, get 
 ![Click-to-trade last-look response in the live stream blotter](../assets/celnet-capabilities/shot-08-clicktrade-lastlook.png)
 *Figure 9.3 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Click-to-trade in the live blotter: a lifted line returns a last-look response bound to the exact streamed price.*
 
-### 9.4 The byte-identical WebSocket mirror
+## 9.4 The byte-identical WebSocket mirror
 
 The contract is served over a high-performance binary gRPC transport for native clients **and** over a **byte-identical WebSocket JSON mirror** for browser and lightweight clients (`crates/celnet-server/src/lib.rs:31,177,359`). The mirror covers **all five services**, field-for-field — it is not a parallel API but the same contract, so a value crossing the WebSocket is identical to the one crossing the binary edge. This is what lets the React GUI and a native SDK client share one mental model and one set of guarantees, and it is verified continuously: the JSON projection is checked to mirror the wire contract exactly.
 
-### 9.5 Typed SDK, InstrumentSpec builder, and admin CLI
+## 9.5 Typed SDK, InstrumentSpec builder, and admin CLI
 
 **The typed Rust SDK** (`crates/celnet-client`) turns the contract into ergonomic, statically-checked calls grouped by service family (~20 public methods, `src/lib.rs` / `rfs.rs` / `series.rs`):
 
@@ -123,7 +123,7 @@ It returns **typed errors** (a rejected stale token, an unknown surface version,
 | `risk` | `RiskService` | **Four** sub-subcommands `aggregate` / `drill` / `positions` / `limits`, with entitlement `--grant` / `--deny` scope flags — the same `RiskService` the GUI Book view and Excel consume. |
 | `stream` | `StreamService.StreamSession` | Subscribe to a two-way RFS stream, print sequenced ticks, unsubscribe cleanly. |
 
-### 9.6 API-first client parity in practice
+## 9.6 API-first client parity in practice
 
 Because there is exactly one contract and every client is a peer over it, parity is **structural rather than aspirational**, and it is proven by an executable matrix (`docs/CLIENT-PARITY-MATRIX.md`): all 18-products × the five service families are reachable from all five surfaces, with honest, stated exceptions:
 

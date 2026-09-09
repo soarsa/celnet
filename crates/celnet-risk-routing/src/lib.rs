@@ -4,7 +4,7 @@
 //! When an order/RFQ is filled, the resulting risk must land in a trader-defined
 //! book so that limits, greeks, and PnL are managed per book. Traders express
 //! *which* book via a decision tree of `IF <field> <op> <value> THEN <book>`
-//! rules. This crate is workstream §8.1 of `docs/FI-RISK-ROUTING-REQUIREMENTS.md`
+//! rules. This crate is workstream §8.1 of `docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md`
 //! — the pure foundation the server, proto/WS, and GUI layers build on. It has
 //! **no** server, proto, or wire dependency; only `serde` for persisting a graph.
 //!

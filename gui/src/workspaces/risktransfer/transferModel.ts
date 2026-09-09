@@ -1,6 +1,6 @@
 /**
  * transferModel — the pure, client-side model behind the FI Risk Transfer ticket
- * (docs/RISK-TRANSFER-REQUIREMENTS.md §9.1). No React, no transport — so the ticket
+ * (docs/hedging/RISK-TRANSFER-REQUIREMENTS.md §9.1). No React, no transport — so the ticket
  * and its tests share ONE source of truth for:
  *
  *   • SYNTHESISED position lines. The mock (and, on a real backend, the FI seam) has

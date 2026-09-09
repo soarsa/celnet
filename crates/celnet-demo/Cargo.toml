@@ -1,0 +1,35 @@
+[package]
+name = "celnet-demo"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet institutional demonstration runner and orchestrator — cleanly separated from core project."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types = { path = "../celnet-types" }
+celnet-core = { path = "../celnet-core" }
+celnet-vanilla = { path = "../celnet-vanilla" }
+celnet-equity-vanilla = { path = "../celnet-equity-vanilla" }
+celnet-rates-exotics = { path = "../celnet-rates-exotics" }
+celnet-exchange-codecs = { path = "../celnet-exchange-codecs" }
+celnet-algo = { path = "../celnet-algo" }
+celnet-margin = { path = "../celnet-margin" }
+celnet-shm = { path = "../celnet-shm" }
+celnet-replog = { path = "../celnet-replog" }
+celnet-license = { path = "../celnet-license" }
+celnet-plugin-host = { path = "../celnet-plugin-host" }
+celnet-plugin-api = { path = "../celnet-plugin-api" }
+celnet-server = { path = "../celnet-server" }
+celnet-c-api = { path = "../celnet-c-api" }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "sync", "time", "macros", "io-util"] }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+

@@ -2012,3 +2012,192 @@ export interface Notification {
 export interface NotificationScope {
   desks: string[];
 }
+
+// --- Clearing Initial Margin (SPAN 2 / SIMM) ---
+
+export type MarginProductFamily =
+  | "BOND_FUTURE"
+  | "INTEREST_RATE_SWAP"
+  | "FX_FORWARD"
+  | "EQUITY_OPTION"
+  | "OIS_SWAP";
+
+export interface ClearedPosition {
+  symbol: string;
+  productFamily: MarginProductFamily;
+  quantity: number;
+  contractSize?: number;
+  initialMarginPerContract?: number;
+  isShort?: boolean;
+  currentPrice?: number;
+  pnlScenarios?: number[];
+}
+
+export interface MarginCalculationRequest {
+  portfolioId: string;
+  positions: ClearedPosition[];
+  confidenceLevel?: number;
+  lookbackDays?: number;
+}
+
+export interface MarginCalculationResponse {
+  portfolioId: string;
+  totalInitialMargin: number;
+  expectedShortfall: number;
+  valueAtRisk: number;
+  stressComponent: number;
+  currency: string;
+  calculatedEpochNanos: bigint;
+}
+
+export type PreTradeMarginOutcome = "APPROVED" | "WARNING" | "EXCEEDS_COLLATERAL";
+
+export interface PreTradeMarginRequest {
+  portfolioId: string;
+  existingPositions?: ClearedPosition[];
+  candidatePosition: ClearedPosition;
+  availableCollateral: number;
+  creditLine?: number;
+  confidenceLevel?: number;
+}
+
+export interface PreTradeMarginResponse {
+  portfolioId: string;
+  outcome: PreTradeMarginOutcome;
+  initialMarginBefore: number;
+  initialMarginAfter: number;
+  deltaMargin: number;
+  collateralHeadroom: number;
+  reason: string;
+}
+
+// --- Algorithmic Execution (TWAP, VWAP, Optimal Liquidation) ---
+
+export type AlgoStrategyType = "TWAP" | "VWAP" | "OPTIMAL_LIQUIDATION" | "POV";
+
+export type AlgoPeggingStyle = "PRIMARY" | "MIDPOINT" | "MARKET" | "NONE";
+
+export type AlgoOrderStatus = "PENDING" | "ACTIVE" | "COMPLETED" | "CANCELLED";
+
+export type ChildSliceStatus = "PENDING" | "DISPATCHED" | "FILLED" | "CANCELLED";
+
+export interface ChildSlice {
+  sliceIndex: number;
+  scheduledOffsetSeconds: number;
+  targetQuantity: number;
+  filledQuantity: number;
+  avgFillPrice: number;
+  status: ChildSliceStatus;
+}
+
+export interface AlgoOrderResponse {
+  parentOrderId: string;
+  clientOrderId: string;
+  symbol: string;
+  totalQuantity: number;
+  executedQuantity: number;
+  arrivalPrice: number;
+  avgExecPrice: number;
+  isBuy: boolean;
+  status: AlgoOrderStatus;
+  implementationShortfallBps: number;
+  slices: ChildSlice[];
+  createdEpochNanos: bigint;
+}
+
+export interface SubmitAlgoOrderRequest {
+  clientOrderId?: string;
+  symbol: string;
+  totalQuantity: number;
+  arrivalPrice: number;
+  isBuy: boolean;
+  strategyType?: AlgoStrategyType;
+  twap?: {
+    durationSeconds: number;
+    sliceCount: number;
+    jitterFactor?: number;
+    peggingStyle?: AlgoPeggingStyle;
+  };
+  optimal?: {
+    horizonSeconds: number;
+    stepCount: number;
+    volatility: number;
+    riskAversion: number;
+    tempImpactEta: number;
+    permImpactGamma: number;
+  };
+}
+
+export interface ListAlgoOrdersResponse {
+  orders: AlgoOrderResponse[];
+}
+
+// --- Cluster Lifecycle, Twin Upgrade & Chaos Resilience ---
+
+export type NodeLifecycleStatus = "PENDING" | "ACTIVE" | "DRAINING" | "RETIRED" | "FAILED";
+
+export interface NodeMember {
+  nodeId: string;
+  endpoint: string;
+  status: NodeLifecycleStatus;
+  activeInFlightTrades: bigint;
+  joinedEpochNanos: bigint;
+}
+
+export interface ClusterTopologyResponse {
+  clusterId: string;
+  leaderId: string;
+  activeGeneration: bigint;
+  members: NodeMember[];
+  jointConsensusActive: boolean;
+}
+
+export interface UpgradeStatusResponse {
+  activeGeneration: bigint;
+  currentVersion: string;
+  shadowVersion: string;
+  twinComparisonPassed: boolean;
+  maxUlpDivergence: bigint;
+  evaluatedTradesCount: bigint;
+  cutoverStatus: string;
+}
+
+export interface TwinValidationResponse {
+  passed: boolean;
+  maxUlpDivergence: bigint;
+  bitExact: boolean;
+  verdict: string;
+}
+
+export interface ChaosTestResponse {
+  clusterResilient: boolean;
+  recoveryTimeMs: bigint;
+  details: string;
+}
+
+// --- ISDA CDM 2026 Digital Trade Lifecycle Event ---
+
+export interface ExportCdmResponse {
+  executionId: bigint;
+  uti: string;
+  cdmEventType: string;
+  cdmJson: string;
+}
+
+// --- Hardware Attestation & Licensing ---
+
+export interface AttestationResponse {
+  valid: boolean;
+  attestationTimestampNanos: bigint;
+  hardwareFingerprint: string;
+  statusMessage: string;
+}
+
+export interface LicenseCapabilityResponse {
+  valid: boolean;
+  subject: string;
+  tier: string;
+  activeCapabilities: string[];
+  expiryEpochSecs: bigint;
+}
+

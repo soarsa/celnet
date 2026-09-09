@@ -238,7 +238,7 @@ Gated in `celnet-parity/tests/heston.rs`: (i) **Carr-Madan == COS** to `|diff| <
 
 ## 6. Prioritized Implementation Order (P0 / P1 / P2) by Workspace Crate
 
-Crate homes in the **implemented** 34-crate tree (this section was written against an early
+Crate homes in the **implemented** 55-crate tree (this section was written against an early
 all-in-`celnet-core` sketch; the real homes are): pure math primitives (libm-routed
 transcendentals, `is_close`, `Smile` trait) in **`celnet-core`**; POD/convention/config types
 in **`celnet-types`**; the **calendar/date engine** in **`celnet-calendar`**; the convention

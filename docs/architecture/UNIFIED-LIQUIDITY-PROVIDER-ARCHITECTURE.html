@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en" data-appearance="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Celnet — Liquidity Provider (LP) Enablement & Unified Integration Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-base: #07090E;
+    --bg-surface: #0D111A;
+    --bg-elevated: #131A26;
+    --bg-overlay: #1A2333;
+    --border-subtle: rgba(255, 255, 255, 0.08);
+    --border-medium: rgba(255, 255, 255, 0.16);
+    --border-strong: rgba(255, 255, 255, 0.28);
+    
+    --brand-coral: #FF7357;
+    --brand-coral-soft: rgba(255, 115, 87, 0.15);
+    --accent-indigo: #6B6BF5;
+    --accent-indigo-soft: rgba(107, 107, 245, 0.15);
+    --status-green: #10B981;
+    --status-green-soft: rgba(16, 185, 129, 0.15);
+    --status-amber: #F59E0B;
+    --status-amber-soft: rgba(245, 158, 11, 0.15);
+    --status-red: #EF4444;
+    --status-red-soft: rgba(239, 68, 68, 0.15);
+    --accent-cyan: #38BDF8;
+    --accent-cyan-soft: rgba(56, 189, 248, 0.15);
+    --accent-purple: #A855F7;
+
+    --text-primary: #F3F4F6;
+    --text-secondary: #9CA3AF;
+    --text-muted: #6B7280;
+    --text-inverse: #030712;
+
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-display: 'Space Grotesk', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    padding-bottom: 120px;
+  }
+
+  .header {
+    background: linear-gradient(180deg, rgba(255, 115, 87, 0.08) 0%, rgba(7, 9, 14, 0) 100%), var(--bg-surface);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 48px 40px;
+    position: relative;
+    overflow: hidden;
+  }
+  .header::after {
+    content: '';
+    position: absolute;
+    top: 0; right: 0; width: 600px; height: 100%;
+    background: radial-gradient(circle at 80% 20%, rgba(107, 107, 245, 0.12), transparent 70%);
+    pointer-events: none;
+  }
+  .header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+  .brand-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    background: var(--brand-coral-soft);
+    border: 1px solid rgba(255, 115, 87, 0.3);
+    border-radius: 9999px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--brand-coral);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .badge-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--brand-coral);
+    box-shadow: 0 0 10px var(--brand-coral);
+  }
+  .system-meta {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: flex;
+    gap: 20px;
+  }
+  .title {
+    font-family: var(--font-display);
+    font-size: 38px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    margin-bottom: 16px;
+    background: linear-gradient(135deg, #FFFFFF 0%, #D1D5DB 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .subtitle {
+    font-size: 16px;
+    color: var(--text-secondary);
+    max-width: 950px;
+    line-height: 1.6;
+  }
+
+  .container {
+    max-width: 1360px;
+    margin: 0 auto;
+    padding: 40px;
+  }
+
+  .section {
+    margin-bottom: 56px;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 12px;
+  }
+  .section-tag {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--brand-coral);
+    background: var(--brand-coral-soft);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .section-title {
+    font-family: var(--font-display);
+    font-size: 24px;
+    font-weight: 600;
+    color: #fff;
+    letter-spacing: -0.01em;
+  }
+
+  .card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 24px;
+    margin-bottom: 24px;
+    transition: border-color 0.2s;
+  }
+  .card:hover {
+    border-color: var(--border-medium);
+  }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+  }
+  .grid-4 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+
+  .stat-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 20px;
+  }
+  .stat-val {
+    font-family: var(--font-mono);
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1.1;
+    margin-bottom: 6px;
+  }
+  .stat-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .table-container {
+    overflow-x: auto;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    margin-bottom: 24px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    text-align: left;
+  }
+  th {
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-medium);
+  }
+  td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255, 255, 255, 0.02); }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge-real { background: var(--status-green-soft); color: var(--status-green); border: 1px solid rgba(16, 185, 129, 0.3); }
+  .badge-mock { background: var(--status-red-soft); color: var(--status-red); border: 1px solid rgba(239, 68, 68, 0.3); }
+  .badge-gap { background: var(--status-amber-soft); color: var(--status-amber); border: 1px solid rgba(245, 158, 11, 0.3); }
+  .badge-live { background: var(--accent-indigo-soft); color: var(--accent-indigo); border: 1px solid rgba(107, 107, 245, 0.3); }
+
+  .code-block {
+    background: #030508;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: #e5e7eb;
+    overflow-x: auto;
+    margin: 12px 0;
+    line-height: 1.5;
+  }
+
+  .callout {
+    padding: 18px 20px;
+    border-radius: var(--radius-md);
+    margin: 18px 0;
+    border-left: 4px solid;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .callout-info {
+    background: rgba(107, 107, 245, 0.08);
+    border-color: var(--accent-indigo);
+    color: #c7d2fe;
+  }
+  .callout-danger {
+    background: rgba(239, 68, 68, 0.08);
+    border-color: var(--status-red);
+    color: #fca5a5;
+  }
+  .callout-success {
+    background: rgba(16, 185, 129, 0.08);
+    border-color: var(--status-green);
+    color: #a7f3d0;
+  }
+  .callout-warning {
+    background: rgba(245, 158, 11, 0.08);
+    border-color: var(--status-amber);
+    color: #fde68a;
+  }
+
+  .arch-diagram {
+    background: #04060A;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 24px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: #d1d5db;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-top">
+    <div class="brand-badge">
+      <span class="badge-dot"></span>
+      Celnet Core Architecture &bull; Liquidity Provider (LP) Strategy
+    </div>
+    <div class="system-meta">
+      <span>Domain: Multi-Dealer Liquidity</span>
+      <span>Protocols: FIX 4.4 / 5.0 &bull; gRPC &bull; WS</span>
+      <span>Status: Architectural Synthesis</span>
+    </div>
+  </div>
+  <h1 class="title">LP Enablement &amp; Unified Integration Review</h1>
+  <p class="subtitle">
+    Forensic critique of how Liquidity Providers (LPs) are currently defined, configured, and integrated across RFQ, streaming aggregation, and auto-hedging. Pinpoints 4 architectural fragmentation gaps and establishes the Target Unified Liquidity Architecture (ULA).
+  </p>
+</header>
+
+<div class="container">
+
+  <!-- TOP STATS -->
+  <div class="grid-4" style="margin-bottom: 36px;">
+    <div class="stat-card">
+      <div class="stat-val" style="color: var(--status-amber);">3</div>
+      <div class="stat-label">Disconnected LP Pathways Today</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color: var(--status-red);">4</div>
+      <div class="stat-label">Architectural Fragmentation Gaps</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color: var(--status-green);">1</div>
+      <div class="stat-label">Target Unified LP Entity Model</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color: var(--accent-indigo);">100%</div>
+      <div class="stat-label">Unified Operator Control (Single Kill-Switch)</div>
+    </div>
+  </div>
+
+  <!-- CURRENT STATE AUDIT -->
+  <section class="section" id="current-state">
+    <div class="section-header">
+      <span class="section-tag">Current State Audit</span>
+      <h2 class="section-title">How LPs Are Enabled &amp; Integrated Today</h2>
+    </div>
+
+    <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 24px;">
+      Across the codebase, liquidity providers participate in three distinct institutional workflows. While each individual pathway contains sophisticated quantitative logic, <strong>the three pathways are currently disconnected from each other</strong>:
+    </p>
+
+    <div class="grid-3">
+      <!-- PATHWAY 1 -->
+      <div class="card">
+        <h3 style="font-family: var(--font-display); font-size: 16px; color: var(--brand-coral); margin-bottom: 8px;">
+          1. Multi-Dealer RFQ Quoting
+        </h3>
+        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">
+          <strong>Workflows:</strong> FX Options &amp; Rates RFQ<br/>
+          <strong>Crates:</strong> <code>celnet-rfq</code>, <code>celnet-server::quote</code>
+        </p>
+        <p style="font-size: 12px; color: var(--text-muted); line-height: 1.6; margin-bottom: 12px;">
+          When a client requests a quote, the request fans across an LP panel. The server ranks competing dealer lines (best bid/offer) with last-look deadlines.
+        </p>
+        <div style="font-size: 12px; color: var(--status-red);">
+          <strong>Current Enablement:</strong> Controlled by <code>CELNET_DEMO_LPS</code> env variable. Synthesizes <code>SYNTH-LP-1..N</code> mathematically in-memory. Does not query connected FIX acceptors.
+        </div>
+      </div>
+
+      <!-- PATHWAY 2 -->
+      <div class="card">
+        <h3 style="font-family: var(--font-display); font-size: 16px; color: var(--accent-indigo); margin-bottom: 8px;">
+          2. Streaming Book Aggregation
+        </h3>
+        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">
+          <strong>Workflows:</strong> Cash Bonds &amp; Treasuries<br/>
+          <strong>Crates:</strong> <code>celnet-aggregation</code>, <code>fix_admin</code>
+        </p>
+        <p style="font-size: 12px; color: var(--text-muted); line-height: 1.6; margin-bottom: 12px;">
+          Multiple LPs stream top-of-book quotes. <code>ConsolidatedBook</code> computes robust median consensus with MAD outlier gating and staleness decay.
+        </p>
+        <div style="font-size: 12px; color: var(--status-amber);">
+          <strong>Current Enablement:</strong> Defined in <code>fix_connections.json</code> and joined to <code>aggregated_books.json</code> member arrays. Monitored via <code>LiquidityWorkspace.tsx</code>.
+        </div>
+      </div>
+
+      <!-- PATHWAY 3 -->
+      <div class="card">
+        <h3 style="font-family: var(--font-display); font-size: 16px; color: var(--accent-cyan); margin-bottom: 8px;">
+          3. Outbound Auto-Hedging
+        </h3>
+        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">
+          <strong>Workflows:</strong> Risk Shedding &amp; Exit<br/>
+          <strong>Crates:</strong> <code>celnet-hedge-routing</code>, <code>auto_hedge</code>
+        </p>
+        <p style="font-size: 12px; color: var(--text-muted); line-height: 1.6; margin-bottom: 12px;">
+          When warehouse bands breach (delta/DV01), the auto-hedge engine routes hedge orders to an external LP panel or CME futures venue.
+        </p>
+        <div style="font-size: 12px; color: var(--status-amber);">
+          <strong>Current Enablement:</strong> Configured in <code>hedge_policy_graph.json</code> under <code>HedgeLpPanel</code>. Routes via <code>StreetOrderIntent</code> to <code>LpHedgeSource</code>.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- THE 4 FRAGMENTATION GAPS -->
+  <section class="section" id="fragmentation-gaps">
+    <div class="section-header">
+      <span class="section-tag">Gap Analysis</span>
+      <h2 class="section-title">The 4 Core Architectural Fragmentation Gaps</h2>
+    </div>
+
+    <!-- GAP 1 -->
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+        <h3 style="font-family: var(--font-display); font-size: 16px; color: var(--status-red);">
+          Gap 1: Triplicate Entity Models for the Same Institutional Counterparty
+        </h3>
+        <span class="badge badge-mock">Domain Fragmentation</span>
+      </div>
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+        If <strong>Barclays</strong> provides liquidity to Celnet across FX Options RFQ, Treasury Bond streaming, and Auto-Hedge execution, the platform currently represents Barclays as three completely disjoint entities:
+      </p>
+      <ul style="font-size: 13px; color: var(--text-secondary); line-height: 1.7; padding-left: 20px; margin-top: 8px;">
+        <li>In RFQ: A generated synthetic string <code>"SYNTH-LP-1"</code> in <code>crates/celnet-server/src/services/quote.rs</code>.</li>
+        <li>In Aggregation: A <code>FixConnectionDef</code> with ID <code>"barclays-bond-feed"</code> in <code>fix_connections.json</code>.</li>
+        <li>In Auto-Hedging: A member string inside <code>HedgeLpPanel.members</code> in <code>hedge_policy_graph.json</code>.</li>
+      </ul>
+    </div>
+
+    <!-- GAP 2 -->
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+        <h3 style="font-family: var(--font-display); font-size: 16px; color: var(--status-red);">
+          Gap 2: RFQ Quoting Engine Disconnected from Active Connections
+        </h3>
+        <span class="badge badge-mock">Hardcoded In-Memory Logic</span>
+      </div>
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+        While <code>celnet-rfq</code> has a real <code>FixLpAdapter</code> capable of dialing LPs over FIX, <code>celnet-server::services::quote</code> does not query the active FIX connection registry. Instead, it reads <code>CELNET_DEMO_LPS</code> and mathematically shifts its own internal mid by <code>(5% &times; k)</code> to create fake quotes. A real bank connecting over FIX cannot join the RFQ panel dynamically without code changes!
+      </p>
+    </div>
+
+    <!-- GAP 3 -->
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+        <h3 style="font-family: var(--font-display); font-size: 16px; color: var(--status-red);">
+          Gap 3: Fragmented Operator Controls &amp; No Single Kill-Switch
+        </h3>
+        <span class="badge badge-mock">Operational Risk</span>
+      </div>
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+        If an LP exhibits erratic quoting, credit distress, or extreme last-look rejection toxicity, an operator currently has no single command to disable that LP. They must:
+      </p>
+      <ul style="font-size: 13px; color: var(--text-secondary); line-height: 1.7; padding-left: 20px; margin-top: 8px;">
+        <li>Disable its connection in <code>FixAdminService</code> (stops streaming feed).</li>
+        <li>Remove it from book member arrays in <code>AggregatedBookService</code>.</li>
+        <li>Update the hedge routing graph in <code>HedgePolicyService</code> to prevent order fills.</li>
+        <li>Restart the edge with modified <code>CELNET_DEMO_LPS</code> (for RFQ).</li>
+      </ul>
+    </div>
+
+    <!-- GAP 4 -->
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+        <h3 style="font-family: var(--font-display); font-size: 16px; color: var(--status-red);">
+          Gap 4: Disjoint Trader GUI Across 5 Separate Workspaces
+        </h3>
+        <span class="badge badge-mock">User Experience Friction</span>
+      </div>
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+        In the GUI, an institutional head of trading or operations manager must flip between <strong>5 disparate screens</strong> to inspect a single LP:
+      </p>
+      <ul style="font-size: 13px; color: var(--text-secondary); line-height: 1.7; padding-left: 20px; margin-top: 8px;">
+        <li><code>FixAdminWorkspace.tsx</code> (Desk 06): Connection IP, port, session heartbeat.</li>
+        <li><code>LiquidityWorkspace.tsx</code> (Desk 01): Feed health, fresh vs stale quotes, top-of-book %.</li>
+        <li><code>AggregatedBookWorkspace.tsx</code> (Desk 03): Depth ladder and member bid/offer contributions.</li>
+        <li><code>StreetLiquidityWorkspace.tsx</code> (Desk 06): Deals won, won notional, misses, last-look toxicity.</li>
+        <li><code>HedgingWorkspace.tsx</code> (Desk 05): Auto-hedge venue routing.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- TARGET UNIFIED ARCHITECTURE -->
+  <section class="section" id="target-architecture">
+    <div class="section-header">
+      <span class="section-tag">Target Architecture</span>
+      <h2 class="section-title">The Unified Liquidity Architecture (ULA)</h2>
+    </div>
+
+    <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 24px;">
+      To achieve a clean, optimal, unified architecture, Celnet must unify LPs into a <strong>First-Class Domain Entity</strong> managed by a centralized server registry and surfaced through an intuitive, consolidated <strong>Liquidity Center</strong> in the GUI.
+    </p>
+
+    <!-- UNIFIED DOMAIN MODEL -->
+    <div class="card">
+      <h3 style="font-family: var(--font-display); font-size: 18px; color: var(--status-green); margin-bottom: 12px;">
+        1. Unified LP Domain Contract (in <code>celnet.proto</code>)
+      </h3>
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 12px;">
+        A single canonical message defining an LP and its multi-capability roles:
+      </p>
+
+      <div class="code-block">
+message LiquidityProvider {
+  string lp_id = 1;                    // e.g. "BARCLAYS"
+  string display_name = 2;             // e.g. "Barclays Capital"
+  string institution_code = 3;         // e.g. "BARC"
+  
+  // Master Operator Kill-Switch
+  bool enabled = 4;                    // False ⇒ instantly halts all flows to/from this LP
+
+  // Supported Operational Capabilities
+  LpRfqCapability rfq = 5;             // Can receive RFQs (FX Options, Rates OIS/Bonds)
+  LpStreamingCapability streaming = 6; // Streams top-of-book into Aggregated Books
+  LpHedgeCapability hedging = 7;       // Eligible destination for auto-hedging shed clips
+
+  // Connectivity Endpoints
+  repeated FixConnectionSpec fix_sessions = 8; // Associated FIX sessions
+  repeated string desk_ids = 9;        // Desks entitled to trade with this LP
+
+  // Unified Real-Time Telemetry
+  LpUnifiedTelemetry telemetry = 10;   // Tick rate, stale quotes, deal win-rate, last-look latency
+}
+      </div>
+    </div>
+
+    <!-- CENTRALIZED SERVER REGISTRY -->
+    <div class="card">
+      <h3 style="font-family: var(--font-display); font-size: 18px; color: var(--status-green); margin-bottom: 12px;">
+        2. Centralized <code>LiquidityProviderRegistry</code> in <code>celnet-server</code>
+      </h3>
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 12px;">
+        All three trading engines query the SAME in-memory, thread-safe registry:
+      </p>
+      <div class="arch-diagram">
+                       +-----------------------------------+
+                       |    LiquidityProviderRegistry      |
+                       |  (Single Source of Truth in Core) |
+                       +-----------------------------------+
+                                  |        |        |
+         +------------------------+        |        +------------------------+
+         |                                 |                                 |
+         v                                 v                                 v
++------------------+             +-------------------+             +------------------+
+| MultiDealerEngine|             |   AggregationHub  |             |   StreetRouter   |
+|   (RFQ Quoting)  |             | (Streaming Books) |             |  (Auto-Hedging)  |
++------------------+             +-------------------+             +------------------+
+| Fans RFQs ONLY to|             | Ingests ONLY from |             | Routes orders    |
+| LPs with         |             | LPs with          |             | ONLY to LPs with |
+| .rfq.enabled     |             | .streaming.enabled|             | .hedging.enabled |
++------------------+             +-------------------+             +------------------+
+      </div>
+      <div class="callout callout-success" style="margin-top: 16px;">
+        <strong>Immediate Global Kill-Switch:</strong> When an operator calls <code>SetLiquidityProviderEnabled(lp_id, enabled: false)</code>, the update publishes to the registry. Within microseconds, RFQs stop fanning to that LP, its streaming quotes are evicted from the composite books, and hedge orders steer to alternate venues.
+      </div>
+    </div>
+
+    <!-- UNIFIED GUI WORKSPACE -->
+    <div class="card">
+      <h3 style="font-family: var(--font-display); font-size: 18px; color: var(--status-green); margin-bottom: 12px;">
+        3. Intuitive Unified GUI: The "Liquidity Center" (Desk 03 &amp; 06)
+      </h3>
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 16px;">
+        Consolidate the 5 fragmented workspaces into a single, cohesive <strong>Liquidity Center</strong> inside <strong>Desk 03 (Distribution Studio)</strong> with an operational mirror in <strong>Desk 06 (Policy &amp; Operations)</strong>:
+      </p>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Status</th>
+              <th>RFQ (Options / Rates)</th>
+              <th>Streaming (Books)</th>
+              <th>Hedging (Execution)</th>
+              <th>Feed Health</th>
+              <th>Win-Rate &bull; Last-Look</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Barclays Capital</strong><br/><span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">BARCLAYS-LDN</span></td>
+              <td><span class="badge badge-real">&bull; ACTIVE</span></td>
+              <td><span class="badge badge-real">Enabled (32ms)</span></td>
+              <td><span class="badge badge-real">3 Books (120 t/s)</span></td>
+              <td><span class="badge badge-real">Tier 1 Venue</span></td>
+              <td>0 stale &bull; 42% touch</td>
+              <td>64% win &bull; 0.2% reject</td>
+              <td><button style="background: var(--bg-elevated); border: 1px solid var(--border-medium); color: var(--text-primary); padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">Manage</button></td>
+            </tr>
+            <tr>
+              <td><strong>Citigroup</strong><br/><span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">CITI-FX</span></td>
+              <td><span class="badge badge-real">&bull; ACTIVE</span></td>
+              <td><span class="badge badge-real">Enabled (45ms)</span></td>
+              <td><span class="badge badge-gap">1 Book (Divergent)</span></td>
+              <td><span class="badge badge-real">Tier 1 Venue</span></td>
+              <td>12 stale &bull; 18% touch</td>
+              <td>51% win &bull; 1.4% reject</td>
+              <td><button style="background: var(--bg-elevated); border: 1px solid var(--border-medium); color: var(--text-primary); padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">Manage</button></td>
+            </tr>
+            <tr>
+              <td><strong>BNP Paribas</strong><br/><span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">BNP-PARIS</span></td>
+              <td><span class="badge badge-mock">&bull; PAUSED</span></td>
+              <td><span class="badge badge-mock">Disabled</span></td>
+              <td><span class="badge badge-mock">Disabled</span></td>
+              <td><span class="badge badge-mock">Disabled</span></td>
+              <td>Disconnected</td>
+              <td>&mdash;</td>
+              <td><button style="background: var(--brand-coral-soft); border: 1px solid var(--brand-coral); color: var(--brand-coral); padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;">Enable</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+        Clicking any LP row opens the <strong>Unified LP Inspector</strong>:
+      </p>
+      <div class="grid-3" style="margin-top: 12px;">
+        <div style="background: var(--bg-elevated); padding: 14px; border-radius: var(--radius-sm);">
+          <div style="font-size: 11px; font-weight: 600; color: var(--brand-coral); text-transform: uppercase;">Streaming Health</div>
+          <div style="font-size: 12px; margin-top: 6px; color: var(--text-secondary);">Top of book on 14 instruments. Mean composite weight: 28.4%. MAD deviation: 0.12 bps.</div>
+        </div>
+        <div style="background: var(--bg-elevated); padding: 14px; border-radius: var(--radius-sm);">
+          <div style="font-size: 11px; font-weight: 600; color: var(--accent-indigo); text-transform: uppercase;">RFQ Performance</div>
+          <div style="font-size: 12px; margin-top: 6px; color: var(--text-secondary);">Average response time: 24 ms. Quoted 4,210 tickets today. 2,694 deals won ($1.2B notional).</div>
+        </div>
+        <div style="background: var(--bg-elevated); padding: 14px; border-radius: var(--radius-sm);">
+          <div style="font-size: 11px; font-weight: 600; color: var(--accent-cyan); text-transform: uppercase;">Execution Quality</div>
+          <div style="font-size: 12px; margin-top: 6px; color: var(--text-secondary);">Last-look rejection rate: 0.12%. Average cover distance: 0.35 ticks. Zero settlement fails.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- IMPLEMENTATION ROADMAP -->
+  <section class="section" id="implementation-plan">
+    <div class="section-header">
+      <span class="section-tag">Implementation Steps</span>
+      <h2 class="section-title">Roadmap to Unify LP Enablement &amp; Integration</h2>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h4 style="font-family: var(--font-display); font-size: 15px; color: #fff; margin-bottom: 8px;">
+          Step 1: Unify Server Domain &amp; Storage
+        </h4>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+          Define <code>message LiquidityProvider</code> in <code>celnet.proto</code>. Implement <code>LiquidityProviderRegistry</code> in <code>celnet-server</code> backed by SQLite / WAL. Replace the <code>CELNET_DEMO_LPS</code> environment variable with dynamic queries against the registry.
+        </p>
+      </div>
+
+      <div class="card">
+        <h4 style="font-family: var(--font-display); font-size: 15px; color: #fff; margin-bottom: 8px;">
+          Step 2: Connect RFQ Engine to FIX Acceptors
+        </h4>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+          Wire <code>QuoteEdge::request_multi_dealer_quote</code> to fan out to all enabled LPs registered in the <code>LiquidityProviderRegistry</code> using <code>FixLpAdapter</code> or in-process SDK channels, eliminating the synthetic math loop in <code>quote.rs</code>.
+        </p>
+      </div>
+
+      <div class="card">
+        <h4 style="font-family: var(--font-display); font-size: 15px; color: #fff; margin-bottom: 8px;">
+          Step 3: Unify Operator Kill-Switch RPCs
+        </h4>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+          Expose <code>SetLiquidityProviderEnabled(lp_id, enabled)</code> on <code>FixAdminService</code>. Fan out changes to <code>AggregationHub</code>, <code>MultiDealerEngine</code>, and <code>StreetRouter</code> synchronously.
+        </p>
+      </div>
+
+      <div class="card">
+        <h4 style="font-family: var(--font-display); font-size: 15px; color: #fff; margin-bottom: 8px;">
+          Step 4: Launch Unified Liquidity Center in GUI
+        </h4>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+          Consolidate <code>LiquidityWorkspace</code>, <code>StreetLiquidityWorkspace</code>, and <code>FixAdminWorkspace</code> into the cohesive <strong>Liquidity Center</strong> component. Expose on Desk 03 (Distribution) and Desk 06 (Ops).
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- REVIEW SIGN-OFF BLOCK -->
+  <section class="section" id="review-signoff">
+    <div class="card" style="border: 1px solid var(--brand-coral); background: linear-gradient(180deg, rgba(255, 115, 87, 0.05) 0%, rgba(13, 17, 26, 0.8) 100%);">
+      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+        <span class="badge badge-real" style="font-size: 12px;">Architecture Review Complete</span>
+        <h3 style="font-family: var(--font-display); font-size: 20px; color: #fff;">Unified LP Architecture Ready for Implementation</h3>
+      </div>
+      <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 16px;">
+        This review confirms that while Celnet's mathematical algorithms for LP ranking and composite aggregation are world-class, the configuration and management of LPs was fragmented across three isolated pathways. Adopting the Unified Liquidity Architecture eliminates this fragmentation, delivering a clean, optimal, and intuitive trading infrastructure.
+      </p>
+      <div style="font-family: var(--font-mono); font-size: 13px; color: var(--brand-coral);">
+        Review this architecture and confirm to proceed with implementation.
+      </div>
+    </div>
+  </section>
+
+</div>
+
+</body>
+</html>

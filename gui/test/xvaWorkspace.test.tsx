@@ -80,7 +80,7 @@ describe("price_xva wire codec (mirror of the server ws codec)", () => {
       result: { cva: 1.5, dva: 0.5, fva: 0.25, total_adjustment: 1.25 },
       correlation_id: 5,
     });
-    expect(decoded).toEqual({ cva: 1.5, dva: 0.5, fva: 0.25, totalAdjustment: 1.25 });
+    expect(decoded).toEqual({ cva: 1.5, dva: 0.5, fva: 0.25, totalAdjustment: 1.25, buckets: [] });
   });
 });
 
@@ -143,12 +143,11 @@ describe("XvaWorkspace — render, fan wiring, honest states", () => {
     }
   });
 
-  it("wires the counterparty exposure fan (illustrative, seeded)", async () => {
+  it("wires the counterparty exposure fan", async () => {
     await renderXva();
-    // The real XvaExposureFan renders — its distinctive caption is present — and the
-    // workspace states the honest boundary (fan not on the wire).
-    expect(await screen.findByText(/EPE .* PFE fan/)).toBeInTheDocument();
-    expect(screen.getByText(/exposure fan is NOT on the contract/i)).toBeInTheDocument();
+    // The real XvaExposureFan renders — its live QMC profile is present.
+    expect(await screen.findByText(/Counterparty exposure profile/i)).toBeInTheDocument();
+    expect(screen.getByText(/Live QMC exposure profile/i)).toBeInTheDocument();
   });
 
   it("surfaces an honest error (no fabricated figure) when the set is made invalid", async () => {

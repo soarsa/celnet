@@ -50,7 +50,6 @@ pub fn yield_to_maturity(bond: &Bond, market_dirty_price: f64) -> Result<Rate, B
 
     // g(y) = price(y) − market is strictly decreasing; g(low_yield) > 0, g(high_yield) < 0.
     let residual = |y: f64| schedule.dirty_price_at_yield(y) - market_dirty_price;
-    let residual_slope = |y: f64| schedule.dirty_price_first_derivative(y);
 
     // The price residual `g` lives in the market's price units, so its acceptance
     // tolerances must be RELATIVE to that scale: a par-100 quote and a 25,000,000
@@ -91,8 +90,9 @@ pub fn yield_to_maturity(bond: &Bond, market_dirty_price: f64) -> Result<Rate, B
     let mut y = seed.clamp(low_yield, high_yield);
     let mut step_prev = (high_yield - low_yield).abs();
     let mut step = step_prev;
-    let mut g = residual(y);
-    let mut dg = residual_slope(y);
+    let (p0, dg0) = schedule.dirty_price_and_first_derivative(y);
+    let mut g = p0 - market_dirty_price;
+    let mut dg = dg0;
 
     for _ in 0..MAX_ITER {
         // Bisect when the Newton iterate would leave the bracket, or is not halving the step.
@@ -110,8 +110,9 @@ pub fn yield_to_maturity(bond: &Bond, market_dirty_price: f64) -> Result<Rate, B
         if step.abs() < YIELD_TOL {
             break;
         }
-        g = residual(y);
-        dg = residual_slope(y);
+        let (p, deriv) = schedule.dirty_price_and_first_derivative(y);
+        g = p - market_dirty_price;
+        dg = deriv;
         // Maintain the bracket around the root.
         if g > 0.0 {
             pos = y;

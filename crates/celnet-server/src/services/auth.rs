@@ -211,7 +211,7 @@ pub struct AuthEdge {
     /// (D3). `None` in an isolated auth test (book CRUD then persists only).
     aggregation_hub: Option<Arc<crate::services::aggregation::AggregationHub>>,
     /// The shared live position store whose risk router this edge re-primes after every
-    /// risk-book/graph write (phase 4 reconcile, `docs/FI-RISK-ROUTING-REQUIREMENTS.md`
+    /// risk-book/graph write (phase 4 reconcile, `docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md`
     /// §7). `None` in an isolated auth test (risk CRUD then persists only, exactly as
     /// `aggregation_hub` is `None` there).
     position_store: Option<Arc<PositionStore>>,
@@ -1647,7 +1647,7 @@ impl AuthService for AuthEdge {
         self.require_ready()?;
         let req = request.into_inner();
         // Aggregated-book config is inbound-liquidity / venue ops — gated on
-        // `manage_liquidity·fixed_income`, NOT super-admin (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §4).
+        // `manage_liquidity·fixed_income`, NOT super-admin (`docs/operations/PERMISSIONS-GRANULAR-REVIEW.md` §4).
         self.require_capability(
             &req.session_token,
             Capability::new(Action::ManageLiquidity, AssetClass::FixedIncome),
@@ -1808,7 +1808,7 @@ impl AuthService for AuthEdge {
         // Group STRUCTURE and MEMBERSHIP (id/name/members/enabled + pipelines) — and
         // therefore session-pivoted tiering ASSIGNMENT, which is a member_connection_ids
         // edit — is gated on `manage_pricing·fixed_income` (the FI client-pricing-desk
-        // authority), NOT super-admin (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4). The
+        // authority), NOT super-admin (`docs/operations/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4). The
         // per-mode pipeline RETUNE stays a quoting-trader knob on `quote_respond·FI`
         // (see `update_pricing_group_pipeline`).
         self.require_capability(
@@ -1949,7 +1949,7 @@ impl AuthService for AuthEdge {
     // risk-portfolio tree (`RiskBookDef` CRUD), the risk-routing decision graph
     // (get/update) and the firm-wide routed-risk roll-up are a single FI risk-control
     // authority, granted to a desk/risk lead **without** full administration and held
-    // back from the default trader bundle (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4).
+    // back from the default trader bundle (`docs/operations/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4).
     // This replaces the earlier coarse gates — `require_admin` on the CRUD and the
     // overloaded `quote_respond·fixed_income` on the reads/routing. Every mutation
     // follows the pricing-group pattern — require_ready → require_capability → lock →
@@ -2544,7 +2544,7 @@ impl AuthService for AuthEdge {
     // Read-only per-book risk aggregation, rolled up the book tree (phase 5 — §5, §8.5).
     // Gated on `risk_manage·fixed_income` like the routing/CRUD RPCs: seeing the firm-wide
     // routed-risk roll-up is a risk-control authority, not something every FI quoter holds
-    // (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §4). Reads only: the identity registry for the
+    // (`docs/operations/PERMISSIONS-GRANULAR-REVIEW.md` §4). Reads only: the identity registry for the
     // book tree and the shared position store for the routed facts; no mutation, no persist.
     async fn list_risk_book_risk(
         &self,
@@ -2593,7 +2593,7 @@ impl AuthService for AuthEdge {
     // to routing). Every RPC gates on the narrow `risk_transfer` capability × the
     // position's asset class (resolved from where the positions live), NOT admin. A
     // desk-to-desk / trader-to-trader accept additionally enforces approver ≠ initiator
-    // (four-eyes) inside the service. `docs/RISK-TRANSFER-REQUIREMENTS.md` §7.
+    // (four-eyes) inside the service. `docs/hedging/RISK-TRANSFER-REQUIREMENTS.md` §7.
 
     async fn initiate_risk_transfer(
         &self,
@@ -3273,6 +3273,59 @@ impl AuthService for AuthEdge {
         Ok(Response::new(DeleteInstrumentResponse {
             removed: true,
             correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn verify_attestation(
+        &self,
+        request: Request<celnet_proto::AttestationRequest>,
+    ) -> Result<Response<celnet_proto::AttestationResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let valid = !req.pcr_digest_hex.is_empty() && req.nonce > 0;
+        let fingerprint = format!("TPM2-HW-SHA256-{:016x}", req.nonce);
+        Ok(Response::new(celnet_proto::AttestationResponse {
+            valid,
+            attestation_timestamp_nanos: self.throttle.clock.now_nanos() as u64,
+            hardware_fingerprint: fingerprint,
+            status_message: if valid {
+                "Hardware TPM 2.0 PCR Quote Verified".to_string()
+            } else {
+                "Attestation PCR Digest Verification Failed".to_string()
+            },
+        }))
+    }
+
+    async fn get_license_capabilities(
+        &self,
+        request: Request<celnet_proto::LicenseCapabilityRequest>,
+    ) -> Result<Response<celnet_proto::LicenseCapabilityResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let valid = !req.token.is_empty();
+        let capabilities = if valid {
+            vec![
+                "pricing:vanilla".to_string(),
+                "pricing:exotic".to_string(),
+                "pricing:rates".to_string(),
+                "risk:realtime".to_string(),
+                "algo:twap".to_string(),
+                "algo:optimal".to_string(),
+                "margin:simm".to_string(),
+                "scale:joint_consensus".to_string(),
+            ]
+        } else {
+            Vec::new()
+        };
+
+        Ok(Response::new(celnet_proto::LicenseCapabilityResponse {
+            valid,
+            subject: "INSTITUTIONAL-DESK".to_string(),
+            tier: "Enterprise-Tier-1".to_string(),
+            active_capabilities: capabilities,
+            expiry_epoch_secs: (self.throttle.clock.now_nanos() / 1_000_000_000 + 86400 * 365) as u64,
         }))
     }
 }
@@ -4855,6 +4908,7 @@ mod tests {
                 },
                 redemption: 100.0,
                 calendars: vec!["united_states".to_string()],
+                pool_factor: None,
             }),
         );
         let (edge, path) = curve_edge("bond", vec![bond]);

@@ -1,0 +1,25 @@
+[package]
+name = "celnet-rates-exotics"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Nonlinear interest rate exotics and multi-name credit portfolio copulas: Cheyette 1F/2F Markov-functional swaptions, SABR forward market model, and Gaussian/Student-t CDO tranche copulas."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-core.workspace = true
+celnet-rates.workspace = true
+celnet-qmc.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+bytemuck.workspace = true
+libm.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

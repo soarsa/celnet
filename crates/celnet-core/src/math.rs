@@ -25,11 +25,11 @@ pub fn ln(x: f64) -> f64 {
     libm::log(x)
 }
 
-/// Square root, via [`libm`].
+/// Square root, via IEEE-754 hardware instruction (`fsqrt` / `sqrtsd`).
 #[inline]
 #[must_use]
 pub fn sqrt(x: f64) -> f64 {
-    libm::sqrt(x)
+    x.sqrt()
 }
 
 /// Standard-normal probability density function `φ(x)`.

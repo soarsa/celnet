@@ -3092,6 +3092,65 @@ message PriceResponse {
 // services — the gRPC surface over the contract
 // ===========================================================================
 
+// A universal polymorphic request to price/evaluate any asset class.
+message ValuationRequest {
+  // Client-assigned request identifier string.
+  string request_id = 1;
+  // Optional caller correlation id.
+  optional uint64 correlation_id = 2;
+  // Valuation payload oneof selecting the target calculation type.
+  oneof payload {
+    // FX and cross-asset option pricing request.
+    PriceRequest options = 3;
+    // Linear rates and fixed-income pricing request.
+    RatesPriceRequest rates = 4;
+    // Counterparty XVA valuation adjustment request.
+    PriceXvaRequest xva = 5;
+  }
+}
+
+// The universal polymorphic priced result.
+message ValuationResponse {
+  // Correlated request identifier string.
+  string request_id = 1;
+  // Optional caller correlation id echo.
+  optional uint64 correlation_id = 2;
+  // Result payload oneof matching the requested calculation.
+  oneof payload {
+    // FX and cross-asset option pricing response.
+    PriceResponse options = 3;
+    // Linear rates and fixed-income pricing response.
+    RatesPriceResponse rates = 4;
+    // Counterparty XVA valuation adjustment response.
+    PriceXvaResponse xva = 5;
+  }
+}
+
+// Universal Calculation Service: single pricing seam across all asset classes.
+// Stateless: caller supplies instrument and market context explicitly.
+service ValuationService {
+  // Calculate valuation, Greeks, and sensitivities across any asset class.
+  rpc Calculate(ValuationRequest) returns (ValuationResponse);
+}
+
+// Universal Trading & RFQ Service: unified lifecycle across taker and maker flows.
+service TradeService {
+  // Request a tradable two-way quote for an instrument (idempotent on key).
+  rpc RequestQuote(QuoteRequest) returns (Quote);
+  // Request competing two-way quotes from many dealers (RFQ-to-many).
+  rpc RequestMultiDealerQuote(QuoteRequest) returns (MultiDealerQuote);
+  // Request a tradeable two-way quote on a linear-rates (fixed-income) instrument.
+  rpc RequestRatesQuote(RatesQuoteRequest) returns (RatesQuote);
+  // Accept a quote and book the resulting execution.
+  rpc AcceptQuote(QuoteAccept) returns (Execution);
+  // Reject a quote (decline to trade).
+  rpc RejectQuote(QuoteReject) returns (RejectAck);
+  // Query executed deals from the blotter.
+  rpc ListDeals(ListDealsRequest) returns (ListDealsResponse);
+  // Export an execution or deal to canonical ISDA CDM 2026 JSON.
+  rpc ExportCdm(ExportCdmRequest) returns (ExportCdmResponse);
+}
+
 // One-shot pricing of a single instrument.
 service PricingService {
   // Price an instrument and return its full 13-Greek risk.
@@ -3721,6 +3780,38 @@ message SetFixConnectionEnabledResponse {
   optional uint64 correlation_id = 2;
 }
 
+// Set capability flags for a liquidity provider.
+message SetLiquidityProviderCapabilitiesRequest {
+  // Bearer session token from AuthService.Login.
+  optional string session_token = 1;
+  // Entitlement principal.
+  optional EntitlementPrincipal principal = 2;
+  // Target LP connection identifier.
+  string connection_id = 3;
+  // Enable RFQ quoting.
+  bool rfq_enabled = 4;
+  // Enable streaming pricing.
+  bool streaming_enabled = 5;
+  // Enable hedging order routing.
+  bool hedging_enabled = 6;
+  // Optional caller correlation id.
+  optional uint64 correlation_id = 7;
+}
+
+// Updated LP capabilities response.
+message SetLiquidityProviderCapabilitiesResponse {
+  // LP connection identifier.
+  string connection_id = 1;
+  // Updated RFQ enabled state.
+  bool rfq_enabled = 2;
+  // Updated streaming enabled state.
+  bool streaming_enabled = 3;
+  // Updated hedging enabled state.
+  bool hedging_enabled = 4;
+  // Optional caller correlation id echo.
+  optional uint64 correlation_id = 5;
+}
+
 // The travel direction of a captured frame, from the acceptor's vantage.
 enum FixMsgDirection {
   // A frame the acceptor RECEIVED from the counterparty (proto3 zero default).
@@ -3836,6 +3927,20 @@ message LiquidityProviderDesc {
   // `∈ [0, 1]` — how much of the composite mid it actually drives. 0 when it
   // contributes nothing.
   double mean_weight = 15;
+  // Whether RFQ quoting is enabled for this LP.
+  bool rfq_enabled = 16;
+  // Whether streaming pricing is enabled for this LP.
+  bool streaming_enabled = 17;
+  // Whether hedging orders may be routed to this LP.
+  bool hedging_enabled = 18;
+  // Institution code or BIC identifier.
+  string institution_code = 19;
+  // Historical win rate in basis or fraction.
+  double win_rate = 20;
+  // Fraction of last-look rejections.
+  double last_look_rejection_rate = 21;
+  // Observed mean round-trip latency in milliseconds.
+  double mean_latency_ms = 22;
 }
 
 // One live quote a provider is currently showing, with the consolidation verdict
@@ -3923,6 +4028,8 @@ service FixAdminService {
   rpc DeleteConnection(DeleteFixConnectionRequest) returns (DeleteFixConnectionResponse);
   // Enable or disable a connection (bind/stop its acceptor).
   rpc SetEnabled(SetFixConnectionEnabledRequest) returns (SetFixConnectionEnabledResponse);
+  // Set capability flags for a liquidity provider.
+  rpc SetLiquidityProviderCapabilities(SetLiquidityProviderCapabilitiesRequest) returns (SetLiquidityProviderCapabilitiesResponse);
   // Poll the captured inbound/outbound session traffic for the monitor screen.
   rpc ListMessages(ListFixMessagesRequest) returns (ListFixMessagesResponse);
 }
@@ -8346,6 +8453,54 @@ service AuthService {
   rpc DeleteInstrument(DeleteInstrumentRequest) returns (DeleteInstrumentResponse);
   // Bootstrap a single-currency discount curve from registry-referenced instruments.
   rpc BuildCurve(BuildCurveRequest) returns (CalibratedCurve);
+  // Verify a hardware TPM 2.0 attestation quote for a node.
+  rpc VerifyAttestation(AttestationRequest) returns (AttestationResponse);
+  // Read active dynamic license capabilities for a token.
+  rpc GetLicenseCapabilities(LicenseCapabilityRequest) returns (LicenseCapabilityResponse);
+}
+
+// Hardware attestation request (TPM 2.0 PCR quote verification).
+message AttestationRequest {
+  // Node identifier to attest.
+  string node_id = 1;
+  // PCR digest hex string.
+  string pcr_digest_hex = 2;
+  // Cryptographic signature over quote and nonce.
+  bytes signature = 3;
+  // Verification nonce.
+  uint64 nonce = 4;
+}
+
+// Hardware attestation response.
+message AttestationResponse {
+  // Whether quote signature and PCR registers match trusted baseline.
+  bool valid = 1;
+  // Hardware attestation timestamp in nanoseconds.
+  uint64 attestation_timestamp_nanos = 2;
+  // Resolved unique hardware fingerprint.
+  string hardware_fingerprint = 3;
+  // Diagnostic status or rejection reason.
+  string status_message = 4;
+}
+
+// License capability evaluation request.
+message LicenseCapabilityRequest {
+  // Serialized Biscuit token.
+  string token = 1;
+}
+
+// License capability evaluation response.
+message LicenseCapabilityResponse {
+  // Whether token is cryptographically valid and unexpired.
+  bool valid = 1;
+  // Subject identity or entity.
+  string subject = 2;
+  // Commercial license tier.
+  string tier = 3;
+  // Deducted active capabilities.
+  repeated string active_capabilities = 4;
+  // Token expiration timestamp in epoch seconds.
+  uint64 expiry_epoch_secs = 5;
 }
 
 // ===========================================================================
@@ -8779,6 +8934,31 @@ message PriceXvaRequest {
 // The computed valuation adjustments (mirrors `celnet_xva::XvaResult`): the three
 // adjustments plus the all-in total `CVA - DVA + FVA` a dealer charges over the
 // risk-free value.
+// One simulation bucket of an XVA expected-exposure profile.
+message ExposureBucket {
+  // Horizon in years.
+  double time_years = 1;
+  // Human-friendly label (e.g. "1M", "1Y").
+  string label = 2;
+  // Expected positive exposure.
+  double ee = 3;
+  // 25th percentile exposure.
+  double q25 = 4;
+  // 75th percentile exposure.
+  double q75 = 5;
+  // Lower bound of potential future exposure.
+  double pfe_lo = 6;
+  // Potential future exposure (e.g. 95th/99th percentile).
+  double pfe = 7;
+  // Expected negative exposure.
+  double ene = 8;
+  // Lower bound of expected negative exposure.
+  double ene_band_lo = 9;
+  // Upper bound of expected negative exposure.
+  double ene_band_hi = 10;
+}
+
+// The computed valuation adjustments and exposure profile.
 message XvaResult {
   // Credit valuation adjustment (≥ 0): expected loss from counterparty default.
   double cva = 1;
@@ -8789,6 +8969,8 @@ message XvaResult {
   double fva = 3;
   // The all-in adjustment `CVA - DVA + FVA` subtracted from the risk-free value.
   double total_adjustment = 4;
+  // The term structure of exposure buckets across simulation time.
+  repeated ExposureBucket buckets = 5;
 }
 
 // Response: the XVA figures for the requested netting set.
@@ -9427,6 +9609,28 @@ message ListDealsResponse {
   repeated Deal deals = 1;
 }
 
+// Request: export execution to canonical ISDA CDM 2026 JSON format.
+message ExportCdmRequest {
+  // Execution identifier to export.
+  uint64 execution_id = 1;
+  // Legal Entity Identifier of the issuing dealer.
+  string issuer_lei = 2;
+  // Client counterparty account identifier.
+  string client_id = 3;
+}
+
+// Response: canonical ISDA CDM 2026 digital trade event.
+message ExportCdmResponse {
+  // Traded execution identifier.
+  uint64 execution_id = 1;
+  // Unique Trade Identifier (UTI).
+  string uti = 2;
+  // CDM lifecycle event type (e.g. Execution).
+  string cdm_event_type = 3;
+  // Pretty-printed canonical ISDA CDM 2026 JSON payload.
+  string cdm_json = 4;
+}
+
 // ---- Notifications: a dedicated server→client push stream ----
 // The desk learns "an RFQ/IOI requires pricing" the instant it lands, without
 // polling. A connected client opens ONE notification subscription scoped to the
@@ -9758,4 +9962,481 @@ service CorporateActionsService {
   rpc ListCorporateActions(ListCorporateActionsRequest) returns (ListCorporateActionsResponse);
   rpc ConfirmCorporateAction(ConfirmCorporateActionRequest) returns (ConfirmCorporateActionResponse);
   rpc ApplyCorporateAction(ApplyCorporateActionRequest) returns (ApplyCorporateActionResponse);
+}
+
+
+// ===========================================================================
+// Margin Service — Pre-Trade & Portfolio Margin Analytics (SPAN 2 / SIMM / FHS)
+// ===========================================================================
+
+// Product family for portfolio margin calculation.
+enum MarginProductFamily {
+  // Treasury and sovereign bond futures.
+  MARGIN_PRODUCT_FAMILY_BOND_FUTURE = 0;
+  // Vanilla and cross-currency interest rate swaps.
+  MARGIN_PRODUCT_FAMILY_INTEREST_RATE_SWAP = 1;
+  // Outright FX forwards and non-deliverable forwards.
+  MARGIN_PRODUCT_FAMILY_FX_FORWARD = 2;
+  // Listed and OTC equity options.
+  MARGIN_PRODUCT_FAMILY_EQUITY_OPTION = 3;
+  // Commodity swaps and futures.
+  MARGIN_PRODUCT_FAMILY_COMMODITY = 4;
+}
+
+// Outcome of pre-trade initial margin simulation against collateral.
+enum PreTradeMarginOutcome {
+  // Trade within limits; approved.
+  PRE_TRADE_MARGIN_OUTCOME_APPROVED = 0;
+  // Approaching collateral boundary.
+  PRE_TRADE_MARGIN_OUTCOME_WARNING = 1;
+  // Requires more collateral than available.
+  PRE_TRADE_MARGIN_OUTCOME_EXCEEDS_COLLATERAL = 2;
+  // Immediate liquidation risk.
+  PRE_TRADE_MARGIN_OUTCOME_LIQUIDATION_IMMINENT = 3;
+}
+
+// Cleared position entry for margin portfolio evaluation.
+message ClearedPositionDto {
+  // Product contract symbol.
+  string symbol = 1;
+  // Asset and margin product family.
+  MarginProductFamily product_family = 2;
+  // Open contract quantity.
+  double quantity = 3;
+  // Face notional per contract unit.
+  double contract_size = 4;
+  // Exchange baseline maintenance margin per contract.
+  double initial_margin_per_contract = 5;
+  // True if position is short.
+  bool is_short = 6;
+  // Latest mark-to-market price.
+  double current_price = 7;
+  // Historical PnL scenarios for Historical Simulation.
+  repeated double pnl_scenarios = 8;
+}
+
+// Request: evaluate total initial margin for portfolio.
+message MarginCalculationRequest {
+  // Target portfolio identifier.
+  string portfolio_id = 1;
+  // Cleared positions in portfolio.
+  repeated ClearedPositionDto positions = 2;
+  // Statistical confidence level (e.g. 0.99 for 99%).
+  double confidence_level = 3;
+  // Historical lookback window in days.
+  uint32 lookback_days = 4;
+}
+
+// Response: initial margin requirements and risk components.
+message MarginCalculationResponse {
+  // Portfolio identifier.
+  string portfolio_id = 1;
+  // Aggregate initial margin requirement.
+  double total_initial_margin = 2;
+  // Tail Expected Shortfall (CVaR).
+  double expected_shortfall = 3;
+  // Value at Risk at configured confidence.
+  double value_at_risk = 4;
+  // Stress testing and liquidity add-on component.
+  double stress_component = 5;
+  // Currency denomination of margin.
+  string currency = 6;
+  // Timestamp when margin was calculated.
+  uint64 calculated_epoch_nanos = 7;
+}
+
+// Request: simulate pre-trade margin impact.
+message PreTradeMarginRequest {
+  // Target portfolio identifier.
+  string portfolio_id = 1;
+  // Current portfolio inventory before trade.
+  repeated ClearedPositionDto existing_positions = 2;
+  // Candidate trade to evaluate.
+  ClearedPositionDto candidate_position = 3;
+  // Available unencumbered cash collateral.
+  double available_collateral = 4;
+  // Available clearing credit line.
+  double credit_line = 5;
+  // Confidence level.
+  double confidence_level = 6;
+}
+
+// Response: pre-trade margin check verdict.
+message PreTradeMarginResponse {
+  // Target portfolio identifier.
+  string portfolio_id = 1;
+  // Approval verdict.
+  PreTradeMarginOutcome outcome = 2;
+  // Margin requirement before candidate order.
+  double initial_margin_before = 3;
+  // Projected margin requirement after candidate order.
+  double initial_margin_after = 4;
+  // Net change in initial margin requirement.
+  double delta_margin = 5;
+  // Collateral headroom remaining after execution.
+  double collateral_headroom = 6;
+  // Descriptive verdict rationale.
+  string reason = 7;
+}
+
+// Pre-trade and clearing house portfolio initial margin service.
+service MarginService {
+  // Calculate portfolio initial margin (FHS / SPAN 2 / SIMM).
+  rpc CalculateMargin(MarginCalculationRequest) returns (MarginCalculationResponse);
+  // Simulate pre-trade margin impact on incoming candidate orders against collateral limits.
+  rpc SimulatePreTrade(PreTradeMarginRequest) returns (PreTradeMarginResponse);
+}
+
+// ===========================================================================
+// Algo Execution Service — Algorithmic Parent Orders & Child Slicing
+// ===========================================================================
+
+// Supported algorithmic execution strategies.
+enum AlgoStrategyType {
+  // Time-Weighted Average Price slicing.
+  ALGO_STRATEGY_TWAP = 0;
+  // Optimal risk-adjusted liquidation (Almgren-Chriss).
+  ALGO_STRATEGY_OPTIMAL_LIQUIDATION = 1;
+  // Volume-Weighted Average Price slicing.
+  ALGO_STRATEGY_VWAP = 2;
+  // Hidden iceberg limit order.
+  ALGO_STRATEGY_ICEBERG = 3;
+}
+
+// Child slice order book pegging reference.
+enum AlgoPeggingStyle {
+  // Peg to near touch (bid for buy, ask for sell).
+  ALGO_PEGGING_PRIMARY = 0;
+  // Peg to far touch (market taker).
+  ALGO_PEGGING_MARKET = 1;
+  // Peg to order book midpoint.
+  ALGO_PEGGING_MIDPOINT = 2;
+  // Fixed limit without pegging.
+  ALGO_PEGGING_NONE = 3;
+}
+
+// Lifecycle state of an algorithmic parent order.
+enum AlgoOrderStatus {
+  // Scheduled but inactive.
+  ALGO_ORDER_STATUS_PENDING = 0;
+  // Actively slicing child orders into the market.
+  ALGO_ORDER_STATUS_ACTIVE = 1;
+  // Fully filled across all slices.
+  ALGO_ORDER_STATUS_COMPLETED = 2;
+  // Cancelled before full execution.
+  ALGO_ORDER_STATUS_CANCELLED = 3;
+}
+
+// Lifecycle state of an individual child slice.
+enum ChildSliceStatus {
+  // Awaiting scheduled release time.
+  CHILD_SLICE_STATUS_PENDING = 0;
+  // Sent to exchange gateway.
+  CHILD_SLICE_STATUS_DISPATCHED = 1;
+  // Fully filled.
+  CHILD_SLICE_STATUS_FILLED = 2;
+  // Cancelled.
+  CHILD_SLICE_STATUS_CANCELLED = 3;
+}
+
+// Parameters for TWAP execution.
+message TwapConfigDto {
+  // Total execution duration in seconds.
+  double duration_seconds = 1;
+  // Number of discrete child slices.
+  uint32 slice_count = 2;
+  // Random time randomization jitter factor (0.0 to 1.0).
+  double jitter_factor = 3;
+  // Child price pegging convention.
+  AlgoPeggingStyle pegging_style = 4;
+}
+
+// Parameters for Almgren-Chriss optimal liquidation.
+message OptimalLiquidationConfigDto {
+  // Total liquidation horizon in seconds.
+  double horizon_seconds = 1;
+  // Number of trading steps.
+  uint32 step_count = 2;
+  // Underlying asset volatility.
+  double volatility = 3;
+  // Trader risk aversion coefficient.
+  double risk_aversion = 4;
+  // Temporary price impact parameter (eta).
+  double temp_impact_eta = 5;
+  // Permanent price impact parameter (gamma).
+  double perm_impact_gamma = 6;
+}
+
+// Scheduled child slice details.
+message ChildSliceDto {
+  // Index of this slice (0 to N-1).
+  uint32 slice_index = 1;
+  // Scheduled release offset from parent start in seconds.
+  double scheduled_offset_seconds = 2;
+  // Target contract quantity for this slice.
+  double target_quantity = 3;
+  // Filled contract quantity.
+  double filled_quantity = 4;
+  // Average execution price on fills.
+  double avg_fill_price = 5;
+  // Current child slice lifecycle status.
+  ChildSliceStatus status = 6;
+}
+
+// Request: submit new parent algorithmic order.
+message SubmitAlgoOrderRequest {
+  // Client idempotency key / order identifier.
+  string client_order_id = 1;
+  // Contract or instrument symbol.
+  string symbol = 2;
+  // Total target quantity.
+  double total_quantity = 3;
+  // Market arrival price at order initiation.
+  double arrival_price = 4;
+  // True for buy, false for sell.
+  bool is_buy = 5;
+  // Strategy algorithm family.
+  AlgoStrategyType strategy_type = 6;
+  // TWAP parameters if strategy is TWAP.
+  optional TwapConfigDto twap = 7;
+  // Optimal liquidation parameters if strategy is Optimal Liquidation.
+  optional OptimalLiquidationConfigDto optimal = 8;
+}
+
+// Request: record a fill against a child slice.
+message RecordAlgoFillRequest {
+  // Parent order identifier.
+  string parent_order_id = 1;
+  // Slice index that received the fill.
+  uint32 slice_index = 2;
+  // Filled quantity.
+  double fill_quantity = 3;
+  // Execution fill price.
+  double fill_price = 4;
+}
+
+// Request: fetch order status.
+message GetAlgoOrderRequest {
+  // Target parent order identifier.
+  string parent_order_id = 1;
+}
+
+// Request: list algorithmic orders.
+message ListAlgoOrdersRequest {
+  // Optional symbol filter.
+  string symbol_filter = 1;
+}
+
+// Full status and schedule of an algorithmic order.
+message AlgoOrderResponse {
+  // System-assigned parent order identifier.
+  string parent_order_id = 1;
+  // Client order identifier.
+  string client_order_id = 2;
+  // Contract symbol.
+  string symbol = 3;
+  // Total target quantity.
+  double total_quantity = 4;
+  // Executed quantity so far.
+  double executed_quantity = 5;
+  // Benchmark arrival price.
+  double arrival_price = 6;
+  // Volume-weighted average execution price.
+  double avg_exec_price = 7;
+  // Direction: true for buy, false for sell.
+  bool is_buy = 8;
+  // Parent order lifecycle status.
+  AlgoOrderStatus status = 9;
+  // Execution slippage against arrival price in basis points.
+  double implementation_shortfall_bps = 10;
+  // All scheduled child slices.
+  repeated ChildSliceDto slices = 11;
+  // Order creation timestamp in nanoseconds.
+  uint64 created_epoch_nanos = 12;
+}
+
+// Response: list of algorithmic orders.
+message ListAlgoOrdersResponse {
+  // List of matching orders.
+  repeated AlgoOrderResponse orders = 1;
+}
+
+// Algorithmic order decomposition, execution and shortfall tracking service.
+service AlgoExecutionService {
+  // Submit parent algorithmic order (TWAP / Optimal Liquidation) decomposed into child slices.
+  rpc SubmitAlgoOrder(SubmitAlgoOrderRequest) returns (AlgoOrderResponse);
+  // Query status and child slice schedule of an algo parent order.
+  rpc GetAlgoOrder(GetAlgoOrderRequest) returns (AlgoOrderResponse);
+  // Record execution fill against a specific child slice, updating parent avg price and shortfall.
+  rpc RecordAlgoFill(RecordAlgoFillRequest) returns (AlgoOrderResponse);
+  // List all active and completed algorithmic orders.
+  rpc ListAlgoOrders(ListAlgoOrdersRequest) returns (ListAlgoOrdersResponse);
+}
+
+// ===========================================================================
+// Cluster Service — Autonomous Node Lifecycle, Scale, Upgrades & Chaos
+// ===========================================================================
+
+// Node membership state within cluster.
+enum NodeLifecycleStatus {
+  // Node syncing state; not serving live orders.
+  NODE_STATUS_JOINING = 0;
+  // Node active and serving live traffic.
+  NODE_STATUS_ACTIVE = 1;
+  // Node draining in-flight requests before exit.
+  NODE_STATUS_DRAINING = 2;
+  // Node safely retired from consensus.
+  NODE_STATUS_RETIRED = 3;
+}
+
+// Adversarial chaos testing injection types.
+enum ChaosType {
+  // Isolate node from network consensus traffic.
+  CHAOS_TYPE_NETWORK_PARTITION = 0;
+  // Abruptly terminate cluster leader.
+  CHAOS_TYPE_LEADER_KILL = 1;
+  // High concurrency contention and queue stress.
+  CHAOS_TYPE_STRESS = 2;
+}
+
+// Individual cluster node descriptor.
+message NodeMemberDto {
+  // Unique node identifier.
+  string node_id = 1;
+  // gRPC / peer transport endpoint.
+  string endpoint = 2;
+  // Current lifecycle status.
+  NodeLifecycleStatus status = 3;
+  // Count of active trades currently draining on this node.
+  uint64 active_in_flight_trades = 4;
+  // Timestamp when node joined the cluster.
+  uint64 joined_epoch_nanos = 5;
+}
+
+// Request: query cluster membership.
+message ClusterTopologyRequest {
+  // Cluster identifier.
+  string cluster_id = 1;
+}
+
+// Response: current cluster membership and leader.
+message ClusterTopologyResponse {
+  // Cluster identifier.
+  string cluster_id = 1;
+  // Current Raft / consensus leader node id.
+  string leader_id = 2;
+  // Active configuration generation counter.
+  uint64 active_generation = 3;
+  // Active member nodes.
+  repeated NodeMemberDto members = 4;
+  // True if mid-flight joint consensus transition is in progress.
+  bool joint_consensus_active = 5;
+}
+
+// Request: add new node to cluster.
+message ScaleUpNodeRequest {
+  // New node identifier.
+  string node_id = 1;
+  // Endpoint of new node.
+  string endpoint = 2;
+}
+
+// Request: drain and remove node from cluster.
+message ScaleDownNodeRequest {
+  // Target node identifier to decommission.
+  string node_id = 1;
+  // Force immediate exit without draining in-flight trades.
+  bool force_immediate = 2;
+}
+
+// Response: outcome of node scale operation.
+message ScaleNodeResponse {
+  // Target node identifier.
+  string node_id = 1;
+  // Resulting lifecycle status.
+  NodeLifecycleStatus new_status = 2;
+  // In-flight trades remaining to drain before complete retirement.
+  uint64 remaining_drain_trades = 3;
+  // Descriptive status message.
+  string message = 4;
+}
+
+// Request: query hot upgrade status.
+message UpgradeStatusRequest {
+}
+
+// Response: zero-downtime hot upgrade telemetry.
+message UpgradeStatusResponse {
+  // Current active routing generation.
+  uint64 active_generation = 1;
+  // Production release version.
+  string current_version = 2;
+  // Shadow twin release version.
+  string shadow_version = 3;
+  // Whether twin shadow validation passed with 0 ULP drift.
+  bool twin_comparison_passed = 4;
+  // Maximum observed floating-point ULP drift.
+  uint64 max_ulp_divergence = 5;
+  // Count of shadow trades evaluated.
+  uint64 evaluated_trades_count = 6;
+  // Atomic pointer cutover state.
+  string cutover_status = 7;
+}
+
+// Request: execute twin comparison validation between two price series.
+message TwinValidationRequest {
+  // Production baseline price calculations.
+  repeated double baseline_prices = 1;
+  // Candidate release price calculations.
+  repeated double candidate_prices = 2;
+  // Maximum acceptable ULP difference (0 for exact bit-identity).
+  uint64 max_allowed_ulp = 3;
+}
+
+// Response: twin verification outcome.
+message TwinValidationResponse {
+  // True if candidate prices matched within allowed ULP threshold.
+  bool passed = 1;
+  // Maximum observed ULP divergence.
+  uint64 max_ulp_divergence = 2;
+  // True if 100% bit-exact across all evaluated prices.
+  bool bit_exact = 3;
+  // Summary evaluation verdict.
+  string verdict = 4;
+}
+
+// Request: inject adversarial chaos into cluster.
+message ChaosTestRequest {
+  // Chaos injection category.
+  ChaosType chaos_type = 1;
+  // Target node identifiers to perturb.
+  repeated string target_nodes = 2;
+  // Duration of perturbation in milliseconds.
+  uint32 duration_ms = 3;
+}
+
+// Response: chaos test resilience audit result.
+message ChaosTestResponse {
+  // True if cluster maintained availability and consensus invariants.
+  bool cluster_resilient = 1;
+  // Recovery / failover latency in milliseconds.
+  uint64 recovery_time_ms = 2;
+  // Diagnostic recovery log.
+  string details = 3;
+}
+
+// Autonomous cluster scaling, zero-downtime upgrade, and chaos testing service.
+service ClusterService {
+  // Query live cluster membership, active generation, and scaling status.
+  rpc GetClusterTopology(ClusterTopologyRequest) returns (ClusterTopologyResponse);
+  // Register and scale up a new node with dynamic joint consensus.
+  rpc ScaleUpNode(ScaleUpNodeRequest) returns (ScaleNodeResponse);
+  // Initiate graceful drain and scale down of an existing node.
+  rpc ScaleDownNode(ScaleDownNodeRequest) returns (ScaleNodeResponse);
+  // Query hot upgrade status and IEEE-754 bit-exact twin comparison metrics.
+  rpc GetUpgradeStatus(UpgradeStatusRequest) returns (UpgradeStatusResponse);
+  // Trigger bit-exact twin validation between candidate and baseline releases.
+  rpc TriggerTwinValidation(TwinValidationRequest) returns (TwinValidationResponse);
+  // Execute adversarial chaos resilience test (partition, leader kill, stress).
+  rpc ExecuteChaosTest(ChaosTestRequest) returns (ChaosTestResponse);
 }

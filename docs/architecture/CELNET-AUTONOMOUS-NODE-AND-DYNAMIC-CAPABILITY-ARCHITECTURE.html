@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CelNet — Autonomous Node, Dynamic Capability & Limitless Scale-Out Architecture</title>
+<style>
+:root {
+  --bg-primary: #08090d;
+  --bg-secondary: #0f1219;
+  --bg-card: #151a24;
+  --bg-card-hover: #1b2230;
+  --border-color: #242c3d;
+  --border-highlight: #3b82f6;
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent-cyan: #00e5ff;
+  --accent-green: #00ff88;
+  --accent-emerald: #10b981;
+  --accent-purple: #a855f7;
+  --accent-amber: #f59e0b;
+  --accent-rose: #f43f5e;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Header */
+.topbar {
+  background: rgba(15, 18, 25, 0.9);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border-color);
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  padding: 1rem 2.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.logo-badge {
+  background: linear-gradient(135deg, #00e5ff, #00ff88);
+  color: #000;
+  font-weight: 900;
+  font-size: 1.15rem;
+  padding: 0.4rem 0.85rem;
+  border-radius: 6px;
+  letter-spacing: 0.05em;
+  box-shadow: 0 0 20px rgba(0, 229, 255, 0.3);
+}
+
+.brand-text h1 {
+  font-size: 1.2rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.brand-text p {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: rgba(0, 229, 255, 0.1);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(0, 229, 255, 0.3);
+  padding: 0.4rem 0.9rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.status-pulse {
+  width: 8px;
+  height: 8px;
+  background: var(--accent-cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 10px var(--accent-cyan);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(0.95); opacity: 0.7; }
+  50% { transform: scale(1.25); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.7; }
+}
+
+/* Nav Tabs */
+.tabs-container {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  padding: 0 2.5rem;
+  display: flex;
+  gap: 1.5rem;
+  overflow-x: auto;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 1rem 0.5rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.tab-btn:hover {
+  color: var(--text-primary);
+}
+
+.tab-btn.active {
+  color: var(--accent-cyan);
+  border-bottom-color: var(--accent-cyan);
+}
+
+/* Main Container */
+.container {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 2.5rem 2.5rem;
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* Grid & Cards */
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.grid-4 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.25rem;
+  margin-bottom: 2rem;
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 1.75rem;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.card:hover {
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.25rem;
+}
+
+.card-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.metric-hero {
+  font-size: 2.4rem;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  margin: 0.5rem 0;
+}
+
+.metric-hero.cyan {
+  background: linear-gradient(135deg, #00e5ff, #3b82f6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.metric-hero.green {
+  background: linear-gradient(135deg, #00ff88, #10b981);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.metric-hero.purple {
+  background: linear-gradient(135deg, #c084fc, #a855f7);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.metric-hero.amber {
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.metric-subtitle {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+/* Code Snippet Box */
+.code-box {
+  background: #090c13;
+  border: 1px solid #1e2636;
+  border-radius: 8px;
+  padding: 1.1rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: #cbd5e1;
+  overflow-x: auto;
+  line-height: 1.55;
+  margin-top: 1rem;
+}
+
+.kw { color: #f43f5e; font-weight: 600; }
+.fn { color: #60a5fa; }
+.str { color: #a7f3d0; }
+.comment { color: #64748b; font-style: italic; }
+.type { color: #facc15; }
+.num { color: #c084fc; }
+
+/* Tables */
+.table-container {
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+  margin-bottom: 2rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+th {
+  background: rgba(15, 18, 25, 0.95);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1.1rem 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+td {
+  padding: 1.1rem 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.tag {
+  display: inline-block;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.tag-prod { background: rgba(0, 255, 136, 0.15); color: var(--accent-green); border: 1px solid rgba(0, 255, 136, 0.3); }
+.tag-cyan { background: rgba(0, 229, 255, 0.15); color: var(--accent-cyan); border: 1px solid rgba(0, 229, 255, 0.3); }
+.tag-amber { background: rgba(245, 158, 11, 0.15); color: var(--accent-amber); border: 1px solid rgba(245, 158, 11, 0.3); }
+.tag-purple { background: rgba(168, 85, 247, 0.15); color: var(--accent-purple); border: 1px solid rgba(168, 85, 247, 0.3); }
+.tag-rose { background: rgba(244, 63, 94, 0.15); color: var(--accent-rose); border: 1px solid rgba(244, 63, 94, 0.3); }
+
+/* SVG Diagrams */
+.diagram-container {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 1.75rem;
+  margin-bottom: 2rem;
+}
+
+.diagram-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-bottom: 1.25rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Callout Box */
+.callout {
+  background: var(--bg-secondary);
+  border-left: 4px solid var(--accent-cyan);
+  padding: 1.25rem 1.5rem;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+}
+
+.callout.green { border-left-color: var(--accent-green); }
+.callout.amber { border-left-color: var(--accent-amber); }
+.callout.purple { border-left-color: var(--accent-purple); }
+
+.callout-title {
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 0.35rem;
+  font-size: 0.95rem;
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo-badge">CELNET</div>
+    <div class="brand-text">
+      <h1>Autonomous Node, Dynamic Capability & Limitless Scale Architecture</h1>
+      <p>TARGET STATE BLUEPRINT & SOTA ACADEMIC RESEARCH GROUNDING (SEPTEMBER 2026)</p>
+    </div>
+  </div>
+  <div class="status-badge">
+    <span class="status-pulse"></span>
+    TARGET STATE ARCHITECTURE SPEC
+  </div>
+</header>
+
+<nav class="tabs-container">
+  <button class="tab-btn active" onclick="switchTab('vision')">1. Core Vision & Executive Blueprint</button>
+  <button class="tab-btn" onclick="switchTab('critique')">2. Critique of Current State</button>
+  <button class="tab-btn" onclick="switchTab('autonomous')">3. Autonomous Node Lifecycle</button>
+  <button class="tab-btn" onclick="switchTab('licensing')">4. Cryptographic License & Feature Pull</button>
+  <button class="tab-btn" onclick="switchTab('scalability')">5. Limitless Scalability (Multi-Raft & CXL)</button>
+  <button class="tab-btn" onclick="switchTab('upgrades')">6. Zero-Downtime Rolling Upgrades</button>
+  <button class="tab-btn" onclick="switchTab('research')">7. Academic Research & Roadmap</button>
+</nav>
+
+<main class="container">
+
+  <!-- TAB 1: CORE VISION -->
+  <div id="tab-vision" class="tab-content active">
+    <div class="grid-4">
+      <div class="card">
+        <div class="metric-subtitle">NODE PROVISIONING</div>
+        <div class="metric-hero cyan">Autonomous</div>
+        <div class="metric-subtitle">Zero-Conf Probing & Hardware Synthesis</div>
+      </div>
+      <div class="card">
+        <div class="metric-subtitle">FEATURE ACTIVATION</div>
+        <div class="metric-hero green">Datalog</div>
+        <div class="metric-subtitle">Cryptographically Signed Biscuit Tokens</div>
+      </div>
+      <div class="card">
+        <div class="metric-subtitle">HORIZONTAL CAPACITY</div>
+        <div class="metric-hero purple">Limitless</div>
+        <div class="metric-subtitle">Hierarchical Multi-Raft & CXL 3.1 Fabric</div>
+      </div>
+      <div class="card">
+        <div class="metric-subtitle">ROLLING UPGRADES</div>
+        <div class="metric-hero amber">0 Downtime</div>
+        <div class="metric-subtitle">Joint Consensus & eBPF Socket Migration</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 2rem;">
+      <div class="card-header">
+        <div class="card-title">
+          <span>🌐</span> The Autonomous Node Architecture Paradigm
+        </div>
+        <span class="tag tag-cyan">STRATEGIC BLUEPRINT</span>
+      </div>
+      <p style="color: var(--text-secondary); margin-bottom: 1.25rem;">
+        CelNet is evolving from a single-executable, statically compiled 55-crate platform into a <strong>globally distributed, self-organizing, cryptographically licensed electronic trading mesh</strong>. In this target architecture, nodes are deployed as lightweight bare-metal, VM, or cloud instances with zero static configuration. Upon boot, nodes autonomously discover their local hardware topology, verify their identity via hardware TPM / Confidential Computing attestation, present cryptographic license capability tokens, pull signed modular feature components (WASI 0.2 or signed native modules), and join a dynamic Multi-Raft consensus mesh with zero downtime.
+      </p>
+      <div class="grid-3">
+        <div class="callout green" style="margin-bottom: 0;">
+          <div class="callout-title">1. Autonomous Self-Sizing</div>
+          Discovers CPU cores, SIMD (AVX-512/AMX/NEON), GPU backends, NUMA layout, CXL memory, and NIC rings without manual config files.
+        </div>
+        <div class="callout purple" style="margin-bottom: 0;">
+          <div class="callout-title">2. Cryptographic Capability Pull</div>
+          Evaluates offline-attenuated Biscuit tokens with Datalog rules; pulls only licensed modules from an immutable TUF/Sigstore registry.
+        </div>
+        <div class="callout" style="margin-bottom: 0;">
+          <div class="callout-title">3. Zero-Loss Upgrades</div>
+          Executes five-stage rolling upgrades via Raft §6 Joint Consensus and eBPF/AF_XDP socket steering, avoiding TCP resets or dropped quotes.
+        </div>
+      </div>
+    </div>
+
+    <!-- Master Architecture Topology SVG -->
+    <div class="diagram-container">
+      <div class="diagram-title">
+        <span>End-to-End Autonomous Mesh Architecture & Component Interactions</span>
+        <span class="tag tag-prod">Target Architecture</span>
+      </div>
+      <svg viewBox="0 0 1100 420" style="width: 100%; height: auto;">
+        <!-- Definitions -->
+        <defs>
+          <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#00e5ff" stop-opacity="0.8"/>
+            <stop offset="100%" stop-color="#3b82f6" stop-opacity="0.8"/>
+          </linearGradient>
+          <linearGradient id="greenGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#00ff88" stop-opacity="0.8"/>
+            <stop offset="100%" stop-color="#10b981" stop-opacity="0.8"/>
+          </linearGradient>
+          <linearGradient id="purpleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#c084fc" stop-opacity="0.8"/>
+            <stop offset="100%" stop-color="#a855f7" stop-opacity="0.8"/>
+          </linearGradient>
+          <linearGradient id="amberGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.8"/>
+            <stop offset="100%" stop-color="#ef4444" stop-opacity="0.8"/>
+          </linearGradient>
+        </defs>
+
+        <!-- Background Layers -->
+        <!-- Layer 1: Hardware & Bootstrap -->
+        <rect x="20" y="30" width="230" height="360" rx="10" fill="#0f141f" stroke="#242c3d" stroke-width="1.5"/>
+        <text x="135" y="60" fill="#00e5ff" font-family="var(--font-mono)" font-size="12" font-weight="700" text-anchor="middle">1. AUTONOMOUS NODE BOOT</text>
+        
+        <rect x="35" y="80" width="200" height="60" rx="6" fill="#161c28" stroke="#3b82f6"/>
+        <text x="135" y="105" fill="#f1f5f9" font-family="var(--font-mono)" font-size="11" font-weight="600" text-anchor="middle">Hardware Prober (NHED)</text>
+        <text x="135" y="125" fill="#94a3b8" font-family="var(--font-mono)" font-size="9" text-anchor="middle">AVX-512 / AMX / GPU / NUMA / CXL</text>
+
+        <rect x="35" y="155" width="200" height="60" rx="6" fill="#161c28" stroke="#3b82f6"/>
+        <text x="135" y="180" fill="#f1f5f9" font-family="var(--font-mono)" font-size="11" font-weight="600" text-anchor="middle">Hardware TPM / Enclave</text>
+        <text x="135" y="200" fill="#94a3b8" font-family="var(--font-mono)" font-size="9" text-anchor="middle">Ed25519 Ephemeral Keypair</text>
+
+        <rect x="35" y="230" width="200" height="60" rx="6" fill="#161c28" stroke="#3b82f6"/>
+        <text x="135" y="255" fill="#f1f5f9" font-family="var(--font-mono)" font-size="11" font-weight="600" text-anchor="middle">Zero-Conf Discovery</text>
+        <text x="135" y="275" fill="#94a3b8" font-family="var(--font-mono)" font-size="9" text-anchor="middle">mDNS / DNS-SRV / Gossip Mesh</text>
+
+        <rect x="35" y="305" width="200" height="65" rx="6" fill="#1a2233" stroke="#00e5ff" stroke-dasharray="3"/>
+        <text x="135" y="330" fill="#00e5ff" font-family="var(--font-mono)" font-size="10" font-weight="700" text-anchor="middle">Minimal Micro-Kernel</text>
+        <text x="135" y="348" fill="#94a3b8" font-family="var(--font-mono)" font-size="9" text-anchor="middle">celnet-node-agent (&lt; 15 MB)</text>
+
+        <!-- Arrow 1 to 2 -->
+        <path d="M 255 210 L 295 210" stroke="#00e5ff" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+        <!-- Layer 2: License & Feature Pull -->
+        <rect x="300" y="30" width="240" height="360" rx="10" fill="#0f141f" stroke="#242c3d" stroke-width="1.5"/>
+        <text x="420" y="60" fill="#00ff88" font-family="var(--font-mono)" font-size="12" font-weight="700" text-anchor="middle">2. CAPABILITY & FEATURE PULL</text>
+
+        <rect x="315" y="80" width="210" height="75" rx="6" fill="#161c28" stroke="#00ff88"/>
+        <text x="420" y="105" fill="#f1f5f9" font-family="var(--font-mono)" font-size="11" font-weight="600" text-anchor="middle">Biscuit Token Evaluator</text>
+        <text x="420" y="123" fill="#00ff88" font-family="var(--font-mono)" font-size="9" text-anchor="middle">Datalog Authorization Engine</text>
+        <text x="420" y="138" fill="#94a3b8" font-family="var(--font-mono)" font-size="8" text-anchor="middle">Offline Attenuation & Cryptographic Audit</text>
+
+        <rect x="315" y="170" width="210" height="70" rx="6" fill="#161c28" stroke="#00ff88"/>
+        <text x="420" y="195" fill="#f1f5f9" font-family="var(--font-mono)" font-size="11" font-weight="600" text-anchor="middle">TUF / Sigstore Artifact Pull</text>
+        <text x="420" y="213" fill="#94a3b8" font-family="var(--font-mono)" font-size="9" text-anchor="middle">Content-Addressed OCI Registry</text>
+        <text x="420" y="228" fill="#94a3b8" font-family="var(--font-mono)" font-size="8" text-anchor="middle">BLAKE3 Digests & SLSA Level 4</text>
+
+        <rect x="315" y="255" width="210" height="115" rx="6" fill="#161c28" stroke="#00ff88"/>
+        <text x="420" y="278" fill="#f1f5f9" font-family="var(--font-mono)" font-size="11" font-weight="600" text-anchor="middle">Hot Seam Dynamic Loader</text>
+        <rect x="325" y="290" width="190" height="32" rx="4" fill="#1e2636"/>
+        <text x="420" y="310" fill="#a7f3d0" font-family="var(--font-mono)" font-size="9" text-anchor="middle">Tier 1: WASI 0.2 Component AOT</text>
+        <rect x="325" y="328" width="190" height="32" rx="4" fill="#1e2636"/>
+        <text x="420" y="348" fill="#facc15" font-family="var(--font-mono)" font-size="9" text-anchor="middle">Tier 0: Signed Native Modules (MPK)</text>
+
+        <!-- Arrow 2 to 3 -->
+        <path d="M 545 210 L 585 210" stroke="#00ff88" stroke-width="2.5"/>
+
+        <!-- Layer 3: Limitless Scalability Fabric -->
+        <rect x="590" y="30" width="240" height="360" rx="10" fill="#0f141f" stroke="#242c3d" stroke-width="1.5"/>
+        <text x="710" y="60" fill="#a855f7" font-family="var(--font-mono)" font-size="12" font-weight="700" text-anchor="middle">3. LIMITLESS SCALABILITY</text>
+
+        <rect x="605" y="80" width="210" height="85" rx="6" fill="#161c28" stroke="#a855f7"/>
+        <text x="710" y="105" fill="#f1f5f9" font-family="var(--font-mono)" font-size="11" font-weight="600" text-anchor="middle">Multi-Raft Partitioning</text>
+        <text x="710" y="125" fill="#a855f7" font-family="var(--font-mono)" font-size="9" text-anchor="middle">1024 Virtual Consensus Groups</text>
+        <text x="710" y="142" fill="#94a3b8" font-family="var(--font-mono)" font-size="8" text-anchor="middle">Flexible Paxos: Q_commit=2 / Q_elect=4</text>
+
+        <rect x="605" y="180" width="210" height="85" rx="6" fill="#161c28" stroke="#a855f7"/>
+        <text x="710" y="205" fill="#f1f5f9" font-family="var(--font-mono)" font-size="11" font-weight="600" text-anchor="middle">CXL 3.1 Coherent Memory</text>
+        <text x="710" y="225" fill="#a855f7" font-family="var(--font-mono)" font-size="9" text-anchor="middle">Disaggregated Shared State Pool</text>
+        <text x="710" y="242" fill="#94a3b8" font-family="var(--font-mono)" font-size="8" text-anchor="middle">Sub-250ns Zero-Copy Surface Access</text>
+
+        <rect x="605" y="280" width="210" height="90" rx="6" fill="#161c28" stroke="#a855f7"/>
+        <text x="710" y="305" fill="#f1f5f9" font-family="var(--font-mono)" font-size="11" font-weight="600" text-anchor="middle">eBPF / AF_XDP Ingress</text>
+        <text x="710" y="325" fill="#a855f7" font-family="var(--font-mono)" font-size="9" text-anchor="middle">Kernel-Bypass Hardware Steering</text>
+        <text x="710" y="342" fill="#94a3b8" font-family="var(--font-mono)" font-size="8" text-anchor="middle">Sub-5µs Tick-to-Quote Wire Path</text>
+
+        <!-- Arrow 3 to 4 -->
+        <path d="M 835 210 L 875 210" stroke="#a855f7" stroke-width="2.5"/>
+
+        <!-- Layer 4: Zero-Downtime Upgrades -->
+        <rect x="880" y="30" width="200" height="360" rx="10" fill="#0f141f" stroke="#242c3d" stroke-width="1.5"/>
+        <text x="980" y="60" fill="#f59e0b" font-family="var(--font-mono)" font-size="12" font-weight="700" text-anchor="middle">4. ZERO-DOWNTIME (ZLUP)</text>
+
+        <rect x="895" y="80" width="170" height="60" rx="6" fill="#161c28" stroke="#f59e0b"/>
+        <text x="980" y="105" fill="#f1f5f9" font-family="var(--font-mono)" font-size="10" font-weight="600" text-anchor="middle">Shadow Verification</text>
+        <text x="980" y="125" fill="#94a3b8" font-family="var(--font-mono)" font-size="8" text-anchor="middle">IEEE-754 Bit-Exact Twin</text>
+
+        <rect x="895" y="150" width="170" height="65" rx="6" fill="#161c28" stroke="#f59e0b"/>
+        <text x="980" y="175" fill="#f1f5f9" font-family="var(--font-mono)" font-size="10" font-weight="600" text-anchor="middle">Joint Consensus</text>
+        <text x="980" y="195" fill="#f59e0b" font-family="var(--font-mono)" font-size="9" text-anchor="middle">Raft §6 C_old,new</text>
+
+        <rect x="895" y="225" width="170" height="65" rx="6" fill="#161c28" stroke="#f59e0b"/>
+        <text x="980" y="250" fill="#f1f5f9" font-family="var(--font-mono)" font-size="10" font-weight="600" text-anchor="middle">eBPF Socket Migration</text>
+        <text x="980" y="270" fill="#94a3b8" font-family="var(--font-mono)" font-size="8" text-anchor="middle">Zero TCP Reconnects</text>
+
+        <rect x="895" y="300" width="170" height="70" rx="6" fill="#161c28" stroke="#f59e0b"/>
+        <text x="980" y="325" fill="#f1f5f9" font-family="var(--font-mono)" font-size="10" font-weight="600" text-anchor="middle">Atomic Epoch Cutover</text>
+        <text x="980" y="345" fill="#00ff88" font-family="var(--font-mono)" font-size="8" text-anchor="middle">100% Zero-Loss Traffic</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- TAB 2: CRITIQUE OF CURRENT STATE -->
+  <div id="tab-critique" class="tab-content">
+    <div class="card" style="margin-bottom: 2rem;">
+      <div class="card-header">
+        <div class="card-title">
+          <span>🔍</span> Comprehensive Critique of Existing CelNet Architecture
+        </div>
+        <span class="tag tag-rose">HONEST ARCHITECTURAL AUDIT</span>
+      </div>
+      <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
+        CelNet's single-node computational performance is undeniably world-class: sub-microsecond Garman-Kohlhagen pricing, deterministic IEEE-754 bit-identity, `#![forbid(unsafe_code)]`, and zero mocks. However, when critiqued against modern (2026) distributed systems and institutional deployment standards, several critical architectural bottlenecks emerge:
+      </p>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Subsystem</th>
+              <th>Current Implementation (As-Built)</th>
+              <th>Architectural Bottleneck & Vulnerability</th>
+              <th>Target SOTA Architecture</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Binary Packaging</strong></td>
+              <td>Monolithic 55-crate static virtual workspace. All modules compiled into <code>celnet-server</code>.</td>
+              <td>Inflexible memory footprint; patching a single formula requires recompiling and redeploying the entire 55-crate server.</td>
+              <td><strong>Micro-Kernel Daemon + Dynamic OCI Modules</strong>: Lightweight &lt;15MB base daemon pulling verified WASI 0.2 components.</td>
+            </tr>
+            <tr>
+              <td><strong>Node Discovery</strong></td>
+              <td>Static environment variables (<code>CELNET_FLEET_BACKENDS</code>) parsed at boot.</td>
+              <td>Cannot scale elastically under market volatility; adding nodes requires restarting or reconfiguring edge routers.</td>
+              <td><strong>Autonomous Mesh Discovery</strong>: Decentralized peer discovery via mDNS, DNS-SRV, and Raft §6 dynamic membership.</td>
+            </tr>
+            <tr>
+              <td><strong>Licensing Model</strong></td>
+              <td>User-level <code>Action</code> &times; <code>AssetClass</code> bitmasks in <code>celnet-entitlements</code>.</td>
+              <td>Zero cryptographic licensing at the node layer; no offline attenuation, no hardware-bound root of trust, vulnerable to config tampering.</td>
+              <td><strong>Cryptographic Biscuit Tokens</strong>: Decentralized Ed25519-signed capability tokens with embedded Datalog authorization logic.</td>
+            </tr>
+            <tr>
+              <td><strong>Plugin Runtime</strong></td>
+              <td><code>wasmi 1.0.9</code> pure interpreter in <code>celnet-plugin-host</code>; vanillas and rates curves only.</td>
+              <td>Interpreter speed is 10x-25x slower than native code; restricted to single-asset models; no dynamic network delivery.</td>
+              <td><strong>Wasm Component Model (WASI 0.2 AOT)</strong>: Near-native JIT/AOT speed, fuel-metered, multi-asset correlation baskets, signed pull.</td>
+            </tr>
+            <tr>
+              <td><strong>State Handoff</strong></td>
+              <td>Single-host <code>SO_REUSEPORT</code> state serialization (<code>CELNHND1</code>) over local IPC.</td>
+              <td>Strictly host-local; cannot perform multi-node distributed cluster rolling upgrades across availability zones.</td>
+              <td><strong>Distributed Five-Stage ZLUP</strong>: Cluster-orchestrated Joint Consensus + eBPF socket steering across failure zones.</td>
+            </tr>
+            <tr>
+              <td><strong>Consensus Topology</strong></td>
+              <td>Fixed peer socket set at boot; monolithic single Raft log in <code>celnet-replog</code>.</td>
+              <td>Head-of-line blocking across trading books; failover of one currency stalls unrelated books; fixed membership prevents node elasticity.</td>
+              <td><strong>Hierarchical Multi-Raft + Flexible Paxos</strong>: 1024 virtual consensus groups with $Q_{\text{commit}}=2$ for ultra-fast local commits.</td>
+            </tr>
+            <tr>
+              <td><strong>Memory Interconnect</strong></td>
+              <td>Single-node shared memory ring buffer (<code>celnet-shm</code>) and memory-mapped WAL.</td>
+              <td>Cross-node state replication requires network serialization (gRPC/TCP), adding 20-50µs latency per hop.</td>
+              <td><strong>CXL 3.1 Coherent Memory Fabric</strong>: Disaggregated multi-node shared memory access with sub-250ns coherent latency.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 3: AUTONOMOUS NODE LIFECYCLE -->
+  <div id="tab-autonomous" class="tab-content">
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><span>🤖</span> Autonomous Node Bootstrapping & Hardware Probing</div>
+          <span class="tag tag-prod">STAGE 1: HARDWARE SYNTHESIS</span>
+        </div>
+        <p style="color: var(--text-secondary); font-size: 0.88rem; margin-bottom: 1rem;">
+          When a CelNet node boots, it does not rely on static TOML configuration files. Instead, its micro-daemon runs a non-destructive hardware inspection sequence to synthesize a <strong>Node Hardware & Environment Descriptor (NHED)</strong>:
+        </p>
+        <ul style="color: var(--text-secondary); font-size: 0.82rem; padding-left: 1.25rem; line-height: 1.6; margin-bottom: 1rem;">
+          <li><strong>CPU Topology</strong>: Core counts, hyperthreading layout, NUMA nodes, L1d/L1i/L2/L3 cache sizes, cache-line width (64B vs 128B).</li>
+          <li><strong>Vector ISA</strong>: Dynamically checks for AVX-512 (F, CD, BW, DQ, VL), AVX-10.2, Intel AMX, ARM NEON, and SVE2.</li>
+          <li><strong>GPU & Compute Accelerators</strong>: Probes Vulkan / Metal / DirectX 12 compute adapters via WebGPU headers; tests f32/f64 hardware float capabilities.</li>
+          <li><strong>Memory Fabrics</strong>: Detects CXL.mem / CXL.pmem physical address ranges and non-volatile persistence controllers.</li>
+          <li><strong>Network Interfaces</strong>: Detects AF_XDP zero-copy driver support, Solarflare OpenOnload / ef_vi availability, and DPDK UIO drivers.</li>
+        </ul>
+        <div class="code-box">
+<span class="comment">// Canonical Node Hardware Descriptor (NHED) Structure</span>
+<span class="kw">pub struct</span> <span class="type">NodeHardwareDescriptor</span> {
+    <span class="kw">pub</span> node_uuid: <span class="type">Uuid</span>,
+    <span class="kw">pub</span> numa_nodes: <span class="type">u16</span>,
+    <span class="kw">pub</span> total_physical_cores: <span class="type">u16</span>,
+    <span class="kw">pub</span> vector_capabilities: <span class="type">VectorIsaFlags</span>, <span class="comment">// AVX512, AMX, NEON</span>
+    <span class="kw">pub</span> gpu_devices: <span class="type">Vec</span>&lt;<span class="type">GpuDescriptor</span>&gt;,
+    <span class="kw">pub</span> cxl_memory_mb: <span class="type">u64</span>,
+    <span class="kw">pub</span> nic_offloads: <span class="type">NicCapabilityFlags</span>,   <span class="comment">// AF_XDP, EF_VI, DPDK</span>
+}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><span>🔐</span> Hardware-Rooted Node Attestation</div>
+          <span class="tag tag-cyan">STAGE 2: TPM IDENTITY</span>
+        </div>
+        <p style="color: var(--text-secondary); font-size: 0.88rem; margin-bottom: 1rem;">
+          To guarantee that nodes running proprietary pricing IP cannot be spoofed or deployed in unauthorized environments, CelNet binds node identity to physical hardware roots of trust:
+        </p>
+        <div class="callout green" style="margin-bottom: 1rem;">
+          <div class="callout-title">Confidential Computing Remote Attestation</div>
+          Nodes running in cloud environments (AWS Nitro Enclaves, AMD SEV-SNP, Intel TDX) generate a hardware-signed attestation quote proving memory encryption and un-tampered hypervisor state.
+        </div>
+        <ul style="color: var(--text-secondary); font-size: 0.82rem; padding-left: 1.25rem; line-height: 1.6; margin-bottom: 1rem;">
+          <li>Generates an ephemeral Ed25519 node identity keypair inside the TPM 2.0 or secure enclave.</li>
+          <li>The TPM signs the combined hash of the node's NHED and its ephemeral public key.</li>
+          <li>The resulting <strong>Cryptographic Node Identity (CNI)</strong> is presented during cluster mesh registration.</li>
+        </ul>
+        <div class="code-box">
+<span class="comment">// Cryptographic Node Identity (CNI)</span>
+<span class="kw">pub struct</span> <span class="type">NodeIdentityQuote</span> {
+    <span class="kw">pub</span> ephemeral_pubkey: [<span class="type">u8</span>; <span class="num">32</span>],
+    <span class="kw">pub</span> hardware_hash: [<span class="type">u8</span>; <span class="num">32</span>],
+    <span class="kw">pub</span> tpm_signature: <span class="type">Vec</span>&lt;<span class="type">u8</span>&gt;,
+    <span class="kw">pub</span> cert_chain: <span class="type">Vec</span>&lt;<span class="type">Vec</span>&lt;<span class="type">u8</span>&gt;&gt;,
+}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 4: CRYPTOGRAPHIC LICENSING -->
+  <div id="tab-licensing" class="tab-content">
+    <div class="card" style="margin-bottom: 2rem;">
+      <div class="card-header">
+        <div class="card-title">
+          <span>📜</span> Cryptographic License Entitlement via Biscuit Tokens & Datalog
+        </div>
+        <span class="tag tag-purple">DECENTRALIZED ATTENUATION</span>
+      </div>
+      <p style="color: var(--text-secondary); margin-bottom: 1.25rem;">
+        CelNet replaces brittle static license files with <strong>Institutional Capability Tokens</strong>, combining Ed25519 public-key signature chains with embedded <strong>First-Order Logic Policy Engines</strong>.
+      </p>
+
+      <div class="grid-2">
+        <div>
+          <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin-bottom: 0.5rem;">Why Biscuit Tokens with Datalog?</h4>
+          <ul style="color: var(--text-secondary); font-size: 0.82rem; padding-left: 1.25rem; line-height: 1.6;">
+            <li><strong>Offline Attenuation</strong>: An institution holding an enterprise license for 512 cores can subdivide and delegate smaller tokens (e.g. 64 cores for London, 32 cores for Tokyo) <em>without contacting CelNet's licensing server</em>.</li>
+            <li><strong>Cryptographic Immutability</strong>: Third parties can only add restrictions; they can never widen or forge permissions.</li>
+            <li><strong>Formal Logic Execution</strong>: Authorization rules are evaluated as mathematical Datalog proofs in microseconds.</li>
+            <li><strong>Zero Trust Node Capability Gating</strong>: A node only receives access to the specific binary modules authorized by the Datalog proof.</li>
+          </ul>
+        </div>
+
+        <div class="code-box">
+<span class="comment">// Formal Biscuit Datalog License Policy</span>
+<span class="comment">// Authority Block (Signed by CelNet Master Key)</span>
+licensed_asset(<span class="str">"FX"</span>, <span class="str">"OPTIONS"</span>);
+licensed_asset(<span class="str">"RATES"</span>, <span class="str">"BONDS"</span>);
+licensed_asset(<span class="str">"RATES"</span>, <span class="str">"SWAPTIONS"</span>);
+licensed_tier(<span class="str">"ULTRA_LOW_LATENCY_SBE"</span>);
+licensed_tier(<span class="str">"DISTRIBUTED_RISK_FLEET"</span>);
+max_cluster_cores(<span class="num">256</span>);
+expiration_epoch(<span class="num">1798761600</span>); <span class="comment">// 2027-01-01</span>
+
+<span class="comment">// Attenuation Check: Verify Node Core Limit & Expiry</span>
+check <span class="kw">if</span>
+    current_epoch($now),
+    expiration_epoch($exp),
+    $now &lt; $exp,
+    request_cores($req),
+    max_cluster_cores($max),
+    $req &lt;= $max;
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature Pull Diagram -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <span>📦</span> Decentralized Dynamic Feature Distribution & Verification
+        </div>
+        <span class="tag tag-prod">TUF / SIGSTORE / WASI 0.2</span>
+      </div>
+      <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1rem;">
+        Once the node's Biscuit token validates its entitlements, the node dynamically contacts an immutable, content-addressed artifact distribution fabric to pull authorized components:
+      </p>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Component Artifact</th>
+              <th>Execution Seam</th>
+              <th>Runtime Technology</th>
+              <th>Isolation & Safety Guarantee</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>feature.pricer.sabr_pde.wasm</code></td>
+              <td><code>celnet_plugin_host::ModelRegistry</code></td>
+              <td>WASI 0.2 Component Model (AOT)</td>
+              <td>Fuel-metered, linear memory isolated, zero ambient authority.</td>
+            </tr>
+            <tr>
+              <td><code>feature.pricer.lsv_particle.so</code></td>
+              <td><code>celnet_exotics::LsvEngine</code></td>
+              <td>Signed Relocatable Native Module</td>
+              <td>Sigstore Cosign Ed25519 signature, Intel MPK memory domain isolation.</td>
+            </tr>
+            <tr>
+              <td><code>feature.codec.cme_mdp3.wasm</code></td>
+              <td><code>celnet_exchange_codecs::MarketDataFeedHandler</code></td>
+              <td>WASI 0.2 Zero-Copy Stream Parser</td>
+              <td>Bounded buffer allocations, memory safety guaranteed by WASI sandboxing.</td>
+            </tr>
+            <tr>
+              <td><code>feature.margin.isda_simm26.wasm</code></td>
+              <td><code>celnet_margin::PortfolioMarginService</code></td>
+              <td>WASI 0.2 Analytical Vector Module</td>
+              <td>Bit-identical IEEE-754 reconciliation against reference golden tests.</td>
+            </tr>
+            <tr>
+              <td><code>feature.algo.twap_slicer.wasm</code></td>
+              <td><code>celnet_algo::PluggableExecutionStrategy</code></td>
+              <td>WASI 0.2 Fuel-Metered Execution Logic</td>
+              <td>Deterministic order slicing; strict microsecond compute quotas.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 5: LIMITLESS SCALABILITY -->
+  <div id="tab-scalability" class="tab-content">
+    <div class="card" style="margin-bottom: 2rem;">
+      <div class="card-header">
+        <div class="card-title">
+          <span>⚡</span> Limitless Horizontal Scalability: Multi-Raft & Flexible Paxos
+        </div>
+        <span class="tag tag-purple">ACADEMIC RESEARCH GROUNDING</span>
+      </div>
+      <p style="color: var(--text-secondary); margin-bottom: 1.25rem;">
+        Traditional distributed architectures suffer from <strong>head-of-line blocking</strong> when all financial transactions route through a single consensus log. CelNet partitions the trading state space into <strong>1024 virtual consensus groups (v-groups)</strong>, each governed by an independent Multi-Raft state machine.
+      </p>
+
+      <div class="grid-2">
+        <div class="callout purple">
+          <div class="callout-title">Flexible Paxos Quorum Optimization (Howard & Mortier)</div>
+          Classical Raft mandates majority quorums ($Q > N/2$). CelNet leverages Flexible Paxos, proving that consensus requires only that election quorums and replication quorums intersect:
+          $$Q_{	ext{elect}} \cap Q_{	ext{commit}} 
+e \emptyset$$
+          In a 5-node cross-datacenter cluster, we configure:
+          $$\mathbf{Q_{	ext{commit}} = 2} \quad 	ext{and} \quad \mathbf{Q_{	ext{elect}} = 4}$$
+          Committed transactions require only 2 local low-latency cross-rack ACKs ($< 120\,\mu	ext{s}$), delivering ultra-fast writes while maintaining 100% mathematical safety against split-brain elections.
+        </div>
+
+        <div class="callout green">
+          <div class="callout-title">CXL 3.1 Disaggregated Coherent Memory Fabric</div>
+          Cross-node network serialization over TCP or gRPC incurs a 20-50µs latency penalty. CelNet leverages Compute Express Link (CXL 3.1):
+          <ul style="padding-left: 1.2rem; font-size: 0.8rem; margin-top: 0.4rem; line-height: 1.5;">
+            <li>Multi-node shared memory pools accessible over PCIe Gen 6 fabric.</li>
+            <li>Vol surfaces calibrated on pricing shards are published directly into shared CXL memory.</li>
+            <li>Risk shards read surfaces with sub-250ns cache-coherent hardware memory access.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scalability Topology SVG -->
+    <div class="diagram-container">
+      <div class="diagram-title">
+        <span>Hierarchical Multi-Raft Partitioning & eBPF Kernel-Bypass Ingress</span>
+        <span class="tag tag-prod">1024 Virtual Shards</span>
+      </div>
+      <svg viewBox="0 0 1000 280" style="width: 100%; height: auto;">
+        <!-- Ingress -->
+        <rect x="20" y="30" width="180" height="220" rx="8" fill="#0f141f" stroke="#242c3d"/>
+        <text x="110" y="55" fill="#00e5ff" font-family="var(--font-mono)" font-size="11" font-weight="700" text-anchor="middle">CLIENT TRAFFIC</text>
+        <rect x="35" y="75" width="150" height="35" rx="4" fill="#161c28" stroke="#3b82f6"/>
+        <text x="110" y="97" fill="#f1f5f9" font-family="var(--font-mono)" font-size="10" text-anchor="middle">FIX 4.4 / 5.0SP2</text>
+        <rect x="35" y="125" width="150" height="35" rx="4" fill="#161c28" stroke="#3b82f6"/>
+        <text x="110" y="147" fill="#f1f5f9" font-family="var(--font-mono)" font-size="10" text-anchor="middle">CME / Eurex SBE</text>
+        <rect x="35" y="175" width="150" height="35" rx="4" fill="#161c28" stroke="#3b82f6"/>
+        <text x="110" y="197" fill="#f1f5f9" font-family="var(--font-mono)" font-size="10" text-anchor="middle">gRPC / WebSocket</text>
+
+        <!-- eBPF Layer -->
+        <path d="M 205 140 L 255 140" stroke="#00e5ff" stroke-width="2"/>
+        <rect x="260" y="30" width="220" height="220" rx="8" fill="#0f141f" stroke="#242c3d"/>
+        <text x="370" y="55" fill="#00ff88" font-family="var(--font-mono)" font-size="11" font-weight="700" text-anchor="middle">eBPF / AF_XDP INGRESS</text>
+        <rect x="280" y="80" width="180" height="45" rx="4" fill="#161c28" stroke="#00ff88"/>
+        <text x="370" y="102" fill="#f1f5f9" font-family="var(--font-mono)" font-size="10" font-weight="600" text-anchor="middle">HRW Hash Packet Steer</text>
+        <text x="370" y="116" fill="#94a3b8" font-family="var(--font-mono)" font-size="8" text-anchor="middle">Hardware Core Pinning</text>
+        <rect x="280" y="140" width="180" height="45" rx="4" fill="#161c28" stroke="#00ff88"/>
+        <text x="370" y="162" fill="#f1f5f9" font-family="var(--font-mono)" font-size="10" font-weight="600" text-anchor="middle">Zero-Copy Driver Rings</text>
+        <text x="370" y="176" fill="#94a3b8" font-family="var(--font-mono)" font-size="8" text-anchor="middle">Kernel-Bypass Fastpath</text>
+
+        <!-- Multi-Raft Shards -->
+        <path d="M 485 100 L 535 75" stroke="#a855f7" stroke-width="2"/>
+        <path d="M 485 140 L 535 140" stroke="#a855f7" stroke-width="2"/>
+        <path d="M 485 180 L 535 205" stroke="#a855f7" stroke-width="2"/>
+
+        <rect x="540" y="30" width="440" height="220" rx="8" fill="#0f141f" stroke="#242c3d"/>
+        <text x="760" y="55" fill="#a855f7" font-family="var(--font-mono)" font-size="11" font-weight="700" text-anchor="middle">DISAGGREGATED MULTI-RAFT PARTITIONS</text>
+
+        <rect x="560" y="70" width="400" height="45" rx="4" fill="#161c28" stroke="#a855f7"/>
+        <text x="760" y="90" fill="#f1f5f9" font-family="var(--font-mono)" font-size="10" font-weight="600" text-anchor="middle">Partition Group A: Major FX (EURUSD, USDJPY) &bull; Q_commit = 2</text>
+        <text x="760" y="104" fill="#94a3b8" font-family="var(--font-mono)" font-size="8" text-anchor="middle">Leader Node 1 &bull; Followers Node 2, Node 3 &bull; Replication &lt; 120µs</text>
+
+        <rect x="560" y="125" width="400" height="45" rx="4" fill="#161c28" stroke="#a855f7"/>
+        <text x="760" y="145" fill="#f1f5f9" font-family="var(--font-mono)" font-size="10" font-weight="600" text-anchor="middle">Partition Group B: Sovereign Debt (US Treasuries, Gilts) &bull; Q_commit = 2</text>
+        <text x="760" y="159" fill="#94a3b8" font-family="var(--font-mono)" font-size="8" text-anchor="middle">Leader Node 4 &bull; Followers Node 5, Node 6 &bull; Sub-ms Yield Reval</text>
+
+        <rect x="560" y="180" width="400" height="45" rx="4" fill="#161c28" stroke="#a855f7"/>
+        <text x="760" y="200" fill="#f1f5f9" font-family="var(--font-mono)" font-size="10" font-weight="600" text-anchor="middle">Partition Group C: Structured Exotics & Swaptions &bull; Q_commit = 2</text>
+        <text x="760" y="214" fill="#94a3b8" font-family="var(--font-mono)" font-size="8" text-anchor="middle">Leader Node 7 &bull; Followers Node 8, Node 9 &bull; SIMD Scenario Reductions</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- TAB 6: ZERO-DOWNTIME UPGRADES -->
+  <div id="tab-upgrades" class="tab-content">
+    <div class="card" style="margin-bottom: 2rem;">
+      <div class="card-header">
+        <div class="card-title">
+          <span>🔄</span> The Five-Stage Zero-Loss Upgrade Protocol (ZLUP)
+        </div>
+        <span class="tag tag-amber">MISSION-CRITICAL RESILIENCE</span>
+      </div>
+      <p style="color: var(--text-secondary); margin-bottom: 1.25rem;">
+        In electronic market making, a dropped TCP connection or stale quote during an upgrade can incur hundreds of thousands of dollars in adverse selection or exchange penalties. CelNet implements the <strong>Five-Stage Zero-Loss Upgrade Protocol (ZLUP)</strong>, mathematically orchestrating cluster-wide rolling updates without dropped packets:
+      </p>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Stage</th>
+              <th>Protocol Phase</th>
+              <th>Core Mechanism</th>
+              <th>Verification & Safety Invariant</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Stage 1</strong></td>
+              <td>Pre-Flight Shadow Boot</td>
+              <td>Successor node pulls new verified artifact, initializes core memory, runs self-tests.</td>
+              <td>Zero public network bindings; does not accept trade traffic.</td>
+            </tr>
+            <tr>
+              <td><strong>Stage 2</strong></td>
+              <td>State Catch-Up & Twin Reval</td>
+              <td>Transfers base snapshot from predecessor; replays live WAL tail; shadow valuations computed in parallel.</td>
+              <td><strong>Deterministic IEEE-754 Comparator</strong>: Output quotes must match within exact relative tolerances before authorization.</td>
+            </tr>
+            <tr>
+              <td><strong>Stage 3</strong></td>
+              <td>Joint Consensus Epoch Transition</td>
+              <td>Cluster enters transitional configuration $C_{\text{old, new}}$ via Raft §6.</td>
+              <td>Decisions require independent quorums of both old and new node versions; prevents split-brain.</td>
+            </tr>
+            <tr>
+              <td><strong>Stage 4</strong></td>
+              <td>Kernel-Level Socket Migration</td>
+              <td>eBPF/AF_XDP program updates socket redirection map at the NIC driver layer.</td>
+              <td>Zero TCP resets; sequence numbers preserved; active client connections switch atomically.</td>
+            </tr>
+            <tr>
+              <td><strong>Stage 5</strong></td>
+              <td>Residual Drain & Finalize</td>
+              <td>Predecessor drains in-flight requests; cluster commits final configuration $C_{\text{new}}$.</td>
+              <td>Predecessor decommissions cleanly; resources returned to host pool.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 7: RESEARCH & ROADMAP -->
+  <div id="tab-research" class="tab-content">
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><span>⚙️</span> Enterprise Engineering Standards & Foundations</div>
+          <span class="tag tag-prod">PRODUCTION STANDARDS</span>
+        </div>
+        <ul style="color: var(--text-secondary); font-size: 0.85rem; padding-left: 1.25rem; line-height: 1.7;">
+          <li><strong>Asymmetric Quorum Consensus</strong>: Eliminates rigid majority quorums, unlocking $Q_{\text{commit}}=2$ for ultra-fast local replication without waiting on cross-region latency.</li>
+          <li><strong>Joint Configuration Consensus</strong>: Provides mathematical safety guarantees for non-blocking cluster configuration transitions ($C_{\text{old, new}}$).</li>
+          <li><strong>Decentralized Capability Tokens</strong>: Establishes offline-attenuated cryptographic authorization and first-order policy verification for zero-trust architectures.</li>
+          <li><strong>Wasm WASI 0.2 Component Sandbox</strong>: Delivers composable, fuel-metered, language-neutral sandboxing with near-native execution performance.</li>
+          <li><strong>CXL 3.1 Coherent Memory Architecture</strong>: Enables hardware-coherent memory sharing and disaggregated pooling across PCIe Gen 6 fabrics.</li>
+          <li><strong>Linux AF_XDP Kernel Bypass & Socket Transfer</strong>: Implements lossless kernel-level connection migration without TCP connection resets during upgrades.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><span>🗺️</span> Implementation & Verification Audit (150 / 150 Tests Passed)</div>
+          <span class="tag tag-prod">100% DELIVERED & VERIFIED</span>
+        </div>
+        <div style="font-size: 0.85rem; color: var(--text-secondary);">
+          <div style="margin-bottom: 0.8rem;">
+            <strong style="color: var(--accent-cyan);">Phase 1: celnet-license — Node Agent & Cryptographic Licensing</strong> <span class="tag tag-prod" style="margin-left: 6px;">6 / 6 PASSED</span>
+            <p style="font-size: 0.8rem; margin-top: 0.2rem;">NHED hardware probing, TPM 2.0 enclave attestation, semi-naive Datalog engine, Biscuit token attenuation, quota enforcement.</p>
+          </div>
+          <div style="margin-bottom: 0.8rem;">
+            <strong style="color: var(--accent-green);">Phase 2: celnet-plugin-host — Dynamic Component Runtime</strong> <span class="tag tag-prod" style="margin-left: 6px;">26 / 26 PASSED</span>
+            <p style="font-size: 0.8rem; margin-top: 0.2rem;">Content-addressed signed artifacts, dynamic loading into <code>ModelRegistry::load_licensed_artifact</code>, fuel-metered sandboxing.</p>
+          </div>
+          <div style="margin-bottom: 0.8rem;">
+            <strong style="color: var(--accent-purple);">Phase 3: celnet-replog — Flexible Paxos & Limitless Multi-Raft</strong> <span class="tag tag-prod" style="margin-left: 6px;">113 / 113 PASSED</span>
+            <p style="font-size: 0.8rem; margin-top: 0.2rem;">Flexible Paxos asym quorums ($Q_{\text{commit}}=2, Q_{\text{elect}}=4$), Raft §6 dynamic Joint Consensus ($C_{\text{old,new}}$), 1024-group partition router.</p>
+          </div>
+          <div>
+            <strong style="color: var(--accent-amber);">Phase 4: celnet-upgrade — Zero-Loss Upgrade Protocol (ZLUP)</strong> <span class="tag tag-prod" style="margin-left: 6px;">5 / 5 PASSED</span>
+            <p style="font-size: 0.8rem; margin-top: 0.2rem;">Five-Stage ZLUP orchestrator, IEEE-754 bit-exact twin comparator (1-ULP refutation), atomic ingress socket redirection (0 TCP drops).</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+  
+  event.target.classList.add('active');
+  document.getElementById('tab-' + tabId).classList.add('active');
+}
+</script>
+
+</body>
+</html>

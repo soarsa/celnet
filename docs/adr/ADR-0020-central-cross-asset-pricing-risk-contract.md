@@ -1,8 +1,7 @@
 # ADR-0020: One central cross-asset pricing/risk contract (`Priceable` / `MarketResolver` / `RiskMeasure`)
 
-- **Status:** Proposed (2026-07-01) — the contract is **landed on `origin/main`** (Phase A1 +
-  A2, commit `ee43dc4`, full t2 green 19/19). This ADR records the decision the code already
-  realizes.
+- **Status:** Accepted & Implemented (Phase A1, A2, and Phase B landed on main).
+  This ADR records the authoritative decision and central contract specification.
 - **Relates to:** ADR-0007 (one unversioned contract), ADR-0008 (multi-asset carry / asset-class
   router + `ProductEngine` registry), ADR-0010 (converge FI rates onto the shared `DiscountCurve`
   seam), ADR-0016 (hot-core curve-handle embargo).

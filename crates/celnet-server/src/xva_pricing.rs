@@ -35,7 +35,8 @@
 //! typed error, never a panic on the async edge.
 
 use celnet_proto::{
-    OptionType as WireOptionType, PriceXvaRequest, XvaResult as WireXvaResult, XvaSurvivalCurve,
+    ExposureBucket as WireExposureBucket, OptionType as WireOptionType, PriceXvaRequest,
+    XvaResult as WireXvaResult, XvaSurvivalCurve,
 };
 use celnet_types::OptionType;
 use celnet_xva::{
@@ -268,11 +269,29 @@ pub fn price_xva(req: &PriceXvaRequest) -> Result<WireXvaResult, XvaPriceError> 
         return Err(XvaPriceError::NonFiniteResult);
     }
 
+    let buckets = profile
+        .buckets()
+        .iter()
+        .map(|b| WireExposureBucket {
+            time_years: b.time_years,
+            label: b.label.clone(),
+            ee: b.ee,
+            q25: b.q25,
+            q75: b.q75,
+            pfe_lo: b.pfe_lo,
+            pfe: b.pfe,
+            ene: b.ene,
+            ene_band_lo: b.ene_band_lo,
+            ene_band_hi: b.ene_band_hi,
+        })
+        .collect();
+
     Ok(WireXvaResult {
         cva: result.cva,
         dva: result.dva,
         fva: result.fva,
         total_adjustment: total,
+        buckets,
     })
 }
 

@@ -26,7 +26,7 @@ Binding rules honored throughout: **no mocks/placeholders**; **vendor-neutral id
 
 | Module | Items | Why it is already neutral |
 |---|---|---|
-| `parametric.rs` | `ParametricSlice` (raw SVI), `total_variance`, `d_total_variance`, `d2_total_variance`, `butterfly_density_factor` (Durrleman g), `min_butterfly_density_factor`, `satisfies_wing_bound` (Lee `b(1+|ρ|) ≤ 2`), `is_butterfly_free`, `vol_at`, `impl Smile` | Defined purely on `(k = ln(K/F), w = σ²t)` anchored at `(forward, t)`. No conventions, no rates, no delta. |
+| `parametric.rs` | `ParametricSlice` (raw SVI), `total_variance`, `d_total_variance`, `d2_total_variance`, `butterfly_density_factor` (Durrleman g), `min_butterfly_density_factor`, `satisfies_wing_bound` (Lee `b(1+&#124;ρ&#124;) ≤ 2`), `is_butterfly_free`, `vol_at`, `impl Smile` | Defined purely on `(k = ln(K/F), w = σ²t)` anchored at `(forward, t)`. No conventions, no rates, no delta. |
 | `parametric_surface.rs` | `ParametricSurface` (SSVI), `phi`, `total_variance`, `is_butterfly_free`, `is_calendar_free`, `to_slice` | Pure `(k, θ)` math; closed-form Gatheral–Jacquier conditions are dimensionless. |
 | `extended_surface.rs` | `ExtendedSlice`/`ExtendedSurface` (eSSVI, `(θ, ρ, ψ)`) | Same — `(k, θ, ρ, ψ)` only. |
 | `arbitrage.rs` | `check_slice`, `implied_density`, `forward_call_strike_slope`, `ArbitrageReport` | Generic over `S: Smile`, evaluated on a strike grid against `(forward, t)`; the undiscounted forward call removes all discounting/rate coupling. |
@@ -267,7 +267,7 @@ Pins the *complete* FX calibration pipeline output bits across the §2.3 code mo
 |---|---|
 | `context_forward_is_carry_seam_bits` | O4 both halves (`funding_carry` bits; `FxRates` parity with `MarketContext::forward` bits). |
 | `anchors_match_hand_computed` | `k_i`/`w_i` vs in-test `ln`/`σ²t` re-computation, `to_bits` equal. |
-| `exact_svi_grid_round_trips` | O1 on a BTC-scale fixture (`spot = 60_000`, `r = 0.05`, `funding = 0.02`, `t = 0.25`; truth `a = 0.012, b = 0.08, ρ = −0.4, m = 0.02, σ = 0.15`; 13 log-spaced strikes 40k–90k): on-grid `max_vol_error ≤ 5e-7`; `|w_fit − w_truth| ≤ 1e-7` at 41 off-grid `k ∈ ±0.6`; parameters within `1e-4` (relative for `b, σ`; absolute for `ρ, m`; `a` within `1e-6`). |
+| `exact_svi_grid_round_trips` | O1 on a BTC-scale fixture (`spot = 60_000`, `r = 0.05`, `funding = 0.02`, `t = 0.25`; truth `a = 0.012, b = 0.08, ρ = −0.4, m = 0.02, σ = 0.15`; 13 log-spaced strikes 40k–90k): on-grid `max_vol_error ≤ 5e-7`; `&#124;w_fit − w_truth&#124; ≤ 1e-7` at 41 off-grid `k ∈ ±0.6`; parameters within `1e-4` (relative for `b, σ`; absolute for `ρ, m`; `a` within `1e-6`). |
 | `flat_grid_fits_flat` | Constant-vol grid reproduces the flat vol ≤ `1e-10`; slice butterfly-free. |
 | `fit_is_bit_reproducible` | Two identical runs: fitted-slice fields and `implied_vol` bits equal. |
 | `skewed_grid_reproduces_skew_direction` | Put-skewed grid ⇒ `ρ < 0`, put-wing vol > call-wing vol. |

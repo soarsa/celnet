@@ -62,7 +62,9 @@ use celnet_conventions::ConventionRecord;
 use celnet_engine::rt::{MarketState, StateHandle};
 use celnet_engine::testing::make_state;
 use celnet_proto::risk_service_client::RiskServiceClient;
-use celnet_proto::{AggregateRiskRequest, NumeraireRate, ReportingNumeraire, RiskDimension};
+use celnet_proto::{
+    AggregateRiskRequest, EntitlementPrincipal, NumeraireRate, ReportingNumeraire, RiskDimension,
+};
 use celnet_risk_cube::{BookId as CubeBookId, DeskId, EntityId, FactKey, LocationId, TraderId};
 use celnet_risk_fleet::FleetTopology;
 use celnet_server::services::risk::store::BookedPosition;
@@ -156,7 +158,11 @@ fn firm_request() -> AggregateRiskRequest {
                 },
             ],
         }),
-        principal: None,
+        principal: Some(EntitlementPrincipal {
+            grant_all: true,
+            grants: vec![],
+            denies: vec![],
+        }),
         scope: None,
         vega_pillars: vec![],
         var_spot_shocks: vec![-0.02, -0.01, 0.0, 0.01, 0.02],

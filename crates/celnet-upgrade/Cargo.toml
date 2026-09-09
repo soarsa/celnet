@@ -1,0 +1,19 @@
+[package]
+name = "celnet-upgrade"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet Zero-Loss Upgrade Protocol (ZLUP) orchestrator and bit-exact twin comparator"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-replog.workspace = true
+celnet-license = { path = "../celnet-license" }
+
+[dev-dependencies]

@@ -8,11 +8,11 @@ Celnet is built so that **pricing is never the bottleneck**. The maths runs in n
 
 *Fig 7 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The Celnet latency ladder: a pinned, allocation-free hot core feeds a wait-free ring that bridges to the async edge — the network is the only layer left that matters.*
 
-### Pricing as a non-event
+## Pricing as a non-event
 
 The full FX desk Greek set — price plus 13 Greeks — is computed in a single pass over the pinned hot core, with no locks, no allocations, and no logging on the critical path. Because in-core valuation completes in nanosecond-scale time, batch revaluation across many instruments and tenors stays comfortably ahead of the streaming cadence a desk demands. A price request never waits on the maths — it waits, briefly, on the network that carries it.
 
-### Architecture that keeps the core hot
+## Architecture that keeps the core hot
 
 | Layer | What it does for latency |
 |-------|--------------------------|

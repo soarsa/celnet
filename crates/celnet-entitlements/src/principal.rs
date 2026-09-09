@@ -1,5 +1,5 @@
 //! The entitlement **principal** (`docs/RISK-HIERARCHY.md` §4,
-//! `docs/EXPERIENCE-ARCHITECTURE.md` §3).
+//! `docs/clients/EXPERIENCE-ARCHITECTURE.md` §3).
 //!
 //! A [`Principal`] is *who is looking*: a set of **grant** rules (the dimension
 //! subtrees the principal may read) and **deny** rules (information barriers —

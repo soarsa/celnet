@@ -2,11 +2,11 @@
 
 **Status:** LANDED on `main` · **Updated:** 2026-07-02
 **Scope tracked:** the locked P0 (USD-only, linear rates + cash, no vol/credit — see
-[`OPEN-QUESTIONS.md`](./OPEN-QUESTIONS.md) D3–D12) plus the cross-asset/UI items.
+[`OPEN-QUESTIONS.md`](OPEN-QUESTIONS.md) D3–D12) plus the cross-asset/UI items.
 
 This is the single source of truth for *what is built vs outstanding*. Each outstanding item is a
 **gated slice** (compiles + `clippy -D warnings` + tests + rustfmt; numeric items validated against
-QuantLib or a closed-form/structural identity per [`FI-VERIFICATION-CONTRACT.md`](./FI-VERIFICATION-CONTRACT.md)).
+QuantLib or a closed-form/structural identity per [`FI-VERIFICATION-CONTRACT.md`](FI-VERIFICATION-CONTRACT.md)).
 
 ---
 

@@ -1,0 +1,23 @@
+[package]
+name = "celnet-exchange-codecs"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Native exchange binary protocol codecs for institutional market data and order entry (SBE MDP 3.0, SBE iLink3, ETI binary framing, OUCH direct stream)."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-sbe.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+bytemuck.workspace = true
+libm.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

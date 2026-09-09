@@ -1,8 +1,8 @@
 /**
  * RiskBooksWorkspace — the admin hierarchical RISK-PORTFOLIO tree editor
- * (docs/FI-RISK-ROUTING-REQUIREMENTS.md §6.2). USER-FACING name "Risk Portfolios";
+ * (docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md §6.2). USER-FACING name "Risk Portfolios";
  * the wire type stays {@link RiskBook}/`RiskBookDef` (the rename is UI-only — see
- * docs/FI-BOOK-CONCEPTS.md). Risk portfolios form a TREE (desk → portfolio →
+ * docs/fixed-income/FI-BOOK-CONCEPTS.md). Risk portfolios form a TREE (desk → portfolio →
  * sub-portfolio); a filled order/RFQ routes its risk into a leaf portfolio so
  * limits / greeks / PnL are managed per portfolio. This pane lets an admin list /
  * create / rename / nest / enable-disable portfolios, set per-portfolio
@@ -15,7 +15,7 @@
  * firm-wide surface rather than one screen per asset.
  *
  * Gating: the risk-portfolio RPCs gate on the granular `risk_manage` capability
- * server-side (docs/PERMISSIONS-GRANULAR-REVIEW.md §4 — a firm risk-control authority
+ * server-side (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4 — a firm risk-control authority
  * distinct from super-admin, so a desk/risk lead manages portfolios WITHOUT full
  * Administer). Edit affordances mirror it in TWO tiers: reaching the pane needs
  * `risk_manage` on EITHER class (`readOnly`), while editing a particular portfolio needs

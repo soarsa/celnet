@@ -3,7 +3,7 @@
  * "Risk", whose tabbed shell spans NINE sibling views that were previously separate
  * rail destinations (mirroring the Pricing and Transfers→Risk Transfer merges):
  *   • **Dashboard** (default) — the per-portfolio rolled-up risk view ({@link
- *     DashboardPanel}); the routed-risk roll-up (docs/FI-RISK-ROUTING-REQUIREMENTS.md
+ *     DashboardPanel}); the routed-risk roll-up (docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md
  *     §6.3, §8.6).
  *   • **Portfolios** — the create / enable / edit / limits / hierarchy editor
  *     ({@link RiskBooksWorkspace}, composed VERBATIM), the target of the Dashboard's

@@ -7,7 +7,7 @@ Celnet treats risk as a single, integrated capability that spans two altitudes a
 ![Risk architecture: book-shaped scenario risk and the firm-wide position-fact cube as two zooms of one fact model](../assets/celnet-capabilities/fig-06-risk-architecture.png)
 *Figure 6 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Risk architecture. A versioned marked-surface registry feeds book-shaped scenario risk (the desk's working view) and a convention-canonicalized OLAP position-fact cube (the firm-wide view) that aggregates vanilla **and exotic** legs. Normalize → cube → limits ∥ entitlements: one fact model, drilled at every altitude, extended to FRTB-SA regulatory capital and (internal) XVA.*
 
-### 6.1 Book-shaped scenario risk
+## 6.1 Book-shaped scenario risk
 
 Risk at the desk is computed by real repricing, not by linear extrapolation from a single point. Every scenario number is produced by re-running the same nanosecond-scale pricing core that quotes live, so the risk surface is internally consistent with the price.
 
@@ -23,7 +23,7 @@ Underpinning all of it is a **versioned marked-surface registry**. A calibrated 
 ![Risk workspace: spot × vol reprice grid with swappable axes, P&L/delta/vega tabs, the per-tenor × delta vega ladder, cross-gamma and theta-roll](../assets/celnet-capabilities/shot-04-risk-scenario.png)
 *Screenshot — the Risk workspace (Cmd-4): a spot × vol reprice grid with swappable axes and P&L / delta / vega tabs, the vega ladder bucketed per tenor × delta, plus cross-gamma and theta-roll.*
 
-### 6.2 The firm-wide position-fact cube
+## 6.2 The firm-wide position-fact cube
 
 Above the desk view sits an OLAP **position-fact cube** that gives the firm one canonical, queryable picture of all option risk. Positions arrive in many conventions and numeraires; Celnet canonicalizes them — convention-normalized and netted into a common numeraire — before anything is aggregated, so figures across pairs, books, and entities are genuinely additive where they should be.
 
@@ -44,7 +44,7 @@ Roll-up respects the mathematics of each measure. **Additive** measures (notiona
 
 On top of the cube sits a **cascading limit tree** — board → entity → desk → book → trader — with both pre-trade and post-trade checks, so a candidate trade is tested against every limit it would touch before it is done, and the live book is policed continuously after. Finally, aggregation is **entitlement-aware**: the server prunes the cube to what a given viewer is allowed to see *before* it aggregates, so a trader sees their own slice, a desk head sees the desk, and the firm view rolls up only what the requester is entitled to — pre-aggregation pruning, not after-the-fact redaction.
 
-### 6.3 One cube, two views — Book ↔ Risk drill
+## 6.3 One cube, two views — Book ↔ Risk drill
 
 Because the desk's book view and the scenario-risk view are projections of the same fact cube, the GUI lets a trader move between altitudes in a single gesture. The **Book** workspace presents net P&L, Vega, Gamma, and Theta as headline cards with a per-pair breakdown and an aggregate vega ladder; selecting any aggregated book row **drills straight into that position's scenario risk** in the Risk workspace — same numbers, deeper zoom, no context switch and no separate tool.
 
@@ -53,13 +53,13 @@ Because the desk's book view and the scenario-risk view are projections of the s
 
 The result is one risk capability with no seams: real-reprice scenario risk for the trader, a convention-canonicalized OLAP cube with limits and entitlements for the firm, a versioned marked surface as the shared source of truth, and a single drill that connects the firm-wide book to a single position's behaviour under stress.
 
-### 6.4 Exotic legs aggregate as first-class citizens
+## 6.4 Exotic legs aggregate as first-class citizens
 
 The cube is not a vanilla-only ledger. A booked exotic — a barrier, a digital — earns a genuine seat in every roll-up, contributing its **real** sensitivities rather than a vanilla proxy or, worse, a silent zero that would understate the firm's risk. An exotic leg supplies its full canonical Greek set and premium line so it sums into the net-Greeks and vega-ladder roll-up exactly like a vanilla leaf, and it re-prices the *real exotic payoff* under each scenario for VaR/ES and supplies its own up/down curvature legs for FRTB — so the firm tail and curvature reflect a knock-out's gamma sign-flip near the barrier or a digital's pin risk, never a smoothed-over vanilla approximation. Digitals use the closed-form `celnet-exotics` digital Greeks; barriers use a central finite-difference of the closed-form Reiner-Rubinstein price (the barrier closed form has no published higher-order Greek set, so finite-difference of the exact price is the honest, deterministic, `libm`-routed and bit-reproducible source). The first-class exotic legs are the **deterministic, closed-form** members of the catalogue — single barrier and European digital — which re-price exactly under shocks with no Monte-Carlo estimator noise, so they slot into the cube's machine-exact VaR/curvature path. MC-priced exotics (Asian, TARF, accumulator, discrete lookback) extend the same `ExoticKind` seam through a finite-difference of a common-random-number MC price that carries an explicit Monte-Carlo standard-error caveat — a named extension, never a stub.
 
 Crucially, this exotic-leg aggregation is preserved end-to-end through the distributed fan-out: a firm book *including* exotic legs, partitioned across an HRW (highest-random-weight) fleet and re-aggregated through the cross-shard algebra, reconciles to the single-node firm aggregate — additive Greeks to ~1e-12 and the re-gathered non-additive VaR/ES and curvature to the same bit-level tolerance. The exotic seat survives sharding; the firm view is the same number whether computed on one node or fanned out across the fleet. *(`celnet-risk-cube/src/exotic.rs`; parity rows `celnet-parity/tests/exotic_risk_cube.rs` Gate A and `celnet-parity/tests/exotic_risk_cube.rs`; the cross-shard algebra lives in `celnet-risk-fleet`.)*
 
-### 6.5 Regulatory capital — FRTB-SA (Standardised Approach)
+## 6.5 Regulatory capital — FRTB-SA (Standardised Approach)
 
 On top of the position-fact cube, Celnet computes market-risk capital under the Basel **FRTB Standardised Approach** (BCBS *MAR21/22/23*) — the full Sensitivities-based Method (SbM), not a stand-in. Capital is built bottom-up from net sensitivities the cube already holds:
 
@@ -75,7 +75,7 @@ On top of the position-fact cube, Celnet computes market-risk capital under the 
 
 The quadratic-form kernel `√(Σ WS² + ΣΣ ρ WS WS)` is factored once and reused for delta, vega and the cross-bucket step, so there is no duplicated formula and no opportunity for the three sites to drift. The `0.75ρ` LOW-correlation floor — material for FX where `γ = 0.6` must decorrelate to `0.45`, not `0.2` — is pinned to **hand-computed BCBS constants** in a dedicated test, after a prior wave caught a circular-oracle defect (a longhand check that had independently re-derived the *same* wrong floor). The whole SbM machinery is gated against a genuinely independent longhand oracle — every formula re-written from raw weighted sensitivities using only `f64` arithmetic and `f64::sqrt`, never calling back into the production code — agreeing to ~1e-10, with structural identities (a perfectly-hedged bucket gives `K_b = 0`; RRAO equals the exact hand-summed `Σ |notional|·weight`). *(`celnet-risk-cube/src/frtb.rs`; parity row `celnet-parity/tests/frtb.rs`.)*
 
-### 6.6 Counterparty valuation adjustments — XVA
+## 6.6 Counterparty valuation adjustments — XVA
 
 Celnet computes the counterparty-risk valuation adjustments — **CVA** (credit), **DVA** (debit/own-credit) and **FVA** (funding) — over a netting set of vanilla FX options. The pipeline is end-to-end and exact: an exposure simulation evolves spot under risk-neutral GBM on an exposure-date grid, driven by low-discrepancy **Sobol** normals from `celnet-qmc` (far lower exposure-profile variance than plain pseudo-random MC at the same path budget), reprices and **nets within the set** at each grid date, and reduces across paths to the expected positive/negative exposure profiles `EPE(t_k)` / `ENE(t_k)`; a piecewise-constant hazard-rate curve gives risk-neutral survival `S(t) = exp(−∫λ)`; and the discrete Basel/ISDA aggregation forms unilateral CVA `= LGD · Σ_k D(t_k)·EPE(t_k)·[S(t_{k−1}) − S(t_k)]`, the symmetric DVA over own-survival and ENE, and the funding adjustment FVA over the net expected exposure on the joint-survival measure. The arithmetic is validated against a hand-derived closed-form CVA in exact limits — agreeing to ~1e-9 with every intermediate constant **hand-pinned to offline-computed published values** (guarding against the engine and oracle sharing a mis-stated constant), monotone in hazard and LGD, zero at zero default probability, with DVA/FVA sign symmetry. *(`celnet-xva/src/{cva,exposure,netting,survival}.rs`; parity row `celnet-parity/tests/xva.rs`.)*
 

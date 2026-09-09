@@ -9,7 +9,7 @@ This is not a thin "price a vanilla in a cell" plug-in. The add-in ships **27** 
 ![Branded Excel hero — a CELNET.RFQ formula in the bar, a two-way RFQ spill, the full Greek vector spilling from CELNET.GREEKS, a smile grid from CELNET.SURFACE, live CELNET.SERIES observable cells, and the connected Celnet task pane.](../assets/celnet-capabilities/shot-10-excel-grid-branded.png)
 *The branded Excel surface: live two-way prices, spilled Greeks, a smile grid, and streaming observables — all served from the engine over the one contract.*
 
-### 10.1 Design principles
+## 10.1 Design principles
 
 Three rules make the add-in safe to trust on a live desk. (`excel/src/functions/functions.ts`, header doc-comment + per-function bodies.)
 
@@ -19,11 +19,11 @@ Three rules make the add-in safe to trust on a live desk. (`excel/src/functions/
 
 Failures are typed, not silent: the add-in surfaces structured **`#CELNET_*`** spreadsheet errors — a bad-argument error (`#CELNET_ARG!`, raised for any shaping/validation failure) is distinct from a generic transport error (`#CELNET_ERR!`), and the streaming cells flip to a visible `(stale)` / `(resync)` state on a heartbeat gap rather than freezing as live — so a mistyped tenor, a dropped connection, and a stale feed are visibly distinct rather than all collapsing to `#VALUE!`.
 
-### 10.2 The complete `CELNET.*` function reference
+## 10.2 The complete `CELNET.*` function reference
 
 All 27 functions, grouped by family. Signatures are the exact worksheet argument lists (`@customfunction` / `@param` metadata in `excel/src/functions/functions.ts`); optional arguments are shown in `[brackets]`. "Spill" describes the dynamic-array shape returned. Every priced spill ends in the **convention footer** described in §10.1. The **`std_error` row** is present **only** when the product is Monte-Carlo-priced *and* the server stamped a `price_std_error` — an analytic/PDE/closed-form price never carries one, so a cell never reads a precision claim its number does not have. (This is the §6 honest boundary applied per-cell: MC products carry a price standard error; they are never rendered as machine-precision.)
 
-#### Pricing & vanilla Greeks
+### Pricing & vanilla Greeks
 
 | Function | Signature | Behaviour | Spill |
 |----------|-----------|-----------|-------|
@@ -31,7 +31,7 @@ All 27 functions, grouped by family. Signatures are the exact worksheet argument
 | `CELNET.GREEKS` | `(pair, tenor, strikeOrDelta, callPut, notional)` | The full **13-Greek** vector for the structure in one pass. | 14×2: 13 `[name, value]` rows + a convention footer row |
 | `CELNET.RFQ` | `(pair, tenor, strikeOrDelta, callPut, notional)` | Requests a two-way quote; the `quoteId` binds the task-pane Trade ticket and carries a last-look validity. | 1×N: `[bid, offer, quoteId, validUntil]` + convention footer |
 
-#### Exotics & structured products
+### Exotics & structured products
 
 Each exotic spill is `["premium", PV]`, an optional `["std_error", σ̄]` row (only when MC-priced — see column), the 13 risk Greeks, and the convention footer. Every premium is the server's `celnet-exotics` value, bit-identical to the SDK/CLI.
 
@@ -55,7 +55,7 @@ Each exotic spill is `["premium", PV]`, an optional `["std_error", σ̄]` row (o
 
 > **Honest exception — `CELNET.BASKET` Greeks.** Multi-asset basket Greeks (a per-leg N×{spot,vol} Jacobian plus cross-gammas) are a distinct larger increment and are **not yet computed**: the server returns a **zeroed** Greek strip alongside the real, measured premium and MC std-error. The basket spill's Greek rows are therefore honestly `0` — the headline (premium + its std-error) is real; the sensitivities are deferred, not faked. (`functions.ts` `BASKET` doc-comment + `shaping.ts`.)
 
-#### Surface marking
+### Surface marking
 
 | Function | Signature | Behaviour | Spill / phase |
 |----------|-----------|-----------|---------------|
@@ -68,14 +68,14 @@ Each exotic spill is `["premium", PV]`, an optional `["std_error", σ̄]` row (o
 ![The Celnet Excel task pane, connected — RFQ entry, the Contribute-Mark two-phase confirm, and the VV / SABR / SVI / SSVI / eSSVI smile-model selector.](../assets/celnet-capabilities/shot-09-excel-taskpane.png)
 *The task pane is the control surface for connection, RFQ, and the confirmed contribute-mark — including the smile-model selector (VV / SABR / SVI / SSVI / eSSVI) that drives `MARKSURFACE` and `MARK`.*
 
-#### Streaming
+### Streaming
 
 | Function | Signature | Behaviour |
 |----------|-----------|-----------|
 | `CELNET.SUBSCRIBE` | `(pair, tenor, strikeOrDelta, callPut, notional)` | Pins a live two-way to a cell, multiplexed on the **single** session and coalesced with identical-argument cells (refcounted; torn down on cell delete/recalc, no orphans). Re-emits on every Update; flips to a visible `(stale)` / `(resync)` state on a heartbeat gap rather than freezing. *(`@streaming`.)* |
 | `CELNET.SERIES` | `(pair, observable, [tenor], [delta])` | Pins a live market observable (trend series). Observables: **ATM** (ATM vol), **SPOT**, **RR** (risk reversal), **BF** (butterfly), **FWD** (forward). ATM/RR/BF/FWD need a `tenor`; RR/BF additionally need a `delta` wing (e.g. `0.25` or `25`). SPOT is tenor-independent. Same multiplex stream that drives the GUI's trend modes. *(`@streaming`.)* |
 
-#### Server-side risk & observability
+### Server-side risk & observability
 
 These functions read the firm's **server-computed** aggregate — the API-first parity rule: a client never loops positions and sums. The roll-up, entitlement-pruning, and reporting-numeraire conversion all happen server-side in `celnet-risk-normalize`/`celnet-risk-cube`, so an Excel cell is bit-identical to the GUI Book/Risk views.
 
@@ -86,7 +86,7 @@ These functions read the firm's **server-computed** aggregate — the API-first 
 | `CELNET.LIMITS` | `(scope, numeraire, [rates])` | The limit-tree utilization + RAG for a scope node — each limit's cap / exposure / ratio / RAG status / enforcement / headroom, computed server-side against the node's aggregated exposure. `scope` = `DIM:value` or `FIRM`. | Limit grid: header, one row per limit, worst-RAG / hard-breach footer |
 | `CELNET.STATUS` | `()` | Live server observability: connection state plus the latest `Heartbeat`'s drain-side price latency (**p50 / p99 / p99.9**, HdrHistogram), the `celnet-fanout` ring's conflation-drop count (`received + skipped == produced` accounting), and the surface-version / correlation provenance echo. **Passive** — never sends a request; reads the most recent beat the shared connection already saw, so it is safe to leave live. | 2-row spill: header + a live server-health value row |
 
-### 10.3 Desk workflows in the spreadsheet
+## 10.3 Desk workflows in the spreadsheet
 
 Because the add-in rides the same contract as every other client, real desk work runs end-to-end inside Excel — and every result reconciles, to the last bit, with the GUI.
 

@@ -1,5 +1,5 @@
 //! `celnet-refstore` — the mastered reference-data + corporate-actions **ingestion & golden-source**
-//! layer (Phase B of `docs/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md`).
+//! layer (Phase B of `docs/fixed-income/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md`).
 //!
 //! This is the mutable evolution of the static `celnet-refdata` `Vec` into an **effective-dated,
 //! append-only, journal-backed golden source** plus the ingestion machinery that keeps it current

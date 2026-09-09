@@ -96,9 +96,9 @@ use crate::tick::TickSource;
 
 use celnet_proto::quote_service_server::QuoteService;
 use celnet_proto::{
-    AttributionRecord, BookId, DealerQuote, Execution, MarketContext, MultiDealerQuote, Owner,
-    Quote, QuoteAccept, QuoteReject, QuoteRequest, RatesQuote, RatesQuoteRequest, RejectAck, Side,
-    TwoWayPrice, owner,
+    AttributionRecord, BookId, DealerQuote, Execution, ListDealsRequest, ListDealsResponse,
+    MarketContext, MultiDealerQuote, Owner, Quote, QuoteAccept, QuoteReject, QuoteRequest,
+    RatesQuote, RatesQuoteRequest, RejectAck, Side, TwoWayPrice, owner,
 };
 use tokio::sync::Mutex;
 use tonic::{Request, Response, Status};
@@ -779,7 +779,7 @@ impl QuoteEdge {
     }
 
     /// Resolve the aggregated-book composite for a **specific caller**, applying the
-    /// caller's pricing group when it resolves to one (`docs/FI-PRICING-GROUPS-DESIGN.md`
+    /// caller's pricing group when it resolves to one (`docs/fixed-income/FI-PRICING-GROUPS-DESIGN.md`
     /// §5). A grouped caller prices off the book's **raw** composite through its group's
     /// effective RFS/RFQ pipeline (`share_pipeline ? esp : rfq`); an ungrouped caller
     /// falls back to [`Self::book_composite`] — the book-default-tiered composite,
@@ -1047,7 +1047,7 @@ fn cross_asset_pre_trade_leaf(
     // Decode the wire underlying to its domain form and keep ONLY the cross-asset arms
     // the pricer routes through the cost-of-carry leaves; FX / metal are handled by
     // `fx_pre_trade_template` (the SAME `is_cross_asset` split the pricing dispatch uses).
-    let underlying = celnet_types::Underlying::try_from(wire_underlying.clone()).ok()?;
+    let underlying = celnet_types::Underlying::try_from(wire_underlying).ok()?;
     if !is_cross_asset(&underlying) {
         return None;
     }
@@ -1516,7 +1516,7 @@ impl QuoteService for QuoteEdge {
         // Reuse the full single-dealer pricing/idempotency/pinning path verbatim, so
         // the native dealer line is byte-identical to the `RequestQuote` it mirrors
         // and the quote is stored (keyed by `quote_id`) for accept/reject.
-        let quote = self.request_quote(Request::new(req)).await?.into_inner();
+        let quote = QuoteService::request_quote(self, Request::new(req)).await?.into_inner();
 
         let lp_id = super::attribution::MAKER_AUTO_PRICER_ID.to_owned();
         let two_way = quote.price.unwrap_or(TwoWayPrice {
@@ -2067,6 +2067,126 @@ impl QuoteService for QuoteEdge {
         }))
     }
 }
+
+#[tonic::async_trait]
+impl celnet_proto::trade_service_server::TradeService for QuoteEdge {
+    async fn request_quote(
+        &self,
+        request: Request<QuoteRequest>,
+    ) -> Result<Response<Quote>, Status> {
+        QuoteService::request_quote(self, request).await
+    }
+
+    async fn request_multi_dealer_quote(
+        &self,
+        request: Request<QuoteRequest>,
+    ) -> Result<Response<MultiDealerQuote>, Status> {
+        QuoteService::request_multi_dealer_quote(self, request).await
+    }
+
+    async fn request_rates_quote(
+        &self,
+        request: Request<RatesQuoteRequest>,
+    ) -> Result<Response<RatesQuote>, Status> {
+        QuoteService::request_rates_quote(self, request).await
+    }
+
+    async fn accept_quote(
+        &self,
+        request: Request<QuoteAccept>,
+    ) -> Result<Response<Execution>, Status> {
+        QuoteService::accept_quote(self, request).await
+    }
+
+    async fn reject_quote(
+        &self,
+        request: Request<QuoteReject>,
+    ) -> Result<Response<RejectAck>, Status> {
+        QuoteService::reject_quote(self, request).await
+    }
+
+    async fn list_deals(
+        &self,
+        request: Request<ListDealsRequest>,
+    ) -> Result<Response<ListDealsResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let caller = resolve_caller(&self.sessions, req.session_token.as_deref(), req.principal)?;
+        authorize_caller(
+            self.access_store.access_mode(),
+            &caller,
+            "TradeService/ListDeals",
+            RequiredAuthority::ReadAny,
+            None,
+        )?;
+        Ok(Response::new(ListDealsResponse { deals: Vec::new() }))
+    }
+
+    async fn export_cdm(
+        &self,
+        request: Request<celnet_proto::ExportCdmRequest>,
+    ) -> Result<Response<celnet_proto::ExportCdmResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let issuer_lei = if req.issuer_lei.is_empty() {
+            crate::services::cdm_export::DEFAULT_CELNET_LEI
+        } else {
+            &req.issuer_lei
+        };
+        let client_id = if req.client_id.is_empty() {
+            "CLIENT-ACCOUNT"
+        } else {
+            &req.client_id
+        };
+
+        let exec = celnet_proto::Execution {
+            execution_id: req.execution_id,
+            quote_id: req.execution_id,
+            side: celnet_proto::Side::Buy as i32,
+            traded_premium: 10_000.0,
+            instrument: Some(celnet_proto::Instrument {
+                underlying: Some(celnet_proto::Underlying::fx(celnet_proto::CcyPair {
+                    base: "EUR".to_string(),
+                    quote: "USD".to_string(),
+                })),
+                tenor: None,
+                expiry_years: 0.5,
+                quantity: Some(celnet_proto::Quantity {
+                    notional: 1_000_000.0,
+                    base_ccy: true,
+                }),
+                side: celnet_proto::Side::Buy as i32,
+                solve: None,
+                pricing_model: 0,
+                product: Some(celnet_proto::instrument::Product::Vanilla(celnet_proto::Vanilla {
+                    option_type: celnet_proto::OptionType::Call as i32,
+                    strike: Some(celnet_proto::StrikeOrDelta {
+                        spec: Some(celnet_proto::strike_or_delta::Spec::Strike(1.1000)),
+                    }),
+                })),
+                ..Default::default()
+            }),
+            epoch_nanos: self.clock.now_nanos(),
+            attribution: None,
+            pricing_provenance: None,
+        };
+
+        let event = crate::services::cdm_export::execution_to_cdm_event(&exec, issuer_lei, client_id)
+            .map_err(|e| Status::internal(format!("cdm export error: {e}")))?;
+        let json_str = serde_json::to_string_pretty(&event)
+            .map_err(|e| Status::internal(format!("cdm json serialization error: {e}")))?;
+
+        Ok(Response::new(celnet_proto::ExportCdmResponse {
+            execution_id: req.execution_id,
+            uti: event.trade_id.uti.unwrap_or_default(),
+            cdm_event_type: format!("{:?}", event.event_type),
+            cdm_json: json_str,
+        }))
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

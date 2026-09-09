@@ -1,6 +1,6 @@
 /**
  * PricingFeatureCard — one draggable feature card in the pricing-group pipeline
- * canvas (docs/FI-PRICING-GROUPS-DESIGN.md §8.5). Renders the card header (kind
+ * canvas (docs/fixed-income/FI-PRICING-GROUPS-DESIGN.md §8.5). Renders the card header (kind
  * badge + keyboard reorder up/down + remove) and, when expanded, the per-kind
  * inline configuration:
  *   MID SHIFT  → shift + unit + a nullable reference-price override

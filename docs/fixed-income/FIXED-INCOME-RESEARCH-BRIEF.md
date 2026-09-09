@@ -1,6 +1,6 @@
 # Fixed Income — Deep-Research Brief (agent charter & requirements)
 
-**Status:** Draft base — 2026-06-21 · Branch `feature/fixedincome`
+**Status:** FOUNDATIONAL RESEARCH REFERENCE — Landed across fixed-income subsystem (`celnet-rates`, `celnet-bond`, `celnet-refdata`, `celnet-tiering`, `celnet-aggregation`)
 **Owner:** (operator) · **Executor:** a deep-research agent (see §1)
 **Bar:** the same SOTA, validated, OSS-only standard the FX-options platform already meets.
 

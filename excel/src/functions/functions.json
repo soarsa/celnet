@@ -1060,6 +1060,192 @@
         "type": "any"
       },
       "parameters": []
+    },
+    {
+      "id": "MARGIN",
+      "name": "MARGIN",
+      "description": "Clearing initial margin breakdown: Total Initial Margin (IM), Expected Shortfall (ES 97.5%), VaR, and stress add-ons.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "portfolioId",
+          "description": "Target portfolio identifier.",
+          "type": "string"
+        },
+        {
+          "name": "lookbackDays",
+          "description": "Historical lookback window in days (default 500).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "confidenceLevel",
+          "description": "Statistical confidence level (default 0.99 for 99%).",
+          "type": "number",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "PRETRADEMARGIN",
+      "name": "PRETRADEMARGIN",
+      "description": "Pre-trade initial margin simulation and what-if collateral check for an incremental order.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "portfolioId",
+          "description": "Target portfolio identifier.",
+          "type": "string"
+        },
+        {
+          "name": "symbol",
+          "description": "Asset or currency symbol.",
+          "type": "string"
+        },
+        {
+          "name": "notional",
+          "description": "Trade notional amount.",
+          "type": "number"
+        },
+        {
+          "name": "isBuy",
+          "description": "True for buy, false for sell.",
+          "type": "boolean"
+        },
+        {
+          "name": "availableCollateral",
+          "description": "Available unencumbered collateral.",
+          "type": "number"
+        }
+      ]
+    },
+    {
+      "id": "ALGO",
+      "name": "ALGO",
+      "description": "Submit and inspect an optimal algorithmic execution order (TWAP / Almgren-Chriss liquidation).",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "symbol",
+          "description": "Asset symbol (e.g. EURUSD, AAPL).",
+          "type": "string"
+        },
+        {
+          "name": "quantity",
+          "description": "Total order quantity.",
+          "type": "number"
+        },
+        {
+          "name": "arrivalPrice",
+          "description": "Pre-trade arrival reference price.",
+          "type": "number"
+        },
+        {
+          "name": "isBuy",
+          "description": "True for buy, false for sell.",
+          "type": "boolean"
+        },
+        {
+          "name": "durationSeconds",
+          "description": "Execution horizon duration in seconds.",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "slices",
+          "description": "Number of child order slices.",
+          "type": "number",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "ALGOORDERS",
+      "name": "ALGOORDERS",
+      "description": "Roster of all active algorithmic execution parent orders across the desk.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": []
+    },
+    {
+      "id": "CLUSTER",
+      "name": "CLUSTER",
+      "description": "Distributed Raft consensus cluster membership, leader status, and node health.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": []
+    },
+    {
+      "id": "UPGRADESTATUS",
+      "name": "UPGRADESTATUS",
+      "description": "Real-time zero-downtime rolling upgrade monitor and shadow twin validation status.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": []
+    },
+    {
+      "id": "CDM",
+      "name": "CDM",
+      "description": "Export trade execution lifecycle as an ISDA CDM 2026 digital event object.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "executionId",
+          "description": "Trade execution identifier.",
+          "type": "number"
+        },
+        {
+          "name": "uti",
+          "description": "Unique Trade Identifier (UTI).",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "ATTESTATION",
+      "name": "ATTESTATION",
+      "description": "Hardware TPM 2.0 PCR quote cryptographic attestation verification.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "expectedFingerprint",
+          "description": "Optional expected platform fingerprint.",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "LICENSE",
+      "name": "LICENSE",
+      "description": "Dynamic institutional capability token license and cryptographically attenuated entitlements.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": []
     }
   ]
 }

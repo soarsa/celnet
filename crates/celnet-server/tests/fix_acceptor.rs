@@ -689,3 +689,55 @@ async fn fix_hard_limit_blown_lift_is_rejected() {
     .await
     .expect("test timed out");
 }
+
+/// Build an Equity option `QuoteRequest(R)` conforming to FIX 5.0 SP2 / cross-asset dialect.
+fn build_equity_quote_request<'a>(
+    req_id: &'a [u8],
+    symbol: &'a [u8],
+    strike: f64,
+    expiry_years: f64,
+) -> impl FnOnce(&Header<'_>, &mut FrameEncoder) -> Vec<u8> + 'a {
+    move |h: &Header<'_>, e: &mut FrameEncoder| {
+        e.clear();
+        h.encode(MsgType::QuoteRequest, e);
+        e.push(131, req_id);
+        e.push(55, symbol); // Symbol = "AAPL"
+        e.push(460, b"7"); // Product = EQUITY
+        e.push(167, b"OPT"); // Option
+        e.push(201, b"1"); // Call
+        e.push(202, format!("{strike}").as_bytes());
+        e.push(38, b"1000"); // OrderQty = 1000
+        e.push(1194, b"0"); // European
+        e.push(TAG_EXPIRY_YEARS, format!("{expiry_years}").as_bytes());
+        e.finish()
+    }
+}
+
+/// End-to-end Cross-Asset FIX test: verify an equity option RFQ over real TCP loopback
+/// receives a valid two-way Quote(S) with positive bid/offer and tight spread.
+#[tokio::test]
+async fn fix_cross_asset_equity_rfq_returns_two_way_quote() {
+    tokio::time::timeout(DEADLINE, async {
+        let clock = Clock::system();
+        let (edge, fix_addr) = boot_edge_with_fix(clock).await;
+
+        let mut drv = Driver::connect(fix_addr).await;
+        drv.send_app(build_equity_quote_request(b"REQ-EQ-1", b"AAPL", 150.0, 0.5)).await;
+
+        let quote_raw = drv.next_app(MsgType::Quote).await;
+        let cursor = FrameCursor::parse(&quote_raw).expect("a well-formed Quote");
+        let view = QuoteView::new(cursor);
+
+        assert_eq!(view.quote_id().is_some(), true, "quote carries QuoteID(117)");
+        assert_eq!(view.symbol(), Some(b"AAPL".as_slice()), "quote carries Symbol(55)");
+        let bid = view.bid().expect("has valid parsed bid price");
+        let offer = view.offer().expect("has valid parsed offer price");
+        assert!(bid > 0.0, "bid is positive: {bid}");
+        assert!(offer > bid, "offer exceeds bid: {offer} > {bid}");
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test timed out");
+}
+

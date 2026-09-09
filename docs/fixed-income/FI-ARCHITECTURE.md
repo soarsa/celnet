@@ -14,7 +14,7 @@ estate, does **not** fork a parallel silo.
 > **Guardrails honoured.** OSS-only; **vendor-neutral purpose-named** crate/module/type identifiers
 > (CLAUDE.md §8 — `celnet-rates`, not a method name); **single additive contract** (no versioning,
 > guardrail #9 — rates arms append to the one `celnet.proto`); validate-don't-assert
-> ([`FI-VERIFICATION-CONTRACT.md`](./FI-VERIFICATION-CONTRACT.md)).
+> ([`FI-VERIFICATION-CONTRACT.md`](FI-VERIFICATION-CONTRACT.md)).
 
 ---
 
@@ -98,7 +98,7 @@ These mirror how the FX cross-asset/linear waves appended `Underlying`, `CarryMo
 `fx_swap`/`ndf`, and the RFQ messages ([`../INTERFACES.md`](../INTERFACES.md) §"Asset-class universe").
 Because `tools/check-verification-coverage.mjs` **parses the proto oneof**, each new rates arm
 automatically demands its golden vector + parity row + per-client exposure declaration
-([`FI-VERIFICATION-CONTRACT.md`](./FI-VERIFICATION-CONTRACT.md) §3).
+([`FI-VERIFICATION-CONTRACT.md`](FI-VERIFICATION-CONTRACT.md) §3).
 
 ### 2.1 The five-client surface (identical contract)
 
@@ -126,7 +126,7 @@ loop-and-sum** — the server rolls up over org dimensions in a reporting numera
   instrument-Jacobian delta ladder desks hedge on (findings §2.5/§2.6).
 - The risk-cube (bump-reprice over pillars × curves) reuses `celnet-risk-cube`'s additive roll-up +
   non-additive bump-and-revalue machinery; FRTB GIRR/CSR sensitivities reuse the same path and are
-  cross-checked against **ORE** ([`FI-VERIFICATION-CONTRACT.md`](./FI-VERIFICATION-CONTRACT.md) §2).
+  cross-checked against **ORE** ([`FI-VERIFICATION-CONTRACT.md`](FI-VERIFICATION-CONTRACT.md) §2).
 - `celnet-risk-normalize` provides the convention/numeraire canonicalisation the cube sits on — rates
   cashflows normalise through the **same** boundary as FX (single risk hierarchy).
 
@@ -140,7 +140,7 @@ loop-and-sum** — the server rolls up over org dimensions in a reporting numera
 > by **scope + license**, and FI capability is reached as **lenses** of the shared workspaces (Market
 > Data → curve lens, Risk → rates lens, Book → positions/deals lenses, Ticket → rates product family;
 > the standalone `RatesWorkspace` is deleted). "FI integrated, not a peer." The subsections below are
-> retained as design rationale; for the shipped IA see [`FI-STATUS.md`](./FI-STATUS.md) slice F.
+> retained as design rationale; for the shipped IA see [`FI-STATUS.md`](FI-STATUS.md) slice F.
 
 Per the earlier **locked D2 decision**, the GUI was to gain a **top-level asset-class tab layer ABOVE
 the existing workspace rail**, so each domain owned its own workspace set (`OPEN-QUESTIONS.md` D2).
@@ -212,9 +212,9 @@ rail becomes domain-parameterised, the Shell and keyboard grammar stay data-driv
 - **Q1** currency scope (sizes the calendar/fixing static) · **Q4** v1 single-OIS-discount (assumed) ·
   **Q10** default interpolation · **Q11** STIR convexity placeholder · **Q12** calendar/fixing
   sourcing · **Q8/Q9** oracle-engine exclusions · **Q13** CME-CF third anchor. See the per-doc
-  "pending Q*" notes in [`FI-CURVES-SPEC.md`](./FI-CURVES-SPEC.md),
-  [`FI-CONVENTIONS.md`](./FI-CONVENTIONS.md), and
-  [`FI-VERIFICATION-CONTRACT.md`](./FI-VERIFICATION-CONTRACT.md).
+  "pending Q*" notes in [`FI-CURVES-SPEC.md`](FI-CURVES-SPEC.md),
+  [`FI-CONVENTIONS.md`](FI-CONVENTIONS.md), and
+  [`FI-VERIFICATION-CONTRACT.md`](FI-VERIFICATION-CONTRACT.md).
 
 **Deferred (later passes, flagged not half-built):** `celnet-rates-vol` (swaptions/caps —
 Bachelier/normal-SABR/Hull-White/G2++), credit/CDS, inflation, cash-bond static-data breadth, full

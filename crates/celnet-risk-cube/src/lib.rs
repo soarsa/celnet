@@ -1,5 +1,5 @@
 //! Celnet single-node hierarchical risk **cube** (`docs/RISK-HIERARCHY.md`
-//! §2.1/§2.5/§3.2, `docs/EXPERIENCE-ARCHITECTURE.md` P2-5).
+//! §2.1/§2.5/§3.2, `docs/clients/EXPERIENCE-ARCHITECTURE.md` P2-5).
 //!
 //! # What this crate is
 //!

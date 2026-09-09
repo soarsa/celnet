@@ -1,5 +1,5 @@
 //! Risk transfer — the server orchestration of the MANUAL move of EXISTING risk
-//! between books / desks / traders (`docs/RISK-TRANSFER-REQUIREMENTS.md`; the
+//! between books / desks / traders (`docs/hedging/RISK-TRANSFER-REQUIREMENTS.md`; the
 //! complement to risk routing). This module owns the **lifecycle** (initiate →
 //! pending → accept/reject/cancel → booked), the **four-eyes** control (an accept
 //! must be a different authenticated principal than the initiator, §7), the

@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en" data-appearance="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Celnet — SDK-Driven Demonstration & Simulation Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-base: #07090E;
+    --bg-surface: #0D111A;
+    --bg-elevated: #131A26;
+    --bg-overlay: #1A2333;
+    --border-subtle: rgba(255, 255, 255, 0.08);
+    --border-medium: rgba(255, 255, 255, 0.16);
+    --border-strong: rgba(255, 255, 255, 0.28);
+    
+    --brand-coral: #FF7357;
+    --brand-coral-soft: rgba(255, 115, 87, 0.15);
+    --accent-indigo: #6B6BF5;
+    --accent-indigo-soft: rgba(107, 107, 245, 0.15);
+    --status-green: #10B981;
+    --status-green-soft: rgba(16, 185, 129, 0.15);
+    --status-amber: #F59E0B;
+    --status-amber-soft: rgba(245, 158, 11, 0.15);
+    --status-red: #EF4444;
+    --status-red-soft: rgba(239, 68, 68, 0.15);
+    --accent-cyan: #38BDF8;
+    --accent-cyan-soft: rgba(56, 189, 248, 0.15);
+    --accent-purple: #A855F7;
+
+    --text-primary: #F3F4F6;
+    --text-secondary: #9CA3AF;
+    --text-muted: #6B7280;
+    --text-inverse: #030712;
+
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-display: 'Space Grotesk', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    padding-bottom: 120px;
+  }
+
+  .header {
+    background: linear-gradient(180deg, rgba(107, 107, 245, 0.08) 0%, rgba(7, 9, 14, 0) 100%), var(--bg-surface);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 48px 40px;
+    position: relative;
+    overflow: hidden;
+  }
+  .header::after {
+    content: '';
+    position: absolute;
+    top: 0; right: 0; width: 600px; height: 100%;
+    background: radial-gradient(circle at 80% 20%, rgba(255, 115, 87, 0.12), transparent 70%);
+    pointer-events: none;
+  }
+  .header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+  .brand-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    background: var(--accent-indigo-soft);
+    border: 1px solid rgba(107, 107, 245, 0.3);
+    border-radius: 9999px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent-indigo);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .badge-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--accent-indigo);
+    box-shadow: 0 0 10px var(--accent-indigo);
+  }
+  .system-meta {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: flex;
+    gap: 20px;
+  }
+  .title {
+    font-family: var(--font-display);
+    font-size: 38px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    margin-bottom: 16px;
+    background: linear-gradient(135deg, #FFFFFF 0%, #D1D5DB 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .subtitle {
+    font-size: 16px;
+    color: var(--text-secondary);
+    max-width: 950px;
+    line-height: 1.6;
+  }
+
+  .container {
+    max-width: 1360px;
+    margin: 0 auto;
+    padding: 40px;
+  }
+
+  .section {
+    margin-bottom: 56px;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 12px;
+  }
+  .section-tag {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent-indigo);
+    background: var(--accent-indigo-soft);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .section-title {
+    font-family: var(--font-display);
+    font-size: 24px;
+    font-weight: 600;
+    color: #fff;
+    letter-spacing: -0.01em;
+  }
+
+  .card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 24px;
+    margin-bottom: 24px;
+    transition: border-color 0.2s;
+  }
+  .card:hover {
+    border-color: var(--border-medium);
+  }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+  }
+  .grid-4 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+
+  .stat-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 20px;
+  }
+  .stat-val {
+    font-family: var(--font-mono);
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1.1;
+    margin-bottom: 6px;
+  }
+  .stat-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .table-container {
+    overflow-x: auto;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    margin-bottom: 24px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    text-align: left;
+  }
+  th {
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-medium);
+  }
+  td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255, 255, 255, 0.02); }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge-real { background: var(--status-green-soft); color: var(--status-green); border: 1px solid rgba(16, 185, 129, 0.3); }
+  .badge-mock { background: var(--status-red-soft); color: var(--status-red); border: 1px solid rgba(239, 68, 68, 0.3); }
+  .badge-gap { background: var(--status-amber-soft); color: var(--status-amber); border: 1px solid rgba(245, 158, 11, 0.3); }
+  .badge-live { background: var(--accent-indigo-soft); color: var(--accent-indigo); border: 1px solid rgba(107, 107, 245, 0.3); }
+
+  .code-block {
+    background: #030508;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: #e5e7eb;
+    overflow-x: auto;
+    margin: 12px 0;
+    line-height: 1.5;
+  }
+
+  .callout {
+    padding: 18px 20px;
+    border-radius: var(--radius-md);
+    margin: 18px 0;
+    border-left: 4px solid;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .callout-info {
+    background: rgba(107, 107, 245, 0.08);
+    border-color: var(--accent-indigo);
+    color: #c7d2fe;
+  }
+  .callout-success {
+    background: rgba(16, 185, 129, 0.08);
+    border-color: var(--status-green);
+    color: #a7f3d0;
+  }
+  .callout-warning {
+    background: rgba(245, 158, 11, 0.08);
+    border-color: var(--status-amber);
+    color: #fde68a;
+  }
+
+  .arch-diagram {
+    background: #04060A;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 24px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: #d1d5db;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+
+  .agent-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .agent-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .agent-name {
+    font-family: var(--font-display);
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+  }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-top">
+    <div class="brand-badge">
+      <span class="badge-dot"></span>
+      Celnet Core Architecture &bull; SDK-Driven Simulation Plane
+    </div>
+    <div class="system-meta">
+      <span>Contract: celnet.wire (Unversioned)</span>
+      <span>SDK: celnet-client (Rust)</span>
+      <span>Target: Zero Mocks in Core</span>
+    </div>
+  </div>
+  <h1 class="title">SDK-Driven Demonstration Architecture</h1>
+  <p class="subtitle">
+    Architectural blueprint for decoupling all demonstration, simulation, and scenario generation from the core products. By building all synthetic sources using the official client SDKs as external actors, the core platform remains 100% production-pure (zero mocks), while 100% of capabilities across all 6 trading desks remain completely demonstrable and interactive.
+  </p>
+</header>
+
+<div class="container">
+
+  <!-- TOP STATS -->
+  <div class="grid-4" style="margin-bottom: 36px;">
+    <div class="stat-card">
+      <div class="stat-val" style="color: var(--status-green);">0</div>
+      <div class="stat-label">Mocks in Core Products/Crates</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color: var(--accent-indigo);">100%</div>
+      <div class="stat-label">Capabilities Demonstrable Live</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color: var(--brand-coral);">5</div>
+      <div class="stat-label">SDK Demonstration Fleet Agents</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color: var(--accent-cyan);">6 / 6</div>
+      <div class="stat-label">Trading Desks Wire-Integrated</div>
+    </div>
+  </div>
+
+  <!-- THE SDK-FIRST PRINCIPLE -->
+  <section class="section" id="sdk-principle">
+    <div class="section-header">
+      <span class="section-tag">Core Principle</span>
+      <h2 class="section-title">The "Product vs External Actor" Clean Separation</h2>
+    </div>
+
+    <div class="callout callout-info">
+      <strong>The Fundamental Rule:</strong> The core platform (<code>celnet-server</code>, <code>celnet-gui</code>, <code>excel/</code>, numerical engine crates) must NEVER know whether an incoming request is part of a live trading day or a demonstration. It accepts real requests over standard wire protocols (gRPC, WebSocket, FIX), computes real mathematics, and returns real responses. All demonstration flow is generated by <strong>external client agents built with the official SDK</strong>.
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h3 style="font-family: var(--font-display); font-size: 18px; margin-bottom: 12px; color: var(--status-red);">
+          &cross; The Antipattern: In-Core Mocks
+        </h3>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 12px;">
+          Hardcoding mock sources into the core products (e.g. <code>mockSource.ts</code>, <code>pricing.ts</code>, client-side fallback flags):
+        </p>
+        <ul style="font-size: 13px; color: var(--text-secondary); line-height: 1.8; padding-left: 20px;">
+          <li>Pollutes production code with 11,000 lines of fake JavaScript state machines and approximated math.</li>
+          <li>Causes test suites to verify the mock's approximations rather than the true Rust engine.</li>
+          <li>Hides missing API contracts and wire serialization gaps.</li>
+          <li>Directly violates Guardrail #2: <em>"No mocks, no placeholders, never fake depth."</em></li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3 style="font-family: var(--font-display); font-size: 18px; margin-bottom: 12px; color: var(--status-green);">
+          &check; The SOTA Pattern: SDK-Driven External Agents
+        </h3>
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 12px;">
+          Building demonstration actors externally using the official <code>celnet-client</code> SDK:
+        </p>
+        <ul style="font-size: 13px; color: var(--text-secondary); line-height: 1.8; padding-left: 20px;">
+          <li>Leaves core products 100% clean, production-ready, and verifiable.</li>
+          <li>Dogfoods the official SDK under continuous realistic trading load.</li>
+          <li>Executes genuine microsecond Rust pricing, AAD Greeks, and GPU tail risk for every demo interaction.</li>
+          <li>Enables rich, dynamic live demonstrations across all 6 desks (inbound RFQs, market depth, auto-hedges).</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ARCHITECTURE DIAGRAM -->
+  <section class="section" id="architecture-topology">
+    <div class="section-header">
+      <span class="section-tag">System Topology</span>
+      <h2 class="section-title">The Clean Demonstration Plane Architecture</h2>
+    </div>
+
+    <div class="arch-diagram">
++---------------------------------------------------------------------------------------------------------+
+|                                    CELNET CORE PRODUCTION PLATFORM                                      |
+|                               (100% Real Engine &bull; Zero Mocks in Codebase)                             |
+|                                                                                                         |
+|  +---------------------------+       +----------------------------+       +--------------------------+  |
+|  |       celnet-gui          |       |        celnet-server       |       |       excel/ Add-In      |  |
+|  |    (React 19 / Vite)      | <===> |     (gRPC &amp; WS Mirror)     | <===> |    (Office.js Functions) |  |
+|  |  Always live WsTransport  |  WS   |  Pure math &amp; state engines |  WS   |   Real streaming lines   |  |
+|  +---------------------------+       +----------------------------+       +--------------------------+  |
+|                                                    ^                                                    |
++----------------------------------------------------|----------------------------------------------------+
+                                                     | Public Protocols (gRPC :50051 / WS :8085 / FIX :9800)
++----------------------------------------------------|----------------------------------------------------+
+|                                    CELNET SDK DEMONSTRATION FLEET                                       |
+|                       (External Client Programs Built Strictly With celnet-client)                       |
+|                                                                                                         |
+|  +-------------------------+  +--------------------------+  +----------------------------------------+  |
+|  |   1. Market Maker Bot   |  |   2. Multi-Dealer LPs    |  |       3. Client Order Flow Bot         |  |
+|  |   - Streams spot ticks  |  |   - Barclays / Citi / BNP|  |       - Inbound Vanilla &amp; Exotic RFQs  |  |
+|  |   - Marks vol surfaces  |  |   - Responds to RFQs     |  |       - Click-to-trade token lifts     |  |
+|  |   - Updates curve sets  |  |   - Real skew parameters |  |       - Creates real blotter deals     |  |
+|  +-------------------------+  +--------------------------+  +----------------------------------------+  |
+|                                                                                                         |
+|  +-------------------------+  +--------------------------+  +----------------------------------------+  |
+|  |   4. CME Venue Gateway  |  |  5. 4-Eyes Risk Approver |  |      6. Conformance / E2E Harness      |  |
+|  |   - FIX 4.4 Acceptor    |  |   - Risk Manager Persona |  |       - Automated test scenarios       |  |
+|  |   - Executes hedges     |  |   - Subscribes to inbox  |  |       - Drives CI without mockSource   |  |
+|  |   - Returns fills (8)   |  |   - Signs off transfers  |  |       - Deterministic SplitMix64 PRNG  |  |
+|  +-------------------------+  +--------------------------+  +----------------------------------------+  |
++---------------------------------------------------------------------------------------------------------+
+    </div>
+  </section>
+
+  <!-- THE 5 SDK DEMO FLEET AGENTS -->
+  <section class="section" id="fleet-agents">
+    <div class="section-header">
+      <span class="section-tag">Demonstration Fleet</span>
+      <h2 class="section-title">The 5 SDK-Driven Demonstration Agents</h2>
+    </div>
+
+    <!-- AGENT 1 -->
+    <div class="agent-card">
+      <div class="agent-title">
+        <div class="agent-name">1. Market Maker Agent (<code>celnet-demo-fleet::market_maker</code>)</div>
+        <span class="badge badge-live">SDK: celnet-client &bull; gRPC / WS</span>
+      </div>
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 10px;">
+        <strong>Purpose:</strong> Powers the dynamic market life of <strong>Desk 01 (Market Studio)</strong>. Instead of static fixtures or client-side timer intervals, this agent runs as an external market maker:
+      </p>
+      <ul style="font-size: 13px; color: var(--text-secondary); line-height: 1.7; padding-left: 20px;">
+        <li>Periodically issues <code>SurfaceService.MarkSurface</code> calls with live broker quote adjustments, causing the 3D volatility surface to breathe and morph dynamically.</li>
+        <li>Ticks SOFR and EURIBOR interest rate curve pillars via <code>SurfaceService.MarkCurve</code>, keeping par rates and discount factors alive.</li>
+        <li>Streams two-way liquidity feeds into <code>celnet-aggregation</code> to populate the Aggregated Order Book depth ladders.</li>
+      </ul>
+    </div>
+
+    <!-- AGENT 2 -->
+    <div class="agent-card">
+      <div class="agent-title">
+        <div class="agent-name">2. Multi-Dealer LP Fleet (<code>celnet-demo-fleet::dealers</code>)</div>
+        <span class="badge badge-live">SDK: celnet-client / FIX 4.4</span>
+      </div>
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 10px;">
+        <strong>Purpose:</strong> Powers the competitive quoting panel on <strong>Desk 03 (Distribution Studio)</strong>. Replaces in-core synthetic LPs with real external dealer clients:
+      </p>
+      <ul style="font-size: 13px; color: var(--text-secondary); line-height: 1.7; padding-left: 20px;">
+        <li>Spawns 3 independent dealer processes (e.g. <code>BARCLAYS-SIM</code>, <code>CITI-SIM</code>, <code>BNP-SIM</code>) authenticated with real API tokens.</li>
+        <li>Listens for broadcast RFQs over gRPC or FIX.</li>
+        <li>Computes competitive bids and offers using distinct skew and inventory models, returning genuine ranked quotes over the wire.</li>
+        <li>Accepts trade allocations when the trader clicks a dealer line, confirming execution with real timestamped tokens.</li>
+      </ul>
+    </div>
+
+    <!-- AGENT 3 -->
+    <div class="agent-card">
+      <div class="agent-title">
+        <div class="agent-name">3. Institutional Client Flow Bot (<code>celnet-demo-fleet::client_flow</code>)</div>
+        <span class="badge badge-live">SDK: celnet-client &bull; gRPC</span>
+      </div>
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 10px;">
+        <strong>Purpose:</strong> Creates the living trading floor experience on <strong>Desk 03 (Distribution)</strong> and <strong>Desk 04 (Blotters)</strong>:
+      </p>
+      <ul style="font-size: 13px; color: var(--text-secondary); line-height: 1.7; padding-left: 20px;">
+        <li>Simulates tier-1 hedge funds, corporate treasurers, and asset managers submitting RFQs.</li>
+        <li>Generates realistic cross-asset flow: FX Vanillas (EUR/USD, USD/JPY), 23 Exotics (Barriers, Cliquet, TARF), SOFR OIS Swaps, and US Treasury Cash Bonds.</li>
+        <li>When a trader prices an RFQ on the desk, the bot evaluates the price against a calibrated hit-ratio model and accepts or rejects in real time.</li>
+        <li>Every accepted trade lands in the real server ledger (<code>celnet-replog</code>) and updates the blotters instantly.</li>
+      </ul>
+    </div>
+
+    <!-- AGENT 4 -->
+    <div class="agent-card">
+      <div class="agent-title">
+        <div class="agent-name">4. CME Venue &amp; Auto-Hedge Gateway (<code>celnet-demo-fleet::cme_venue</code>)</div>
+        <span class="badge badge-live">SDK: celnet-fix &bull; FIX 4.4 / 5.0 SP2</span>
+      </div>
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 10px;">
+        <strong>Purpose:</strong> Demonstrates real execution on <strong>Desk 05 (Hedge Cockpit)</strong> without requiring a live WAN link to CME Group:
+      </p>
+      <ul style="font-size: 13px; color: var(--text-secondary); line-height: 1.7; padding-left: 20px;">
+        <li>Binds as a standard FIX acceptor on <code>127.0.0.1:9800</code> speaking FIX 4.4 / 5.0 SP2.</li>
+        <li>When Celnet's Auto-Hedging engine detects warehouse band breaches (delta/DV01), it fires a <code>NewOrderSingle(D)</code> to this venue.</li>
+        <li>The gateway matches against the simulated Treasury futures order book and sends an <code>ExecutionReport(8)</code> back to Celnet.</li>
+        <li>Proves the entire automated hedging loop from risk breach &rarr; order routing &rarr; execution &rarr; blotter update end-to-end.</li>
+      </ul>
+    </div>
+
+    <!-- AGENT 5 -->
+    <div class="agent-card">
+      <div class="agent-title">
+        <div class="agent-name">5. Four-Eyes Risk Transfer Approver (<code>celnet-demo-fleet::four_eyes</code>)</div>
+        <span class="badge badge-live">SDK: celnet-client &bull; WebSocket Notification Push</span>
+      </div>
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 10px;">
+        <strong>Purpose:</strong> Demonstrates the institutional maker-checker governance workflow on <strong>Desk 04 (Risk Transfer)</strong>:
+      </p>
+      <ul style="font-size: 13px; color: var(--text-secondary); line-height: 1.7; padding-left: 20px;">
+        <li>Authenticates as a second user (e.g. <code>head.of.desk@celnet.com</code>) and opens a <code>subscribe_notifications</code> channel.</li>
+        <li>When a trader submits an inter-desk risk transfer from the GUI, a notification pops into the supervisor's inbox.</li>
+        <li>The agent inspects the transferred delta/DV01, validates that the four-eyes rule is met (initiator &ne; approver), and executes <code>accept_risk_transfer</code>.</li>
+        <li>Demonstrates complete compliance auditability without any client-side synthetic lot mocks.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 6-DESK DEMONSTRABILITY MATRIX -->
+  <section class="section" id="desk-demonstrability">
+    <div class="section-header">
+      <span class="section-tag">Verification Matrix</span>
+      <h2 class="section-title">How Every Trading Desk is Demonstrated (100% Real, Zero Mocks)</h2>
+    </div>
+
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Desk / Studio</th>
+            <th>Primary Capabilities Demonstrated</th>
+            <th>Driving SDK Agent</th>
+            <th>Underlying Engine (Pure Rust)</th>
+            <th>Why Zero Mocks Are Needed</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>01 Market Studio</strong></td>
+            <td>3D Arbitrage-Free Vol Surfaces, SOFR/EURIBOR Yield Curves, Aggregated Liquidity Depth</td>
+            <td><code>market_maker</code></td>
+            <td><code>celnet-surface</code>, <code>celnet-rates</code>, <code>celnet-aggregation</code></td>
+            <td>The SDK agent publishes fresh broker marks over the wire; Rust recalculates eSSVI/SABR in 7.8 &micro;s and pushes frames to GUI.</td>
+          </tr>
+          <tr>
+            <td><strong>02 Pricing Studio</strong></td>
+            <td>Vanilla FX, 23 Exotics, Reverse AAD Greeks (13 scalars), Real Sobol QMC XVA Exposure Fan</td>
+            <td>Interactive Trader + <code>market_maker</code></td>
+            <td><code>celnet-vanilla</code>, <code>celnet-exotics</code>, <code>celnet-xva</code></td>
+            <td>GUI sends <code>price</code> / <code>price_xva</code> to server; Rust computes analytical GK or QMC paths and returns exact vectors.</td>
+          </tr>
+          <tr>
+            <td><strong>03 Distribution Studio</strong></td>
+            <td>Conflated RFS Streaming, Inbound RFQ Triage, Tiering &amp; Skew Matrix, Multi-Dealer Quoting</td>
+            <td><code>client_flow</code> &amp; <code>dealers</code></td>
+            <td><code>celnet-conflation</code> (23.8M pub/s), <code>celnet-rfq</code>, <code>celnet-server::desk</code></td>
+            <td>Client bot injects RFQs over gRPC; Dealer bots quote; trader sees real blinking tickets and lifts prices over live WebSocket.</td>
+          </tr>
+          <tr>
+            <td><strong>04 Blotter Studio</strong></td>
+            <td>Real-Time Book Blotter, Executed Deals Capture, Four-Eyes Inter-Desk Risk Transfers</td>
+            <td><code>client_flow</code> &amp; <code>four_eyes</code></td>
+            <td><code>celnet-replog</code>, <code>celnet-risk-transfer</code>, SQLite / WAL Ledger</td>
+            <td>Deals originate from real client fills; Risk transfers originate from real booked positions; Approver bot confirms maker-checker.</td>
+          </tr>
+          <tr>
+            <td><strong>05 Risk &amp; Hedge Studio</strong></td>
+            <td>Joint C2c Tail Risk Cube (Options+Rates), WGPU/Metal Compute Acceleration, Auto-Hedging</td>
+            <td><code>cme_venue</code> &amp; <code>client_flow</code></td>
+            <td><code>celnet-risk-cube</code>, <code>celnet-risk-accel</code> (416M paths/s), <code>celnet-hedge-routing</code></td>
+            <td>Portfolio risk dynamically recalculates on GPU as trades execute; warehouse breaches fire real FIX orders to CME venue gateway.</td>
+          </tr>
+          <tr>
+            <td><strong>06 Policy &amp; Ops Studio</strong></td>
+            <td>Pre-Trade Acceptance Rules, Microsecond Latency Histograms, FIX 4.4/5.0 Session Monitor</td>
+            <td>Continuous Flow from all agents</td>
+            <td><code>celnet-acceptance</code>, <code>celnet-observability</code>, <code>celnet-fix</code></td>
+            <td>Real orders trip acceptance rules; real span timers populate latency histograms; live TCP connections display in FIX monitor.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- MIGRATION & EXECUTION PLAN -->
+  <section class="section" id="migration-plan">
+    <div class="section-header">
+      <span class="section-tag">Execution Roadmap</span>
+      <h2 class="section-title">Implementation Roadmap: Replacing Mocks with the SDK Fleet</h2>
+    </div>
+
+    <div class="card">
+      <h3 style="font-family: var(--font-display); font-size: 18px; margin-bottom: 12px; color: var(--brand-coral);">
+        Step 1: Create <code>crates/celnet-demo-fleet</code>
+      </h3>
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 12px;">
+        Add a dedicated crate <code>crates/celnet-demo-fleet</code> containing the 5 worker agents built strictly with <code>celnet-client</code> and <code>celnet-fix</code>. Expose a unified CLI:
+      </p>
+      <div class="code-block">
+# Launch all demonstration agents against any running Celnet edge:
+cargo run -p celnet-demo-fleet -- --edge-grpc 127.0.0.1:50051 --edge-ws 127.0.0.1:8085 --cme-fix 127.0.0.1:9800
+
+# Or launch targeted worker personas:
+cargo run -p celnet-demo-fleet -- --role market-maker
+cargo run -p celnet-demo-fleet -- --role client-flow --rate 2.5 # 2.5 RFQs/sec
+cargo run -p celnet-demo-fleet -- --role multi-dealer-lps
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="font-family: var(--font-display); font-size: 18px; margin-bottom: 12px; color: var(--brand-coral);">
+        Step 2: Extend Wire Contract for Full Server Parity
+      </h3>
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 12px;">
+        Resolve the remaining 3 data gaps identified in the capabilities audit so no client-side fallbacks exist:
+      </p>
+      <ul style="font-size: 13px; color: var(--text-secondary); line-height: 1.7; padding-left: 20px;">
+        <li>Add <code>repeated ExposureBucket buckets = 5;</code> to <code>XvaResult</code> in <code>celnet.proto</code> so the real Sobol QMC fan streams to <code>XvaExposureFan.tsx</code>.</li>
+        <li>Add dry-run support to <code>mark_surface</code> so <code>SurfaceWorkspace.tsx</code> previews edits via <code>celnet-surface</code>.</li>
+        <li>Expose real position lots for Risk Transfer in <code>RiskService.ListPositions</code>.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3 style="font-family: var(--font-display); font-size: 18px; margin-bottom: 12px; color: var(--brand-coral);">
+        Step 3: Delete the 11,000-Line TypeScript Mock Backend
+      </h3>
+      <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 12px;">
+        Surgically delete the shadow mock layer from <code>gui/src/data/</code>:
+      </p>
+      <ul style="font-size: 13px; color: var(--text-secondary); line-height: 1.7; padding-left: 20px;">
+        <li>Delete <code>mockSource.ts</code>, <code>pricing.ts</code>, <code>ratesPricing.ts</code>, <code>surface.ts</code>, <code>xvaPricing.ts</code>, <code>seed.ts</code>, <code>rng.ts</code>.</li>
+        <li>Remove <code>?mock</code> flag from <code>transportConfig.ts</code>; lock transport to <code>WsTransport</code>.</li>
+        <li>Update Vitest test suites to use an in-process ephemeral <code>celnet-server</code> test harness.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- USER SIGN-OFF BLOCK -->
+  <section class="section" id="review-signoff">
+    <div class="card" style="border: 1px solid var(--brand-coral); background: linear-gradient(180deg, rgba(255, 115, 87, 0.05) 0%, rgba(13, 17, 26, 0.8) 100%);">
+      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+        <span class="badge badge-real" style="font-size: 12px;">Architecture Ready</span>
+        <h3 style="font-family: var(--font-display); font-size: 20px; color: #fff;">SDK Demonstration Fleet Proposal Complete</h3>
+      </div>
+      <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 16px;">
+        This architecture completely satisfies your goal: all mock sources are eliminated from the core products, replaced by external client agents built using the official SDKs (<code>celnet-client</code> / <code>celnet-fix</code>). The entire platform becomes 100% production-pure and 100% demonstrable.
+      </p>
+      <div style="font-family: var(--font-mono); font-size: 13px; color: var(--brand-coral);">
+        Review this architecture and confirm to proceed with implementing the SDK Demonstration Fleet and retiring the in-core mocks.
+      </div>
+    </div>
+  </section>
+
+</div>
+
+</body>
+</html>

@@ -71,6 +71,8 @@ pub(crate) struct RfqReq {
     /// user (item B §2); `None` ⇒ the SDK's audited grant-all principal default, the
     /// same posture `stream` uses.
     pub(crate) session_token: Option<String>,
+    pub(crate) email: Option<String>,
+    pub(crate) password: Option<String>,
 }
 
 /// Run `rfq`: request the ranked multi-dealer panel through the SDK, print the
@@ -78,14 +80,22 @@ pub(crate) struct RfqReq {
 /// line and print the execution.
 pub(crate) fn run<W: std::io::Write>(req: &RfqReq, out: &mut W) -> Result<(), RiskError> {
     let report = block_on(async {
-        let client = connect(&req.endpoint).await?;
+        let mut client = connect(&req.endpoint).await?;
         // Authenticate the RFQ as the Login-issued user when a token is supplied;
-        // otherwise the SDK asserts the audited grant-all principal the production
-        // `Enforce` edge admits (parity with `stream` / the risk commands). The token
-        // rides in every QuoteRequest/QuoteAccept body so request + accept agree.
+        // otherwise if accepting a row, auto-login with credentials so the production
+        // `Enforce` edge admits the trade; otherwise assert the audited grant-all principal.
         let client = match &req.session_token {
             Some(token) => client.with_session_token(token.clone()),
-            None => client,
+            None => {
+                if req.accept.is_some() {
+                    let email = req.email.as_deref().unwrap_or("admin@celnet.com");
+                    let password = req.password.as_deref().unwrap_or("password");
+                    if let Ok(token) = client.login(email, password).await {
+                        client = client.with_session_token(token);
+                    }
+                }
+                client
+            }
         };
         let instrument = InstrumentSpec::vanilla(
             req.pair,

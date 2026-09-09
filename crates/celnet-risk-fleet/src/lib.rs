@@ -89,14 +89,21 @@
 #![forbid(unsafe_code)]
 
 pub mod additive;
+pub mod hedged_fan_in;
 pub mod rates;
+pub mod scenario_grid;
 
 pub use additive::{AdditiveAggregate, fan_in_additive_seq};
+pub use hedged_fan_in::{
+    HedgedError, HedgedFanInCoordinator, HedgedMetrics, HedgedMetricsSnapshot, HedgedPolicy,
+    HedgedResponse, WinningSource,
+};
 pub use rates::{
     KeyRateBucket, RatesFactKey, RatesFirmRollup, RatesFleetReducer, RatesLogicalShard,
     RatesNodeAggregate, RatesRiskFact, firm_aggregate_rates, partition_rates_facts,
     rates_partition_key_of,
 };
+pub use scenario_grid::{ExpectedShortfallAggregator, FrtbCurvatureAggregator, NonAdditiveRiskAggregator, ScenarioFleetReducer, ScenarioGridError, ScenarioGridVector};
 
 use celnet_core::ExoticLegPricer;
 use celnet_risk_cube::{

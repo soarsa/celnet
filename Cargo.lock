@@ -398,6 +398,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-algo"
+version = "0.0.0"
+dependencies = [
+ "bytemuck",
+ "celnet-core",
+ "celnet-types",
+ "libm",
+ "proptest",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "celnet-analytics"
 version = "0.0.0"
 dependencies = [
@@ -408,15 +421,28 @@ dependencies = [
 name = "celnet-bench"
 version = "0.0.0"
 dependencies = [
+ "celnet-algo",
  "celnet-conventions",
  "celnet-core",
  "celnet-engine",
+ "celnet-exchange-codecs",
+ "celnet-fanout",
  "celnet-gpu",
+ "celnet-journal",
+ "celnet-license",
+ "celnet-margin",
+ "celnet-plugin-api",
+ "celnet-plugin-host",
  "celnet-proto",
+ "celnet-rates-exotics",
+ "celnet-replog",
  "celnet-risk-cube",
  "celnet-risk-fleet",
  "celnet-risk-normalize",
+ "celnet-router",
+ "celnet-sbe",
  "celnet-server",
+ "celnet-shm",
  "celnet-surface",
  "celnet-types",
  "celnet-vanilla",
@@ -425,8 +451,10 @@ dependencies = [
  "futures-util",
  "hdrhistogram",
  "iai-callgrind",
+ "prost",
  "serde",
  "serde_json",
+ "tempfile",
  "thread-priority",
  "tokio",
  "tonic",
@@ -440,6 +468,18 @@ dependencies = [
  "celnet-rates",
  "celnet-types",
  "time",
+]
+
+[[package]]
+name = "celnet-c-api"
+version = "0.1.0"
+dependencies = [
+ "celnet-algo",
+ "celnet-core",
+ "celnet-rates-exotics",
+ "celnet-types",
+ "celnet-vanilla",
+ "libm",
 ]
 
 [[package]]
@@ -569,6 +609,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-demo"
+version = "0.0.0"
+dependencies = [
+ "celnet-algo",
+ "celnet-c-api",
+ "celnet-core",
+ "celnet-equity-vanilla",
+ "celnet-exchange-codecs",
+ "celnet-license",
+ "celnet-margin",
+ "celnet-plugin-api",
+ "celnet-plugin-host",
+ "celnet-rates-exotics",
+ "celnet-replog",
+ "celnet-server",
+ "celnet-shm",
+ "celnet-types",
+ "celnet-vanilla",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+]
+
+[[package]]
 name = "celnet-engine"
 version = "0.0.0"
 dependencies = [
@@ -601,6 +667,19 @@ dependencies = [
  "celnet-core",
  "celnet-types",
  "proptest",
+]
+
+[[package]]
+name = "celnet-exchange-codecs"
+version = "0.0.0"
+dependencies = [
+ "bytemuck",
+ "celnet-sbe",
+ "celnet-types",
+ "libm",
+ "proptest",
+ "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -714,6 +793,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-license"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "celnet-types",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "celnet-limits"
 version = "0.0.0"
 dependencies = [
@@ -751,6 +842,21 @@ dependencies = [
  "tokio",
  "tonic",
  "tracing",
+]
+
+[[package]]
+name = "celnet-margin"
+version = "0.0.0"
+dependencies = [
+ "bytemuck",
+ "celnet-core",
+ "celnet-rates",
+ "celnet-rates-risk",
+ "celnet-types",
+ "libm",
+ "proptest",
+ "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -814,6 +920,7 @@ name = "celnet-plugin-host"
 version = "0.0.0"
 dependencies = [
  "celnet-core",
+ "celnet-license",
  "celnet-plugin-api",
  "celnet-types",
  "celnet-vanilla",
@@ -848,6 +955,21 @@ dependencies = [
  "celnet-calendar",
  "celnet-types",
  "time",
+]
+
+[[package]]
+name = "celnet-rates-exotics"
+version = "0.0.0"
+dependencies = [
+ "bytemuck",
+ "celnet-core",
+ "celnet-qmc",
+ "celnet-rates",
+ "celnet-types",
+ "libm",
+ "proptest",
+ "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -945,6 +1067,8 @@ dependencies = [
  "celnet-router",
  "celnet-types",
  "proptest",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
@@ -986,13 +1110,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-sbe"
+version = "0.0.0"
+dependencies = [
+ "bytemuck",
+ "celnet-proto",
+ "celnet-types",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "celnet-server"
 version = "0.0.0"
 dependencies = [
+ "arc-swap",
  "argon2",
  "blake3",
  "celnet-acceptance",
  "celnet-aggregation",
+ "celnet-algo",
  "celnet-analytics",
  "celnet-bond",
  "celnet-calendar",
@@ -1006,6 +1145,7 @@ dependencies = [
  "celnet-engine",
  "celnet-entitlements",
  "celnet-equity-vanilla",
+ "celnet-exchange-codecs",
  "celnet-exotics",
  "celnet-fanout",
  "celnet-fix",
@@ -1015,26 +1155,31 @@ dependencies = [
  "celnet-limits",
  "celnet-linear",
  "celnet-lp-sim",
+ "celnet-margin",
  "celnet-observability",
  "celnet-plugin-api",
  "celnet-plugin-host",
  "celnet-proto",
  "celnet-rates",
+ "celnet-rates-exotics",
  "celnet-rates-risk",
  "celnet-refdata",
  "celnet-refstore",
  "celnet-replog",
  "celnet-rfq",
+ "celnet-risk-accel",
  "celnet-risk-cube",
  "celnet-risk-fleet",
  "celnet-risk-normalize",
  "celnet-risk-routing",
  "celnet-risk-transfer",
  "celnet-router",
+ "celnet-sbe",
  "celnet-surface",
  "celnet-testkit",
  "celnet-tiering",
  "celnet-types",
+ "celnet-upgrade",
  "celnet-vanilla",
  "celnet-xva",
  "futures-util",
@@ -1049,6 +1194,18 @@ dependencies = [
  "tokio-tungstenite",
  "tonic",
  "tracing",
+]
+
+[[package]]
+name = "celnet-shm"
+version = "0.0.0"
+dependencies = [
+ "celnet-sbe",
+ "celnet-types",
+ "crossbeam-utils",
+ "memmap2",
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1089,6 +1246,15 @@ version = "0.0.0"
 dependencies = [
  "libm",
  "serde",
+]
+
+[[package]]
+name = "celnet-upgrade"
+version = "0.0.0"
+dependencies = [
+ "celnet-license",
+ "celnet-replog",
+ "celnet-types",
 ]
 
 [[package]]
@@ -2073,6 +2239,15 @@ name = "memchr"
 version = "2.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b947ae49db0d222b1dbc6b113ce7248a3fc3a6ca21b696717bfc000ba4484d8"
+
+[[package]]
+name = "memmap2"
+version = "0.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "metrics"

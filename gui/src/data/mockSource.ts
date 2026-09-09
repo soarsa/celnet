@@ -182,6 +182,18 @@ import type {
   VegaBucket,
   XvaPricingRequest,
   XvaResult,
+  MarginCalculationRequest,
+  MarginCalculationResponse,
+  PreTradeMarginRequest,
+  PreTradeMarginResponse,
+  SubmitAlgoOrderRequest,
+  AlgoOrderResponse,
+  ListAlgoOrdersResponse,
+  ClusterTopologyResponse,
+  UpgradeStatusResponse,
+  ExportCdmResponse,
+  AttestationResponse,
+  LicenseCapabilityResponse,
 } from "./contract";
 import { CAPABILITY_ACTIONS, CAPABILITY_ASSETS, pillarYears } from "./contract";
 import { forward, priceInstrument, strikeFromDelta } from "./pricing";
@@ -2087,7 +2099,7 @@ export class MockTransport implements CelnetTransport {
     ],
   };
 
-  // --- Auto-hedge (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md) -----
+  // --- Auto-hedge (docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md) -----
   //
   // A GENUINE in-memory hedge feature (not a stub): a seeded exit-policy graph, a
   // couple of warehouse thresholds bound to the seeded FI books/desk, the engine
@@ -3457,6 +3469,13 @@ export class MockTransport implements CelnetTransport {
         bestBidCount: live ? Math.max(0, instruments - 2 * i) : 0,
         bestOfferCount: live ? Math.max(0, instruments - 2 * i - 1) : 0,
         meanWeight: live ? 1 / (i + 1.5) : 0,
+        rfqEnabled: true,
+        streamingEnabled: live,
+        hedgingEnabled: live,
+        institutionCode: c.id.toUpperCase(),
+        winRate: live ? 0.65 : 0,
+        lastLookRejectionRate: live ? 0.02 : 0,
+        meanLatencyMs: live ? 4.5 + i : 0,
       };
     });
     const focus = providers.find((p) => p.connectionId === connectionId);
@@ -4299,7 +4318,7 @@ export class MockTransport implements CelnetTransport {
     return cloneRiskGraph(this.mockRiskGraph);
   }
 
-  // --- Auto-hedge (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md) -----
+  // --- Auto-hedge (docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md) -----
 
   async getHedgePolicyGraph(
     scopeKind: HedgePolicyScopeKind = "firm",
@@ -4807,7 +4826,7 @@ export class MockTransport implements CelnetTransport {
     return this.computeRiskBookRisk();
   }
 
-  // --- FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md) ------------------
+  // --- FI Risk transfer (docs/hedging/RISK-TRANSFER-REQUIREMENTS.md) ------------------
   //
   // The manual move of EXISTING risk. Genuine in-memory stores + real risk math
   // (not a stub): a BOOKED transfer moves a signed slice of the source book's risk
@@ -6359,6 +6378,165 @@ export class MockTransport implements CelnetTransport {
         });
       }
     }
+  }
+
+  // --- Enterprise Capabilities (Margin, Algo, Cluster, CDM, Attestation, Licensing) ---
+
+  async calculateMargin(request: MarginCalculationRequest): Promise<MarginCalculationResponse> {
+    const pId = request.portfolioId || "PORTFOLIO-1";
+    return {
+      portfolioId: pId,
+      totalInitialMargin: 4500000.0,
+      expectedShortfall: 3800000.0,
+      valueAtRisk: 3100000.0,
+      stressComponent: 700000.0,
+      currency: "USD",
+      calculatedEpochNanos: nowNanos(),
+    };
+  }
+
+  async simulatePreTradeMargin(request: PreTradeMarginRequest): Promise<PreTradeMarginResponse> {
+    const pId = request.portfolioId || "PORTFOLIO-1";
+    const collat = request.availableCollateral || 10000000;
+    const delta = Math.abs(request.candidatePosition?.notional ?? 1000000) * 0.05;
+    return {
+      portfolioId: pId,
+      outcome: collat >= delta ? "APPROVED" : "EXCEEDS_COLLATERAL",
+      initialMarginBefore: 4500000.0,
+      initialMarginAfter: 4500000.0 + delta,
+      deltaMargin: delta,
+      collateralHeadroom: Math.max(0, collat - (4500000.0 + delta)),
+      reason: collat >= delta ? "Collateral sufficient" : "Exceeds available unencumbered collateral",
+    };
+  }
+
+  async submitAlgoOrder(request: SubmitAlgoOrderRequest): Promise<AlgoOrderResponse> {
+    const parentId = `ALGO-${Math.floor(Math.random() * 900000 + 100000)}`;
+    const dur = request.twap?.durationSeconds ?? 300;
+    const slicesCount = request.twap?.sliceCount ?? 5;
+    const sliceQty = request.totalQuantity / slicesCount;
+    const childSlices = Array.from({ length: slicesCount }, (_, idx) => ({
+      sliceIndex: idx + 1,
+      scheduledOffsetSeconds: Math.floor((dur / slicesCount) * idx),
+      targetQuantity: sliceQty,
+      filledQuantity: idx === 0 ? sliceQty : 0,
+      avgFillPrice: request.arrivalPrice,
+      status: (idx === 0 ? "FILLED" : "PENDING") as const,
+    }));
+    return {
+      parentOrderId: parentId,
+      clientOrderId: request.clientOrderId ?? `CLIENT-${parentId}`,
+      symbol: request.symbol,
+      totalQuantity: request.totalQuantity,
+      executedQuantity: sliceQty,
+      arrivalPrice: request.arrivalPrice,
+      avgExecPrice: request.arrivalPrice,
+      isBuy: request.isBuy,
+      status: "ACTIVE",
+      implementationShortfallBps: 0.85,
+      slices: childSlices,
+      createdEpochNanos: nowNanos(),
+    };
+  }
+
+  async listAlgoOrders(): Promise<ListAlgoOrdersResponse> {
+    return {
+      orders: [
+        {
+          parentOrderId: "ALGO-TWAP-DEMO",
+          clientOrderId: "CLIENT-DEMO-1",
+          symbol: "EURUSD",
+          totalQuantity: 10000000,
+          executedQuantity: 6000000,
+          arrivalPrice: 1.085,
+          avgExecPrice: 1.08508,
+          isBuy: true,
+          status: "ACTIVE",
+          implementationShortfallBps: 0.74,
+          slices: [],
+          createdEpochNanos: nowNanos(),
+        },
+      ],
+    };
+  }
+
+  async getClusterTopology(): Promise<ClusterTopologyResponse> {
+    const now = nowNanos();
+    return {
+      clusterId: "celnet-primary-prod",
+      leaderId: "node-1-prod",
+      activeGeneration: 42n,
+      members: [
+        {
+          nodeId: "node-1-prod",
+          endpoint: "tcp://10.0.1.1:9090",
+          status: "ACTIVE",
+          activeInFlightTrades: 1250n,
+          joinedEpochNanos: now - 3600_000_000_000n,
+        },
+        {
+          nodeId: "node-2-prod",
+          endpoint: "tcp://10.0.1.2:9090",
+          status: "ACTIVE",
+          activeInFlightTrades: 980n,
+          joinedEpochNanos: now - 3600_000_000_000n,
+        },
+      ],
+      jointConsensusActive: false,
+    };
+  }
+
+  async getUpgradeStatus(): Promise<UpgradeStatusResponse> {
+    return {
+      activeGeneration: 43n,
+      currentVersion: "2026.9.1",
+      shadowVersion: "2026.9.2",
+      twinComparisonPassed: true,
+      maxUlpDivergence: 0n,
+      evaluatedTradesCount: 500000n,
+      cutoverStatus: "READY_FOR_CUTOVER",
+    };
+  }
+
+  async exportCdm(executionId: bigint, uti?: string): Promise<ExportCdmResponse> {
+    const resolvedUti = uti || `UTI-2026-${executionId}`;
+    return {
+      executionId,
+      uti: resolvedUti,
+      cdmEventType: "TradeExecution",
+      cdmJson: JSON.stringify({
+        header: { executionId: String(executionId), uti: resolvedUti },
+        eventType: "TradeExecution",
+        timestamp: new Date().toISOString(),
+      }),
+    };
+  }
+
+  async verifyAttestation(expectedFingerprint?: string): Promise<AttestationResponse> {
+    return {
+      valid: true,
+      attestationTimestampNanos: nowNanos(),
+      hardwareFingerprint: expectedFingerprint || "PCR-SHA256-0x9F3E4A",
+      statusMessage: "TPM 2.0 PCR Quote cryptographically verified",
+    };
+  }
+
+  async getLicenseCapabilities(): Promise<LicenseCapabilityResponse> {
+    return {
+      valid: true,
+      subject: "institutional-tier-1",
+      tier: "TIER_ENTERPRISE_GLOBAL",
+      activeCapabilities: [
+        "PRICING_ADVANCED",
+        "RATES_MULTI_CURVE",
+        "ISDA_SIMM_MARGIN",
+        "ALGO_EXECUTION",
+        "ZERO_DOWNTIME_CLUSTER",
+        "CDM_EXPORT",
+        "HARDWARE_ATTESTATION",
+      ],
+      expiryEpochSecs: 1893456000n,
+    };
   }
 }
 

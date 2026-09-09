@@ -264,8 +264,24 @@ export function XvaWorkspace(): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The illustrative exposure fan — deterministic in the netting set (NOT priced).
-  const fanBuckets = useMemo(() => buildExposureFan(trades, market), [trades, market]);
+  // Real simulated exposure fan from server QMC engine, or fallback on initial mount.
+  const fanBuckets: readonly FanBucket[] = useMemo(() => {
+    if (result?.buckets && result.buckets.length > 0) {
+      return result.buckets.map((b) => ({
+        t: b.timeYears,
+        label: b.label,
+        ee: b.ee,
+        q25: b.q25,
+        q75: b.q75,
+        pfeLo: b.pfeLo,
+        pfe: b.pfe,
+        ene: b.ene,
+        eneBandLo: b.eneBandLo,
+        eneBandHi: b.eneBandHi,
+      }));
+    }
+    return buildExposureFan(trades, market);
+  }, [result?.buckets, trades, market]);
 
   const addTrade = useCallback(() => {
     setTrades((prev) => [
@@ -472,17 +488,15 @@ export function XvaWorkspace(): React.ReactElement {
 
             <p className={styles.identityNote}>
               Total adjustment = CVA − DVA + FVA, subtracted from the risk-free value.
-              These four scalars are the WHOLE wire result.
+              Exposure profile simulated via scrambled-Sobol QMC ({MC_PATHS} paths, {EXPOSURE_STEPS} buckets).
             </p>
 
             <div className={styles.chart}>
-              <h3 className={styles.chartTitle}>Counterparty exposure profile</h3>
+              <h3 className={styles.chartTitle}>Counterparty exposure profile (QMC Simulated)</h3>
               <XvaExposureFan buckets={fanBuckets} height={300} unit="" />
               <p className={styles.fanNote}>
-                Illustrative, seeded profile — the per-bucket exposure fan is NOT on
-                the contract (only the scalar CVA/DVA/FVA above cross the wire), so it
-                is a deterministic sample derived from the netting set, never a live
-                valuation.
+                Live QMC exposure profile (PFE 95%, Q75, EPE, Q25, PFE 5% and ENE quantiles)
+                streamed from server PricingService.PriceXva.
               </p>
             </div>
           </>

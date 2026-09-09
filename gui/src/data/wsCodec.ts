@@ -1375,11 +1375,25 @@ export function priceXvaRequestToWire(r: XvaPricingRequest): WireObject {
 /** Decode the `price_xva_response` frame's `result` into an `XvaResult`. */
 export function xvaResultFromWire(o: WireObject): XvaResult {
   const result = child(o, "result");
+  const rawBuckets = Array.isArray(result.buckets) ? (result.buckets as WireObject[]) : [];
+  const buckets = rawBuckets.map((b) => ({
+    timeYears: num(b, "time_years"),
+    label: str(b, "label"),
+    ee: num(b, "ee"),
+    q25: num(b, "q25"),
+    q75: num(b, "q75"),
+    pfeLo: num(b, "pfe_lo"),
+    pfe: num(b, "pfe"),
+    ene: num(b, "ene"),
+    eneBandLo: num(b, "ene_band_lo"),
+    eneBandHi: num(b, "ene_band_hi"),
+  }));
   return {
     cva: num(result, "cva"),
     dva: num(result, "dva"),
     fva: num(result, "fva"),
     totalAdjustment: num(result, "total_adjustment"),
+    buckets,
   };
 }
 
@@ -3421,6 +3435,13 @@ function liquidityProviderFromWire(o: WireObject): LiquidityProvider {
     bestBidCount: num(o, "best_bid_count"),
     bestOfferCount: num(o, "best_offer_count"),
     meanWeight: num(o, "mean_weight"),
+    rfqEnabled: o["rfq_enabled"] === true,
+    streamingEnabled: o["streaming_enabled"] === true,
+    hedgingEnabled: o["hedging_enabled"] === true,
+    institutionCode: str(o, "institution_code"),
+    winRate: num(o, "win_rate"),
+    lastLookRejectionRate: num(o, "last_look_rejection_rate"),
+    meanLatencyMs: num(o, "mean_latency_ms"),
   };
 }
 

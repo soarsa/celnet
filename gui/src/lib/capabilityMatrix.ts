@@ -57,7 +57,7 @@ export const ACTION_LABELS: Record<CapabilityAction, string> = {
  * `config/identity.rs::default_trader_bundle`, which withholds `Administer`,
  * `RiskTransfer`, and the three management authorities `RiskManage` /
  * `ManagePricing` / `ManageLiquidity` and the cross-asset read `ViewAnalytics`
- * (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §5; `config/identity.rs`). `ManageAcceptance`
+ * (`docs/operations/PERMISSIONS-GRANULAR-REVIEW.md` §5; `config/identity.rs`). `ManageAcceptance`
  * (author the incoming-quote-acceptance graph) joins the held-back seats.
  */
 export const TRADER_HELD_BACK_ACTIONS: ReadonlySet<CapabilityAction> =
@@ -436,7 +436,7 @@ export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
     readActions: ["view"],
     writeActions: [],
   },
-  // FI management authorities (docs/PERMISSIONS-GRANULAR-REVIEW.md §4.3): one
+  // FI management authorities (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4.3): one
   // trader-friendly Write toggle per granular management cap, so an admin can grant
   // it from the component grid (the raw CapabilityMatrix already lists every action
   // row automatically). Read = `view·FI` (shared with the other FI reads); Write =
@@ -471,7 +471,7 @@ export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
     writeActions: ["manage_liquidity"],
   },
   // FIX Connections — the venue/liquidity-connection admin surface. Its rail row is
-  // delegable on `manage_liquidity·FI` (docs/PERMISSIONS-GRANULAR-REVIEW.md §4), so
+  // delegable on `manage_liquidity·FI` (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4), so
   // seeing AND editing connections both require the cap: Read = Write =
   // `manage_liquidity·FI` (not the `view` floor — you cannot see Connections without
   // the manage-liquidity grant). Shares the underlying cap with Manage Liquidity.
@@ -532,7 +532,7 @@ export const COMPONENT_ACCESS: readonly ComponentAccess[] = [
     readActions: ["view"],
     writeActions: ["risk_transfer"],
   },
-  // Corporate Actions (docs/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md
+  // Corporate Actions (docs/fixed-income/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md
   // §11): the reference-data steward seat that confirms / applies bond corporate
   // actions. Read = `view·FI` (the CA-inbox + schedule reads sit on the view floor,
   // shared with the other FI reads); Write = the narrow `refdata` capability the

@@ -2,14 +2,11 @@
 
 > **Renumbered 2026-07-01:** was ADR-0013; the number collided with ADR-0013 (single sell-side front-end, the canonical/heavily-referenced decision). Moved to the next free number, kept consecutive with its FI sibling ADR-0018 (fixed income). Internal references to the fixed-income ADR now read ADR-0018.
 
-- **Status:** Proposed (2026-07-01)
+- **Status:** Accepted (Target Architecture Leaf, Non-blocking).
 - **Relates to:** ADR-0018 (fixed income as a new asset-class leaf), ADR-0010 (FI rates onto
   the carry seam), ADR-0008 (multi-asset carry / asset-class routing), ADR-0007 (one
-  unversioned contract).
+  unversioned contract), ADR-0020 (central contract).
 - **Context doc:** `docs/FI-CREDIT-ENGINE-DESIGN.md`.
-- **Branch:** drafted on `feature/fi-reference-data`. The analytics leaf builds on the FI
-  branch; the contract/registration step targets `main`'s pricing core, exactly as ADR-0018
-  prescribes for `celnet-bond`.
 
 ## Context
 

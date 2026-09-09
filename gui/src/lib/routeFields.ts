@@ -1,6 +1,6 @@
 /**
  * The routable-field registry for the risk-routing decision graph
- * (docs/FI-RISK-ROUTING-REQUIREMENTS.md §8.6). Every {@link RouteField} the flow
+ * (docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md §8.6). Every {@link RouteField} the flow
  * canvas can test is described here ONCE: its human label, the palette group it
  * lives in, its value KIND (enum / numeric / string), the operators legal for that
  * kind (mirrors `celnet_risk_routing::RouteOp::valid_for`, same matrix), and — for

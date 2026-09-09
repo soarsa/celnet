@@ -1,5 +1,5 @@
 //! The **risk-transfer apply engine** — the behavioral core that moves *existing*
-//! risk between risk books (`docs/RISK-TRANSFER-REQUIREMENTS.md` §6). It is the
+//! risk between risk books (`docs/hedging/RISK-TRANSFER-REQUIREMENTS.md` §6). It is the
 //! server-side complement to the pure [`celnet_risk_transfer`] leaf crate: that
 //! crate owns the deterministic numerics (validation, the two-leg computation, the
 //! identity plan) with **no** server deps; this module owns all the store

@@ -1420,6 +1420,52 @@ export class Connection {
     return this.request("limit_status", body, "limit_status_response");
   }
 
+  /** `MarginService.CalculateMargin` — calculate initial margin, ES, and VaR. */
+  async calculateMargin(body: WireObject): Promise<WireObject> {
+    return this.request("calculate_margin", body, "calculate_margin_response");
+  }
+
+  /** `MarginService.SimulatePreTradeMargin` — simulate pre-trade margin impact. */
+  async simulatePreTradeMargin(body: WireObject): Promise<WireObject> {
+    return this.request("simulate_pre_trade_margin", body, "simulate_pre_trade_margin_response");
+  }
+
+  /** `AlgoService.SubmitAlgoOrder` — submit parent algorithmic order. */
+  async submitAlgoOrder(body: WireObject): Promise<WireObject> {
+    return this.request("submit_algo_order", body, "submit_algo_order_response");
+  }
+
+  /** `AlgoService.ListAlgoOrders` — list active algorithmic orders. */
+  async listAlgoOrders(body: WireObject = {}): Promise<WireObject> {
+    return this.request("list_algo_orders", body, "list_algo_orders_response");
+  }
+
+  /** `ClusterService.GetClusterTopology` — inspect cluster topology and Raft consensus. */
+  async getClusterTopology(body: WireObject = {}): Promise<WireObject> {
+    return this.request("get_cluster_topology", body, "get_cluster_topology_response");
+  }
+
+  /** `ClusterService.GetUpgradeStatus` — inspect twin validation and zero-downtime rolling upgrade. */
+  async getUpgradeStatus(body: WireObject = {}): Promise<WireObject> {
+    return this.request("get_upgrade_status", body, "get_upgrade_status_response");
+  }
+
+  /** `ExportService.ExportCdm` — export trade as ISDA CDM 2026 digital event. */
+  async exportCdm(body: WireObject): Promise<WireObject> {
+    return this.request("export_cdm", body, "export_cdm_response");
+  }
+
+  /** `AttestationService.VerifyAttestation` — verify hardware TPM 2.0 quote. */
+  async verifyAttestation(body: WireObject = {}): Promise<WireObject> {
+    return this.request("verify_attestation", body, "verify_attestation_response");
+  }
+
+  /** `LicenseService.GetLicenseCapabilities` — inspect dynamic capability token license capabilities. */
+  async getLicenseCapabilities(body: WireObject = {}): Promise<WireObject> {
+    return this.request("get_license_capabilities", body, "get_license_capabilities_response");
+  }
+
+
   // --- AuthService (interactive sign-in) ------------------------------------
   //
   // `login` is the one call made while anonymous (no token to present); on success

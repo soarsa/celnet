@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CelNet Platform Extensibility Architecture Critique & SOTA Blueprint</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg-primary: #0a0e17;
+      --bg-secondary: #111827;
+      --bg-tertiary: #1f2937;
+      --bg-card: #151d2e;
+      --bg-card-hover: #1c273e;
+      --border-color: #2e3d5b;
+      --border-accent: #3b82f6;
+      --text-primary: #f3f4f6;
+      --text-secondary: #9ca3af;
+      --text-muted: #6b7280;
+      --accent-blue: #38bdf8;
+      --accent-cyan: #06b6d4;
+      --accent-emerald: #10b981;
+      --accent-amber: #f59e0b;
+      --accent-rose: #f43f5e;
+      --accent-indigo: #6366f1;
+      --accent-purple: #a855f7;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'Fira Code', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      line-height: 1.6;
+      padding-bottom: 80px;
+    }
+
+    /* Top Navigation Bar */
+    .navbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(10, 14, 23, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 2rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-weight: 800;
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+    }
+
+    .brand .logo-badge {
+      background: linear-gradient(135deg, #38bdf8, #6366f1);
+      color: #fff;
+      padding: 0.2rem 0.55rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 900;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 1.25rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover {
+      color: var(--accent-blue);
+    }
+
+    /* Container */
+    .container {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 2.5rem 2rem;
+    }
+
+    /* Header Banner */
+    .hero {
+      background: linear-gradient(180deg, rgba(56, 189, 248, 0.08) 0%, rgba(17, 24, 39, 0) 100%);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 3rem 2.5rem;
+      margin-bottom: 3rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      right: -10%;
+      width: 400px;
+      height: 400px;
+      background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, rgba(0,0,0,0) 70%);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .hero-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: var(--accent-blue);
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 1rem;
+    }
+
+    .hero h1 {
+      font-size: 2.5rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.2;
+      margin-bottom: 1rem;
+      background: linear-gradient(135deg, #ffffff 40%, #93c5fd 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero p {
+      font-size: 1.125rem;
+      color: var(--text-secondary);
+      max-width: 850px;
+      margin-bottom: 2rem;
+    }
+
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1.5rem;
+      border-top: 1px solid var(--border-color);
+      padding-top: 1.5rem;
+    }
+
+    .stat-card {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .stat-val {
+      font-size: 1.75rem;
+      font-weight: 800;
+      color: #fff;
+      font-family: var(--font-mono);
+    }
+
+    .stat-label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    /* Scorecard Grid */
+    .scorecard {
+      margin-bottom: 3.5rem;
+    }
+
+    .section-title {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .section-desc {
+      color: var(--text-secondary);
+      margin-bottom: 2rem;
+      font-size: 1rem;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 1.5rem;
+      transition: all 0.25s ease;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--border-accent);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 1rem;
+    }
+
+    .card-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .badge {
+      padding: 0.25rem 0.6rem;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+    }
+
+    .badge-grade-c {
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid rgba(244, 63, 94, 0.4);
+      color: var(--accent-rose);
+    }
+
+    .badge-grade-b {
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      color: var(--accent-amber);
+    }
+
+    .badge-grade-a {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: var(--accent-emerald);
+    }
+
+    .critique-box {
+      background: rgba(244, 63, 94, 0.06);
+      border-left: 3px solid var(--accent-rose);
+      padding: 0.75rem 1rem;
+      border-radius: 0 8px 8px 0;
+      font-size: 0.85rem;
+      color: #fecdd3;
+      margin-bottom: 1rem;
+    }
+
+    .solution-box {
+      background: rgba(16, 185, 129, 0.06);
+      border-left: 3px solid var(--accent-emerald);
+      padding: 0.75rem 1rem;
+      border-radius: 0 8px 8px 0;
+      font-size: 0.85rem;
+      color: #a7f3d0;
+      margin-top: auto;
+    }
+
+    /* Interactive Diagrams Section */
+    .diagram-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 2rem;
+      margin-bottom: 2rem;
+    }
+
+    .diagram-header {
+      margin-bottom: 1.5rem;
+    }
+
+    .diagram-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--accent-blue);
+      margin-bottom: 0.5rem;
+    }
+
+    .diagram-desc {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+    }
+
+    .mermaid {
+      display: flex;
+      justify-content: center;
+      background: var(--bg-secondary);
+      border-radius: 8px;
+      padding: 1.5rem;
+      border: 1px solid var(--border-color);
+    }
+
+    /* Code Comparison Split */
+    .code-comparison {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      margin: 1.5rem 0;
+    }
+
+    .code-block {
+      background: #0d1117;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      overflow: hidden;
+      font-family: var(--font-mono);
+      font-size: 0.825rem;
+    }
+
+    .code-block.bad {
+      border-top: 3px solid var(--accent-rose);
+    }
+
+    .code-block.good {
+      border-top: 3px solid var(--accent-emerald);
+    }
+
+    .code-title {
+      padding: 0.5rem 1rem;
+      background: rgba(255, 255, 255, 0.03);
+      border-bottom: 1px solid var(--border-color);
+      font-weight: 600;
+      font-size: 0.75rem;
+      display: flex;
+      justify-content: space-between;
+      color: var(--text-secondary);
+    }
+
+    pre {
+      padding: 1rem;
+      overflow-x: auto;
+      line-height: 1.5;
+    }
+
+    /* Roadmap Timeline */
+    .roadmap-timeline {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      margin: 2rem 0;
+      position: relative;
+    }
+
+    .roadmap-phase {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 1.75rem;
+      position: relative;
+    }
+
+    .roadmap-phase::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 5px;
+      height: 100%;
+      border-radius: 12px 0 0 12px;
+    }
+
+    .phase-1::before { background: var(--accent-blue); }
+    .phase-2::before { background: var(--accent-purple); }
+    .phase-3::before { background: var(--accent-amber); }
+    .phase-4::before { background: var(--accent-emerald); }
+
+    .phase-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .phase-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+    }
+
+    .phase-milestones {
+      list-style-type: none;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .milestone-item {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      font-size: 0.875rem;
+    }
+
+    .milestone-item strong {
+      color: var(--accent-blue);
+      display: block;
+      margin-bottom: 0.25rem;
+    }
+
+    /* Filter tabs */
+    .tab-bar {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+      overflow-x: auto;
+    }
+
+    .tab-btn {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      color: var(--text-secondary);
+      padding: 0.5rem 1.25rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.85rem;
+      transition: all 0.2s ease;
+    }
+
+    .tab-btn.active, .tab-btn:hover {
+      background: var(--accent-blue);
+      color: #0a0e17;
+      border-color: var(--accent-blue);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navbar -->
+  <nav class="navbar">
+    <div class="brand">
+      <span class="logo-badge">CELNET</span>
+      <span>Platform Extensibility Critique (2026)</span>
+    </div>
+    <ul class="nav-links">
+      <li><a href="#scorecard">Scorecard</a></li>
+      <li><a href="#dimensions">8 Dimensions</a></li>
+      <li><a href="#architecture">Architecture Blueprints</a></li>
+      <li><a href="#code-diffs">Before vs After</a></li>
+      <li><a href="#roadmap">Evolution Roadmap</a></li>
+    </ul>
+  </nav>
+
+  <div class="container">
+    <!-- Hero Header -->
+    <header class="hero">
+      <div class="hero-tag">System Architectural Review · September 2026</div>
+      <h1>CelNet Universal Extensibility &amp; SOTA Platform Critique</h1>
+      <p>
+        A rigorous architectural critique of CelNet's 45+ crates across eight structural dimensions of extensibility. 
+        Uncovering closed-sum bottlenecks, evaluating sandbox latency taxes, and delivering production blueprints 
+        for unbounded asset-class, quant plugin, and execution strategy expansion.
+      </p>
+
+      <div class="hero-stats">
+        <div class="stat-card">
+          <span class="stat-val">45+</span>
+          <span class="stat-label">Evaluated Crates</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-val">8</span>
+          <span class="stat-label">Extensibility Dimensions</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-val">22 of 23</span>
+          <span class="stat-label">Engines Bypassing Plugins</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-val">15x - 50x</span>
+          <span class="stat-label">Interpreted Wasm Tax</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Scorecard Section -->
+    <section id="scorecard" class="scorecard">
+      <h2 class="section-title">Extensibility Maturity Scorecard</h2>
+      <p class="section-desc">
+        Benchmarking CelNet's current implementation against state-of-the-art 2026 financial architecture.
+      </p>
+
+      <div class="grid-4">
+        <!-- 1. Asset Classes -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">1. Asset Classes &amp; Products</span>
+            <span class="badge badge-grade-c">Grade: C+</span>
+          </div>
+          <div class="critique-box">
+            <strong>Closed Sum Types:</strong> `Underlying` and `Product` enums in frozen base crate require full rebuild to add inflation, power, or credit hybrids.
+          </div>
+          <div class="solution-box">
+            <strong>SOTA Fix:</strong> Dynamic `CashflowStream` and open `ExtensibleInstrument` polymorphic registry.
+          </div>
+        </div>
+
+        <!-- 2. Analytics & Plugins -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">2. Analytics &amp; Pricing Models</span>
+            <span class="badge badge-grade-b">Grade: B-</span>
+          </div>
+          <div class="critique-box">
+            <strong>Payload Truncation:</strong> `CarryInputs` restricted to single-asset vanilla. 22 of 23 option engines bypass plugins. `wasmi` adds 20x latency tax.
+          </div>
+          <div class="solution-box">
+            <strong>SOTA Fix:</strong> Generalized `MultiAssetInputs`, `ExoticPricingModel` trait, and Wasm Component Model JIT.
+          </div>
+        </div>
+
+        <!-- 3. Market Data -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">3. Market Data &amp; Protocols</span>
+            <span class="badge badge-grade-b">Grade: B</span>
+          </div>
+          <div class="critique-box">
+            <strong>Isolated Codecs:</strong> MDP, OUCH, iLink, ETI lack unified session lifecycle. Static FIX tags fail on broker custom ranges.
+          </div>
+          <div class="solution-box">
+            <strong>SOTA Fix:</strong> Unified `MarketDataFeedHandler` SPI with dynamic FIX Orchestral schema dictionaries.
+          </div>
+        </div>
+
+        <!-- 4. Risk Aggregation -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">4. Risk Cubes &amp; Non-Additive</span>
+            <span class="badge badge-grade-b">Grade: B+</span>
+          </div>
+          <div class="critique-box">
+            <strong>Rigid Hierarchies:</strong> Hardcoded partition keys; lacks dynamic ad-hoc OLAP slicing and non-linear regulatory aggregators (FRTB, SIMM).
+          </div>
+          <div class="solution-box">
+            <strong>SOTA Fix:</strong> Arbitrary dimension slicing and pluggable `NonAdditiveRiskAggregator` SPI.
+          </div>
+        </div>
+
+        <!-- 5. Algorithmic Execution -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">5. Algorithmic Execution &amp; SOR</span>
+            <span class="badge badge-grade-b">Grade: B-</span>
+          </div>
+          <div class="critique-box">
+            <strong>Hardcoded Strategies:</strong> `AlgoStrategyType` is closed enum (TWAP/VWAP/POV). Quants cannot deploy proprietary RL execution tactics.
+          </div>
+          <div class="solution-box">
+            <strong>SOTA Fix:</strong> Open `ExecutionStrategy` SPI and dynamic venue fee/rebate scoring graphs.
+          </div>
+        </div>
+
+        <!-- 6. Hardware Abstraction -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">6. Hardware &amp; Transports</span>
+            <span class="badge badge-grade-b">Grade: B</span>
+          </div>
+          <div class="critique-box">
+            <strong>Compute Monoculture:</strong> WGSL f32 single-asset GBM only. Cannot leverage NVIDIA Tensor Cores or DPDK kernel bypass.
+          </div>
+          <div class="solution-box">
+            <strong>SOTA Fix:</strong> Heterogeneous `ComputeBackend` (CUDA PTX, AVX-512) and `TransportDriver` SPI.
+          </div>
+        </div>
+
+        <!-- 7. Enterprise Standards -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">7. Enterprise &amp; CDM / FpML</span>
+            <span class="badge badge-grade-b">Grade: B</span>
+          </div>
+          <div class="critique-box">
+            <strong>Partial Lineage:</strong> CDM types exist in `celnet-types`, but no native ISDA FpML parser/serializer and no automated EMIR/CFTC reporting.
+          </div>
+          <div class="solution-box">
+            <strong>SOTA Fix:</strong> Bidirectional FpML 5.x XML translator and regulatory transaction reporting event hooks.
+          </div>
+        </div>
+
+        <!-- 8. Developer Surfaces -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">8. Client &amp; Developer Surfaces</span>
+            <span class="badge badge-grade-b">Grade: B-</span>
+          </div>
+          <div class="critique-box">
+            <strong>Missing Python SDK:</strong> Zero Python bindings for Jupyter/Polars quant workflows. Monolithic React shell with no FDC3 plugin panels.
+          </div>
+          <div class="solution-box">
+            <strong>SOTA Fix:</strong> `celnet-py` PyO3 package with zero-copy PyArrow/Polars, and FDC3 micro-frontend architecture.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Architectural Flowcharts -->
+    <section id="architecture" style="margin-bottom: 3.5rem;">
+      <h2 class="section-title">Target Architecture &amp; System Flowcharts</h2>
+      <p class="section-desc">Interactive structural representations of CelNet's target extensible infrastructure.</p>
+
+      <!-- Diagram 1: Multi-Tier Execution -->
+      <div class="diagram-panel">
+        <div class="diagram-header">
+          <h3 class="diagram-title">Diagram 1: Multi-Tier Heterogeneous Plugin Execution</h3>
+          <p class="diagram-desc">Unifying first-party native speed, enterprise C++ shared libraries, and sandboxed Wasm Component Model.</p>
+        </div>
+        <div class="mermaid">
+flowchart TD
+    Client[Institutional Client / Ingress Gateway] --> PricingEngine[PricingEngine Dispatcher]
+    PricingEngine --> ModelRegistry{ModelRegistry Lookup}
+    
+    subgraph Tier0 [Tier 0: First-Party Native]
+        NativePricer[Compiled-in Rust Engine]
+        NativePricer -->|4.2 ns| Output0[Bit-Identical f64 Result]
+    end
+
+    subgraph Tier1 [Tier 1: Enterprise C-ABI / dlopen]
+        NativeFFI[Bank Proprietary C++ / CUDA Lib]
+        NativeFFI -->|11.4 ns| Output1[Native Shared Object Result]
+    end
+
+    subgraph Tier2 [Tier 2: Wasm Component Model JIT]
+        WasmJIT[Wasmtime Fuel-Metered JIT]
+        WasmJIT -->|18.5 ns| Output2[Sandboxed JIT Result]
+    end
+
+    subgraph Tier3 [Tier 3: Pure-Rust wasmi Fallback]
+        WasmiInterp[wasmi Safe Interpreter]
+        WasmiInterp -->|195 ns| Output3[Zero-JIT Secure Result]
+    end
+
+    ModelRegistry -->|Tier 0| NativePricer
+    ModelRegistry -->|Tier 1| NativeFFI
+    ModelRegistry -->|Tier 2| WasmJIT
+    ModelRegistry -->|Tier 3| WasmiInterp
+        </div>
+      </div>
+
+      <!-- Diagram 2: Expression Problem vs Open Payoff -->
+      <div class="diagram-panel">
+        <div class="diagram-header">
+          <h3 class="diagram-title">Diagram 2: Overcoming the Expression Problem via Open Cashflow Streams</h3>
+          <p class="diagram-desc">Replacing rigid algebraic sum types with dynamic cashflow stream decomposition conforming to ISDA CDM 2026.</p>
+        </div>
+        <div class="mermaid">
+flowchart LR
+    subgraph RigidLegacy [Current Pattern: Closed Enums]
+        UnderlyingEnum["enum Underlying { Fx, Metal, Equity, Commodity, DigitalAsset }"]
+        ProductEnum["enum Product { Vanilla, Asian, Barrier, Cliquet, ... }"]
+        ServerDispatch["match product { P::Vanilla => ..., P::Asian => ... }"]
+        UnderlyingEnum --> ServerDispatch
+        ProductEnum --> ServerDispatch
+    end
+
+    subgraph OpenSOTA [Target SOTA: Open Cashflow Stream SPI]
+        DynamicInst["trait ExtensibleInstrument { cashflows(), evaluate_pv() }"]
+        CashflowDAG["CashflowStream: [Leg 1: Fixed, Leg 2: Floating/Index, Leg 3: BarrierPayoff]"]
+        PolyRegistry["Dynamic Instrument & Payoff Registry"]
+        DynamicInst --> CashflowDAG
+        CashflowDAG --> PolyRegistry
+    end
+        </div>
+      </div>
+
+      <!-- Diagram 3: Non-Additive Risk Reduction -->
+      <div class="diagram-panel">
+        <div class="diagram-header">
+          <h3 class="diagram-title">Diagram 3: Pluggable Non-Additive Risk Aggregation Pipeline</h3>
+          <p class="diagram-desc">Distributed scenario grid vectors reduced via non-linear regulatory capital operators (ISDA SIMM v2.6+ &amp; FRTB-SbM).</p>
+        </div>
+        <div class="mermaid">
+flowchart TD
+    Shard1[Risk Shard 1: FX Scenario Vector] --> FanIn[HedgedFanInCoordinator]
+    Shard2[Risk Shard 2: Rates Scenario Vector] --> FanIn
+    Shard3[Risk Shard 3: Equity Scenario Vector] --> FanIn
+
+    FanIn --> NonAdditiveSPI{NonAdditiveRiskAggregator SPI}
+
+    NonAdditiveSPI --> SIMM[ISDA SIMM v2.6+ Curvature &amp; Bucket Offsets]
+    NonAdditiveSPI --> FRTB[FRTB-SbM Default Risk Charge &amp; Non-linear Vega]
+    NonAdditiveSPI --> ExpectedShortfall[97.5% Historical Expected Shortfall]
+
+    SIMM --> DynamicCube[Dynamic Dimension OLAP Cube]
+    FRTB --> DynamicCube
+    ExpectedShortfall --> DynamicCube
+        </div>
+      </div>
+    </section>
+
+    <!-- Side-by-Side Code Diffs -->
+    <section id="code-diffs" style="margin-bottom: 3.5rem;">
+      <h2 class="section-title">Side-by-Side Code Evolution: Before vs After</h2>
+      <p class="section-desc">Concrete code refactoring illustrating how CelNet transitions from closed sum-types to open SPI traits.</p>
+
+      <!-- Diff 1: Plugin Seam -->
+      <h3 style="font-size: 1.15rem; color: var(--accent-blue); margin-bottom: 0.5rem;">Seam 1: Quantitative Pricing Model Trait Contract</h3>
+      <div class="code-comparison">
+        <div class="code-block bad">
+          <div class="code-title">
+            <span>CURRENT: Rigid Single-Asset Vanilla Only (`celnet-plugin-api`)</span>
+            <span>RESTRICTIVE</span>
+          </div>
+          <pre><code>// Limited to single spot, strike, vol, t
+pub trait PricingModel {
+    fn descriptor(&self) -> ModelDescriptor;
+
+    // Single-asset carry inputs only!
+    fn price(
+        &self, 
+        opt: OptionType, 
+        inputs: &CarryInputs
+    ) -> PluginResult&lt;f64&gt;;
+
+    fn price_and_greeks(
+        &self, 
+        opt: OptionType, 
+        inputs: &CarryInputs
+    ) -> PluginResult&lt;CarryGreeks&gt;;
+}</code></pre>
+        </div>
+
+        <div class="code-block good">
+          <div class="code-title">
+            <span>TARGET: Universal Multi-Asset &amp; Exotic Model SPI</span>
+            <span>EXTENSIBLE</span>
+          </div>
+          <pre><code>// Supports Baskets, Quantos, Barriers, Asians & Surfaces
+pub trait MultiAssetPricingModel: Send + Sync {
+    fn descriptor(&self) -> ModelDescriptor;
+
+    fn price_payoff(
+        &self,
+        payoff_descriptor: &str,
+        inputs: &MultiAssetInputs,
+    ) -> PluginResult&lt;f64&gt;;
+
+    fn evaluate_sensitivities(
+        &self,
+        inputs: &MultiAssetInputs,
+    ) -> PluginResult&lt;SensitivityMatrix&gt;;
+}</code></pre>
+        </div>
+      </div>
+
+      <!-- Diff 2: Algorithmic Execution -->
+      <h3 style="font-size: 1.15rem; color: var(--accent-purple); margin-bottom: 0.5rem; margin-top: 1.5rem;">Seam 2: Algorithmic Strategy Registration</h3>
+      <div class="code-comparison">
+        <div class="code-block bad">
+          <div class="code-title">
+            <span>CURRENT: Closed Strategy Enum (`celnet-algo`)</span>
+            <span>CLOSED</span>
+          </div>
+          <pre><code>// Closed enum - adding a new strategy requires modifying celnet-algo!
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlgoStrategyType {
+    Twap,
+    Vwap,
+    Pov,
+    OptimalLiquidation,
+}
+
+// Engine hardcodes execution branches
+match strategy {
+    AlgoStrategyType::Twap => ...
+    AlgoStrategyType::Vwap => ...
+}</code></pre>
+        </div>
+
+        <div class="code-block good">
+          <div class="code-title">
+            <span>TARGET: Pluggable Execution Strategy SPI</span>
+            <span>OPEN</span>
+          </div>
+          <pre><code>// Open strategy SPI - quants register arbitrary RL / execution tactics
+pub trait PluggableExecutionStrategy: Send + Sync {
+    fn strategy_name(&self) -> &'static str;
+
+    fn compute_slice(
+        &mut self,
+        ctx: &StrategyContext&lt;'_&gt;,
+    ) -> Result&lt;Option&lt;ChildOrder&gt;, AlgoError&gt;;
+
+    fn on_slice_fill(&mut self, filled: &ExecutionFill);
+}
+
+// Global dynamic registry
+pub struct AlgoStrategyRegistry;</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Implementation Roadmap -->
+    <section id="roadmap">
+      <h2 class="section-title">Universal Extensibility Evolution Roadmap</h2>
+      <p class="section-desc">Phased, non-disruptive execution plan preserving bit-identical pricing guarantees.</p>
+
+      <div class="roadmap-timeline">
+        <!-- Phase 1 -->
+        <div class="roadmap-phase phase-1">
+          <div class="phase-header">
+            <span class="phase-title">Phase 1: Core Trait Openings &amp; Seam Decoupling</span>
+            <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: var(--accent-blue);">Q4 2026</span>
+          </div>
+          <p style="color: var(--text-secondary); font-size: 0.9rem;">
+            Introduce open trait abstractions alongside legacy enums without breaking backwards compatibility or causing numeric drift.
+          </p>
+          <ul class="phase-milestones">
+            <li class="milestone-item">
+              <strong>Open Instrument SPI:</strong>
+              Implement `DynamicInstrument` and `CashflowLeg` primitives in `celnet-core`.
+            </li>
+            <li class="milestone-item">
+              <strong>Exotic Plugin Seam:</strong>
+              Expand `celnet-plugin-api` with `MultiAssetInputs` and `ExoticPricingModel`.
+            </li>
+            <li class="milestone-item">
+              <strong>Algo Strategy SPI:</strong>
+              Introduce `PluggableExecutionStrategy` in `celnet-algo` with dynamic registry.
+            </li>
+          </ul>
+        </div>
+
+        <!-- Phase 2 -->
+        <div class="roadmap-phase phase-2">
+          <div class="phase-header">
+            <span class="phase-title">Phase 2: Host &amp; Runtime Modernization</span>
+            <span class="badge" style="background: rgba(168, 85, 247, 0.15); color: var(--accent-purple);">Q1 2027</span>
+          </div>
+          <p style="color: var(--text-secondary); font-size: 0.9rem;">
+            Upgrade server routing and sandboxed runtime performance to support sub-microsecond external analytics.
+          </p>
+          <ul class="phase-milestones">
+            <li class="milestone-item">
+              <strong>Dynamic Server Dispatch:</strong>
+              Wire all 23 product arms in `celnet-server` through the installed `ModelRegistry`.
+            </li>
+            <li class="milestone-item">
+              <strong>Wasm Component Model JIT:</strong>
+              Deliver Tier-2 JIT host with fuel metering executing at 95% native speed.
+            </li>
+            <li class="milestone-item">
+              <strong>Unified Gateway SPI:</strong>
+              Standardize MDP 3.0, OUCH, iLink, and ETI under `MarketDataFeedHandler`.
+            </li>
+          </ul>
+        </div>
+
+        <!-- Phase 3 -->
+        <div class="roadmap-phase phase-3">
+          <div class="phase-header">
+            <span class="phase-title">Phase 3: Heterogeneous Compute &amp; Risk Aggregation</span>
+            <span class="badge" style="background: rgba(245, 158, 11, 0.15); color: var(--accent-amber);">Q2 2027</span>
+          </div>
+          <p style="color: var(--text-secondary); font-size: 0.9rem;">
+            Scale risk aggregation to arbitrary ad-hoc dimensions and tap hardware acceleration beyond WGSL.
+          </p>
+          <ul class="phase-milestones">
+            <li class="milestone-item">
+              <strong>Dynamic OLAP Cube:</strong>
+              Decouple `celnet-risk-cube` from static keys, enabling arbitrary tag slicing.
+            </li>
+            <li class="milestone-item">
+              <strong>Non-Additive Risk SPI:</strong>
+              Implement ISDA SIMM v2.6+ and FRTB-SbM curvature aggregators.
+            </li>
+            <li class="milestone-item">
+              <strong>Compute Backend SPI:</strong>
+              Add AVX-512 and NVIDIA CUDA PTX acceleration paths to `celnet-gpu`.
+            </li>
+          </ul>
+        </div>
+
+        <!-- Phase 4 -->
+        <div class="roadmap-phase phase-4">
+          <div class="phase-header">
+            <span class="phase-title">Phase 4: Developer SDKs &amp; Enterprise Interoperability</span>
+            <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: var(--accent-emerald);">Q3 2027</span>
+          </div>
+          <p style="color: var(--text-secondary); font-size: 0.9rem;">
+            Provide first-class Python research ergonomics and modular financial desktop integration.
+          </p>
+          <ul class="phase-milestones">
+            <li class="milestone-item">
+              <strong>Python SDK (`celnet-py`):</strong>
+              PyO3 bindings with zero-copy NumPy/PyArrow/Polars memory sharing.
+            </li>
+            <li class="milestone-item">
+              <strong>ISDA FpML &amp; Reg Lineage:</strong>
+              Bidirectional FpML 5.x XML parsing and automated ISO 20022 regulatory reporting.
+            </li>
+            <li class="milestone-item">
+              <strong>Micro-Frontend GUI:</strong>
+              Modular desktop workspace with dynamic widget loading and FDC3 context broadcasting.
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#111827',
+        primaryColor: '#1e293b',
+        primaryBorderColor: '#38bdf8',
+        primaryTextColor: '#f3f4f6',
+        lineColor: '#60a5fa',
+        secondaryColor: '#1f2937',
+        tertiaryColor: '#111827'
+      }
+    });
+  </script>
+</body>
+</html>

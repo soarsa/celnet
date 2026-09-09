@@ -418,6 +418,22 @@ impl TryFrom<WireCcyPair> for CcyPair {
     }
 }
 
+impl TryFrom<&WireCcyPair> for CcyPair {
+    type Error = WireError;
+
+    fn try_from(value: &WireCcyPair) -> Result<Self, Self::Error> {
+        let base = Ccy::parse(&value.base).ok_or_else(|| WireError::InvalidCcy {
+            field: "base",
+            value: value.base.clone(),
+        })?;
+        let quote = Ccy::parse(&value.quote).ok_or_else(|| WireError::InvalidCcy {
+            field: "quote",
+            value: value.quote.clone(),
+        })?;
+        Ok(CcyPair::new(base, quote))
+    }
+}
+
 // ---- Metal -----------------------------------------------------------------
 
 impl From<Metal> for WireMetal {
@@ -469,6 +485,22 @@ impl TryFrom<WireMetalPair> for MetalPair {
     }
 }
 
+impl TryFrom<&WireMetalPair> for MetalPair {
+    type Error = WireError;
+
+    fn try_from(value: &WireMetalPair) -> Result<Self, Self::Error> {
+        let metal = WireMetal::try_from(value.metal).map_err(|_| WireError::UnknownEnum {
+            kind: "Metal",
+            tag: value.metal,
+        })?;
+        let quote = Ccy::parse(&value.quote).ok_or_else(|| WireError::InvalidCcy {
+            field: "quote",
+            value: value.quote.clone(),
+        })?;
+        Ok(MetalPair::new(Metal::from(metal), quote))
+    }
+}
+
 // ---- SettlementStyle -------------------------------------------------------
 
 impl From<SettlementStyle> for WireSettlementStyle {
@@ -509,6 +541,15 @@ impl From<WireSymbol> for Symbol {
     }
 }
 
+impl From<&WireSymbol> for Symbol {
+    fn from(value: &WireSymbol) -> Self {
+        Symbol {
+            ticker: value.ticker.clone(),
+            venue: value.venue.clone(),
+        }
+    }
+}
+
 // ---- EquityRef -------------------------------------------------------------
 
 impl From<EquityRef> for WireEquityRef {
@@ -533,6 +574,25 @@ impl TryFrom<WireEquityRef> for EquityRef {
         let currency = Ccy::parse(&value.currency).ok_or(WireError::InvalidCcy {
             field: "currency",
             value: value.currency,
+        })?;
+        Ok(EquityRef::new(symbol, currency))
+    }
+}
+
+impl TryFrom<&WireEquityRef> for EquityRef {
+    type Error = WireError;
+
+    fn try_from(value: &WireEquityRef) -> Result<Self, Self::Error> {
+        let symbol = value
+            .symbol
+            .as_ref()
+            .ok_or(WireError::MissingField {
+                field: "EquityRef.symbol",
+            })
+            .map(Symbol::from)?;
+        let currency = Ccy::parse(&value.currency).ok_or_else(|| WireError::InvalidCcy {
+            field: "currency",
+            value: value.currency.clone(),
         })?;
         Ok(EquityRef::new(symbol, currency))
     }
@@ -567,6 +627,25 @@ impl TryFrom<WireCommodityRef> for CommodityRef {
     }
 }
 
+impl TryFrom<&WireCommodityRef> for CommodityRef {
+    type Error = WireError;
+
+    fn try_from(value: &WireCommodityRef) -> Result<Self, Self::Error> {
+        let symbol = value
+            .symbol
+            .as_ref()
+            .ok_or(WireError::MissingField {
+                field: "CommodityRef.symbol",
+            })
+            .map(Symbol::from)?;
+        let currency = Ccy::parse(&value.currency).ok_or_else(|| WireError::InvalidCcy {
+            field: "currency",
+            value: value.currency.clone(),
+        })?;
+        Ok(CommodityRef::new(symbol, currency))
+    }
+}
+
 // ---- CryptoPair ------------------------------------------------------------
 
 impl From<CryptoPair> for WireCryptoPair {
@@ -581,6 +660,12 @@ impl From<CryptoPair> for WireCryptoPair {
 impl From<WireCryptoPair> for CryptoPair {
     fn from(value: WireCryptoPair) -> Self {
         CryptoPair::new(value.base, value.quote)
+    }
+}
+
+impl From<&WireCryptoPair> for CryptoPair {
+    fn from(value: &WireCryptoPair) -> Self {
+        CryptoPair::new(value.base.clone(), value.quote.clone())
     }
 }
 
@@ -605,9 +690,9 @@ impl From<WireCryptoPair> for CryptoPair {
 /// [`WireError::UnknownEnum`] if a metal tag is out of range.
 pub fn validate_fx_underlying(underlying: &WireUnderlying) -> Result<Underlying, WireError> {
     match &underlying.r#ref {
-        Some(underlying::Ref::Fx(pair)) => Ok(Underlying::Fx(CcyPair::try_from(pair.clone())?)),
+        Some(underlying::Ref::Fx(pair)) => Ok(Underlying::Fx(CcyPair::try_from(pair)?)),
         Some(underlying::Ref::Metal(pair)) => {
-            Ok(Underlying::Metal(MetalPair::try_from(pair.clone())?))
+            Ok(Underlying::Metal(MetalPair::try_from(pair)?))
         }
         // The cross-asset arms decode to their domain variant (the server routes
         // on the identity), but an FX-option product cannot price them: refuse
@@ -657,9 +742,9 @@ pub fn validate_deliverable_underlying(
     // deliverable/non-deliverable *convention* check (e.g. an NDF-only FX pair)
     // is the server's registry lookup, layered on the decoded identity below.
     match &underlying.r#ref {
-        Some(underlying::Ref::Fx(pair)) => Ok(Underlying::Fx(CcyPair::try_from(pair.clone())?)),
+        Some(underlying::Ref::Fx(pair)) => Ok(Underlying::Fx(CcyPair::try_from(pair)?)),
         Some(underlying::Ref::Metal(pair)) => {
-            Ok(Underlying::Metal(MetalPair::try_from(pair.clone())?))
+            Ok(Underlying::Metal(MetalPair::try_from(pair)?))
         }
         Some(underlying::Ref::Equity(_)) => Err(WireError::WrongUnderlying {
             product_family: "deliverable forward",
@@ -814,6 +899,29 @@ impl TryFrom<WireUnderlying> for Underlying {
 
     fn try_from(value: WireUnderlying) -> Result<Self, Self::Error> {
         match value.r#ref {
+            Some(underlying::Ref::Fx(pair)) => Ok(Underlying::Fx(CcyPair::try_from(pair)?)),
+            Some(underlying::Ref::Metal(pair)) => Ok(Underlying::Metal(MetalPair::try_from(pair)?)),
+            Some(underlying::Ref::Equity(equity)) => {
+                Ok(Underlying::Equity(EquityRef::try_from(equity)?))
+            }
+            Some(underlying::Ref::Commodity(commodity)) => {
+                Ok(Underlying::Commodity(CommodityRef::try_from(commodity)?))
+            }
+            Some(underlying::Ref::DigitalAsset(pair)) => {
+                Ok(Underlying::DigitalAsset(CryptoPair::from(pair)))
+            }
+            None => Err(WireError::MissingField {
+                field: "Underlying.ref",
+            }),
+        }
+    }
+}
+
+impl TryFrom<&WireUnderlying> for Underlying {
+    type Error = WireError;
+
+    fn try_from(value: &WireUnderlying) -> Result<Self, Self::Error> {
+        match &value.r#ref {
             Some(underlying::Ref::Fx(pair)) => Ok(Underlying::Fx(CcyPair::try_from(pair)?)),
             Some(underlying::Ref::Metal(pair)) => Ok(Underlying::Metal(MetalPair::try_from(pair)?)),
             Some(underlying::Ref::Equity(equity)) => {

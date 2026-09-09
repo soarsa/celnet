@@ -25,7 +25,7 @@ pub type HedgeFieldKind = FieldKind;
 /// Where `celnet-risk-routing`'s `RouteField` snapshots one *fill*, [`HedgeField`]
 /// snapshots one `(book × instrument)` *risk state*: the net risk, its budget
 /// band, the flow quality that built it, and the market's current offset/hedge
-/// cost (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §5.2).
+/// cost (`docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §5.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum HedgeField {
     // ---- identity -----------------------------------------------------------

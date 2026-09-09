@@ -1,6 +1,6 @@
 /**
  * RiskRoutingWorkspace — the FI risk-routing editor, reworked as a conventional
- * RULES-TABLE + per-rule-editor CRUD flow (docs/FI-RISK-ROUTING-REQUIREMENTS.md
+ * RULES-TABLE + per-rule-editor CRUD flow (docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md
  * §6.1, §8.6). The home view is an ordered TABLE of `IF <ANDed conditions> THEN
  * <risk book>` rules — row order is priority (first-match-wins). "Create risk rule"
  * / "Edit" opens the {@link RuleEditor}; Save adds/updates the rule and returns to
@@ -60,7 +60,7 @@ export function RiskRoutingWorkspace(): React.ReactElement {
   const { auth } = app;
   const signedIn = auth.user !== undefined && auth.user !== null;
   // Routing rules are FI risk management — gated on the granular `risk_manage·FI`
-  // capability (docs/PERMISSIONS-GRANULAR-REVIEW.md §4), replacing the overloaded
+  // capability (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4), replacing the overloaded
   // `quote_respond·FI` stand-in. The risk-portfolio STRUCTURE (Risk Portfolios pane)
   // is the same capability; the whole surface is rail-hidden without it.
   const canEdit = auth.can("risk_manage", "fixed_income");

@@ -1,0 +1,9 @@
+{
+  "name": "Act 1: Quantitative Calibration & Asymptotic Wing Verification",
+  "description": "Exhaustive pricing across 14 Garman-Kohlhagen Greeks, Rough SigVol, Cheyette 1F/2F, and Normal SABR with Roger Lee bounds",
+  "spot": 1.0850,
+  "hurst_exponent": 0.10,
+  "roger_lee_bound_limit": 2.0,
+  "swaption_notional": 10000000.0,
+  "cdo_tranche": [0.03, 0.07]
+}

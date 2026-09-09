@@ -1,0 +1,23 @@
+[package]
+name = "celnet-sbe"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet Simple Binary Encoding (SBE) flyweight codec — zero-allocation, fixed-offset message serializers for ultra-low-latency IPC and network streams."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-proto.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+bytemuck.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

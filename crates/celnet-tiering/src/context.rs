@@ -83,6 +83,9 @@ pub struct QuoteCtx {
     /// Upstream freshness signal: `true` when the composite is stale or the LP
     /// quorum was lost. Triggers the [`crate::StalePolicy`] in the pipeline.
     pub is_stale: bool,
+    /// Signed inventory limit utilization `q / limit_cap` (-1.0 to +1.0, or beyond under breach).
+    /// When present, utilization-based skew models use this normalized metric.
+    pub inventory_utilization: Option<f64>,
 }
 
 impl QuoteCtx {
@@ -101,6 +104,7 @@ impl QuoteCtx {
             smoothed_spread: None,
             raw_spread: None,
             is_stale: false,
+            inventory_utilization: None,
         }
     }
 
@@ -108,6 +112,13 @@ impl QuoteCtx {
     #[must_use]
     pub fn with_inventory(mut self, q: f64) -> Self {
         self.inventory = q;
+        self
+    }
+
+    /// Set signed inventory limit utilization `q / limit_cap`.
+    #[must_use]
+    pub fn with_inventory_utilization(mut self, u: f64) -> Self {
+        self.inventory_utilization = Some(u);
         self
     }
 

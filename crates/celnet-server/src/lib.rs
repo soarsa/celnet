@@ -1,7 +1,7 @@
 //! Celnet service edge — the tokio async gRPC front that exposes the core-pinned
 //! [`celnet_engine`] pricing core to the Celer estate and front end over the
 //! single, current, unversioned [`celnet_proto`] wire contract
-//! (`docs/ARCHITECTURE.md` §3, §5; `docs/API-CLIENTS.md`).
+//! (`docs/ARCHITECTURE.md` §3, §5; `docs/clients/API-CLIENTS.md`).
 //!
 //! # Two-tier model: async edge ⇄ pinned hot core
 //!
@@ -72,7 +72,9 @@
 pub mod clock;
 pub mod config;
 pub mod core_link;
+pub mod ingress;
 pub mod lsv_pricer;
+pub mod multicast;
 pub mod pricer;
 pub mod rates_pricing;
 pub mod readiness;
@@ -84,6 +86,14 @@ pub mod ws;
 pub mod xva_pricing;
 
 pub use clock::Clock;
+pub use ingress::{
+    CoDelConfig, CoDelQueue, HeadDropQueue, HeadDropStats, HeadDropStatsSnapshot,
+    SojournLatencyStats,
+};
+pub use multicast::{
+    DeliveryRecord, EdgeProxy, FairnessReport, JasperConfig, JasperFrame, JasperMulticastTree,
+    SubscriberId,
+};
 // The edge's entitlements trust-boundary posture, re-exported on the server facade
 // because `store().set_access_mode` takes it: any consumer configuring the edge's
 // access mode (a dev/test edge flipping to `Permissive`) needs the type without
@@ -118,8 +128,9 @@ use celnet_proto::quote_service_server::QuoteServiceServer;
 use celnet_proto::risk_service_server::RiskServiceServer;
 use celnet_proto::stream_service_server::StreamServiceServer;
 use celnet_proto::surface_service_server::SurfaceServiceServer;
+use celnet_proto::trade_service_server::TradeServiceServer;
+use celnet_proto::valuation_service_server::ValuationServiceServer;
 
-use config::consistency::ConsistencyPolicy;
 use config::fix_connections::FixConnectionStore;
 use config::identity::IdentityStore;
 use services::auth::AuthEdge;
@@ -437,11 +448,13 @@ impl Edge {
         let bound = listener.local_addr()?;
         let (grpc_shutdown, grpc_rx) = oneshot::channel::<()>();
 
-        let pricing = PricingServiceServer::new(PricingEdge::with_fleet(
+        let pricing_edge = Arc::new(PricingEdge::with_fleet(
             Arc::clone(&gate),
             Arc::clone(&surface_book),
             fleet.clone(),
         ));
+        let pricing = PricingServiceServer::from_arc(Arc::clone(&pricing_edge));
+        let valuation = ValuationServiceServer::from_arc(Arc::clone(&pricing_edge));
         // The edge-wide session registry: the ONE authentication state every front
         // (gRPC + WS) and every gated edge (quote, stream, risk, fix-admin, auth)
         // shares. Created before the edges so each is built `.with_sessions(...)` /
@@ -471,6 +484,7 @@ impl Edge {
             .with_aggregation_hub(Arc::clone(&aggregation_hub)),
         );
         let quote = QuoteServiceServer::from_arc(Arc::clone(&quote_edge));
+        let trade = TradeServiceServer::from_arc(Arc::clone(&quote_edge));
         // The shared LINEAR-RATES position book (created here so the stream + auth edges can
         // share it): ONE book read/written by the RiskService rates Book/List RPCs and the
         // RfqDeskService (whose AcceptDeskQuote books accepted deals into it), and read by the
@@ -726,7 +740,7 @@ impl Edge {
         // Seed a default ENABLED "Firm Warehouse" risk book + a default single-leaf routing
         // graph that targets it on a PRISTINE store, so an accepted / lifted fill routes into
         // an enabled risk book and the per-book risk dashboard shows a row out of the box
-        // (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §3.1/§8.2). Idempotent — a no-op once any
+        // (`docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md` §3.1/§8.2). Idempotent — a no-op once any
         // risk book or routing graph exists. Runs BEFORE the routers are primed below so the
         // seeded graph takes effect from first boot.
         let risk_routing_seeded = identity_store.ensure_seed_risk_routing();
@@ -785,7 +799,7 @@ impl Edge {
         }
 
         // Prime the shared position store's risk router from the persisted firm-wide
-        // routing graph (phase 4 boot reconcile, `docs/FI-RISK-ROUTING-REQUIREMENTS.md`
+        // routing graph (phase 4 boot reconcile, `docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md`
         // §7): every subsequent fill through `book_from_attribution` is routed to its
         // risk book from first boot. `None` (no graph persisted yet) leaves routing off —
         // fills book byte-identically to before. Runs before `identity_store` is moved
@@ -878,7 +892,8 @@ impl Edge {
         // dedicated transport knob (`CELNET_RAFT_PEERS`); `InProcess` (the default) boots
         // an inert single-node group. The blocking boot (socket bind + bounded leader
         // wait) runs off the reactor.
-        let mut consistency = ConsistencyPolicy::from_env();
+        let platform_cfg = config::PlatformConfig::load_or_default(None);
+        let mut consistency = platform_cfg.to_consistency_policy();
         for d in &identity_store.desks {
             for b in &d.books {
                 consistency.map_book_to_desk(b.clone(), d.id.clone());
@@ -997,13 +1012,24 @@ impl Edge {
                     Arc::clone(&gate),
                 ),
             );
+        let margin = celnet_proto::margin_service_server::MarginServiceServer::new(
+            services::margin::MarginEdge::new(Arc::clone(&gate), clock.clone()),
+        );
+        let algo = celnet_proto::algo_execution_service_server::AlgoExecutionServiceServer::new(
+            services::algo::AlgoEdge::new(Arc::clone(&gate), clock.clone()),
+        );
+        let cluster = celnet_proto::cluster_service_server::ClusterServiceServer::new(
+            services::cluster::ClusterEdge::new(Arc::clone(&gate), clock.clone()),
+        );
 
         let incoming = tonic::transport::server::TcpIncoming::from_listener(listener, true, None)
             .map_err(std::io::Error::other)?;
         let grpc_task = tokio::spawn(async move {
             tonic::transport::Server::builder()
                 .add_service(pricing)
+                .add_service(valuation)
                 .add_service(quote)
+                .add_service(trade)
                 .add_service(stream)
                 .add_service(surface)
                 .add_service(risk)
@@ -1013,6 +1039,9 @@ impl Edge {
                 .add_service(notifications)
                 .add_service(corp_actions)
                 .add_service(liquidity_feed)
+                .add_service(margin)
+                .add_service(algo)
+                .add_service(cluster)
                 .serve_with_incoming_shutdown(incoming, async {
                     let _ = grpc_rx.await;
                 })

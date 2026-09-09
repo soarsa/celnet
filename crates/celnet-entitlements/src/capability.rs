@@ -66,7 +66,7 @@ pub enum Action {
     /// write **distinct** from [`Action::Book`]: a desk can be granted booking
     /// (`Book`) without being granted the authority to move risk across the desk
     /// boundary (`RiskTransfer`). Gates the initiate/accept transfer RPCs
-    /// (`docs/RISK-TRANSFER-REQUIREMENTS.md` §7). Not in the default trader bundle —
+    /// (`docs/hedging/RISK-TRANSFER-REQUIREMENTS.md` §7). Not in the default trader bundle —
     /// a narrow, explicitly-granted authority (like [`Action::Administer`]).
     RiskTransfer,
     /// Run the **client-side counterparty sandbox** — generate mock RFQ/IOI/order
@@ -84,20 +84,20 @@ pub enum Action {
     /// this replaces as the FI risk-manager stand-in) and from super-admin
     /// ([`Action::Administer`]): a desk/risk lead can be granted it **without** full
     /// administration. Not in the default trader bundle — a narrow, explicitly-granted
-    /// authority (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1).
+    /// authority (`docs/operations/PERMISSIONS-GRANULAR-REVIEW.md` §3.1).
     RiskManage,
     /// Manage **FI client-pricing** structure: pricing-group structure/membership
     /// CRUD (which inbound FIX sessions / users / desks a group prices) — hence the
     /// session-pivoted **tiering assignment**, expressed as a group's membership edit.
     /// The per-group **pipeline retune** stays a quoting-trader knob on
     /// [`Action::QuoteRespond`], NOT this. A client-pricing-desk control separable
-    /// from identity administration (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1).
+    /// from identity administration (`docs/operations/PERMISSIONS-GRANULAR-REVIEW.md` §3.1).
     ManagePricing,
     /// Manage **inbound liquidity / venue ops**: FIX connection administration
     /// (create/update/delete/enable) and aggregated-book configuration. Distinct from
     /// identity administration ([`Action::Administer`]) — a venue-ops seat. Exercised
     /// on the asset the venue serves, so an FX-liquidity and an FI-liquidity seat are
-    /// separately expressible (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1).
+    /// separately expressible (`docs/operations/PERMISSIONS-GRANULAR-REVIEW.md` §3.1).
     ManageLiquidity,
     /// View the **cross-product Analytics** surface — the per-client flow / P&L-
     /// attribution ($/mm, spread economics, quote-fishing) rollups over what the desk
@@ -112,7 +112,7 @@ pub enum Action {
     /// **Author / arm an auto-hedge (risk-internalisation) policy**: edit the
     /// firm-wide hedge-policy decision graph (get/update), the warehouse-threshold
     /// bands, and the engine config (advisory-only / kill-switch / rate guards)
-    /// (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §8.2). A NARROW
+    /// (`docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §8.2). A NARROW
     /// risk-control authority **distinct** from [`Action::Book`]: *running* inside a
     /// policy — the booking-class internal-cross / external-hedge legs the engine
     /// fires — still gates on `Book` × the position's asset, so a desk can be granted
@@ -126,7 +126,7 @@ pub enum Action {
     /// CAEV/CAMV lifecycle that re-derives an instrument's cashflow schedule and books
     /// the resulting redemption/coupon movement) and, more broadly, the golden-source
     /// security-master admin surface
-    /// (`docs/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md` §11). A NARROW
+    /// (`docs/fixed-income/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md` §11). A NARROW
     /// reference-data authority **distinct** from [`Action::Book`] (a CA apply *books*
     /// through the same rates path, still gated on `Book`, but *authorising* the
     /// mastered-data change is this separate seat), from [`Action::RiskManage`], and

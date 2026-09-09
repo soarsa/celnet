@@ -92,7 +92,7 @@ rates specialisation:
   — it parses the proto, so the **additive** rates arms are picked up automatically once added).
 - **(d) Five-client conformance** — server == SDK == CLI == Excel == GUI against a real edge; a
   parity-matrix row per `(asset-class=rates, product)`. The new GUI Fixed-Income workspace
-  (D2, [`FI-ARCHITECTURE.md`](./FI-ARCHITECTURE.md)) and Excel `CELNET.*` rates functions are part of
+  (D2, [`FI-ARCHITECTURE.md`](FI-ARCHITECTURE.md)) and Excel `CELNET.*` rates functions are part of
   this axis.
 - **(e) Performance budget** — curve build is cheap (`<ms`); the budgeted concern is the **risk cube**
   (n_instruments × n_pillars × n_curves bump-reprice), which reuses the existing server-owned

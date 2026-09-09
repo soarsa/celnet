@@ -24,7 +24,7 @@
  * membership edit, which the server gates on `manage_pricing·fixed_income`.
  *
  * Gating: a Fixed-Income client-pricing surface, rail-visible on the granular
- * `manage_pricing·fixed_income` capability (docs/PERMISSIONS-GRANULAR-REVIEW.md §4 —
+ * `manage_pricing·fixed_income` capability (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4 —
  * the FI pricing-desk authority, distinct from super-admin). Reassigning a session and
  * the "Edit in Pricing Groups" deep-link both use the same cap; a manager holding it
  * edits WITHOUT full Administer, and a user lacking it never reaches the pane.

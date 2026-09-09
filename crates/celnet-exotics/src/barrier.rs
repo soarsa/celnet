@@ -46,6 +46,7 @@ use celnet_types::OptionType;
 // `celnet_exotics::{BarrierKind, BarrierStyle, SingleBarrier}` reference is
 // byte-identical.
 pub use celnet_types::{BarrierKind, BarrierStyle, SingleBarrier};
+#[cfg(test)]
 use celnet_vanilla::price as vanilla_price;
 
 use crate::inputs::ExoticInputs;
@@ -289,14 +290,16 @@ pub fn single_barrier_price(i: &ExoticInputs, spec: SingleBarrier) -> f64 {
 
 /// The rebate-free single-barrier value.
 fn single_barrier_no_rebate(i: &ExoticInputs, kind: BarrierKind, strike: f64, barrier: f64) -> f64 {
-    // The Reiner-Rubinstein in/out parity leg is the plain vanilla at `strike`.
-    // This analytic closed form is the Garman-Kohlhagen (FX) image construction;
-    // a non-FX barrier prices on the PDE/MC engines, so lowering to the FX vanilla
-    // here typed-rejects a non-FX carry rather than silently mis-pricing it.
-    let vanilla = vanilla_price(
+    // The Reiner-Rubinstein in/out parity leg is the plain vanilla at `strike`,
+    // evaluated through the carry seam (byte-identical to Garman-Kohlhagen for FX,
+    // and generalized cost-of-carry for equities, commodities, and crypto).
+    let vanilla = crate::inputs::carry_vanilla_price_at(
         kind.option,
-        &i.as_fx_vanilla(strike)
-            .expect("analytic single-barrier is the FX (Garman-Kohlhagen) closed form"),
+        i.spot,
+        strike,
+        i.vol,
+        i.t,
+        &i.carry,
     );
 
     // If the barrier is already breached the knock is resolved immediately.

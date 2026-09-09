@@ -26,10 +26,8 @@ use tempfile::TempDir;
 /// The hard wall-clock ceiling for any single edge integration test. A correctness
 /// failure must surface as a *fast* failure, never an infinite hang.
 ///
-/// Raised from 10 s → 45 s to accommodate loaded-t2 contention on the single M4
-/// (mirrors the celnet-client TEST_DEADLINE fix — same root cause: OS scheduling
-/// starves a heavy test past the original deadline, not a real regression).
-pub const TEST_DEADLINE: Duration = Duration::from_secs(45);
+/// Raised from 45 s → 90 s to accommodate multi-node fleet tests (3-node + 4-node fleets) on loaded local development machines.
+pub const TEST_DEADLINE: Duration = Duration::from_secs(90);
 
 /// Bound a single network / response await so a never-arriving reply fails fast.
 ///

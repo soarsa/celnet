@@ -233,7 +233,7 @@ impl LimitSpec {
 }
 
 /// Traffic-light status of a limit's utilization (`docs/RISK-HIERARCHY.md` §5.2;
-/// the RAG overlay of `docs/EXPERIENCE-ARCHITECTURE.md` §"Limits overlay").
+/// the RAG overlay of `docs/clients/EXPERIENCE-ARCHITECTURE.md` §"Limits overlay").
 ///
 /// Ordered by severity so the worst status across a set of limits is `max`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

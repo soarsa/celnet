@@ -194,8 +194,8 @@ pub use mc::{
     price_barrier_bgk_shifted,
 };
 pub use multiasset::{
-    BasketEstimate, BasketKind, BasketLeg, BasketMcConfig, BasketSpec, CholeskyFactor,
-    CorrelationError, cholesky, price_basket,
+    BasketEstimate, BasketKind, BasketLeg, BasketMcConfig, BasketSensitivities, BasketSpec,
+    CholeskyFactor, CorrelationError, cholesky, price_basket, price_basket_with_sensitivities,
 };
 pub use normal::{gaussian_pair_from_uniforms, inverse_cdf};
 pub use particle::{CalibrationResult, ParticleConfig, calibrate_leverage};

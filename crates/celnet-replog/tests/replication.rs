@@ -35,6 +35,7 @@ fn test_cfg() -> RaftConfig {
         election_max: Duration::from_millis(800),
         heartbeat: Duration::from_millis(40),
         io_timeout: Duration::from_secs(2),
+        quorum_policy: celnet_replog::QuorumPolicy::Majority,
     }
 }
 

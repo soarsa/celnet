@@ -24,48 +24,8 @@ import {
   type ScopeNode,
   type ScopeState,
 } from "./scope";
-import { DOMAINS, type Domain } from "./commands";
-
-/**
- * The rail workspace the view is parked on. Mirrors `commands.WorkspaceId` exactly
- * (fe-fi-migration #6: the single class-parametric rail). A recalled/pasted URL
- * carrying a retired id (`rates`/`curve`/`ratesrisk`/`deals`/`ratesbook`) is an
- * unknown token ⇒ `decode` ignores it and defaults the workspace (forward-compat),
- * so old bookmarks still open — just on the shared workspace's default lens.
- */
-export type WorkspaceId =
-  | "ticket"
-  | "stream"
-  | "surface"
-  | "risk"
-  | "book"
-  | "quoting"
-  | "fistreaming"
-  | "aggbook"
-  | "tiering"
-  | "riskbooks"
-  | "riskdashboard"
-  | "filedgers"
-  | "riskrouting"
-  | "hedgeflow"
-  | "hedging"
-  | "acceptance"
-  | "risktransfer"
-  | "transferinbox"
-  | "transferaudit"
-  | "xva"
-  | "excel"
-  | "clientflow"
-  | "latencyops"
-  | "streetliquidity"
-  | "eventtrace"
-  | "connections"
-  | "liquidity"
-  | "admin"
-  | "permissions"
-  | "pricinggroups"
-  | "corpactions"
-  | "refdata";
+import { DOMAINS, type Domain, type WorkspaceId } from "./commands";
+export type { WorkspaceId };
 
 const WORKSPACES: readonly WorkspaceId[] = [
   "ticket",
@@ -81,6 +41,7 @@ const WORKSPACES: readonly WorkspaceId[] = [
   "riskdashboard",
   "filedgers",
   "riskrouting",
+  "hedgeflow",
   "hedging",
   "acceptance",
   "risktransfer",
@@ -99,6 +60,12 @@ const WORKSPACES: readonly WorkspaceId[] = [
   "pricinggroups",
   "corpactions",
   "refdata",
+  "studio_markets",
+  "studio_pricing",
+  "studio_distribution",
+  "studio_blotter",
+  "studio_risk",
+  "studio_policy",
 ] as const;
 
 /**

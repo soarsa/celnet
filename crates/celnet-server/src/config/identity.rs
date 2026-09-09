@@ -58,7 +58,7 @@ pub const SEED_ADMIN_EMAIL: &str = "admin@celnet.com";
 pub const SEED_ADMIN_PASSWORD: &str = "password";
 
 /// The stable id of the default **"Firm Warehouse"** risk book seeded on a pristine
-/// store (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §3.1/§8.2). Its presence — plus the
+/// store (`docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md` §3.1/§8.2). Its presence — plus the
 /// default single-leaf routing graph that targets it — is what makes an accepted /
 /// lifted fill land in an ENABLED risk book (and show a row on the per-book risk
 /// dashboard) out of the box, before an operator has defined any finer books.
@@ -67,7 +67,7 @@ pub const DEFAULT_WAREHOUSE_BOOK_ID: &str = "warehouse";
 pub const DEFAULT_WAREHOUSE_BOOK_NAME: &str = "Firm Warehouse";
 /// The default warehouse **DV01 budget** (the "100") seeded for the default warehouse book on
 /// a pristine store, so the internalise decision has a cap to measure fills against out of the
-/// box (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4). A deliberately generous
+/// box (`docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4). A deliberately generous
 /// firm-warehouse budget: a normally-sized single fill sits comfortably under it (⇒ fully
 /// internalised when the desk captured edge), so the deal blotter shows a real internalise
 /// decision from first boot. An operator narrows it via `AuthService.UpdateHedgeThreshold`.
@@ -120,7 +120,7 @@ impl Role {
 /// [`Action::Administer`] (super-admin), [`Action::RiskTransfer`] (cross-desk risk
 /// move), and the three per-feature management authorities [`Action::RiskManage`],
 /// [`Action::ManagePricing`] and [`Action::ManageLiquidity`]
-/// (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §5). A plain trader therefore keeps every
+/// (`docs/operations/PERMISSIONS-GRANULAR-REVIEW.md` §5). A plain trader therefore keeps every
 /// trading capability but does **not** get the Risk Routing / Risk Portfolios / Risk
 /// Dashboard, Pricing-Group / Tiering, or FIX-connection / Aggregated-Book management
 /// surfaces until an admin grants the matching capability (per-user overlay or an
@@ -657,7 +657,7 @@ fn default_async_giveback_pct() -> f64 {
 /// set of connected clients (inbound FIX sessions, GUI/API principals, or a desk as
 /// a default tier) to their own outbound **feature pipelines**, so different clients
 /// receive different outbound prices off the **same** raw composite
-/// (`docs/FI-PRICING-GROUPS-DESIGN.md`; Phase 2a).
+/// (`docs/fixed-income/FI-PRICING-GROUPS-DESIGN.md`; Phase 2a).
 ///
 /// Membership is **many-to-one**: a group serves many members, and each member
 /// resolves to **exactly one enabled group** (validated — see
@@ -919,7 +919,7 @@ impl PricingGroupResolver {
 }
 
 /// Per-**risk-book** pre-trade limits: the persisted, shape-validated caps a book
-/// carries (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §3.1). Each cap is an optional,
+/// carries (`docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md` §3.1). Each cap is an optional,
 /// non-negative magnitude in the book's booking currency (net/gross notional) or in
 /// PV-per-basis-point (`max_dv01`); `None` means "no cap on this axis".
 ///
@@ -967,7 +967,7 @@ impl RiskLimits {
 }
 
 /// One persisted **risk book**: a trader-defined portfolio an accepted fill's risk can
-/// land in (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §3.1). Books form a **tree** via
+/// land in (`docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md` §3.1). Books form a **tree** via
 /// [`parent_id`](Self::parent_id) — a top-level book (`parent_id == None`) tags an owning
 /// [`desk_id`](Self::desk_id); a sub-book refines a parent for finer attribution and
 /// later roll-up. The firm-wide [`RiskRoutingGraph`] routes a fill to a book by id.
@@ -1136,13 +1136,13 @@ pub struct IdentityStore {
     /// The trader-defined **pricing groups**: named groupings that bind connected
     /// clients (FIX sessions / users / desks) to their own outbound feature pipelines,
     /// so different clients receive different outbound prices off the same raw composite
-    /// (`docs/FI-PRICING-GROUPS-DESIGN.md`; Phase 2a). An additive serde-default field
+    /// (`docs/fixed-income/FI-PRICING-GROUPS-DESIGN.md`; Phase 2a). An additive serde-default field
     /// (no `schema_version`), so an existing `identity.json` (which carries no
     /// `pricing_groups`) loads unchanged.
     #[serde(default)]
     pub pricing_groups: Vec<PricingGroupDef>,
     /// The trader-defined **risk books**: the tree of portfolios an accepted fill's risk
-    /// can land in (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §3.1). Books nest via
+    /// can land in (`docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md` §3.1). Books nest via
     /// [`RiskBookDef::parent_id`]; the routing graph below targets them by id. An additive
     /// serde-default field (no `schema_version`), so an existing `identity.json` (which
     /// carries no `risk_books`) loads unchanged.
@@ -1156,7 +1156,7 @@ pub struct IdentityStore {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk_routing_graph: Option<RiskRoutingGraph>,
     /// The firm-wide **auto-hedge / risk-internalisation policy graph** (Phase B —
-    /// `docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §5). The sibling of
+    /// `docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §5). The sibling of
     /// [`risk_routing_graph`](Self::risk_routing_graph) whose leaves are **exit actions**
     /// instead of book targets. `None` until an operator first defines one; when present,
     /// every `CrossInternal` leaf must name a known instrument and every `RfqOut` leaf a
@@ -2245,7 +2245,7 @@ impl IdentityStore {
     /// id has no existing book — so saving a graph that references a not-yet-created
     /// portfolio id *creates that portfolio* (enabled) and a routed fill therefore always
     /// has an enabled home to show on the per-book risk dashboard
-    /// (`docs/FI-RISK-ROUTING-REQUIREMENTS.md` §8.2). Idempotent and **non-destructive**:
+    /// (`docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md` §8.2). Idempotent and **non-destructive**:
     /// a leaf that names an already-defined book (enabled OR disabled) never mutates it, so
     /// re-saving a graph provisions nothing new and a deliberately-disabled book stays
     /// disabled (and its graph then fails validation, loudly, rather than being silently

@@ -189,6 +189,135 @@ pub fn greeks(opt: OptionType, i: &EquityInputs) -> EquityGreeks {
     }
 }
 
+/// A discrete cash dividend payment.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DiscreteDividend {
+    /// Time of ex-dividend date in years from valuation date (0 < time <= T).
+    pub time_years: f64,
+    /// Absolute cash dividend amount per share (D > 0).
+    pub amount: f64,
+}
+
+/// Inputs for pricing options on underlyings with discrete cash dividend schedules.
+///
+/// In equity markets, single stocks pay discrete cash dividends rather than continuous yields.
+/// The standard escrow model (spot-adjusted Black-Scholes) decomposes spot S into:
+/// - Escrowed dividend component: PV(Dividends) = sum_{t_i <= T} D_i * exp(-r * t_i)
+/// - Pure / risky equity component: S* = S - PV(Dividends)
+///
+/// If S* <= 0, the dividend schedule exceeds spot value, creating arbitrage or default.
+/// The forward is F = S* * exp((r - repo) * T).
+/// The option is priced using generalized Black-Scholes on S* with forward F and discount exp(-r * T).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiscreteDividendInputs {
+    /// Spot price of the underlying asset.
+    pub spot: f64,
+    /// Strike price.
+    pub strike: f64,
+    /// Annualized volatility (quoted on the pure/risky stock or asset).
+    pub vol: f64,
+    /// Time to expiry in years.
+    pub t: f64,
+    /// Continuously compounded risk-free discount rate r.
+    pub r: f64,
+    /// Borrow / repo spread (default 0.0).
+    pub repo: f64,
+    /// Discrete cash dividend schedule over the option life.
+    pub dividends: Vec<DiscreteDividend>,
+}
+
+impl DiscreteDividendInputs {
+    /// Construct new discrete dividend pricing inputs.
+    pub fn new(
+        spot: f64,
+        strike: f64,
+        vol: f64,
+        t: f64,
+        r: f64,
+        repo: f64,
+        dividends: Vec<DiscreteDividend>,
+    ) -> Self {
+        Self {
+            spot,
+            strike,
+            vol,
+            t,
+            r,
+            repo,
+            dividends,
+        }
+    }
+
+    /// Present value of all cash dividends occurring prior to expiry:
+    /// PV(D) = sum_{t_i <= T} D_i * exp(-r * t_i)
+    pub fn pv_dividends(&self) -> f64 {
+        let mut pv = 0.0;
+        for div in &self.dividends {
+            if div.time_years > 0.0 && div.time_years <= self.t {
+                pv += div.amount * exp(-self.r * div.time_years);
+            }
+        }
+        pv
+    }
+
+    /// Escrow-adjusted pure spot price: S* = S - PV(D).
+    /// Returns an error if PV(Dividends) >= spot (dividend arbitrage / negative stock).
+    pub fn pure_spot(&self) -> Result<f64, String> {
+        let s_star = self.spot - self.pv_dividends();
+        if s_star <= 0.0 {
+            Err(format!(
+                "PV of discrete dividends ({:.4}) >= spot ({:.4}); dividend arbitrage / negative forward",
+                self.pv_dividends(),
+                self.spot
+            ))
+        } else {
+            Ok(s_star)
+        }
+    }
+
+    /// Forward under discrete cash dividends:
+    /// F = (S - PV(D)) * exp((r - repo) * T)
+    pub fn forward(&self) -> Result<f64, String> {
+        let s_star = self.pure_spot()?;
+        Ok(s_star * exp((self.r - self.repo) * self.t))
+    }
+}
+
+/// Price an equity option under discrete cash dividend escrow model.
+pub fn price_discrete_dividends(
+    opt: OptionType,
+    i: &DiscreteDividendInputs,
+) -> Result<f64, String> {
+    let s_star = i.pure_spot()?;
+    let b = i.r - i.repo;
+    Ok(gbsm_carry_price(opt, b, i.r, s_star, i.strike, i.vol, i.t))
+}
+
+/// Compute full Greeks under discrete cash dividend escrow model.
+pub fn greeks_discrete_dividends(
+    opt: OptionType,
+    i: &DiscreteDividendInputs,
+) -> Result<EquityGreeks, String> {
+    let s_star = i.pure_spot()?;
+    let b = i.r - i.repo;
+    let cg = gbsm_carry_greeks(opt, b, i.r, s_star, i.strike, i.vol, i.t);
+    Ok(EquityGreeks {
+        price: cg.price,
+        delta_spot: cg.delta_spot,
+        delta_forward: cg.delta_forward,
+        gamma: cg.gamma,
+        vega: cg.vega,
+        theta: cg.theta,
+        rates: cg.rates,
+        vanna: cg.vanna,
+        volga: cg.volga,
+        charm: cg.charm,
+        speed: cg.speed,
+        zomma: cg.zomma,
+        color: cg.color,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use celnet_core::assert_close;
@@ -556,5 +685,69 @@ mod tests {
             // Vega never negative.
             prop_assert!(greeks(OptionType::Call, &i).vega >= -1e-12);
         }
+    }
+
+    #[test]
+    fn test_discrete_dividend_escrow_pricing_and_put_call_parity() {
+        let spot = 100.0;
+        let strike = 95.0;
+        let vol = 0.25;
+        let t = 1.0;
+        let r = 0.05;
+        let repo = 0.0;
+
+        // Two quarterly dividends of $1.50 each at 3m and 9m
+        let dividends = vec![
+            DiscreteDividend {
+                time_years: 0.25,
+                amount: 1.50,
+            },
+            DiscreteDividend {
+                time_years: 0.75,
+                amount: 1.50,
+            },
+        ];
+
+        let inputs = DiscreteDividendInputs::new(spot, strike, vol, t, r, repo, dividends);
+        let pv_div = inputs.pv_dividends();
+        assert!(pv_div > 2.80 && pv_div < 3.00);
+
+        let s_star = inputs.pure_spot().unwrap();
+        assert_close!(s_star, spot - pv_div, 1e-10, 1e-10);
+
+        let call = price_discrete_dividends(OptionType::Call, &inputs).unwrap();
+        let put = price_discrete_dividends(OptionType::Put, &inputs).unwrap();
+
+        // Model-free discrete dividend put-call parity:
+        // C - P = (S - PV(D)) - K * exp(-r * T)
+        let lhs = call - put;
+        let rhs = s_star - strike * exp(-r * t);
+        assert_close!(lhs, rhs, 1e-9, 1e-9);
+
+        // Greeks strip
+        let cg = greeks_discrete_dividends(OptionType::Call, &inputs).unwrap();
+        assert_close!(cg.price, call, 1e-10, 1e-10);
+        assert!(cg.delta_spot > 0.0 && cg.delta_spot < 1.0);
+        assert!(cg.gamma > 0.0);
+        assert!(cg.vega > 0.0);
+    }
+
+    #[test]
+    fn test_discrete_dividend_arbitrage_error() {
+        // Dividend amount exceeding spot ($120 on $100 stock)
+        let inputs = DiscreteDividendInputs::new(
+            100.0,
+            100.0,
+            0.20,
+            0.5,
+            0.05,
+            0.0,
+            vec![DiscreteDividend {
+                time_years: 0.25,
+                amount: 120.0,
+            }],
+        );
+        let res = price_discrete_dividends(OptionType::Call, &inputs);
+        assert!(res.is_err());
     }
 }

@@ -148,6 +148,18 @@ import type {
   UserDesc,
   XvaPricingRequest,
   XvaResult,
+  MarginCalculationRequest,
+  MarginCalculationResponse,
+  PreTradeMarginRequest,
+  PreTradeMarginResponse,
+  SubmitAlgoOrderRequest,
+  AlgoOrderResponse,
+  ListAlgoOrdersResponse,
+  ClusterTopologyResponse,
+  UpgradeStatusResponse,
+  ExportCdmResponse,
+  AttestationResponse,
+  LicenseCapabilityResponse,
 } from "./contract";
 
 /** A priced result for a single instrument (PricingService.Price). */
@@ -791,7 +803,7 @@ export interface CelnetTransport {
     sharePipeline: boolean,
   ): Promise<PricingGroup>;
 
-  // --- FI Risk routing & risk books (docs/FI-RISK-ROUTING-REQUIREMENTS.md) -----
+  // --- FI Risk routing & risk books (docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md) -----
   //
   // Admin-defined RISK BOOKS (a portfolio tree) + a firm-wide routing decision
   // GRAPH that books each fill's risk into a leaf book. Every RPC is admin-gated
@@ -935,7 +947,7 @@ export interface CelnetTransport {
     dismiss: boolean,
   ): Promise<{ provenance: HedgeProvenance | null; suggestions: HedgeSuggestion[] }>;
 
-  // --- FI Risk transfer (docs/RISK-TRANSFER-REQUIREMENTS.md) ------------------
+  // --- FI Risk transfer (docs/hedging/RISK-TRANSFER-REQUIREMENTS.md) ------------------
   //
   // The MANUAL move of EXISTING risk — the complement to routing. Initiate/accept
   // gate server-side on the NARROW `risk_transfer` capability × the position's
@@ -1154,4 +1166,33 @@ export interface CelnetTransport {
    * remain (or deleting the last curve) is `failed_precondition`.
    */
   deleteCurveDefinition(curveId: string): Promise<void>;
+
+  // --- Enterprise Capabilities (Margin, Algo, Cluster, CDM, Attestation, Licensing) ---
+
+  /** MarginService.CalculateMargin — portfolio initial margin, ES, VaR, and stress add-ons. */
+  calculateMargin(request: MarginCalculationRequest): Promise<MarginCalculationResponse>;
+
+  /** MarginService.SimulatePreTradeMargin — pre-trade incremental margin impact and headroom check. */
+  simulatePreTradeMargin(request: PreTradeMarginRequest): Promise<PreTradeMarginResponse>;
+
+  /** AlgoService.SubmitAlgoOrder — submit parent algorithmic execution order. */
+  submitAlgoOrder(request: SubmitAlgoOrderRequest): Promise<AlgoOrderResponse>;
+
+  /** AlgoService.ListAlgoOrders — list active algorithmic execution orders. */
+  listAlgoOrders(): Promise<ListAlgoOrdersResponse>;
+
+  /** ClusterService.GetClusterTopology — Raft consensus cluster membership and leader health. */
+  getClusterTopology(): Promise<ClusterTopologyResponse>;
+
+  /** ClusterService.GetUpgradeStatus — zero-downtime rolling upgrade monitor and shadow twin validation status. */
+  getUpgradeStatus(): Promise<UpgradeStatusResponse>;
+
+  /** ExportService.ExportCdm — export trade execution lifecycle as ISDA CDM 2026 digital event. */
+  exportCdm(executionId: bigint, uti?: string): Promise<ExportCdmResponse>;
+
+  /** AttestationService.VerifyAttestation — hardware TPM 2.0 quote cryptographic attestation. */
+  verifyAttestation(expectedFingerprint?: string): Promise<AttestationResponse>;
+
+  /** LicenseService.GetLicenseCapabilities — dynamic capability token license inspection. */
+  getLicenseCapabilities(): Promise<LicenseCapabilityResponse>;
 }

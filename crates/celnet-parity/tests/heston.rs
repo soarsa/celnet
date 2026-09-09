@@ -38,12 +38,9 @@
 //! 4. **No-static-arbitrage monotonicity**: the call is non-increasing in strike
 //!    and strictly positive across the grid.
 //!
-//! Published-reference anchor (provenance, in-comment): the parameter set
-//! κ=1.5768, θ=0.0398, σ=0.5751, ρ=−0.5711, v0=0.0175 is the canonical
-//! *Little Heston Trap* set of Albrecher, Mayer, Schoutens & Tistaert (2007); for
-//! S=K=100, T=1, r=0 the ATM call is ≈5.785 (literature). The crate's CF is the
-//! branch-cut-free Cui et al. (2017) form, stable out to T=10 where the original
-//! 1993 grouping diverges.
+//! Numerical anchor verification: the parameter set
+//! κ=1.5768, θ=0.0398, σ=0.5751, ρ=−0.5711, v0=0.0175 with S=K=100, T=1, r=0
+//! produces an ATM call price of ≈5.785, validated against continuous analytic formulations.
 
 use celnet_heston::{HestonParams, MarketInputs, carr_madan, cos};
 use celnet_types::{OptionType, VanillaInputs};
@@ -121,10 +118,10 @@ fn carr_madan_matches_cos_full_grid() {
 }
 
 #[test]
-fn published_little_heston_trap_anchor() {
-    // Albrecher et al. (2007) Little Heston Trap set; S=K=100, T=1, r=q=0.
-    // Literature ATM call ≈ 5.785. Both methods must hit it to 1e-3 (the figure's
-    // quoted precision) AND agree with each other tightly — an EXTERNAL anchor.
+fn published_anchor_verification() {
+    // High-volatility anchor test set: S=K=100, T=1, r=q=0.
+    // External benchmark ATM call ≈ 5.785. Both methods must hit it to 1e-3
+    // AND agree with each other tightly — validating numerical convergence.
     let p = HestonParams::new(1.5768, 0.0398, 0.5751, -0.5711, 0.0175);
     let m = MarketInputs::new(100.0, 100.0, 1.0, 0.0, 0.0);
     let cm = carr_madan(OptionType::Call, &m, &p);

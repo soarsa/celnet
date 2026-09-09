@@ -48,7 +48,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use celnet_replog::{BookState, BookUpdate, Log, LogEntry, RaftConfig, RaftNode, Role};
+use celnet_replog::{
+    BookState, BookUpdate, Log, LogEntry, QuorumPolicy, RaftConfig, RaftNode, Role,
+};
 
 // ---------------------------------------------------------------------------
 // Local deadline / scaffolding (mirrors celnet-replog/tests/common, copied here
@@ -108,6 +110,7 @@ fn cfg() -> RaftConfig {
         election_max: Duration::from_millis(800),
         heartbeat: Duration::from_millis(40),
         io_timeout: Duration::from_secs(2),
+        quorum_policy: QuorumPolicy::Majority,
     }
 }
 

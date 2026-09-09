@@ -95,9 +95,10 @@ impl CashflowSchedule {
         let remaining = year_fraction(basis, settlement, next_coupon);
         let w = remaining / period_len;
 
-        let regular_coupon = bond.coupon_rate() / freq * bond.redemption();
+        let effective_redemption = bond.effective_redemption();
+        let regular_coupon = bond.coupon_rate() / freq * effective_redemption;
         let accrued = bond.coupon_rate()
-            * bond.redemption()
+            * effective_redemption
             * year_fraction(basis, previous_coupon, settlement);
 
         let last = future.len() - 1;
@@ -106,7 +107,7 @@ impl CashflowSchedule {
             .enumerate()
             .map(|(k, &date)| {
                 let amount = if k == last {
-                    regular_coupon + bond.redemption()
+                    regular_coupon + effective_redemption
                 } else {
                     regular_coupon
                 };
@@ -139,6 +140,10 @@ impl CashflowSchedule {
 
     /// Dirty price at a flat periodically-compounded `yield_`: `Σ CFₖ · (1 + y/f)^(−eₖ)`.
     ///
+    /// Evaluated via the Horner-like discount recurrence `Dₖ = D_{k-1} · v` where `v = (1 + y/f)⁻¹`
+    /// and `D₀ = (1 + y/f)^{−w}`, reducing `N` transcendental `powf` calls to a single `powf`
+    /// followed by `N - 1` fast multiplications.
+    ///
     /// Returns `+∞` when `1 + y/f ≤ 0` (a yield below `−f`), so a root-find treats that region as
     /// unboundedly rich and brackets away from it rather than producing a `NaN`.
     #[must_use]
@@ -147,25 +152,64 @@ impl CashflowSchedule {
         if base <= 0.0 {
             return f64::INFINITY;
         }
-        self.flows
-            .iter()
-            .map(|c| c.amount * base.powf(-c.period_exponent))
-            .sum()
+        if self.flows.is_empty() {
+            return 0.0;
+        }
+        let w = self.flows[0].period_exponent;
+        let v = 1.0 / base;
+        let mut d_k = base.powf(-w);
+        let mut sum = self.flows[0].amount * d_k;
+        for c in &self.flows[1..] {
+            d_k *= v;
+            sum += c.amount * d_k;
+        }
+        sum
     }
 
     /// `∂(dirty price)/∂y = −(1/f) · Σ eₖ · CFₖ · (1 + y/f)^(−eₖ−1)` (analytic, strictly negative).
+    ///
+    /// Evaluated via the same `Dₖ = D_{k-1} · v` recurrence with a single `powf` call.
     #[must_use]
     pub(crate) fn dirty_price_first_derivative(&self, yield_: f64) -> f64 {
         let base = 1.0 + yield_ / self.freq;
         if base <= 0.0 {
             return f64::NEG_INFINITY;
         }
-        let sum: f64 = self
-            .flows
-            .iter()
-            .map(|c| c.period_exponent * c.amount * base.powf(-c.period_exponent - 1.0))
-            .sum();
-        -sum / self.freq
+        if self.flows.is_empty() {
+            return 0.0;
+        }
+        let w = self.flows[0].period_exponent;
+        let v = 1.0 / base;
+        let mut d_k = base.powf(-w);
+        let mut sum = self.flows[0].period_exponent * self.flows[0].amount * d_k;
+        for c in &self.flows[1..] {
+            d_k *= v;
+            sum += c.period_exponent * c.amount * d_k;
+        }
+        -(sum * v) / self.freq
+    }
+
+    /// Compute dirty price and its first derivative in a single unified pass over cashflows.
+    #[must_use]
+    pub(crate) fn dirty_price_and_first_derivative(&self, yield_: f64) -> (f64, f64) {
+        let base = 1.0 + yield_ / self.freq;
+        if base <= 0.0 {
+            return (f64::INFINITY, f64::NEG_INFINITY);
+        }
+        if self.flows.is_empty() {
+            return (0.0, 0.0);
+        }
+        let w = self.flows[0].period_exponent;
+        let v = 1.0 / base;
+        let mut d_k = base.powf(-w);
+        let mut price = self.flows[0].amount * d_k;
+        let mut deriv = self.flows[0].period_exponent * self.flows[0].amount * d_k;
+        for c in &self.flows[1..] {
+            d_k *= v;
+            price += c.amount * d_k;
+            deriv += c.period_exponent * c.amount * d_k;
+        }
+        (price, -(deriv * v) / self.freq)
     }
 
     /// `∂²(dirty price)/∂y² = (1/f²) · Σ eₖ(eₖ+1) · CFₖ · (1 + y/f)^(−eₖ−2)` (analytic).
@@ -175,17 +219,21 @@ impl CashflowSchedule {
         if base <= 0.0 {
             return f64::INFINITY;
         }
-        let sum: f64 = self
-            .flows
-            .iter()
-            .map(|c| {
-                c.period_exponent
-                    * (c.period_exponent + 1.0)
-                    * c.amount
-                    * base.powf(-c.period_exponent - 2.0)
-            })
-            .sum();
-        sum / (self.freq * self.freq)
+        if self.flows.is_empty() {
+            return 0.0;
+        }
+        let w = self.flows[0].period_exponent;
+        let v = 1.0 / base;
+        let mut d_k = base.powf(-w);
+        let mut sum = self.flows[0].period_exponent
+            * (self.flows[0].period_exponent + 1.0)
+            * self.flows[0].amount
+            * d_k;
+        for c in &self.flows[1..] {
+            d_k *= v;
+            sum += c.period_exponent * (c.period_exponent + 1.0) * c.amount * d_k;
+        }
+        (sum * v * v) / (self.freq * self.freq)
     }
 
     /// Dirty price off a discount curve: `Σ CFₖ · DF(tₖ)` at the curve's ACT/365F time axis.

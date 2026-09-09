@@ -139,15 +139,20 @@ async fn rfs_click_to_trade_books_streamed_line_and_rejects_forged_token() {
         // Scan the interleaved stream for the reject and the booking.
         let mut saw_reject = false;
         let mut booked = None;
-        for _ in 0..256 {
+        for _ in 0..1024 {
             match next_msg(&mut inbound).await {
                 server_stream_message::Message::StreamReject(r) if r.token == 0x0BAD_F00D => {
                     assert_eq!(r.reason, stream_reject::Reason::UnknownToken as i32);
                     saw_reject = true;
+                    if booked.is_some() {
+                        break;
+                    }
                 }
                 server_stream_message::Message::Executed(e) if e.token == buy_token => {
                     booked = Some(e);
-                    break;
+                    if saw_reject {
+                        break;
+                    }
                 }
                 _ => continue,
             }

@@ -361,4 +361,3 @@ should **synthesise the corpus** and close the remaining tails:
 - ISDA CDS Standard Model Public License v1.0 (text): https://bnikolic.co.uk/isdacdslicensev1
 - IHS Markit — CDS Indices Primer (Nov 2021): https://cdn.ihsmarkit.com/www/pdf/1221/CDS-Indices-Primer---2021.pdf
 - credule (R) — Credit curve bootstrapping vignette: https://cran.r-project.org/web/packages/credule/vignettes/credule.html
-```

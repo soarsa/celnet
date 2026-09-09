@@ -28,7 +28,7 @@
 //! into the concrete face/cash change on a specific holding — the movement the booking sinks apply
 //! (§8), attributed as a corporate action, not a trade (the §10.2 double-count guard).
 //!
-//! See `docs/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md` and
+//! See `docs/fixed-income/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md` and
 //! `docs/ANALYTICS-REQUIREMENTS.md` §10 for the full requirement.
 
 mod date;

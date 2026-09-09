@@ -4,7 +4,7 @@
 //! The threshold is a **soft, banded risk budget** per `(book × metric)`, reusing
 //! the `celnet-limits` vocabulary (`LimitMetric` / `LimitSpec` soft bands /
 //! `RagStatus` / `Utilization`) rather than a parallel one
-//! (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4). Green = warehouse,
+//! (`docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4). Green = warehouse,
 //! amber = skew to attract offset, red = hedge the overflow.
 //!
 //! # Sizing — hedge to the band edge, not to flat (§4.3)
@@ -67,12 +67,12 @@ pub struct WarehouseThreshold {
     /// The band-edge target as a fraction of `cap` (default = `amber`): hedge the
     /// overflow beyond this, not to flat.
     pub target_fraction: f64,
-    /// Minimum hedge clip (fixed-cost / minimum-ticket floor, Zakamouline 2006).
+    /// Minimum hedge clip (fixed-cost / minimum-ticket floor).
     pub min_clip: f64,
-    /// Maximum single hedge clip; a larger overflow is worked (Almgren–Chriss).
+    /// Maximum single hedge clip; a larger overflow is worked in tranches.
     pub max_clip: f64,
-    /// Whether to ramp the hedged fraction with utilisation (soft externalisation,
-    /// Barzykin et al. 2021) rather than hedging the whole overflow at once.
+    /// Whether to ramp the hedged fraction with utilisation (dynamic soft externalisation)
+    /// rather than hedging the whole overflow at once.
     pub ramped: bool,
     /// The ramp gain `k` in `hedge_fraction = clamp(k·(utilization − 1), 0, 1)`.
     pub ramp_k: f64,

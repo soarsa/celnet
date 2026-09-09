@@ -1,147 +1,130 @@
-# Celnet documentation — index
+# Celnet Documentation — Master Reference Index
 
-86 documents sit at the root of `docs/`. This index is the map. It is grouped by **what you
-are trying to do**, and it marks each document's currency honestly, because most of this
-corpus was written during a specific wave and has not been revisited since.
+Welcome to the Celnet documentation corpus. Celnet is a state-of-the-art FX-options and multi-asset pricing, analytics, and risk platform written in pure Rust.
 
-> **Currency legend** — `LIVE` maintained and current · `REFERENCE` stable, rarely needs
-> change · `HISTORICAL` describes a completed or superseded wave; kept for the decision
-> trail, do not plan against it.
->
-> Measured 2026-08-17: **142 of 167 markdown files under `docs/` had not been touched in
-> over 30 days**, while the code moved 1,370 commits. Treat an undated claim in a
-> `HISTORICAL` document as unverified.
+This index is the **master navigation map**. It is organized into **Core Reference Anchors** (the essential system specifications kept at the root) and **Specialized Domain Reference Libraries** (curated into dedicated subdirectories). All historical wave plans, retired audits, and legacy drafts have been consolidated into the [Archive](archive/README.md).
 
-## Start here
+---
 
-| Document | What it is | Currency |
+## 1. Core Reference Anchors (Root)
+
+These 15 canonical documents define the system's architecture, contracts, quantitative standards, and execution rules. They are the primary entrypoints for engineering and operations:
+
+| Document | Topic & Scope | Currency |
 |---|---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture, crate layout, concurrency and latency model | `REFERENCE` ⚠ predates 12 crates |
-| [ROADMAP.md](ROADMAP.md) | Phase plan and crate-ownership workstreams | `LIVE` |
-| [INTERFACES.md](INTERFACES.md) | The frozen-interface registry — current contracts and their deferrals | `LIVE` |
-| [adr/README.md](adr/README.md) | Numbered architecture decisions | `LIVE` |
-| [IMPLEMENTATION-LEDGER.md](IMPLEMENTATION-LEDGER.md) | Append-only progress log, newest first | `LIVE` |
-| [PARALLEL-SESSIONS.md](PARALLEL-SESSIONS.md) | Lane board and the tiered-gate law (§4.2) | `LIVE` |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | **System Architecture (As-Built)**: 64-crate Cargo workspace, hot-core / async-edge split, lock-free fan-out, Wasm plugin sandbox, zero-downtime upgrades. | `REFERENCE` (64 crates) |
+| [INTERFACES.md](INTERFACES.md) | **Frozen Interface Registry**: The single, current unversioned contracts across the 64 crates, wire protocols, and core traits. | `LIVE` |
+| [ROADMAP.md](ROADMAP.md) | **Implementation Roadmap**: Phased evolution, crate workstream ownership, and parallel session lanes. | `LIVE` |
+| [PARALLEL-SESSIONS.md](PARALLEL-SESSIONS.md) | **Parallel Development Mesh**: Live lane board, lock-free worktree rules, and the Tiered-Gate Law (§4.2). | `LIVE` |
+| [IMPLEMENTATION-LEDGER.md](IMPLEMENTATION-LEDGER.md) | **Implementation Ledger**: Append-only chronological history of landed milestones, gates, and oracle verifications. | `LIVE` |
+| [ANALYTICS-SPEC.md](ANALYTICS-SPEC.md) | **FX Options Analytics Spec**: Closed-form Garman-Kohlhagen, Greeks (1st/2nd/higher), strike↔delta root solvers, and smile dynamics. | `REFERENCE` |
+| [CONVENTIONS.md](CONVENTIONS.md) | **FX Market Conventions**: Per-(pair, tenor) delta conventions (spot/forward, premium-adjusted), ATM styles (DNS/ATMF), and cut-offs. | `REFERENCE` |
+| [HEDGING-AND-RISK-EXIT.md](HEDGING-AND-RISK-EXIT.md) | **Hedging & Risk Exit (As-Built)**: How risk lands in a book, is aggregated, and the exact offsetting-leg exit mechanism. | `LIVE` |
+| [COMPETITIVE-ANALYSIS.md](COMPETITIVE-ANALYSIS.md) | **Competitive Analysis & Moats**: Competitor critique (SynOption, Fenics/kACE, Murex, Bloomberg) and platform positioning. | `REFERENCE` |
+| [CELER-INTEGRATION.md](CELER-INTEGRATION.md) | **Celer Integration Map**: Native integration with Celer Trader, trade-lifecycle estate, and market-data vendor feeds. | `REFERENCE` |
+| [SCALE-OUT.md](SCALE-OUT.md) | **Horizontal Scale-Out Architecture**: Shard-by-pair HRW partitioning, Raft log replication, and cross-fleet risk fan-out. | `REFERENCE` |
+| [VERIFICATION-CONTRACT.md](VERIFICATION-CONTRACT.md) | **Verification Contract**: Per-asset-class golden vector and independent golden-oracle parity gates (QuantLib golden oracle). | `LIVE` |
+| [HARDENING.md](HARDENING.md) | **Hardening Gates (WS-T)**: Mutation-to-zero testing floors, fuzzing suites, sanitizer verification, and memory safety gates. | `LIVE` |
+| [CELNET-CAPABILITIES.md](CELNET-CAPABILITIES.md) | **Master Capabilities Overview**: Comprehensive capability map, brochure index, and cross-surface proofs. | `LIVE` |
+| [celnet-capabilities.html](celnet-capabilities.html) | **Visual Capability Showcase**: Single-page standalone interactive brochure with vector figures. | `BROCHURE` |
+| [architecture/API-TARGET-ARCHITECTURE.html](architecture/API-TARGET-ARCHITECTURE.html) | **Target API Architecture**: Comprehensive API review, structural critique, 8 target bounded services, universal protobuf contracts, and integration blueprint. | `TARGET SPEC` |
 
-**The architecture family is three documents, and that split is correct.**
-`ARCHITECTURE.md` is the **as-built** record, [ARCHITECTURE-TARGET.md](ARCHITECTURE-TARGET.md)
-the **intended** state, and [ARCHITECTURE-DETERMINATION.md](ARCHITECTURE-DETERMINATION.md) the
-**decision trail** that chose it. An earlier revision of this index called that triplication and
-proposed merging them — that was wrong; merging would destroy a real separation.
+---
 
-The genuine defect was staleness, and it is fixed: `ARCHITECTURE.md`'s §2 crate tree said
-**40 crates** when there were **55** and omitted 15 of them entirely, including the whole
-fixed-income reference-data group and both venue simulators. Re-verified against `ls crates`
-on 2026-08-18 and stamped with its currency. The other two remain design-direction documents
-dated 2026-07-01 and are labelled as such.
+## 2. Specialized Domain Reference Libraries
 
-## Analytics, pricing and risk
+Detailed specifications, algorithmic blueprints, and operational guides are organized into logical domain libraries:
 
-| Document | Currency |
-|---|---|
-| [ANALYTICS-SPEC.md](ANALYTICS-SPEC.md) · [ANALYTICS-REQUIREMENTS.md](ANALYTICS-REQUIREMENTS.md) | `REFERENCE` |
-| [CONVENTIONS.md](CONVENTIONS.md) — FX conventions mapped to `celnet-types` | `REFERENCE` |
-| [RISK-HIERARCHY.md](RISK-HIERARCHY.md) — the risk aggregation model | `REFERENCE` |
-| [RISK-MODEL-REQUIREMENTS-AND-GAPS.md](RISK-MODEL-REQUIREMENTS-AND-GAPS.md) · [RISK-MODELS-AND-DV01-STRATEGY.md](RISK-MODELS-AND-DV01-STRATEGY.md) | `LIVE` |
-| [RISK-TRANSFER-REQUIREMENTS.md](RISK-TRANSFER-REQUIREMENTS.md) | `LIVE` |
-| [SURFACE-WORKFLOW.md](SURFACE-WORKFLOW.md) — vol-surface marking and publication | `REFERENCE` |
-| [GPU-AT-SCALE-PLAN.md](GPU-AT-SCALE-PLAN.md) | `HISTORICAL` ⚠ the GPU path is built but unreachable from the server |
-| [SCALE-OUT.md](SCALE-OUT.md) · [TRADING-UNIVERSE-SCALE.md](TRADING-UNIVERSE-SCALE.md) | `REFERENCE` |
+```
+docs/
+├── architecture/      # Deep-dive system architecture, determinations & scale
+├── quant/             # Quantitative models, curves, volatility & risk analytics
+├── fixed-income/      # Fixed Income & Rates design, pricing, curves & reference data
+├── hedging/           # Auto-hedging, inventory skew, execution & risk transfer
+├── clients/           # Front-end, Excel add-in, SDKs & APIs
+├── operations/        # Governance, hardening, observability & security
+├── capabilities/      # Platform capabilities, market positioning & brochures
+├── adr/               # Architecture Decision Records (ADR-0007 through ADR-0022)
+├── plan/              # Sprint implementation specifications & workstream specs
+└── archive/           # Historical wave plans, completed sprint checklists & retired audits
+```
 
-## Fixed income
+### 2.1 Architecture & Systems ([architecture/](architecture/README.md))
+- [ARCHITECTURE-TARGET.md](architecture/ARCHITECTURE-TARGET.md) — Target architecture and multi-dimensional convergence plan.
+- [ARCHITECTURE-DETERMINATION.md](architecture/ARCHITECTURE-DETERMINATION.md) — Chief-architect synthesis and decision trail across all platform dimensions.
+- [DEPLOYMENT-MODES.md](architecture/DEPLOYMENT-MODES.md) — Standalone, hybrid, Celer-integrated, and external-feed-only operational deployment topologies.
+- [PLUGIN-HOST-ALT.md](architecture/PLUGIN-HOST-ALT.md) — Sandboxed plugin-host architecture using `wasmi` (WebAssembly) and native model registries.
+- [GPU-AT-SCALE-PLAN.md](architecture/GPU-AT-SCALE-PLAN.md) — GPU compute abstraction (`celnet-gpu`), `wgpu` pipelines, and CPU SIMD fallbacks.
+- [TRADING-UNIVERSE-SCALE.md](architecture/TRADING-UNIVERSE-SCALE.md) — Symbol universe breadth, multi-pair concurrency, and memory budget scaling analysis.
+- [SIMULATOR-SERVICE-IDENTITIES.md](architecture/SIMULATOR-SERVICE-IDENTITIES.md) — Architecture and identity mapping for synthetic LP simulation.
+- [ORCHESTRATION.md](architecture/ORCHESTRATION.md) — Cross-session task orchestration and multi-agent coordination protocol.
+- [CELER-FIX-INTEGRATION-PLAN.md](architecture/CELER-FIX-INTEGRATION-PLAN.md) — Architectural plan for Celer trade-lifecycle ingress and FIX engine integration.
 
-[FI-PRICING-ENGINE-DESIGN.md](FI-PRICING-ENGINE-DESIGN.md) ·
-[FI-PRICING-GROUPS-DESIGN.md](FI-PRICING-GROUPS-DESIGN.md) ·
-[FI-CREDIT-ENGINE-DESIGN.md](FI-CREDIT-ENGINE-DESIGN.md) ·
-[FI-BOOK-CONCEPTS.md](FI-BOOK-CONCEPTS.md) ·
-[FI-AGGREGATED-BOOK-REQUIREMENTS.md](FI-AGGREGATED-BOOK-REQUIREMENTS.md) ·
-[FI-RISK-ROUTING-REQUIREMENTS.md](FI-RISK-ROUTING-REQUIREMENTS.md) ·
-[FI-TIERING-RESEARCH.md](FI-TIERING-RESEARCH.md) ·
-[FI-BOND-DEAL-CAPTURE-GAP-ANALYSIS.md](FI-BOND-DEAL-CAPTURE-GAP-ANALYSIS.md) ·
-[BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md](BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md) ·
-[CORPORATE-ACTION-MONITOR-GAP-ANALYSIS.md](CORPORATE-ACTION-MONITOR-GAP-ANALYSIS.md) ·
-[CURVES-AND-INSTRUMENT-REFERENCE-DATA-REVIEW.md](CURVES-AND-INSTRUMENT-REFERENCE-DATA-REVIEW.md) ·
-[fixed-income/](fixed-income/) — mostly `LIVE`, the July–August work area.
+### 2.2 Quantitative Models & Risk ([quant/](quant/README.md))
+- [RISK-HIERARCHY.md](quant/RISK-HIERARCHY.md) — Hierarchical OLAP risk aggregation design (firm -> division -> desk -> book -> portfolio).
+- [RISK-MODELS-AND-DV01-STRATEGY.md](quant/RISK-MODELS-AND-DV01-STRATEGY.md) — Desk risk strategy, DV01 key-rate ladders, and scenario revaluation.
+- [RISK-MODEL-REQUIREMENTS-AND-GAPS.md](quant/RISK-MODEL-REQUIREMENTS-AND-GAPS.md) — Risk model requirements, sensitivity types, and portfolio analytics gaps.
+- [SURFACE-WORKFLOW.md](quant/SURFACE-WORKFLOW.md) — Volatility surface marking, calibration workflows, and smile representations (VV, SABR, SVI, SSVI, eSSVI).
+- [ANALYTICS-REQUIREMENTS.md](quant/ANALYTICS-REQUIREMENTS.md) — Trading performance analytics (TCA), mark-outs, spread capture, and execution quality metrics.
+- [LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md](quant/LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md) — Infrastructure latency histograms (p50/p99/p99.9) and real-time hedging analytics.
 
-## Hedging and execution
+### 2.3 Fixed Income & Rates ([fixed-income/](fixed-income/README.md))
+- [FI-ARCHITECTURE.md](fixed-income/FI-ARCHITECTURE.md) — Fixed Income system architecture, crate layout, and multi-curve data flow.
+- [FI-CONVENTIONS.md](fixed-income/FI-CONVENTIONS.md) — Rates and bond market conventions (day-counts, BDC, settlement lag, fixing calendars).
+- [FI-CURVES-SPEC.md](fixed-income/FI-CURVES-SPEC.md) — Multi-curve construction, OIS/SOFR bootstrap, discount factors, and interpolation methods.
+- [FI-PRICING-ENGINE-DESIGN.md](fixed-income/FI-PRICING-ENGINE-DESIGN.md) — Cash bond and credit pricing engine design (`celnet-bond`, Newton-Raphson YTM, DV01/duration).
+- [FI-PRICING-GROUPS-DESIGN.md](fixed-income/FI-PRICING-GROUPS-DESIGN.md) — FI Pricing Groups: trader-composable pricing pipeline, spreads, and feature cards.
+- [FI-CREDIT-ENGINE-DESIGN.md](fixed-income/FI-CREDIT-ENGINE-DESIGN.md) — Credit pricing engine design (`celnet-credit`), survival curves, and credit default swaps.
+- [FI-BOOK-CONCEPTS.md](fixed-income/FI-BOOK-CONCEPTS.md) — Concepts: Composite Aggregated Book vs Trading Book vs Risk Portfolios.
+- [FI-AGGREGATED-BOOK-REQUIREMENTS.md](fixed-income/FI-AGGREGATED-BOOK-REQUIREMENTS.md) — Composite multi-venue liquidity book aggregation requirements.
+- [FI-RISK-ROUTING-REQUIREMENTS.md](fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md) — FI risk routing rules engine, portfolio trees, and routed-risk rollups.
+- [FI-TIERING-RESEARCH.md](fixed-income/FI-TIERING-RESEARCH.md) — Outbound price tiering: client markups, inventory skewing, and client tier matrix.
+- [BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md](fixed-income/BOND-DATA-AND-CORPORATE-ACTIONS-SOURCING-REQUIREMENTS.md) — Reference data sourcing, bond master, and corporate actions.
+- [FI-VERIFICATION-CONTRACT.md](fixed-income/FI-VERIFICATION-CONTRACT.md) — Per-instrument golden vector and oracle validation plan.
+- [FI-STATUS.md](fixed-income/FI-STATUS.md) — Implementation and wiring status across all fixed income crates and client surfaces.
 
-Start at [HEDGING-AND-RISK-EXIT.md](HEDGING-AND-RISK-EXIT.md) (as-built: how risk lands, is
-measured, and exits a book). [HEDGING-CONFIGURATION-GUIDE.md](HEDGING-CONFIGURATION-GUIDE.md)
-is the trader walkthrough. Then
-[AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md](AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md) ·
-[INVENTORY-SKEW-ENGINE-GAP-ANALYSIS.md](INVENTORY-SKEW-ENGINE-GAP-ANALYSIS.md) ·
-[DECISION-AUDIT.md](DECISION-AUDIT.md) ·
-[TRADER-RULE-ENGINE-SETUP.md](TRADER-RULE-ENGINE-SETUP.md) ·
-[LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md](LATENCY-AND-HEDGING-ANALYTICS-REQUIREMENTS.md). All `LIVE`.
+### 2.4 Hedging, Skew & Execution ([hedging/](hedging/README.md))
+- [HEDGING-CONFIGURATION-GUIDE.md](hedging/HEDGING-CONFIGURATION-GUIDE.md) — Trader walkthrough for configuring auto-hedging rules, threshold bands, and hedge venues.
+- [AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md](hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md) — Auto-hedging and internalisation engine specifications and state machines.
+- [INVENTORY-SKEW-ENGINE-GAP-ANALYSIS.md](hedging/INVENTORY-SKEW-ENGINE-GAP-ANALYSIS.md) — Position-driven inventory skewing model (Avellaneda-Stoikov adaptation) and spread adjustment.
+- [TRADER-RULE-ENGINE-SETUP.md](hedging/TRADER-RULE-ENGINE-SETUP.md) — Trader rule engine setup for quote acceptance, risk routing, and execution actions.
+- [RISK-TRANSFER-REQUIREMENTS.md](hedging/RISK-TRANSFER-REQUIREMENTS.md) — Inter-desk and inter-book manual risk transfer mechanics and offsetting leg generation.
+- [DECISION-AUDIT.md](hedging/DECISION-AUDIT.md) — Decision audit engine: explaining why a rule fired, rejected, or adjusted an action.
 
-## Clients, API and integration
+### 2.5 Clients, GUI & Integrations ([clients/](clients/README.md))
+- [GUI-EXPERIENCE-DESIGN.md](clients/GUI-EXPERIENCE-DESIGN.md) — World-class sell-side trading cockpit: 5 workspaces, multi-asset views, and visual design language.
+- [EXPERIENCE-ARCHITECTURE.md](clients/EXPERIENCE-ARCHITECTURE.md) — Unified front-end information architecture, component hierarchy, and navigation flow.
+- [CLIENT-PARITY-MATRIX.md](clients/CLIENT-PARITY-MATRIX.md) — Executable parity matrix proving all 18 products reach all five client surfaces bit-identically.
+- [API-CLIENTS.md](clients/API-CLIENTS.md) — Trader-centric API philosophy, client SDK design, and typed client ergonomic targets.
+- [EXCEL-INTEGRATION.md](clients/EXCEL-INTEGRATION.md) — Excel add-in architecture, real-time streaming, and the `CELNET.*` worksheet function library.
+- [EXCEL-ADDIN-LOCAL-BRINGUP.md](clients/EXCEL-ADDIN-LOCAL-BRINGUP.md) — Developer runbook for local bring-up and testing of the Excel add-in and workbook.
+- [CELNET-CONNECTIVITY-INTEGRATION.md](clients/CELNET-CONNECTIVITY-INTEGRATION.md) — External gateway and connectivity extension framework architecture.
+- [FIX-API.md](clients/FIX-API.md) — Inbound FIX 4.4 acceptor client integration and tag mapping.
+- [FIX-SIM-DESIGN.md](clients/FIX-SIM-DESIGN.md) — FIX client-simulator bot design (`fix-sim`) for automated load and flow testing.
+- [gui-redesign/](gui-redesign/) — Front-end discovery, design tokens, critiques, and component mockups.
 
-| Document | Currency |
-|---|---|
-| [API-CLIENTS.md](API-CLIENTS.md) · [CLIENT-PARITY-MATRIX.md](CLIENT-PARITY-MATRIX.md) | `REFERENCE` ⚠ measured coverage is GUI 112/112, Excel 24/112, SDK ~24/116, CLI ~11/116 |
-| [EXCEL-INTEGRATION.md](EXCEL-INTEGRATION.md) · [EXCEL-ADDIN-LOCAL-BRINGUP.md](EXCEL-ADDIN-LOCAL-BRINGUP.md) | `REFERENCE` |
-| [GUI-EXPERIENCE-DESIGN.md](GUI-EXPERIENCE-DESIGN.md) · [EXPERIENCE-ARCHITECTURE.md](EXPERIENCE-ARCHITECTURE.md) · [gui-redesign/](gui-redesign/) | `REFERENCE` |
-| [GUI-DESIGN.md](GUI-DESIGN.md) | `HISTORICAL` (2026-05-30) — superseded by GUI-EXPERIENCE-DESIGN |
-| [CELER-INTEGRATION.md](CELER-INTEGRATION.md) · [CELER-FIX-INTEGRATION-PLAN.md](CELER-FIX-INTEGRATION-PLAN.md) | `REFERENCE` |
-| [FIX-API.md](FIX-API.md) · [FIX-SIM-DESIGN.md](FIX-SIM-DESIGN.md) · [SIMULATOR-SERVICE-IDENTITIES.md](SIMULATOR-SERVICE-IDENTITIES.md) | `REFERENCE` |
-| [CELNET-CONNECTIVITY-INTEGRATION.md](CELNET-CONNECTIVITY-INTEGRATION.md) | `LIVE` — design for the unmerged `conn/framework` work |
-| [PLUGIN-HOST-ALT.md](PLUGIN-HOST-ALT.md) | `REFERENCE` |
+### 2.6 Operations & Governance ([operations/](operations/README.md))
+- [PERMISSIONS-GRANULAR-REVIEW.md](operations/PERMISSIONS-GRANULAR-REVIEW.md) — Granular per-feature and per-action capability model across FX options and fixed income.
+- [NOTIFICATIONS-REQUIREMENTS.md](operations/NOTIFICATIONS-REQUIREMENTS.md) — Configurable trader notifications, breach alerts, and push messaging delivery.
+- [OBSERVABILITY.md](operations/OBSERVABILITY.md) — Zero-hot-path-cost telemetry, wait-free ring buffers, HdrHistogram metrics, and distributed tracing.
 
-## Operations, verification and delivery
+### 2.7 Capabilities & Market Analysis ([capabilities/](capabilities/README.md))
+- [CAPABILITIES-VS-COMPETITION.md](capabilities/CAPABILITIES-VS-COMPETITION.md) — Feature-by-feature comparison matrix against vendor-neutral incumbent archetypes.
+- [SOTA-2026.md](capabilities/SOTA-2026.md) — State-of-the-art technical scan: low-latency runtimes, zero-copy messaging, and numerical engines.
+- [SOTA-MESSAGING-ENCODING.md](capabilities/SOTA-MESSAGING-ENCODING.md) — Assessment of IPC fan-out, durable logging, and wire encoding architectures.
+- [celnet-capabilities/](celnet-capabilities/) — 14-chapter comprehensive product capability monograph.
 
-[VERIFICATION-CONTRACT.md](VERIFICATION-CONTRACT.md) — the gate that forbids shipping a
-product family without both a golden vector and an independent-oracle parity row; enforced by
-`tools/check-verification-coverage.mjs`. Then [HARDENING.md](HARDENING.md) ·
-[OBSERVABILITY.md](OBSERVABILITY.md) · [DEPLOYMENT-MODES.md](DEPLOYMENT-MODES.md) ·
-[DELIVERY-MODEL.md](DELIVERY-MODEL.md) · [ORCHESTRATION.md](ORCHESTRATION.md) ·
-[SECURITY-AUTHZ-FINDING.md](SECURITY-AUTHZ-FINDING.md) ·
-[PERMISSIONS-GRANULAR-REVIEW.md](PERMISSIONS-GRANULAR-REVIEW.md).
+### 2.8 Architecture Decision Records ([adr/](adr/README.md))
+The numbered, immutable Architecture Decision Records (ADR-0007 through ADR-0022), recording the key architectural turns of the platform.
 
-## Positioning and research
+### 2.9 Historical Archive ([archive/](archive/README.md))
+Consolidated repository of completed development waves ([archive/waves/](archive/waves/)), retired release milestones ([archive/milestones/](archive/milestones/)), completed gap audits ([archive/audits/](archive/audits/)), and superseded early drafts ([archive/superseded/](archive/superseded/)).
 
-[COMPETITIVE-ANALYSIS.md](COMPETITIVE-ANALYSIS.md) ·
-[CAPABILITIES-VS-COMPETITION.md](CAPABILITIES-VS-COMPETITION.md) ·
-[CELNET-CAPABILITIES.md](CELNET-CAPABILITIES.md) ·
-[CAPABILITIES-REVITALISATION-PLAN.md](CAPABILITIES-REVITALISATION-PLAN.md) ·
-[SOTA-2026.md](SOTA-2026.md) · [SOTA-MESSAGING-ENCODING.md](SOTA-MESSAGING-ENCODING.md) ·
-[_research/](_research/). Analysis documents — they describe the market, not the build.
+---
 
-## Historical — completed waves and superseded programmes
+## 3. Documentation Governance & House Rules
 
-Kept for the decision trail. **Do not plan against these.**
-
-[W1-CORE-PLAN.md](W1-CORE-PLAN.md) · [W2-LINEAR-PLAN.md](W2-LINEAR-PLAN.md) ·
-[W3-CRYPTO-PLAN.md](W3-CRYPTO-PLAN.md) · [W4-STRUCTURED-RFQ-PLAN.md](W4-STRUCTURED-RFQ-PLAN.md) ·
-[W5-CROSSASSET-RISK-PLAN.md](W5-CROSSASSET-RISK-PLAN.md) ·
-[POST-W2-INTEGRATION-MANIFEST.md](POST-W2-INTEGRATION-MANIFEST.md) ·
-[GW-FOUNDATION-PLAN.md](GW-FOUNDATION-PLAN.md) · [MASTER-PLAN.md](MASTER-PLAN.md) ·
-[MASTER-EVOLUTION-PROGRAM.md](MASTER-EVOLUTION-PROGRAM.md) ·
-[LEADERSHIP-PROGRAM.md](LEADERSHIP-PROGRAM.md) · [COMPLETION-PROGRAM.md](COMPLETION-PROGRAM.md) ·
-[POST-COMPLETION-AUDIT.md](POST-COMPLETION-AUDIT.md) · [POST-GA-ROADMAP.md](POST-GA-ROADMAP.md) ·
-[GA-READINESS.md](GA-READINESS.md) · [RELEASE-1.0-RC.md](RELEASE-1.0-RC.md) ·
-[NEXT-WORKFLOWS.md](NEXT-WORKFLOWS.md) · [REVIEW-REMEDIATION.md](REVIEW-REMEDIATION.md) ·
-[DOWNSTREAM-EXECUTION-MAP.md](DOWNSTREAM-EXECUTION-MAP.md) ·
-[AUDIT-ADR0008-CONFORMANCE.md](AUDIT-ADR0008-CONFORMANCE.md) ·
-[FIXED-INCOME-EXCEL-INTEGRATION-REVIEW.md](FIXED-INCOME-EXCEL-INTEGRATION-REVIEW.md) ·
-[WORLD-CLASS-BACKLOG.md](WORLD-CLASS-BACKLOG.md).
-
-Fully retired documents live in [archive/](archive/).
-
-## Subdirectories
-
-`adr/` decisions · `acceptance/` machine-readable acceptance targets · `architecture/` rendered
-architecture page · `assets/` figures (script-generated — see `tools/render-capability-figures.mjs`) ·
-`celnet-capabilities/` + `_capabilities-build/` capabilities-document build inputs ·
-`fixed-income/` FI design + mockups · `gui-redesign/` surface mockup corpus ·
-`plan/` active plans · `_research/` source research · `archive/` retired.
-
-## House rules
-
-1. **State currency.** A document that does not say when it was last verified will be read as
-   current and mislead someone. Date your claims.
-2. **One home per topic.** If you are writing something that belongs in an existing document,
-   edit that document. The architecture triplication above is what happens otherwise.
-3. **Never put client-confidential material here.** Customer responses and named-institution
-   material do not belong in the product repository.
-4. **Derived artefacts are not documentation.** Rendered PDFs and figure PNGs are build output;
-   the Markdown source and the render script are the artefacts that matter.
+1. **Zero Legacy / Zero Stale Duplication:** Always refactor documentation to its cleanest, current state as code evolves. Delete or archive dead documents; do not leave superseded wave plans or pre-build gap analyses polluting active reference directories.
+2. **State Currency Honestly:** Every reference document must explicitly declare its status and last-verified date. Never allow undated documents to mislead developers.
+3. **One Home Per Topic:** Documentation is partitioned by functional domain. If you are adding details to an existing capability, edit its canonical document rather than creating competing copies.
+4. **Automated Link & Structure Integrity:** All documentation files and cross-links are continuously validated by `tools/check-all-doc-links.mjs`. Broken relative links, missing anchors, and ragged tables are build gate failures.

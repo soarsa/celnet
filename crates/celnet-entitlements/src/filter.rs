@@ -1,5 +1,5 @@
 //! The server-side **pre-aggregation pruning filter** (`docs/RISK-HIERARCHY.md`
-//! §2.6/§4, `docs/EXPERIENCE-ARCHITECTURE.md` §3).
+//! §2.6/§4, `docs/clients/EXPERIENCE-ARCHITECTURE.md` §3).
 //!
 //! # Why pruning must precede aggregation
 //!

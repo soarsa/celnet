@@ -1766,6 +1766,20 @@ export interface LiquidityProvider {
   bestOfferCount: number;
   /** Mean normalized composite weight over its contributing quotes, in [0, 1]. */
   meanWeight: number;
+  /** Whether this provider is enabled for RFQ participation. */
+  rfqEnabled: boolean;
+  /** Whether this provider is enabled for streaming into aggregated books. */
+  streamingEnabled: boolean;
+  /** Whether this provider is enabled for auto-hedging order routing. */
+  hedgingEnabled: boolean;
+  /** The provider's short institution code (e.g. "BARC", "CITI", "BNP"). */
+  institutionCode: string;
+  /** Deal win-rate [0, 1] across quotes shown to clients. */
+  winRate: number;
+  /** Last-look rejection rate [0, 1]. */
+  lastLookRejectionRate: number;
+  /** Average quote response turnaround time in milliseconds. */
+  meanLatencyMs: number;
 }
 
 /** One live quote a provider is showing, with the consolidation verdict on it. */
@@ -3462,7 +3476,7 @@ export interface AggregationParams {
 // field-for-field. Tiering is composed per-client via a {@link FeatureSpec.tiering}
 // TIERING feature in a pricing-group pipeline (it is NOT carried on the aggregated
 // book). The GUI hand-decodes the WS JSON, so the wire codec (`wsCodec.ts`) matches
-// the server's snake_case names + NUMERIC enums exactly (see `docs/FI-TIERING-RESEARCH.md`).
+// the server's snake_case names + NUMERIC enums exactly (see `docs/fixed-income/FI-TIERING-RESEARCH.md`).
 
 /**
  * The unit an outbound-tiering spread magnitude is expressed in (mirrors the wire
@@ -3688,7 +3702,7 @@ export interface AggregatedBookStreamUpdate {
 }
 
 // ---------------------------------------------------------------------------
-// FI Pricing Groups (docs/FI-PRICING-GROUPS-DESIGN.md) — a trader-composable,
+// FI Pricing Groups (docs/fixed-income/FI-PRICING-GROUPS-DESIGN.md) — a trader-composable,
 // ordered pipeline of pricing FEATURES bound to a named group of clients (FIX
 // connections / GUI-API users / desks). The running two-way flows RAW → the
 // trader's ordered features → OUTBOUND (an ESP stream or an RFS/RFQ quote). Each
@@ -3854,7 +3868,7 @@ export interface PricingGroup {
 }
 
 // ---------------------------------------------------------------------------
-// FI Risk routing & risk books (docs/FI-RISK-ROUTING-REQUIREMENTS.md §6-8). When
+// FI Risk routing & risk books (docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md §6-8). When
 // an order / RFQ fills, the resulting RISK is routed into a trader-defined RISK
 // BOOK (a portfolio node) so limits / greeks / PnL are managed per book. Books
 // form a TREE (a parent aggregates its own routed positions plus every
@@ -5268,11 +5282,34 @@ export interface XvaPricingRequest {
   fundingSpread: number;
 }
 
+/** One time bucket of the simulated exposure profile (PFE, EPE, ENE bands). */
+export interface ExposureBucket {
+  /** Time from the as-of date to this bucket, in years. */
+  timeYears: number;
+  /** Short tenor label for the bucket (e.g. "6M", "1Y"). */
+  label: string;
+  /** Expected (mean) positive exposure — the EE line. */
+  ee: number;
+  /** Inner-band lower quantile (25%). */
+  q25: number;
+  /** Inner-band upper quantile (75%). */
+  q75: number;
+  /** Outer-band lower quantile (5%). */
+  pfeLo: number;
+  /** Outer-band upper quantile (95%) — the PFE envelope. */
+  pfe: number;
+  /** Expected (mean) negative exposure (<= 0). */
+  ene: number;
+  /** Negative exposure band lower quantile (<= 0). */
+  eneBandLo: number;
+  /** Negative exposure band upper quantile (<= 0). */
+  eneBandHi: number;
+}
+
 /**
  * The all-in XVA of a netting set (`celnet.wire.XvaResult`): the three adjustment
  * legs plus their signed total. `totalAdjustment = cva − dva + fva` is the amount
- * subtracted from the risk-free value. This is the WHOLE wire result — no exposure
- * profile crosses the contract.
+ * subtracted from the risk-free value.
  */
 export interface XvaResult {
   /** Credit valuation adjustment (`≥ 0`): expected loss from counterparty default. */
@@ -5283,6 +5320,8 @@ export interface XvaResult {
   fva: number;
   /** The all-in adjustment `cva − dva + fva` subtracted from the risk-free value. */
   totalAdjustment: number;
+  /** Discretized exposure profile buckets (PFE/EPE/ENE quantiles per time step). */
+  buckets?: readonly ExposureBucket[];
 }
 
 // ---------------------------------------------------------------------------
@@ -6390,3 +6429,181 @@ export const CORP_ACTION_STATUS_LABELS: Record<CorpActionStatus, string> = {
   REVERSED: "Reversed",
   CANCELLED: "Cancelled",
 };
+
+// --- Clearing Initial Margin (SIMM / ES / VaR / Pre-Trade) -----------------
+
+export interface ClearedPosition {
+  symbol: string;
+  notional: number;
+  isBuy: boolean;
+  marketPrice?: number;
+}
+
+export interface MarginCalculationRequest {
+  portfolioId: string;
+  positions?: ClearedPosition[];
+  confidenceLevel?: number;
+  lookbackDays?: number;
+}
+
+export interface MarginCalculationResponse {
+  portfolioId: string;
+  totalInitialMargin: number;
+  expectedShortfall: number;
+  valueAtRisk: number;
+  stressComponent: number;
+  currency: string;
+  calculatedEpochNanos: bigint;
+}
+
+export type PreTradeMarginOutcome = "APPROVED" | "WARNING" | "EXCEEDS_COLLATERAL";
+
+export interface PreTradeMarginRequest {
+  portfolioId: string;
+  existingPositions?: ClearedPosition[];
+  candidatePosition: ClearedPosition;
+  availableCollateral: number;
+  creditLine?: number;
+  confidenceLevel?: number;
+}
+
+export interface PreTradeMarginResponse {
+  portfolioId: string;
+  outcome: PreTradeMarginOutcome;
+  initialMarginBefore: number;
+  initialMarginAfter: number;
+  deltaMargin: number;
+  collateralHeadroom: number;
+  reason: string;
+}
+
+// --- Algorithmic Execution (TWAP, VWAP, Optimal Liquidation) ---------------
+
+export type AlgoStrategyType = "TWAP" | "VWAP" | "OPTIMAL_LIQUIDATION" | "POV";
+
+export type AlgoPeggingStyle = "PRIMARY" | "MIDPOINT" | "MARKET" | "NONE";
+
+export type AlgoOrderStatus = "PENDING" | "ACTIVE" | "COMPLETED" | "CANCELLED";
+
+export type ChildSliceStatus = "PENDING" | "DISPATCHED" | "FILLED" | "CANCELLED";
+
+export interface ChildSlice {
+  sliceIndex: number;
+  scheduledOffsetSeconds: number;
+  targetQuantity: number;
+  filledQuantity: number;
+  avgFillPrice: number;
+  status: ChildSliceStatus;
+}
+
+export interface AlgoOrderResponse {
+  parentOrderId: string;
+  clientOrderId: string;
+  symbol: string;
+  totalQuantity: number;
+  executedQuantity: number;
+  arrivalPrice: number;
+  avgExecPrice: number;
+  isBuy: boolean;
+  status: AlgoOrderStatus;
+  implementationShortfallBps: number;
+  slices: ChildSlice[];
+  createdEpochNanos: bigint;
+}
+
+export interface SubmitAlgoOrderRequest {
+  clientOrderId?: string;
+  symbol: string;
+  totalQuantity: number;
+  arrivalPrice: number;
+  isBuy: boolean;
+  strategyType?: AlgoStrategyType;
+  twap?: {
+    durationSeconds: number;
+    sliceCount: number;
+    jitterFactor?: number;
+    peggingStyle?: AlgoPeggingStyle;
+  };
+  optimal?: {
+    horizonSeconds: number;
+    stepCount: number;
+    volatility: number;
+    riskAversion: number;
+    tempImpactEta: number;
+    permImpactGamma: number;
+  };
+}
+
+export interface ListAlgoOrdersResponse {
+  orders: AlgoOrderResponse[];
+}
+
+// --- Cluster Lifecycle, Twin Upgrade & Chaos Resilience --------------------
+
+export type NodeLifecycleStatus = "PENDING" | "ACTIVE" | "DRAINING" | "RETIRED" | "FAILED";
+
+export interface NodeMember {
+  nodeId: string;
+  endpoint: string;
+  status: NodeLifecycleStatus;
+  activeInFlightTrades: bigint;
+  joinedEpochNanos: bigint;
+}
+
+export interface ClusterTopologyResponse {
+  clusterId: string;
+  leaderId: string;
+  activeGeneration: bigint;
+  members: NodeMember[];
+  jointConsensusActive: boolean;
+}
+
+export interface UpgradeStatusResponse {
+  activeGeneration: bigint;
+  currentVersion: string;
+  shadowVersion: string;
+  twinComparisonPassed: boolean;
+  maxUlpDivergence: bigint;
+  evaluatedTradesCount: bigint;
+  cutoverStatus: string;
+}
+
+export interface TwinValidationResponse {
+  passed: boolean;
+  maxUlpDivergence: bigint;
+  bitExact: boolean;
+  verdict: string;
+}
+
+export interface ChaosTestResponse {
+  clusterResilient: boolean;
+  recoveryTimeMs: bigint;
+  details: string;
+}
+
+// --- ISDA CDM 2026 Digital Trade Lifecycle Event ---------------------------
+
+export interface ExportCdmResponse {
+  executionId: bigint;
+  uti: string;
+  cdmEventType: string;
+  cdmJson: string;
+}
+
+// --- Hardware Attestation & Licensing --------------------------------------
+
+export interface AttestationResponse {
+  valid: boolean;
+  attestationTimestampNanos: bigint;
+  hardwareFingerprint: string;
+  statusMessage: string;
+}
+
+export interface LicenseCapabilityResponse {
+  valid: boolean;
+  subject: string;
+  tier: string;
+  activeCapabilities: string[];
+  expiryEpochSecs: bigint;
+}
+

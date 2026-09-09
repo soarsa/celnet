@@ -1,0 +1,9 @@
+{
+  "name": "Act 2: Wire-Speed SBE Execution & Bouchaud Propagator Slicing",
+  "description": "50,000 share order sliced with Bouchaud power-law decay G(tau) ~ tau^(-0.5) under Nutz-Voss dynamic regime modulation",
+  "total_shares": 50000.0,
+  "horizon_seconds": 600.0,
+  "decay_alpha": 0.50,
+  "volatility_shock": 1.0,
+  "codec": "CME MDP 3.0 SBE / CME iLink3"
+}

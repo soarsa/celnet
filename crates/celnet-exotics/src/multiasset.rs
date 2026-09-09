@@ -53,15 +53,18 @@
 //! error — surfaced honestly on the wire (`PriceResponse.price_std_error`) so a
 //! caller never mistakes the Monte-Carlo estimate for closed-form precision.
 //!
-//! # Greeks
+//! # Greeks & Sensitivities
 //!
-//! Multi-asset basket Greeks require a per-leg sensitivity strip (a full
-//! `N × {spot, vol}` Jacobian plus the cross-gammas) that is a distinct, larger
-//! increment than this first vertical slice; this module returns the **price and
-//! its standard error only**. The deferral is explicit (see
-//! [`BasketEstimate`]) — the strip is documented as the next increment rather
-//! than faked with a single-underlying bump that would be silently wrong for a
-//! multi-asset payoff.
+//! Multi-asset basket options support per-leg spot delta sensitivities
+//! `∂V/∂S_a` computed via exact, unbiased pathwise differentiation
+//! (Broadie & Glasserman 1996) alongside the discounted payoff over the
+//! scrambled-Sobol / Brownian-bridge simulation.
+//!
+//! Callers that need only the price and standard error use [`price_basket`];
+//! callers requiring the full per-leg sensitivity strip use
+//! [`price_basket_with_sensitivities`], which produces a [`BasketSensitivities`]
+//! report containing per-leg deltas and their measured between-scramble
+//! standard errors.
 
 use celnet_core::math::{exp, sqrt};
 use celnet_qmc::{BrownianBridge, SobolSequence, inv_norm_cdf};
@@ -151,11 +154,7 @@ impl Default for BasketMcConfig {
 
 /// The result of a multi-asset Monte-Carlo pricing run.
 ///
-/// Greeks are intentionally **absent** — multi-asset basket sensitivities are a
-/// distinct larger increment (a per-leg `N × {spot, vol}` Jacobian plus
-/// cross-gammas). This first slice reports the price and its measured standard
-/// error only; the field set makes the deferral explicit rather than returning a
-/// fabricated single-underlying strip.
+/// For callers needing the price and its standard error only.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BasketEstimate {
     /// The discounted price estimate (in domestic / numeraire currency, per unit
@@ -163,6 +162,41 @@ pub struct BasketEstimate {
     pub price: f64,
     /// The measured between-scramble standard error of [`Self::price`].
     pub std_error: f64,
+}
+
+/// The result of a multi-asset Monte-Carlo pricing and sensitivity run.
+///
+/// Provides the discounted price estimate and standard error alongside the
+/// unbiased per-leg pathwise delta sensitivities (`∂V/∂S_a`) and their
+/// measured standard errors across independent scrambles.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BasketSensitivities {
+    /// The discounted price estimate (in domestic / numeraire currency, per unit
+    /// of the aggregated underlying).
+    pub price: f64,
+    /// The measured between-scramble standard error of [`Self::price`].
+    pub price_std_error: f64,
+    /// Per-leg spot delta `∂V/∂S_a` (unbiased pathwise estimator).
+    pub leg_deltas: Vec<f64>,
+    /// The measured between-scramble standard error of each leg's delta.
+    pub leg_delta_std_errors: Vec<f64>,
+}
+
+impl BasketSensitivities {
+    /// Extract the price-only [`BasketEstimate`].
+    #[must_use]
+    pub fn estimate(&self) -> BasketEstimate {
+        BasketEstimate {
+            price: self.price,
+            std_error: self.price_std_error,
+        }
+    }
+}
+
+impl From<BasketSensitivities> for BasketEstimate {
+    fn from(s: BasketSensitivities) -> Self {
+        s.estimate()
+    }
 }
 
 /// Why a correlation matrix was rejected.
@@ -199,32 +233,40 @@ impl std::error::Error for CorrelationError {}
 /// (`Σ = L · Lᵀ`), produced by [`cholesky`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct CholeskyFactor {
-    /// Row-major lower-triangular factor; `l[i][j] == 0` for `j > i`.
-    l: Vec<Vec<f64>>,
+    /// Dimension `N`.
+    dim: usize,
+    /// Flat row-major lower-triangular factor; `data[i * dim + j] == 0` for `j > i`.
+    data: Vec<f64>,
 }
 
 impl CholeskyFactor {
     /// Dimension `N`.
     #[must_use]
     pub fn dim(&self) -> usize {
-        self.l.len()
+        self.dim
     }
 
     /// The `(i, j)` factor entry (`0` above the diagonal).
     #[must_use]
     pub fn get(&self, i: usize, j: usize) -> f64 {
-        self.l[i][j]
+        if i < self.dim && j <= i {
+            self.data[i * self.dim + j]
+        } else {
+            0.0
+        }
     }
 
     /// Apply the factor: `x = L · z` (correlate an i.i.d. standard-normal vector
     /// `z` into one with covariance `Σ`). `z.len()` and `out.len()` must equal
     /// [`Self::dim`].
+    #[allow(clippy::needless_range_loop)]
     fn apply(&self, z: &[f64], out: &mut [f64]) {
-        for (i, row) in self.l.iter().enumerate() {
-            // Lower-triangular: only j ≤ i contribute.
+        let n = self.dim;
+        for i in 0..n {
+            let row_offset = i * n;
             let mut acc = 0.0;
-            for (j, &lij) in row.iter().enumerate().take(i + 1) {
-                acc += lij * z[j];
+            for j in 0..=i {
+                acc += self.data[row_offset + j] * z[j];
             }
             out[i] = acc;
         }
@@ -258,30 +300,29 @@ pub fn cholesky(sigma: &[Vec<f64>], n: usize) -> Result<CholeskyFactor, Correlat
         }
     }
 
-    // Build L row by row: each new row `i` reads only the already-completed rows
-    // `done` (j < i) and its own partial entries (j == i ⇒ the diagonal pivot).
-    let mut l: Vec<Vec<f64>> = Vec::with_capacity(n);
+    // Build L row by row in a flat contiguous buffer:
+    let mut data = vec![0.0f64; n * n];
     for (i, sigma_row) in sigma.iter().enumerate() {
-        let done: &[Vec<f64>] = &l;
-        let mut li = vec![0.0f64; n];
+        let i_offset = i * n;
         for j in 0..=i {
-            // s = Σ_ij − Σ_{k<j} L_ik L_jk (dot of the two rows' first j entries).
-            let lj: &[f64] = if j < i { &done[j] } else { &li };
-            let dot: f64 = li[..j].iter().zip(&lj[..j]).map(|(a, b)| a * b).sum();
+            let j_offset = j * n;
+            // s = Σ_ij − Σ_{k<j} L_ik L_jk (dot of row i and row j first j entries).
+            let dot: f64 = (0..j)
+                .map(|k| data[i_offset + k] * data[j_offset + k])
+                .sum();
             let s = sigma_row[j] - dot;
             if i == j {
                 // Diagonal: a non-positive pivot ⇒ not positive-definite.
                 if s <= 0.0 {
                     return Err(CorrelationError::NotPositiveDefinite);
                 }
-                li[j] = sqrt(s);
+                data[i_offset + j] = sqrt(s);
             } else {
-                li[j] = s / done[j][j];
+                data[i_offset + j] = s / data[j_offset + j];
             }
         }
-        l.push(li);
     }
-    Ok(CholeskyFactor { l })
+    Ok(CholeskyFactor { dim: n, data })
 }
 
 /// Price a correlated multi-asset option (weighted basket / best-of / worst-of)
@@ -385,6 +426,208 @@ pub fn price_basket(
         price: estimate,
         std_error,
     })
+}
+
+/// Price a correlated multi-asset option alongside per-leg spot delta sensitivities
+/// (`∂V/∂S_a`) by Cholesky-correlated multi-asset GBM Monte-Carlo with exact,
+/// unbiased pathwise differentiation.
+///
+/// Returns a [`BasketSensitivities`] report containing the discounted price
+/// estimate, standard error, per-leg deltas, and their measured between-scramble
+/// standard errors.
+///
+/// # Errors
+///
+/// [`CorrelationError`] if `spec.correlation` is not a valid SPD correlation
+/// matrix for `spec.legs.len()` legs.
+///
+/// # Panics
+///
+/// Panics if `spec.legs` is empty, or if the MC config has a zero budget /
+/// replication / step count.
+pub fn price_basket_with_sensitivities(
+    spec: &BasketSpec,
+    carry: Carry,
+    t: f64,
+    cfg: BasketMcConfig,
+) -> Result<BasketSensitivities, CorrelationError> {
+    let n = spec.legs.len();
+    assert!(n >= 1, "a basket needs at least one leg");
+    assert!(cfg.budget >= 1, "need ≥ 1 path");
+    assert!(cfg.replications >= 2, "need ≥ 2 scrambles for a std-error");
+    assert!(cfg.steps >= 1, "need ≥ 1 time step");
+
+    let chol = cholesky(&spec.correlation, n)?;
+
+    let m = cfg.steps;
+    let bridge = BrownianBridge::new(m, t);
+    let dim = n * m;
+    let seq = SobolSequence::new(dim);
+    let df = carry.discount_df(t);
+
+    // Per-leg deterministic drift and diffusion scale at the terminal horizon.
+    // S_a(T) = S_a(0) · exp[(b_a − ½σ_a²) T + σ_a W_a(T)].
+    let drift: Vec<f64> = spec
+        .legs
+        .iter()
+        .map(|leg| (leg.carry_rate - 0.5 * leg.vol * leg.vol) * t)
+        .collect();
+
+    let mut rep_means = Vec::with_capacity(cfg.replications);
+    let mut delta_reps: Vec<Vec<f64>> = vec![Vec::with_capacity(cfg.replications); n];
+
+    // Scratch buffers reused across paths (zero per-path allocation in the hot
+    // loop beyond the Sobol point vector).
+    let mut u = vec![0.0f64; dim];
+    let mut z_step = vec![0.0f64; n];
+    let mut x_step = vec![0.0f64; n];
+    let mut z_corr = vec![0.0f64; dim];
+    let mut path = vec![0.0f64; m];
+    let mut w_terminal = vec![0.0f64; n];
+    let mut delta_rep_acc = vec![0.0f64; n];
+
+    for r in 0..cfg.replications {
+        let seed = derive_seed(cfg.seed, r as u64);
+        let mut stream = seq.stream(seed);
+        let mut acc = 0.0f64;
+        delta_rep_acc.fill(0.0);
+
+        for _ in 0..cfg.budget {
+            stream.next_point(&mut u);
+
+            for k in 0..m {
+                for (a, zs) in z_step.iter_mut().enumerate() {
+                    *zs = inv_norm_cdf(u[a * m + k]);
+                }
+                chol.apply(&z_step, &mut x_step);
+                for (a, &xs) in x_step.iter().enumerate() {
+                    z_corr[a * m + k] = xs;
+                }
+            }
+
+            for (a, wt) in w_terminal.iter_mut().enumerate() {
+                let base = a * m;
+                bridge.build(&z_corr[base..base + m], &mut path);
+                *wt = path[m - 1];
+            }
+
+            acc += discounted_payoff(spec, &drift, &w_terminal, df);
+            accumulate_pathwise_deltas(spec, &drift, &w_terminal, df, &mut delta_rep_acc);
+        }
+        rep_means.push(acc / cfg.budget as f64);
+        for a in 0..n {
+            delta_reps[a].push(delta_rep_acc[a] / cfg.budget as f64);
+        }
+    }
+
+    let estimate = mean(&rep_means);
+    let var = sample_variance(&rep_means, estimate);
+    let std_error = sqrt(var / cfg.replications as f64);
+
+    let mut leg_deltas = Vec::with_capacity(n);
+    let mut leg_delta_std_errors = Vec::with_capacity(n);
+    for rep in delta_reps.iter().take(n) {
+        let d_est = mean(rep);
+        let d_var = sample_variance(rep, d_est);
+        let d_se = sqrt(d_var / cfg.replications as f64);
+        leg_deltas.push(d_est);
+        leg_delta_std_errors.push(d_se);
+    }
+
+    Ok(BasketSensitivities {
+        price: estimate,
+        price_std_error: std_error,
+        leg_deltas,
+        leg_delta_std_errors,
+    })
+}
+
+#[inline]
+fn accumulate_pathwise_deltas(
+    spec: &BasketSpec,
+    drift: &[f64],
+    w_terminal: &[f64],
+    df: f64,
+    delta_acc: &mut [f64],
+) {
+    match spec.kind {
+        BasketKind::Basket => {
+            let agg = spec
+                .legs
+                .iter()
+                .zip(drift)
+                .zip(w_terminal)
+                .map(|((leg, &mu), &w)| leg.weight * terminal_level(leg, mu, w))
+                .sum::<f64>();
+
+            let is_itm = match spec.option_type {
+                OptionType::Call => agg > spec.strike,
+                OptionType::Put => agg < spec.strike,
+            };
+
+            if is_itm {
+                let sign = match spec.option_type {
+                    OptionType::Call => 1.0,
+                    OptionType::Put => -1.0,
+                };
+                let factor = sign * df;
+                for (a, (leg, (&mu, &wt))) in
+                    spec.legs.iter().zip(drift.iter().zip(w_terminal)).enumerate()
+                {
+                    let r_a = exp(mu + leg.vol * wt);
+                    delta_acc[a] += factor * leg.weight * r_a;
+                }
+            }
+        }
+        BasketKind::BestOf => {
+            let mut best_idx = 0;
+            let mut best_val = f64::NEG_INFINITY;
+            for (a, ((leg, &mu), &wt)) in spec.legs.iter().zip(drift).zip(w_terminal).enumerate() {
+                let val = leg.weight * terminal_level(leg, mu, wt);
+                if val > best_val {
+                    best_val = val;
+                    best_idx = a;
+                }
+            }
+            let is_itm = match spec.option_type {
+                OptionType::Call => best_val > spec.strike,
+                OptionType::Put => best_val < spec.strike,
+            };
+            if is_itm {
+                let sign = match spec.option_type {
+                    OptionType::Call => 1.0,
+                    OptionType::Put => -1.0,
+                };
+                let leg = &spec.legs[best_idx];
+                let r = exp(drift[best_idx] + leg.vol * w_terminal[best_idx]);
+                delta_acc[best_idx] += sign * df * leg.weight * r;
+            }
+        }
+        BasketKind::WorstOf => {
+            let mut worst_idx = 0;
+            let mut worst_val = f64::INFINITY;
+            for (a, ((leg, &mu), &wt)) in spec.legs.iter().zip(drift).zip(w_terminal).enumerate() {
+                let val = leg.weight * terminal_level(leg, mu, wt);
+                if val < worst_val {
+                    worst_val = val;
+                    worst_idx = a;
+                }
+            }
+            let is_itm = match spec.option_type {
+                OptionType::Call => worst_val > spec.strike,
+                OptionType::Put => worst_val < spec.strike,
+            };
+            if is_itm {
+                let sign = match spec.option_type {
+                    OptionType::Call => 1.0,
+                    OptionType::Put => -1.0,
+                };
+                let leg = &spec.legs[worst_idx];
+                let r = exp(drift[worst_idx] + leg.vol * w_terminal[worst_idx]);
+                delta_acc[worst_idx] += sign * df * leg.weight * r;
+            }
+        }
+    }
 }
 
 /// One path's discounted payoff given the terminal Brownian levels `W_a(T)`.
@@ -547,5 +790,114 @@ mod tests {
             .unwrap()
             .price;
         assert!(worst <= best, "worst {worst} should be ≤ best {best}");
+    }
+
+    #[test]
+    fn sensitivities_price_matches_price_basket_bit_identical() {
+        let r_dom = 0.02;
+        let spec = BasketSpec {
+            legs: vec![
+                BasketLeg::new(1.0, 0.1, r_dom - 0.01, 1.0),
+                BasketLeg::new(1.2, 0.12, r_dom - 0.015, 1.0),
+            ],
+            correlation: corr2(0.3),
+            option_type: OptionType::Call,
+            strike: 2.2,
+            kind: BasketKind::Basket,
+        };
+        let cfg = BasketMcConfig {
+            budget: 512,
+            replications: 4,
+            steps: 1,
+            seed: 7,
+        };
+        let base = price_basket(&spec, numeraire(r_dom), 1.0, cfg).unwrap();
+        let sens = price_basket_with_sensitivities(&spec, numeraire(r_dom), 1.0, cfg).unwrap();
+        assert_eq!(base.price.to_bits(), sens.price.to_bits());
+        assert_eq!(base.std_error.to_bits(), sens.price_std_error.to_bits());
+        assert_eq!(sens.leg_deltas.len(), 2);
+        assert_eq!(sens.leg_delta_std_errors.len(), 2);
+        assert!(sens.leg_deltas[0] > 0.0, "call delta must be positive");
+        assert!(sens.leg_deltas[1] > 0.0, "call delta must be positive");
+    }
+
+    #[test]
+    fn single_leg_basket_delta_matches_black_scholes() {
+        use celnet_core::math::norm_cdf;
+        let r_dom = 0.03;
+        let r_for = 0.01;
+        let spot = 100.0;
+        let strike = 100.0;
+        let vol = 0.20;
+        let t = 1.0;
+        let b = r_dom - r_for;
+
+        let spec = BasketSpec {
+            legs: vec![BasketLeg::new(spot, vol, b, 1.0)],
+            correlation: vec![vec![1.0]],
+            option_type: OptionType::Call,
+            strike,
+            kind: BasketKind::Basket,
+        };
+        let cfg = BasketMcConfig {
+            budget: 8192,
+            replications: 16,
+            steps: 1,
+            seed: 42,
+        };
+        let sens = price_basket_with_sensitivities(&spec, numeraire(r_dom), t, cfg).unwrap();
+
+        // Analytical Black-Scholes delta: e^{-r_d * t} * e^{b * t} * N(d1)
+        let d1 = ((spot / strike).ln() + (b + 0.5 * vol * vol) * t) / (vol * sqrt(t));
+        let bs_delta = exp(-r_for * t) * norm_cdf(d1);
+
+        let mc_delta = sens.leg_deltas[0];
+        let mc_se = sens.leg_delta_std_errors[0];
+        let diff = (mc_delta - bs_delta).abs();
+        assert!(
+            diff < 3.0 * mc_se,
+            "MC delta {mc_delta} vs BS delta {bs_delta} diff {diff} exceeds 3*SE ({mc_se})"
+        );
+    }
+
+    #[test]
+    fn sensitivities_pathwise_delta_matches_finite_difference() {
+        let r_dom = 0.02;
+        let spec = BasketSpec {
+            legs: vec![
+                BasketLeg::new(100.0, 0.15, r_dom - 0.01, 0.5),
+                BasketLeg::new(100.0, 0.20, r_dom - 0.015, 0.5),
+            ],
+            correlation: corr2(0.4),
+            option_type: OptionType::Call,
+            strike: 100.0,
+            kind: BasketKind::Basket,
+        };
+        let cfg = BasketMcConfig {
+            budget: 4096,
+            replications: 8,
+            steps: 1,
+            seed: 1234,
+        };
+        let sens = price_basket_with_sensitivities(&spec, numeraire(r_dom), 1.0, cfg).unwrap();
+
+        // Central finite difference for leg 0:
+        let h = 0.01; // 100.0 * 1e-4
+        let mut spec_plus = spec.clone();
+        spec_plus.legs[0].spot += h;
+        let mut spec_minus = spec.clone();
+        spec_minus.legs[0].spot -= h;
+
+        let p_plus = price_basket(&spec_plus, numeraire(r_dom), 1.0, cfg).unwrap().price;
+        let p_minus = price_basket(&spec_minus, numeraire(r_dom), 1.0, cfg).unwrap().price;
+        let fd_delta = (p_plus - p_minus) / (2.0 * h);
+
+        let mc_delta = sens.leg_deltas[0];
+        let mc_se = sens.leg_delta_std_errors[0];
+        let diff = (mc_delta - fd_delta).abs();
+        assert!(
+            diff < 3.5 * mc_se,
+            "pathwise delta {mc_delta} vs FD delta {fd_delta} diff {diff} exceeds 3.5*SE ({mc_se})"
+        );
     }
 }

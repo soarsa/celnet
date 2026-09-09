@@ -25,6 +25,12 @@ import { MarketDataWorkspace } from "../workspaces/MarketDataWorkspace";
 import { QuotingWorkspace } from "../workspaces/QuotingWorkspace";
 import { CorporateActionsWorkspace } from "../workspaces/CorporateActionsWorkspace";
 import { ReferenceDataWorkspace } from "../workspaces/ReferenceDataWorkspace";
+import { UnifiedMarketStudio } from "../workspaces/UnifiedMarketStudio";
+import { UnifiedPricingStudio } from "../workspaces/UnifiedPricingStudio";
+import { UnifiedDistributionStudio } from "../workspaces/UnifiedDistributionStudio";
+import { UnifiedBlotterStudio } from "../workspaces/UnifiedBlotterStudio";
+import { UnifiedRiskStudio } from "../workspaces/UnifiedRiskStudio";
+import { UnifiedPolicyStudio } from "../workspaces/UnifiedPolicyStudio";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { FiStreamingWorkspace } from "../workspaces/FiStreamingWorkspace";
 import { AggregatedBookWorkspace } from "../workspaces/AggregatedBookWorkspace";
@@ -50,6 +56,7 @@ import { CelerMark, CelnetWordmark } from "../components/CelerMark";
 import { ScopeControl } from "../components/ScopeControl";
 import { ScopeSwitcher } from "../components/ScopeSwitcher";
 import { SavedViewsMenu } from "../components/SavedViewsMenu";
+import { StudioSwitcher, CELNET_DESKS } from "../components/StudioSwitcher";
 import { AuthMenu } from "../components/AuthMenu";
 import { NotificationCenter } from "../components/NotificationCenter";
 import { SettingsPanel } from "../components/SettingsPanel";
@@ -74,6 +81,7 @@ import {
   railState,
   resolveChord,
   workspaceDomains,
+  type Command,
   type Domain,
   type RailState,
   type WorkspaceId,
@@ -134,7 +142,7 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // standalone rail row). This id stays valid so any deep-link lands straight on that
   // tab within the merged surface. FI-only.
   riskrouting: () => <RiskDashboardWorkspace initialTab="routing" />,
-  // Auto-Hedging (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md): the
+  // Auto-Hedging (docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md): the
   // trader-composed EXIT-POLICY graph (reusing the risk-routing drag-and-drop
   // editor with ExitAction leaves), the warehouse-threshold config, and the live
   // hedge monitor (advisory intents + provenance + per-book band RAG). Rail-gated
@@ -146,7 +154,7 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // that tab within the merged surface; the tab keeps its `manage_acceptance·FI` gate.
   // FI-only.
   acceptance: () => <RiskDashboardWorkspace initialTab="acceptance" />,
-  // Risk Transfer (docs/RISK-TRANSFER-REQUIREMENTS.md §9): the CONSOLIDATED FI move-
+  // Risk Transfer (docs/hedging/RISK-TRANSFER-REQUIREMENTS.md §9): the CONSOLIDATED FI move-
   // existing-risk surface — a tabbed shell hosting the "Risk Transfer" initiate ticket
   // (default), the "Inbox" accept/reject four-eyes counterparty tab, and the "Audit"
   // immutable provenance blotter. FI-only; the initiate + inbox TABS gate on the
@@ -193,6 +201,12 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   // tab. Reads on the `view·FI` floor; Confirm/Apply gate on `refdata` per-control.
   corpactions: CorporateActionsWorkspace,
   refdata: ReferenceDataWorkspace,
+  studio_markets: () => <UnifiedMarketStudio />,
+  studio_pricing: () => <UnifiedPricingStudio />,
+  studio_distribution: () => <UnifiedDistributionStudio />,
+  studio_blotter: () => <UnifiedBlotterStudio />,
+  studio_risk: () => <UnifiedRiskStudio />,
+  studio_policy: () => <UnifiedPolicyStudio />,
 };
 
 export function Shell(): React.ReactElement {
@@ -308,6 +322,15 @@ export function Shell(): React.ReactElement {
     ([, host]) => presentIds.has(host),
   ).map(([alias]) => alias);
 
+  const CELNET_DESK_IDS: readonly WorkspaceId[] = [
+    "studio_markets",
+    "studio_pricing",
+    "studio_distribution",
+    "studio_blotter",
+    "studio_risk",
+    "studio_policy",
+  ];
+
   // One rail entry. A license-gated (entitled-but-unlicensed) row is PRESENT-BUT-
   // LOCKED (greyed + lock + upsell title, aria-disabled, no nav handler — the class
   // is discoverable but not enterable; default all-licensed ⇒ this never renders);
@@ -386,11 +409,25 @@ export function Shell(): React.ReactElement {
     return railState(id, app.auth, licensed) === "present";
   });
 
+  const deskCommands = useMemo<Command[]>(
+    () =>
+      CELNET_DESKS.map((d) => ({
+        id: `desk-${d.id}`,
+        title: `Desk ${d.code}: ${d.name} — ${d.desc}`,
+        group: "Trading Desks",
+        hint: `Desk ${d.code}`,
+        run: () => app.setWorkspace(d.id),
+      })),
+    [app.setWorkspace],
+  );
+
+  const allCommands = useMemo(() => [...commands, ...deskCommands], [commands, deskCommands]);
+
   // Global keyboard grammar (single source: lib/commands.ts). The Shell resolves a
   // keydown against the registry and dispatches the matched command, so what the
   // product HONOURS is exactly what the cheatsheet ADVERTISES.
   useEffect(() => {
-    const byId = new Map(commands.map((c) => [c.id, c]));
+    const byId = new Map(allCommands.map((c) => [c.id, c]));
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
       // `?` is a literal character inside a text field — never a command there.
@@ -540,8 +577,7 @@ export function Shell(): React.ReactElement {
          * Risk/Book in-progress state, no re-fired heavy effects).
          */}
         <div className={styles.canvas}>
-          {/* Rail-backed panes + the consolidated deep-link alias panes (no rail row,
-              but a `view=<alias>` deep-link must render the host on its folded tab). */}
+          {/* Rail-backed panes + the consolidated deep-link alias panes */}
           {[...mountRail.map((r) => r.id), ...mountAliasIds].map((id) => {
             const View = WORKSPACE_VIEW[id];
             const active = app.workspace === id;
@@ -556,13 +592,22 @@ export function Shell(): React.ReactElement {
               </div>
             );
           })}
+          {/* Celnet Unified Trading Desks: rendered when active */}
+          {CELNET_DESK_IDS.includes(app.workspace) && (() => {
+            const StudioView = WORKSPACE_VIEW[app.workspace];
+            return (
+              <div key={app.workspace} className={`${styles.pane} ${styles.paneActive}`}>
+                <StudioView />
+              </div>
+            );
+          })()}
         </div>
         <StatusRibbon />
       </div>
 
       <CommandPalette
         open={app.paletteOpen}
-        commands={commands}
+        commands={allCommands}
         onClose={() => app.setPaletteOpen(false)}
       />
       <ScopeSwitcher />
@@ -598,6 +643,7 @@ function TitleBar({ onOpenHelp }: { onOpenHelp: () => void }): React.ReactElemen
         </>
       )}
       <SavedViewsMenu />
+      <StudioSwitcher />
       <button
         className={styles.search}
         onClick={() => app.setPaletteOpen(true)}

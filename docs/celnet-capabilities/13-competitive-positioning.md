@@ -7,13 +7,13 @@ Celnet is not a thin challenger closing gaps. It is a **functionally complete, e
 ![Celnet versus the vendor-neutral capability landscape](../assets/celnet-capabilities/fig-12-capability-landscape.png)
 *Figure 13.1 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The capability landscape, mapped against vendor-neutral archetypes. Celnet's footprint spans the full pricing catalogue (first-generation exotics → structured/path-dependent → American/Bermudan → correlated basket → LSV booking), firm-wide and regulatory risk, an internal XVA lens, a streaming edge, and five-client parity in one coherent product.*
 
-### 13.1 An executable parity matrix — claims you can run
+## 13.1 An executable parity matrix — claims you can run
 
-The cornerstone of Celnet's positioning is an **executable parity matrix**: capability claims rendered as gated integration tests inside a 34-crate Rust workspace, backed by an extensive automated test suite. Each row is a capability — a delta convention, a smile model, a barrier method, a Greek, a risk roll-up, a streaming guarantee, an exotic product — expressed as code that must pass against an *independent* oracle (`crates/celnet-parity/tests/` carries roughly two-dozen rows: vanilla & exotic Greeks, eSSVI, Heston, LSV, basket, Asian, var/vol swap, forward-start, FRTB, QMC, Raft, XVA, and more). Because the matrix runs in the same gates that govern every change, parity is *continuously demonstrated*, never merely claimed.
+The cornerstone of Celnet's positioning is an **executable parity matrix**: capability claims rendered as gated integration tests inside a 55-crate Rust workspace, backed by an extensive automated test suite. Each row is a capability — a delta convention, a smile model, a barrier method, a Greek, a risk roll-up, a streaming guarantee, an exotic product — expressed as code that must pass against an *independent* oracle (`crates/celnet-parity/tests/` carries roughly two-dozen rows: vanilla & exotic Greeks, eSSVI, Heston, LSV, basket, Asian, var/vol swap, forward-start, FRTB, QMC, Raft, XVA, and more). Because the matrix runs in the same gates that govern every change, parity is *continuously demonstrated*, never merely claimed.
 
 Crucially, the validation bar is honest **per product class**. Analytic, PDE, and golden-table products (vanilla, digitals, barriers, Heston) are gated to machine precision against frozen QuantLib reference tables (`crates/celnet-golden/data/`: `vanilla_gk.csv`, `digital_gk.csv`, `barrier_gk.csv`, `double_barrier_gk.csv`, `touch_gk.csv`, `heston_fo.csv`). Structured, path-dependent, and Monte-Carlo products (TARF, accumulator, basket, discrete lookback, American via Longstaff-Schwartz) are validated against closed-form limits, finite-difference oracles, hand-pinned published constants, and honest price standard-error bands — never labelled "machine precision". A desk evaluating Celnet runs the matrix; the matrix is the evidence (`docs/CLIENT-PARITY-MATRIX.md`).
 
-### 13.2 Out-functions
+## 13.2 Out-functions
 
 Celnet carries the full working surface of an options desk in a single product, end to end. The catalogue is not "first-generation" — it spans every band a front-to-back platform charges for, all on the **one wire**, parity-gated, and reachable from **all five clients**:
 
@@ -37,7 +37,7 @@ The 18-product unified `Instrument` oneof (`crates/celnet-proto/proto/celnet.pro
 
 Where an incumbent archetype is strong in one band — deep pricing, or firm-wide risk, or a streaming venue, or a clean library — Celnet covers the whole span in one contract. A **closed terminal** gives a desk reach but not an embeddable, deterministic core it can extend; Celnet ships the Open Quant SDK so a desk runs its own models inside the engine. A **front-to-back platform** gives lifecycle coverage but treats FX-options analytics as a bolt-on; Celnet *is* the FX-options pricing system-of-record and slots into that lifecycle with the same structured/path-dependent breadth. A **data-venue** distributes prices but does not own the smile, the exotics, or the risk cube; Celnet does. A **modern library** prices cleanly but offers no streaming edge, no scenario or firm-wide risk, and no operational backbone; Celnet wraps the same numerical rigour in a production edge.
 
-### 13.3 Out-intuits
+## 13.3 Out-intuits
 
 Function is only half the contest; the other half is whether a desk can actually *use* it. Celnet's clients are two zooms of one model, not a scatter of disconnected screens. The GUI's Book and Risk views read the same position-fact cube, so a trader drills from an aggregated book row straight into a single position's scenario risk without changing tools or mental model. A scope breadcrumb, a pair navigator, a command palette, a `?` keyboard-shortcuts overlay, and consistent trend modes carry the same vocabulary across Ticket, Stream, Surface, Risk, and Book — and the Ticket structures the full exotic catalogue, not just vanilla strategies.
 
@@ -46,7 +46,7 @@ Function is only half the contest; the other half is whether a desk can actually
 
 Critically, the front-end has no privileged path. The GUI uses the same APIs as any client, the Excel add-in runs no pricing in the cell, and a value is bit-identical across the GUI, the SDK, the CLI, and the spreadsheet. A desk can move from a streaming blotter to a structuring ticket to a marked surface to a risk grid — and reconcile every one of those numbers against the same server truth. That coherence is what "out-intuits" means in practice: fewer surfaces to learn, no contradictions to chase.
 
-### 13.4 Out-performs
+## 13.4 Out-performs
 
 Celnet's hot core prices vanilla and Greeks at nanosecond scale, so on a streaming line **network framing, not computation, is the only meaningful latency floor**. A two-tier engine joins an async edge to pinned, zero-allocation hot cores over wait-free single-producer-single-consumer rings; state publication is lock-free and read-mostly; and blue-green handoff delivers hot upgrades with no downtime window. The pinned core stays log-, lock-, and allocation-free, with telemetry offloaded over a bounded, drop-on-full ring so observability never taxes the critical path.
 
@@ -57,24 +57,24 @@ Performance is held, not hoped. The in-core §1.2 truth-gate asserts **absolute*
 
 **Honest boundary.** The numbers above are **host-local, single-core, in-core**. Cross-host wire p99, kernel-bypass NIC latency, and the §11 absolute wire-latency SLOs are **deploy-gated** — in-repo proves the §1.2 truth-gate and loopback benches only. On the accelerator side, in-repo measures the GPU dispatch-amortization **ratio** curve (0.68×@4k → ~53×@1M paths on M4); because Apple M4 Metal lacks f64, the GPU path proves **correctness and ratios only** (M4/Lavapipe). CUDA/NVIDIA absolute GPU throughput, the ≤50ms exotic figure, and Workload-A/B absolute numbers are deploy-gated and never claimed here.
 
-### 13.5 Supply-chain-clean and cross-platform deterministic
+## 13.5 Supply-chain-clean and cross-platform deterministic
 
 Celnet is built entirely on open-source, permissively-licensed components — no paid libraries, no proprietary solvers, no commercial runtime data dependencies — and that policy is enforced in the gates, not just intended. For a risk-managed trading desk this is a procurement and audit advantage: the dependency set is inspectable and license-clean by construction.
 
 Determinism is the second pillar. A counter-based RNG is bit-identical between CPU and GPU, GPU results are reconciled against a high-precision CPU oracle, and a CPU SIMD fallback keeps the same answers where no accelerator is present. Plugin models replay bit-identically, and a marked surface is pinned by version so a stale or unknown version is rejected rather than silently re-deriving against live data. The distributed substrate replays bit-identically too: a leader-replicated event log with full Raft (election, Pre-Vote, conflicting-tail truncation, snapshot compaction, InstallSnapshot reseed) reaches `f64::to_bits`-identical state across a localhost multi-process cluster, and a lock-free SPMC broadcast ring fans each pair's tick to every subscriber with exact conflation accounting. The same number reproduces across machines, accelerators, and client surfaces — the foundation of any defensible mark. *(Distributed correctness, quorum, and framing are proven on localhost multi-process only; cross-host wire p99, cross-DC transport, real network partitions, and Raft §6 dynamic membership are deploy-gated.)*
 
-### 13.6 Adapts into the estate you already run
+## 13.6 Adapts into the estate you already run
 
 Positioning is not only about a head-to-head; it is about fit. Celnet is the FX-options pricing system-of-record inside the Celer trade lifecycle and runs across Standalone, Hybrid, and CelerIntegrated deployment modes via reversible adapter swaps on its seam traits — never a rewrite. The in-repo proof is the seam: the FIX 4.4 engine (acceptor + initiator, loopback-tested), the egress governor, the resilient subscriber, the normalization layer, and the DeployMode adapter swap. **CelerIntegrated mode is the designed estate-native binding**: the live JVM distributor sidecar handshake, mailbox calibration, and live quote-feed entitlement are deploy/live-gated, proven at deploy against the running estate — distinct from the in-repo seam. The same market-data seam ingests external products and feeds as integration targets: venue and aggregator feeds such as **Fenics**, **Bloomberg**, **Refinitiv**, and **EBS** are adapter destinations, demonstrating that Celnet meets a desk where its data already lives.
 
 ![Celnet's adaptability across deployment modes and external feeds](../assets/celnet-capabilities/fig-10-deployment-modes.png)
 *Figure 13.4 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Reversible adapter swaps move Celnet between Standalone, Hybrid, and CelerIntegrated modes; the same seam ingests external market-data feeds. CelerIntegrated is the designed estate-native binding, proven at deploy against the live JVM estate.*
 
-### 13.7 The positioning, in one line
+## 13.7 The positioning, in one line
 
 Celnet now matches Murex MX.3, Numerix CrossAsset, and Fenics kACE on structured and path-dependent **breadth** — full first-generation exotics, var/vol swaps, Asians, forward-start/cliquet, quanto, TARF, accumulator, lookback, American/Bermudan early exercise, correlated basket/best-of/worst-of, and an LSV booking model — *while retaining* the edges the deep-catalogue incumbents structurally lack: an open quant SDK, one clean unversioned contract with bit-identical values across five clients, a pinned zero-allocation nanosecond hot core, server-side hierarchical risk, FRTB-SA capital, an internal XVA lens, and an honest evidence trail (parity matrix + golden tables + mutation + fuzz). It meets the closed terminal on reach, the front-to-back platform on lifecycle fit and catalogue depth, the data-venue on distribution, and the modern library on numerical rigour — and it beats each on the dimension the others lack, proven by a parity matrix you can run, on a supply-chain-clean, deterministic foundation. No deploy-gated absolute is claimed in-repo.
 
-**See also:** [`CAPABILITIES-VS-COMPETITION.md`](../CAPABILITIES-VS-COMPETITION.md) is the feature-by-feature comparison; [`COMPETITIVE-ANALYSIS.md`](../COMPETITIVE-ANALYSIS.md) is the market-positioning critique; [`CLIENT-PARITY-MATRIX.md`](../CLIENT-PARITY-MATRIX.md) is the runnable five-client parity proof; [§14 Engineering Rigor](14-engineering-rigor.md) is the evidence trail behind every claim.
+**See also:** [`CAPABILITIES-VS-COMPETITION.md`](../capabilities/CAPABILITIES-VS-COMPETITION.md) is the feature-by-feature comparison; [`COMPETITIVE-ANALYSIS.md`](../COMPETITIVE-ANALYSIS.md) is the market-positioning critique; [`CLIENT-PARITY-MATRIX.md`](../clients/CLIENT-PARITY-MATRIX.md) is the runnable five-client parity proof; [§14 Engineering Rigor](14-engineering-rigor.md) is the evidence trail behind every claim.
 
 ---
 <sub>[← Prev: Celer Integration](12-celer-integration.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Engineering Rigor & Assurance →](14-engineering-rigor.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

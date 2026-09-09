@@ -11,7 +11,7 @@
 //! smile under a fresh `surface_version`, so a client can pin that version on a
 //! price *immediately* (without first issuing its own `MarkSurface`) and reproduce
 //! the marked surface to the bit — the determinism / reproducibility guarantee of
-//! `docs/EXCEL-INTEGRATION.md` §5. The pre-marked version is printed alongside the
+//! `docs/clients/EXCEL-INTEGRATION.md` §5. The pre-marked version is printed alongside the
 //! WS address.
 //!
 //! Ports (env-overridable so the same example serves any local layout):

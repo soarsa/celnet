@@ -6,7 +6,7 @@
  * route. They also pin the validator against the same defects
  * `RiskRoutingGraph::validate` rejects.
  *
- * Truth table (docs/FI-RISK-ROUTING-REQUIREMENTS.md §8.6):
+ * Truth table (docs/fixed-income/FI-RISK-ROUTING-REQUIREMENTS.md §8.6):
  *   ccy = EUR & notional > 50m          → BOOK-A
  *   product = swap & tenor ≥ 10         → BOOK-B
  *   counterparty in [HF-1, HF-2]        → BOOK-C

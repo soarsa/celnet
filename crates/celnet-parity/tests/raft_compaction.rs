@@ -44,8 +44,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use celnet_replog::{
-    BookState, BookUpdate, Log, LogEntry, RaftConfig, RaftNode, Snapshot, SnapshotStore,
-    snapshot_path,
+    BookState, BookUpdate, Log, LogEntry, QuorumPolicy, RaftConfig, RaftNode, Snapshot,
+    SnapshotStore, snapshot_path,
 };
 
 /// Hard wall-clock deadline — nothing here may hang. Set to 180 s (matching
@@ -389,6 +389,7 @@ fn raftnode_compact_then_boot_recovery_is_exact() {
         election_max: Duration::from_millis(240),
         heartbeat: Duration::from_millis(20),
         io_timeout: Duration::from_millis(400),
+        quorum_policy: QuorumPolicy::Majority,
     };
 
     // Single-node cluster: it elects itself leader and commits on its own fsync.

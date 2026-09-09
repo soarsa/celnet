@@ -17,9 +17,11 @@
 //! over a [`tokio::sync::watch`] channel so all firm-wide GUIs reflect the halt
 //! immediately.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use arc_swap::ArcSwap;
 use tokio::sync::watch;
 
 /// An immutable snapshot of the two kill-switch controls plus the monotonic version
@@ -44,6 +46,8 @@ pub struct PricingControl {
     outbound: AtomicBool,
     inbound: AtomicBool,
     version: AtomicU64,
+    /// Lock-free set of individually halted/locked instrument IDs (CA-G6).
+    locked_instruments: ArcSwap<HashSet<String>>,
     /// The change fan-out channel. The sender always holds the current state; every
     /// WS connection subscribes a receiver and forwards a `pricing_control` frame on
     /// each change to its client.
@@ -65,6 +69,7 @@ impl PricingControl {
             outbound: AtomicBool::new(outbound_enabled),
             inbound: AtomicBool::new(inbound_enabled),
             version: AtomicU64::new(1),
+            locked_instruments: ArcSwap::from_pointee(HashSet::new()),
             tx,
         })
     }
@@ -115,6 +120,80 @@ impl PricingControl {
             inbound_enabled: self.inbound.load(Ordering::Relaxed),
             version: self.version.load(Ordering::Relaxed),
         }
+    }
+
+    /// Check whether an individual instrument is locked (halted) from pricing.
+    ///
+    /// This is a **hot-path** lock-free read off the atomic pointer (zero locks, zero mutexes,
+    /// zero allocations).
+    #[must_use]
+    #[inline]
+    pub fn is_instrument_locked(&self, instrument_id: &str) -> bool {
+        let set = self.locked_instruments.load();
+        set.contains(instrument_id)
+    }
+
+    /// Lock (halt) pricing for a specific instrument. Returns true if the instrument was newly locked.
+    ///
+    /// Uses lock-free RCU (`arc_swap::ArcSwap::rcu`). Updates the monotonic version and notifies
+    /// watch subscribers if changed.
+    pub fn lock_instrument(&self, instrument_id: impl Into<String>) -> bool {
+        let id = instrument_id.into();
+        let mut newly_locked = false;
+        self.locked_instruments.rcu(|current| {
+            if current.contains(&id) {
+                newly_locked = false;
+                Arc::clone(current)
+            } else {
+                newly_locked = true;
+                let mut next = (**current).clone();
+                next.insert(id.clone());
+                Arc::new(next)
+            }
+        });
+        if newly_locked {
+            self.notify_change();
+        }
+        newly_locked
+    }
+
+    /// Unlock (resume) pricing for a specific instrument. Returns true if the instrument was unlocked.
+    ///
+    /// Uses lock-free RCU (`arc_swap::ArcSwap::rcu`). Updates the monotonic version and notifies
+    /// watch subscribers if changed.
+    pub fn unlock_instrument(&self, instrument_id: &str) -> bool {
+        let mut unlocked = false;
+        self.locked_instruments.rcu(|current| {
+            if current.contains(instrument_id) {
+                unlocked = true;
+                let mut next = (**current).clone();
+                next.remove(instrument_id);
+                Arc::new(next)
+            } else {
+                unlocked = false;
+                Arc::clone(current)
+            }
+        });
+        if unlocked {
+            self.notify_change();
+        }
+        unlocked
+    }
+
+    /// Return an atomic snapshot of all currently locked instruments.
+    #[must_use]
+    pub fn locked_instruments(&self) -> Arc<HashSet<String>> {
+        self.locked_instruments.load_full()
+    }
+
+    fn notify_change(&self) {
+        let version = self.version.fetch_add(1, Ordering::Relaxed) + 1;
+        let state = PricingControlState {
+            outbound_enabled: self.outbound.load(Ordering::Relaxed),
+            inbound_enabled: self.inbound.load(Ordering::Relaxed),
+            version,
+        };
+        let _ = self.tx.send_replace(state);
     }
 
     /// A fresh change-fan-out receiver for one WS connection. The returned receiver's
@@ -179,5 +258,43 @@ mod tests {
         assert!(!observed.outbound_enabled);
         assert!(observed.inbound_enabled);
         assert_eq!(observed.version, 2);
+    }
+
+    #[test]
+    fn per_instrument_lock_and_unlock_lifecycle() {
+        let control = PricingControl::new(true, true);
+        assert!(!control.is_instrument_locked("US912828ZG01"));
+        assert!(!control.is_instrument_locked("US912828YK50"));
+
+        // Lock one instrument
+        assert!(control.lock_instrument("US912828ZG01"));
+        assert!(control.is_instrument_locked("US912828ZG01"));
+        assert!(!control.is_instrument_locked("US912828YK50"));
+
+        // Duplicate lock is a no-op returning false
+        assert!(!control.lock_instrument("US912828ZG01"));
+
+        // Lock second instrument
+        assert!(control.lock_instrument("US912828YK50"));
+        assert!(control.is_instrument_locked("US912828ZG01"));
+        assert!(control.is_instrument_locked("US912828YK50"));
+
+        let locked = control.locked_instruments();
+        assert_eq!(locked.len(), 2);
+        assert!(locked.contains("US912828ZG01"));
+        assert!(locked.contains("US912828YK50"));
+
+        // Unlock first instrument
+        assert!(control.unlock_instrument("US912828ZG01"));
+        assert!(!control.is_instrument_locked("US912828ZG01"));
+        assert!(control.is_instrument_locked("US912828YK50"));
+
+        // Duplicate unlock is a no-op returning false
+        assert!(!control.unlock_instrument("US912828ZG01"));
+
+        // Unlock second instrument
+        assert!(control.unlock_instrument("US912828YK50"));
+        assert!(!control.is_instrument_locked("US912828YK50"));
+        assert_eq!(control.locked_instruments().len(), 0);
     }
 }

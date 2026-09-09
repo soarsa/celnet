@@ -8,8 +8,8 @@
 //! (which order to route to), `RFQ_OUT` (which panel to fan to), and the external
 //! leg of `SPLIT`. It generalises the include-only list with **exclude** semantics —
 //! "hedge on all LPs *except* X" — the gap the hedging configuration guide flagged
-//! (`docs/HEDGING-CONFIGURATION-GUIDE.md` §4;
-//! `docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4/§6.2).
+//! (`docs/hedging/HEDGING-CONFIGURATION-GUIDE.md` §4;
+//! `docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4/§6.2).
 //!
 //! # Resolution ([`HedgeLpPanel::effective_lps`])
 //!

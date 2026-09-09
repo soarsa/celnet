@@ -47,6 +47,7 @@ pub(crate) fn kind_label(kind: NotificationKind) -> &'static str {
         NotificationKind::RequestExpired => "Expired",
         NotificationKind::QuoteAccepted => "Won",
         NotificationKind::QuoteRejected => "Lost",
+        NotificationKind::ManualInterventionRequired => "Manual intervention",
         NotificationKind::OrderReceived => "Order in",
         NotificationKind::Fill => "Fill",
     }
@@ -58,7 +59,8 @@ pub(crate) fn kind_label(kind: NotificationKind) -> &'static str {
 /// as [`kind_label`].
 pub(crate) fn kind_severity(kind: NotificationKind) -> &'static str {
     match kind {
-        NotificationKind::RequestWithdrawn
+        NotificationKind::ManualInterventionRequired
+        | NotificationKind::RequestWithdrawn
         | NotificationKind::RequestExpired
         | NotificationKind::QuoteRejected => "notable",
         NotificationKind::RfqReceived
@@ -180,13 +182,14 @@ mod tests {
 
     /// The full set of typed kinds the SDK decodes (`Unspecified` is a wire error, not
     /// a variant) — the exhaustiveness fixture for the parity assertions below.
-    const ALL_KINDS: [NotificationKind; 8] = [
+    const ALL_KINDS: [NotificationKind; 9] = [
         NotificationKind::RfqReceived,
         NotificationKind::IoiReceived,
         NotificationKind::RequestWithdrawn,
         NotificationKind::RequestExpired,
         NotificationKind::QuoteAccepted,
         NotificationKind::QuoteRejected,
+        NotificationKind::ManualInterventionRequired,
         NotificationKind::OrderReceived,
         NotificationKind::Fill,
     ];

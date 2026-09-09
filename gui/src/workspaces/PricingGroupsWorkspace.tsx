@@ -17,7 +17,7 @@
  * ---
  *
  * The **Pricing Groups** tab ({@link PricingGroupsPanel}) is the admin drag-and-drop
- * pricing-pipeline builder (docs/FI-PRICING-GROUPS-DESIGN.md §6 + §8.5, server commit
+ * pricing-pipeline builder (docs/fixed-income/FI-PRICING-GROUPS-DESIGN.md §6 + §8.5, server commit
  * 07fc99f).
  *
  * A pricing group maps many FIX connections / users / desks onto ONE pricing
@@ -31,7 +31,7 @@
  *
  * Gating: a Fixed-Income CLIENT-PRICING surface (moved OFF Administration onto the FI
  * tab). Rail visibility AND all edits gate on the granular `manage_pricing·fixed_income`
- * capability (docs/PERMISSIONS-GRANULAR-REVIEW.md §4 — the FI pricing-desk authority,
+ * capability (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4 — the FI pricing-desk authority,
  * distinct from super-admin): a pricing manager creates / updates the whole group
  * (structure + both pipelines) WITHOUT full Administer, and a user lacking the cap never
  * reaches the pane. (The prior split — an `Administer` structure gate plus a

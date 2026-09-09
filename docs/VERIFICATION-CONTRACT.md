@@ -3,11 +3,11 @@
 > The mandatory, written gate set every new product / asset-class must satisfy
 > before it is **done**. This replaces the tribal "the FX recipe" with one
 > enforceable contract. It is the standing reference for
-> [MASTER-EVOLUTION-PROGRAM.md](MASTER-EVOLUTION-PROGRAM.md) §4 (api-first parity
+> [MASTER-EVOLUTION-PROGRAM.md](archive/waves/MASTER-EVOLUTION-PROGRAM.md) §4 (api-first parity
 > gate), §5 **W0** (verification & hygiene foundation), and §6 convergence lens 3
 > (completeness — every proto arm reachable + parity-gated), and it closes the
 > **[W0] verify/verification-contract-doc** item in
-> [WORLD-CLASS-BACKLOG.md](WORLD-CLASS-BACKLOG.md).
+> [WORLD-CLASS-BACKLOG.md](archive/audits/WORLD-CLASS-BACKLOG.md).
 >
 > **Scope of "product":** every arm of the single unversioned
 > `Instrument.product` oneof in `crates/celnet-proto/proto/celnet.proto`. "Asset

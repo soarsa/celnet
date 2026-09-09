@@ -52,6 +52,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 
+use celnet_fix::dialect_cross_asset;
 use celnet_fix::dialect_fx::{self, ExerciseStyle, OptionDescriptor};
 use celnet_fix::dialect_rates;
 use celnet_fix::dictionary::MsgType;
@@ -198,6 +199,8 @@ enum MdRecord {
     Bond(dialect_rates::BondRfq),
     /// An OIS subscription: recorded via [`FixSession::record_rates_rfq`].
     Ois(dialect_rates::RatesRfq),
+    /// A listed Treasury futures contract subscription.
+    Future { _contract_code: String },
 }
 
 /// The pricing inputs a live RFS subscription retains so each re-price tick can
@@ -210,6 +213,8 @@ enum RfsLine {
     Ois { tenor_years: u32 },
     /// A cash-bond line: re-priced as the clean price off the live curve.
     Bond { instrument: Box<BondInstrument> },
+    /// A listed Treasury futures line: re-priced from the aggregated book or benchmark.
+    Future { contract_code: String },
 }
 
 impl RfsLine {
@@ -218,6 +223,7 @@ impl RfsLine {
     fn composite_kind(&self) -> CompositeLineKind {
         match self {
             RfsLine::Bond { .. } => CompositeLineKind::Bond,
+            RfsLine::Future { .. } => CompositeLineKind::Future,
             RfsLine::Ois { tenor_years } => CompositeLineKind::Swap {
                 tenor_years: *tenor_years,
             },
@@ -238,6 +244,8 @@ impl RfsLine {
 enum CompositeLineKind {
     /// A cash bond: keyed by its own `instrument_id` (the FIX symbol).
     Bond,
+    /// A listed Treasury futures contract: keyed by its contract code / symbol.
+    Future,
     /// A swap / OIS curve point at `tenor_years`: keyed by curve symbol + tenor.
     Swap {
         /// The whole-year tenor along the curve.
@@ -818,13 +826,15 @@ impl FixSession {
             Ok(p) => p,
             Err(_) => return,
         };
-        // Firm-wide OUTBOUND kill-switch: while outbound pricing is halted, suppress the
-        // auto-quote frame (never push it to the client). Internal book state / limits
-        // are untouched; nothing else in this path records history for an FX RFQ.
-        if !self.ctx.pricing_control.outbound_enabled() {
+        // Firm-wide OUTBOUND kill-switch + per-instrument lock: while outbound pricing is halted
+        // or the instrument is locked, suppress the auto-quote frame.
+        let sym_str = String::from_utf8_lossy(&symbol);
+        if !self.ctx.pricing_control.outbound_enabled()
+            || self.ctx.pricing_control.is_instrument_locked(sym_str.trim())
+        {
             tracing::debug!(
                 connection_id = %self.ctx.connection_id,
-                "outbound pricing halted: suppressing FX RFQ auto-quote"
+                "outbound pricing halted or instrument locked: suppressing FX RFQ auto-quote"
             );
             return;
         }
@@ -1040,9 +1050,10 @@ impl FixSession {
         if let RatesAdmission::Auto(priced) = &admission {
             let mid = 0.5 * (priced.bid + priced.offer);
             // Firm-wide OUTBOUND kill-switch: while outbound pricing is halted, suppress
-            // the outbound `Quote(S)` frame (do NOT push it) — the desk-inbox row above
-            // was already recorded, so nothing internal is lost.
-            if self.ctx.pricing_control.outbound_enabled() {
+            let sym_str = String::from_utf8_lossy(symbol);
+            if self.ctx.pricing_control.outbound_enabled()
+                && !self.ctx.pricing_control.is_instrument_locked(sym_str.trim())
+            {
                 let quote_id = self.emit_two_way_quote(
                     st,
                     req_id,
@@ -1209,7 +1220,7 @@ impl FixSession {
     fn composite_id_for(symbol: &[u8], line: CompositeLineKind) -> Option<String> {
         let symbol = std::str::from_utf8(symbol).ok()?.trim();
         Some(match line {
-            CompositeLineKind::Bond => symbol.to_string(),
+            CompositeLineKind::Bond | CompositeLineKind::Future => symbol.to_string(),
             CompositeLineKind::Swap { tenor_years } => {
                 celnet_refdata::swap_instrument_id(symbol, tenor_years)
             }
@@ -1404,6 +1415,10 @@ impl FixSession {
                 let Some(sub) = self.md_subs.get(&key) else {
                     continue;
                 };
+                let sym_str = String::from_utf8_lossy(&sub.symbol);
+                if self.ctx.pricing_control.is_instrument_locked(sym_str.trim()) {
+                    continue;
+                }
                 (
                     sub.md_req_id.clone(),
                     sub.symbol.clone(),
@@ -1651,6 +1666,14 @@ impl FixSession {
                 instrument: Box::new(instrument),
             };
             (line, notional, MdRecord::Bond(rfq))
+        } else if frame.get(167) == Some(dialect_rates::SEC_TYPE_FUT) {
+            let requested = frame.get(38).and_then(dialect_fx::parse_float).unwrap_or(10.0);
+            let notional = esp_clip.unwrap_or(requested);
+            let contract_code = String::from_utf8_lossy(&symbol).trim().to_string();
+            let line = RfsLine::Future {
+                contract_code: contract_code.clone(),
+            };
+            (line, notional, MdRecord::Future { _contract_code: contract_code })
         } else {
             let Ok((tenor_years, requested, side)) = dialect_rates::decode_ois_instrument(frame)
             else {
@@ -1708,6 +1731,7 @@ impl FixSession {
                     &admission,
                 )
             }
+            MdRecord::Future { .. } => None,
         };
         // Register the subscription so the ticker re-prices + pushes updates until an
         // unsubscribe (or session close), keyed by the MDReqID.
@@ -1725,7 +1749,10 @@ impl FixSession {
         // (the kill-switch suppresses the snapshot but keeps the subscription registered, so
         // the ticker resumes streaming from live on re-enable).
         if let RatesAdmission::Auto(priced) = &admission {
-            if self.ctx.pricing_control.outbound_enabled() {
+            let sym_str = String::from_utf8_lossy(&symbol);
+            if self.ctx.pricing_control.outbound_enabled()
+                && !self.ctx.pricing_control.is_instrument_locked(sym_str.trim())
+            {
                 self.emit_md_snapshot(st, &md_req_id, &symbol, priced, request_id, out);
                 tracing::info!(
                     class = celnet_observability::LogClass::Pricing.label(),
@@ -1879,8 +1906,10 @@ impl FixSession {
         );
         if let RatesAdmission::Auto(priced) = &admission {
             // Firm-wide OUTBOUND kill-switch: suppress the outbound `Quote(S)` while halted
-            // (the desk-inbox row above already recorded it).
-            if self.ctx.pricing_control.outbound_enabled() {
+            let sym_str = String::from_utf8_lossy(symbol);
+            if self.ctx.pricing_control.outbound_enabled()
+                && !self.ctx.pricing_control.is_instrument_locked(sym_str.trim())
+            {
                 self.emit_two_way_quote(st, req_id, symbol, priced, None, request_id, out);
             } else {
                 tracing::debug!(
@@ -2428,21 +2457,32 @@ impl FixSession {
         let curve = self.live_rates_curve();
         if let Some(intent) = rates_intent_for_kind(self.ctx.kind) {
             // A rates line has no canonical-vanilla risk leaf ⇒ no pre-trade template.
-            // The bond arm is selected by `SecurityType(167)=BOND`; every other rates
+            // The bond/futures arm is selected by `SecurityType(167)=BOND` or `FUT`; every other rates
             // request is the OIS arm.
-            if frame.get(167) == Some(dialect_rates::SEC_TYPE_BOND) {
+            if frame.get(167) == Some(dialect_rates::SEC_TYPE_BOND)
+                || frame.get(167) == Some(dialect_rates::SEC_TYPE_FUT)
+            {
                 return bond_line(frame, Some(intent), &curve).map(|line| (line, None));
             }
             return rates_line(frame, Some(intent), &curve).map(|line| (line, None));
         }
         // The FX-options / legacy-demo acceptor still content-detects a fixed-income
-        // request by `SecurityType(167)` (BOND before OIS), so a mixed acceptor prices
+        // request by `SecurityType(167)` (BOND/FUT before OIS), so a mixed acceptor prices
         // cash bonds and OIS alongside FX options.
-        if frame.get(167) == Some(dialect_rates::SEC_TYPE_BOND) {
+        if frame.get(167) == Some(dialect_rates::SEC_TYPE_BOND)
+            || frame.get(167) == Some(dialect_rates::SEC_TYPE_FUT)
+        {
             return bond_line(frame, None, &curve).map(|line| (line, None));
         }
         if frame.get(167) == Some(dialect_rates::SEC_TYPE_OIS) {
             return rates_line(frame, None, &curve).map(|line| (line, None));
+        }
+
+        // Cross-asset options (Equities, Commodities, Crypto) detected by Product(460).
+        if let Some(prod) = frame.get(460) {
+            if prod == b"7" || prod == b"2" || prod == b"12" {
+                return cross_asset_line(frame).map(|line| (line, None));
+            }
         }
 
         // The vol-time in years carried by the dialect (fully wire-specified, no date
@@ -2637,6 +2677,17 @@ fn curve_line_for(line: &RfsLine, curve: &CurveSet, notional: f64) -> Option<Pri
                 size: notional,
             })
         }
+        RfsLine::Future { contract_code } => {
+            let base_price = celnet_refdata::future_by_id(contract_code)
+                .map(|_| 100.0)
+                .unwrap_or(100.0);
+            let (bid, offer) = dialect_rates::two_way_rates(base_price, 0.015625);
+            Some(PricedLine {
+                bid,
+                offer,
+                size: notional,
+            })
+        }
     }
 }
 
@@ -2802,6 +2853,18 @@ fn bond_line(
     expected: Option<RatesIntent>,
     curve: &CurveSet,
 ) -> Result<PricedLine, ()> {
+    if frame.get(167) == Some(dialect_rates::SEC_TYPE_FUT) {
+        let notional = frame
+            .get(38)
+            .and_then(dialect_fx::parse_float)
+            .unwrap_or(10.0);
+        let (bid, offer) = dialect_rates::two_way_rates(100.0, 0.015625);
+        return Ok(PricedLine {
+            bid,
+            offer,
+            size: notional,
+        });
+    }
     let rfq = dialect_rates::decode_bond_rfq(frame).map_err(|_| ())?;
     if let Some(intent) = expected
         && !subscription_matches_intent(intent, rfq.subscription)
@@ -2810,6 +2873,66 @@ fn bond_line(
     }
     let quote = crate::rates_pricing::quote_bond(&rfq.instrument, curve).map_err(|_| ())?;
     let (bid, offer) = dialect_rates::two_way_rates(quote.clean_price, BOND_HALF_SPREAD);
+    Ok(PricedLine {
+        bid,
+        offer,
+        size: rfq.notional,
+    })
+}
+
+/// Price an inbound cross-asset option RFQ (Equities `Product=7`, Commodities `Product=2`,
+/// Digital Assets `Product=12`) into a two-way line.
+fn cross_asset_line(frame: &FrameCursor<'_>) -> Result<PricedLine, ()> {
+    let rfq = dialect_cross_asset::decode_cross_asset_rfq(frame).map_err(|_| ())?;
+    if rfq.is_american {
+        // Celnet FIX options edge prices European vanilla options
+        return Err(());
+    }
+
+    let spot = rfq.strike;
+    let (fair_price, half_spread) = match rfq.product_kind {
+        dialect_cross_asset::CrossAssetProductKind::Equity => {
+            let inputs = celnet_equity_vanilla::EquityInputs::dividend_paying(
+                spot,
+                rfq.strike,
+                0.20,
+                rfq.expiry_years,
+                0.045,
+                0.015,
+            );
+            let p = celnet_equity_vanilla::price(rfq.option_type, &inputs);
+            let hs = (p * 0.005).max(0.01);
+            (p, hs)
+        }
+        dialect_cross_asset::CrossAssetProductKind::Commodity => {
+            let inputs = celnet_commodity_vanilla::CommodityInputs::on_future(
+                spot,
+                rfq.strike,
+                0.25,
+                rfq.expiry_years,
+                0.045,
+            );
+            let p = celnet_commodity_vanilla::price(rfq.option_type, &inputs);
+            let hs = (p * 0.005).max(0.01);
+            (p, hs)
+        }
+        dialect_cross_asset::CrossAssetProductKind::DigitalAsset => {
+            let inputs = celnet_crypto_vanilla::linear::LinearInputs::funded(
+                spot,
+                rfq.strike,
+                0.60,
+                rfq.expiry_years,
+                0.045,
+                0.02,
+            );
+            let p = celnet_crypto_vanilla::linear::price(rfq.option_type, &inputs);
+            let hs = (p * 0.01).max(0.05);
+            (p, hs)
+        }
+    };
+
+    let bid = (fair_price - half_spread).max(0.0);
+    let offer = fair_price + half_spread;
     Ok(PricedLine {
         bid,
         offer,

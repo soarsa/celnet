@@ -773,6 +773,7 @@ mod tests {
                 },
                 redemption: 100.0,
                 calendars: vec!["united_states".to_string()],
+                pool_factor: None,
             }),
         );
         let err = calibration_instrument(&bond, 0.04, value_date()).expect_err("bond rejected");

@@ -1,6 +1,6 @@
 /**
  * The risk-state field registry for the AUTO-HEDGE exit-policy decision graph
- * (docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md §5.2). Every
+ * (docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md §5.2). Every
  * {@link HedgeField} a hedge condition can test is described here ONCE: its human
  * label, the palette group it lives in, its value KIND (enum / numeric / string),
  * and the operators legal for that kind. It is the exact analogue of

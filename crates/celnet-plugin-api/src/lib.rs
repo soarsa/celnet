@@ -52,6 +52,7 @@ mod calibration;
 mod descriptor;
 mod error;
 pub mod example;
+mod exotic;
 mod pricing;
 mod rates;
 mod registry;
@@ -60,6 +61,7 @@ mod smile;
 pub use calibration::{Calibration, CalibrationReport, CalibrationTarget};
 pub use descriptor::{GreekSupport, ModelDescriptor, ModelId, ModelKind};
 pub use error::{PluginError, PluginResult};
+pub use exotic::{ExoticArchetype, ExoticPayoffDescriptor, ExoticPricingModel, MultiAssetInputs};
 pub use pricing::PricingModel;
 pub use rates::{
     RatesAccrualBasis, RatesCurvePillar, RatesFrequency, RatesMeasures, RatesPricingModel,

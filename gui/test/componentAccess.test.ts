@@ -87,7 +87,7 @@ describe("COMPONENT_ACCESS — the component → capability spec", () => {
 
   it("maps each FI management component to view (Read) + its one management cap (Write)", () => {
     // The three granular management authorities each get a friendly Write toggle
-    // (docs/PERMISSIONS-GRANULAR-REVIEW.md §4.3); Read is the shared view·FI.
+    // (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md §4.3); Read is the shared view·FI.
     const cases: Array<[string, Capability["action"]]> = [
       ["riskmanage", "risk_manage"],
       ["managepricing", "manage_pricing"],

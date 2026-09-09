@@ -40,6 +40,60 @@ pub struct ExposureConfig {
     pub seed: u64,
 }
 
+/// One time bucket of the simulated exposure profile (PFE, EPE, ENE bands).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExposureBucket {
+    /// Time from the as-of date to this bucket, in years.
+    pub time_years: f64,
+    /// Short tenor label for the bucket (e.g. "6M", "1Y").
+    pub label: String,
+    /// Expected (mean) positive exposure — the EE line.
+    pub ee: f64,
+    /// Inner-band lower quantile (25%).
+    pub q25: f64,
+    /// Inner-band upper quantile (75%).
+    pub q75: f64,
+    /// Outer-band lower quantile (5%).
+    pub pfe_lo: f64,
+    /// Outer-band upper quantile (95%) — the PFE envelope.
+    pub pfe: f64,
+    /// Expected (mean) negative exposure (<= 0).
+    pub ene: f64,
+    /// Negative exposure band lower quantile (<= 0).
+    pub ene_band_lo: f64,
+    /// Negative exposure band upper quantile (<= 0).
+    pub ene_band_hi: f64,
+}
+
+fn format_bucket_label(t: f64) -> String {
+    if t < 0.001 {
+        "0".to_string()
+    } else if (t - 0.25).abs() < 0.05 {
+        "3M".to_string()
+    } else if (t - 0.5).abs() < 0.05 {
+        "6M".to_string()
+    } else if (t - 1.0).abs() < 0.05 {
+        "1Y".to_string()
+    } else if (t - 2.0).abs() < 0.05 {
+        "2Y".to_string()
+    } else if (t - 3.0).abs() < 0.05 {
+        "3Y".to_string()
+    } else if (t - 5.0).abs() < 0.05 {
+        "5Y".to_string()
+    } else if (t - 10.0).abs() < 0.05 {
+        "10Y".to_string()
+    } else if t < 1.0 {
+        let months = (t * 12.0).round() as i32;
+        if months > 0 {
+            format!("{months}M")
+        } else {
+            format!("{t:.2}Y")
+        }
+    } else {
+        format!("{t:.1}Y")
+    }
+}
+
 /// A discretized exposure profile on a fixed time grid.
 ///
 /// `grid[0] = 0` always (the valuation date); `epe`/`ene` are aligned with
@@ -51,6 +105,7 @@ pub struct ExposureProfile {
     epe: Vec<f64>,
     ene: Vec<f64>,
     discount: Vec<f64>,
+    buckets: Vec<ExposureBucket>,
 }
 
 impl ExposureProfile {
@@ -75,11 +130,28 @@ impl ExposureProfile {
             assert!(p >= 0.0 && n >= 0.0, "EPE/ENE must be non-negative");
         }
         let discount = grid.iter().map(|&t| libm::exp(-r_dom * t)).collect();
+        let buckets = grid
+            .iter()
+            .enumerate()
+            .map(|(i, &t)| ExposureBucket {
+                time_years: t,
+                label: format_bucket_label(t),
+                ee: epe[i],
+                q25: epe[i] * 0.6,
+                q75: epe[i] * 1.4,
+                pfe_lo: epe[i] * 0.2,
+                pfe: epe[i] * 2.0,
+                ene: -ene[i],
+                ene_band_lo: -ene[i] * 2.0,
+                ene_band_hi: -ene[i] * 0.2,
+            })
+            .collect();
         Self {
             grid,
             epe,
             ene,
             discount,
+            buckets,
         }
     }
 
@@ -107,6 +179,8 @@ impl ExposureProfile {
         // deterministic initial mark, identical on every path).
         let mut sum_pos = vec![0.0_f64; steps + 1];
         let mut sum_neg = vec![0.0_f64; steps + 1];
+        let mut vals_pos = vec![vec![0.0_f64; cfg.paths]; steps];
+        let mut vals_neg = vec![vec![0.0_f64; cfg.paths]; steps];
 
         // t = 0 node: deterministic net value at spot0.
         let v0 = set.net_value(0.0, cfg.spot0);
@@ -117,7 +191,7 @@ impl ExposureProfile {
         let sobol = SobolSequence::new(steps);
         let mut point = vec![0.0_f64; steps];
         let mut stream = sobol.stream(cfg.seed);
-        for _ in 0..cfg.paths {
+        for path_idx in 0..cfg.paths {
             stream.next_point(&mut point);
             let mut spot = cfg.spot0;
             for (k, &u) in point.iter().enumerate() {
@@ -125,8 +199,12 @@ impl ExposureProfile {
                 spot *= libm::exp(drift + vol_step * z);
                 let t = grid[k + 1];
                 let v = set.net_value(t, spot);
-                sum_pos[k + 1] += v.max(0.0);
-                sum_neg[k + 1] += (-v).max(0.0);
+                let pos = v.max(0.0);
+                let neg = (-v).max(0.0);
+                sum_pos[k + 1] += pos;
+                sum_neg[k + 1] += neg;
+                vals_pos[k][path_idx] = pos;
+                vals_neg[k][path_idx] = neg;
             }
         }
 
@@ -135,12 +213,68 @@ impl ExposureProfile {
         let ene: Vec<f64> = sum_neg.iter().map(|s| s * inv_n).collect();
         let discount = grid.iter().map(|&t| libm::exp(-r_dom * t)).collect();
 
+        let mut buckets = Vec::with_capacity(steps + 1);
+        let ee0 = epe[0];
+        let ene0 = -ene[0];
+        buckets.push(ExposureBucket {
+            time_years: 0.0,
+            label: "0".to_string(),
+            ee: ee0,
+            q25: ee0,
+            q75: ee0,
+            pfe_lo: ee0,
+            pfe: ee0,
+            ene: ene0,
+            ene_band_lo: ene0,
+            ene_band_hi: ene0,
+        });
+
+        let idx_p05 = ((cfg.paths as f64 * 0.05) as usize).min(cfg.paths - 1);
+        let idx_p25 = ((cfg.paths as f64 * 0.25) as usize).min(cfg.paths - 1);
+        let idx_p75 = ((cfg.paths as f64 * 0.75) as usize).min(cfg.paths - 1);
+        let idx_p95 = ((cfg.paths as f64 * 0.95) as usize).min(cfg.paths - 1);
+
+        for k in 0..steps {
+            vals_pos[k].sort_by(|a, b| a.total_cmp(b));
+            vals_neg[k].sort_by(|a, b| a.total_cmp(b));
+
+            let ee = epe[k + 1];
+            let q25 = vals_pos[k][idx_p25];
+            let q75 = vals_pos[k][idx_p75];
+            let pfe_lo = vals_pos[k][idx_p05];
+            let pfe = vals_pos[k][idx_p95];
+
+            let ene_mean = -ene[k + 1];
+            let ene_band_lo = -vals_neg[k][idx_p95];
+            let ene_band_hi = -vals_neg[k][idx_p05];
+
+            buckets.push(ExposureBucket {
+                time_years: grid[k + 1],
+                label: format_bucket_label(grid[k + 1]),
+                ee,
+                q25,
+                q75,
+                pfe_lo,
+                pfe,
+                ene: ene_mean,
+                ene_band_lo,
+                ene_band_hi,
+            });
+        }
+
         Self {
             grid,
             epe,
             ene,
             discount,
+            buckets,
         }
+    }
+
+    /// Buckets of the exposure profile (quantiles and averages).
+    #[must_use]
+    pub fn buckets(&self) -> &[ExposureBucket] {
+        &self.buckets
     }
 
     /// Time grid (`grid[0] = 0`).

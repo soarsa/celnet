@@ -407,10 +407,17 @@ fn is_integer_valued(value: f64) -> bool {
 /// server's FIX edge content-detects.
 pub const SEC_TYPE_BOND: &[u8] = b"BOND";
 
+/// FIX `SecurityType(167)` for a listed Treasury futures contract — the futures analogue of
+/// [`SEC_TYPE_BOND`].
+pub const SEC_TYPE_FUT: &[u8] = b"FUT";
+
 /// FIX `Product(460)` value the bond builder stamps (`6` = GOVERNMENT). Decorative: the
 /// decoder never reads `Product(460)` — `SecurityType(167)` selects the arm — exactly as
 /// the OIS builder stamps `Product=5` (RATE) for completeness only.
 pub const PRODUCT_BOND: &[u8] = b"6";
+
+/// FIX `Product(460)` value for a futures contract (`12` = OTHER/FUTURES).
+pub const PRODUCT_FUT: &[u8] = b"12";
 
 /// The dialect tag carrying the bond coupon frequency as **coupons per year**
 /// (`1` / `2` / `4` ⇒ annual / semi-annual / quarterly). FIX 4.4 has no core

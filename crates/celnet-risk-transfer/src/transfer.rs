@@ -1,6 +1,6 @@
 //! The transfer request/record object and its enums.
 //!
-//! Mirrors `docs/RISK-TRANSFER-REQUIREMENTS.md` §5.1. Plain owned types; no
+//! Mirrors `docs/hedging/RISK-TRANSFER-REQUIREMENTS.md` §5.1. Plain owned types; no
 //! serde/prost here — the proto + server phases mirror these shapes on the wire.
 
 use crate::provenance::RiskTransferProvenance;

@@ -28,12 +28,9 @@
 //!    expansion of the (unknown) risk-neutral density reconstructed from the CF,
 //!    with the standard cumulant-based truncation range `[a, b]` and `N` terms.
 //!
-//! The shared CF uses the **branch-cut-free** formulation of Cui, del Baño Rollin
-//! & Germano (2007/2017), which contains no complex logarithm of a winding
-//! argument and stays the continuous analytic continuation at every complex
-//! argument — strictly more robust than the original 1993 grouping and even the
-//! Albrecher et al. (2007) "little Heston trap", which both cross branch cuts for
-//! long maturities. See [`return_char_fn`].
+//! The shared characteristic function uses a continuous **branch-cut-free** formulation
+//! which contains no complex logarithm of a winding argument and remains the continuous analytic continuation
+//! at every complex argument across all maturities. See [`return_char_fn`].
 //!
 //! ## Honest accuracy
 //!
@@ -53,10 +50,6 @@
 //! tests therefore assert the tight cross-method band only on the ≤3y regime; the
 //! Black–Scholes-limit, put–call-parity, anchor and monotonicity oracles validate
 //! correctness independently of cross-method agreement.
-//!
-//! Provenance (Heston 1993; Carr–Madan 1999; Fang–Oosterlee 2008; Cui et al.
-//! 2017) appears in documentation only; the public identifiers are named for
-//! purpose, per the Celnet naming guardrail.
 
 #![forbid(unsafe_code)]
 
@@ -159,18 +152,13 @@ impl MarketInputs {
 /// and apply any spot/strike shift via their own real-valued phase, which avoids
 /// forming and cancelling the large `u·ln S₀` phase at high `u`).
 ///
-/// **Branch-cut-free formulation** (Cui, del Baño Rollin & Germano, 2017,
-/// *Full and fast calibration of the Heston stochastic volatility model*).
-/// Unlike the original 1993 grouping — and even the Albrecher et al. (2007)
-/// "little Heston trap" — this form contains **no complex logarithm of a winding
+/// **Continuous branch-cut-free formulation**:
+/// This form contains **no complex logarithm of a winding
 /// argument**: the only transcendental of a complex argument is `exp`, and the
 /// `cosh/sinh` combination `A₂ = d·cosh(dt/2) + ξ·sinh(dt/2)` stays in the right
-/// half-plane (`Re(d) ≥ 0`), so the CF is the continuous analytic continuation
-/// at **every** complex `u`. This matters because the Carr–Madan transform
-/// evaluates the CF deep in the strip (`Im u = −(α+1)`), where the principal-log
-/// trap form crosses a branch cut and the original 1993 form is unstable; the
-/// COS method (real `u`) is unaffected either way, but a single consistent CF is
-/// cleaner. With `μ = r_d − r_f` and `t = T`:
+/// half-plane (`Re(d) ≥ 0`), so the characteristic function is the continuous analytic continuation
+/// at **every** complex `u`. This guarantees numerical stability across the entire pricing domain.
+/// With `μ = r_d − r_f` and `t = T`:
 ///
 /// ```text
 ///   ξ  = κ − σρ·i·u

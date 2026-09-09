@@ -714,3 +714,5 @@ function Metric({
     </div>
   );
 }
+
+export { RatesRiskPanel as RatesRiskWorkspace };

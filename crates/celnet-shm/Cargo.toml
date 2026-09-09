@@ -1,0 +1,27 @@
+[package]
+name = "celnet-shm"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet shared-memory IPC broadcast ring — lock-free, zero-allocation cross-process ring buffer over memory-mapped files."
+publish = false
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = "warn"
+
+[dependencies]
+crossbeam-utils.workspace = true
+memmap2.workspace = true
+thiserror.workspace = true
+celnet-sbe.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+celnet-types.workspace = true

@@ -18,7 +18,7 @@
  * the desk cares most about $/mm net (desc) and fishing score (desc).
  *
  * Read-only and gated on `view_analytics` — the tab, its rail entry and the query
- * are all hidden/denied without it (docs/PERMISSIONS-GRANULAR-REVIEW.md).
+ * are all hidden/denied without it (docs/operations/PERMISSIONS-GRANULAR-REVIEW.md).
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";

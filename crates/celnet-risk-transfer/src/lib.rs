@@ -14,7 +14,7 @@
 //! # The two operations (locks the taxonomy)
 //!
 //! Industry practice separates two fundamentally different moves, and Celnet
-//! must too (see `docs/RISK-TRANSFER-REQUIREMENTS.md` §3–4):
+//! must too (see `docs/hedging/RISK-TRANSFER-REQUIREMENTS.md` §3–4):
 //!
 //! - **Re-attribution** ([`TransferKind::ReAttribute`]) — the position is
 //!   re-labelled to a different portfolio **within the same desk**. Economics

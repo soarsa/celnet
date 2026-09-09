@@ -66,6 +66,15 @@ celnet-refstore = { path = "crates/celnet-refstore" }
 celnet-rates-risk = { path = "crates/celnet-rates-risk" }
 celnet-risk-transfer = { path = "crates/celnet-risk-transfer" }
 celnet-analytics = { path = "crates/celnet-analytics" }
+celnet-risk-accel = { path = "crates/celnet-risk-accel" }
+celnet-sbe = { path = "crates/celnet-sbe" }
+celnet-shm = { path = "crates/celnet-shm" }
+celnet-exchange-codecs = { path = "crates/celnet-exchange-codecs" }
+celnet-margin = { path = "crates/celnet-margin" }
+celnet-algo = { path = "crates/celnet-algo" }
+celnet-rates-exotics = { path = "crates/celnet-rates-exotics" }
+celnet-upgrade = { path = "crates/celnet-upgrade" }
+celnet-license = { path = "crates/celnet-license" }
 # External — pinned once, used everywhere (OSS / permissively licensed only)
 libm = "0.2"                                   # rust-lang/libm: correctly-rounded, cross-platform-identical transcendentals
 thiserror = "2"                                # dtolnay/thiserror: MIT/Apache-2.0 derive for library error enums (typed, no-std-friendly Display/Error)
@@ -85,6 +94,7 @@ pollster = "0.4"                               # MIT/Apache-2.0 minimal block-on
 rtrb = "0.3"                                   # MIT/Apache-2.0 wait-free SPSC ring buffer
 arc-swap = "1"                                 # MIT/Apache-2.0 lock-free read-mostly publication
 crossbeam-utils = "0.8"                        # MIT/Apache-2.0 CachePadded (false-sharing guard)
+memmap2 = "0.9"                                # MIT/Apache-2.0 cross-platform memory-mapped files and shared memory
 core_affinity = "0.8"                          # MIT/Apache-2.0 core pinning for the hot path
 thread-priority = "1"                          # MIT/Apache-2.0 safe cross-platform thread QoS/priority (macOS QOS_CLASS / POSIX sched) for the low-jitter in-core latency measurement
 # Integration + edge lanes (vetted: deny advisories+licenses ok)

@@ -22,7 +22,7 @@
  *          source "$HOME/.cargo/env" && \
  *            cargo run -p celnet-lp-sim --bin lp-sim -- \
  *            --server 127.0.0.1:<grpc-port> --members LP-SIM-01,LP-SIM-02,LP-SIM-03,LP-SIM-04
- *        (see deploy/start-lp-sim.sh / docs/EXCEL-ADDIN-LOCAL-BRINGUP.md for the
+ *        (see deploy/start-lp-sim.sh / docs/clients/EXCEL-ADDIN-LOCAL-BRINGUP.md for the
  *         canonical invocation + the bundled treasury-universe.json identities).
  *     3. Point the GUI at the live WS mirror (drop `&mock`; the transport resolves
  *        to WsTransport per gui/src/data/transportConfig.ts), sign in as the real

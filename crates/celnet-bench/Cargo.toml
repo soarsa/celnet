@@ -15,6 +15,7 @@ workspace = true
 celnet-types.workspace = true
 celnet-core.workspace = true
 celnet-vanilla.workspace = true
+celnet-fanout.workspace = true
 # Surface-rebuild truth-gate (`surface_rebuild`): the public surface construction
 # — convention-aware delta-space smile calibration from broker ATM/RR/BF quotes
 # (Vanna-Volga + SABR/SVI/SSVI) plus the term-structure assembly across all
@@ -52,6 +53,20 @@ futures-util.workspace = true
 hdrhistogram.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
+prost = { workspace = true }
+celnet-sbe = { workspace = true }
+celnet-shm = { workspace = true }
+celnet-exchange-codecs = { workspace = true }
+celnet-margin = { workspace = true }
+celnet-algo = { workspace = true }
+celnet-rates-exotics = { workspace = true }
+celnet-journal = { workspace = true }
+celnet-replog = { workspace = true }
+celnet-router = { workspace = true }
+celnet-plugin-api = { workspace = true }
+celnet-plugin-host = { workspace = true }
+celnet-license = { workspace = true }
+tempfile = { workspace = true }
 # In-core per-option latency truth-gate (`core_load`): pin the measuring thread
 # to a core and request the max scheduling QoS/priority so the *measured* tail
 # reflects the pricing core's intrinsic cost (~tens of ns) rather than OS jitter
@@ -164,6 +179,26 @@ path = "src/bin/gpu_load.rs"
 [[bin]]
 name = "gpu_gate"
 path = "src/bin/gpu_gate.rs"
+
+# Codec micro-benchmark comparing native struct copy, SBE flyweight, Protobuf, and JSON
+[[bin]]
+name = "codec_bench"
+path = "src/bin/codec_bench.rs"
+
+# End-to-end Hybrid Layered Architecture (HLA) multi-tier latency benchmark
+[[bin]]
+name = "hla_bench"
+path = "src/bin/hla_bench.rs"
+
+# SOTA Phases 1-4 benchmark suite: exchange codecs, margin, algo, rates exotics
+[[bin]]
+name = "sota_phases_bench"
+path = "src/bin/sota_phases_bench.rs"
+
+# Comprehensive multi-node, all-asset, licensing, pluggable models, and SOTA capabilities benchmark
+[[bin]]
+name = "comprehensive_capabilities_bench"
+path = "src/bin/comprehensive_capabilities_bench.rs"
 
 # ---------------------------------------------------------------------------
 # iai-callgrind instruction-count gate (jitter-free, deterministic). Runs under

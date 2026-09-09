@@ -15,6 +15,7 @@ workspace = true
 celnet-types.workspace = true
 celnet-core.workspace = true
 celnet-plugin-api.workspace = true
+celnet-license = { path = "../celnet-license" }
 wasmi.workspace = true
 
 [dev-dependencies]

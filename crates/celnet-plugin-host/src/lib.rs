@@ -51,6 +51,7 @@
 
 pub mod abi;
 pub mod error;
+pub mod exotic_model;
 pub mod host;
 pub mod model;
 pub mod native;
@@ -60,6 +61,7 @@ pub mod replay;
 pub mod wasm;
 
 pub use error::{HostError, HostResult};
+pub use exotic_model::{ExoticHostModel, NativeExoticModel};
 pub use model::HostModel;
 pub use native::NativeModel;
 pub use rates_model::{NativeRatesModel, RatesHostModel};

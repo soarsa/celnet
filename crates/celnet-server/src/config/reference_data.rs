@@ -326,6 +326,9 @@ pub struct BondDef {
     /// Settlement calendar centre labels (at least one).
     #[serde(default)]
     pub calendars: Vec<String>,
+    /// Outstanding pool factor fraction in (0.0, 1.0] (pro-rata redemption/sinking fund); None => 1.0.
+    #[serde(default)]
+    pub pool_factor: Option<f64>,
 }
 
 /// The family-specific convention block of an instrument definition — exactly one
@@ -910,8 +913,23 @@ fn gov_bond_to_instrument_def(s: celnet_refdata::GovBondSpec) -> InstrumentDef {
             maturity_date: civil(s.maturity_date),
             redemption: s.redemption,
             calendars: s.calendars.iter().map(|c| (*c).to_string()).collect(),
+            pool_factor: None,
         }),
     }
+}
+
+/// Helper to resolve a [`BondDef`] against an effective [`celnet_refstore::InstrumentMaster`]
+/// from a [`celnet_refstore::GoldenSourceStore`].
+/// Applies the schedule's `pool_factor()` to scale redemption and record the factor (CA-P1/P2).
+#[must_use]
+pub fn resolve_bond_with_master(
+    mut bond_def: BondDef,
+    master: &celnet_refstore::InstrumentMaster,
+) -> BondDef {
+    let factor = master.schedule.pool_factor();
+    bond_def.pool_factor = Some(factor);
+    bond_def.redemption = master.terms.redemption * factor;
+    bond_def
 }
 
 /// Seed a small, realistic default registry on an **empty** instrument list, so a

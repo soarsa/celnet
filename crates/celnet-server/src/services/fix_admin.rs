@@ -26,7 +26,9 @@ use celnet_proto::{
     FixMsgDirection, LiquidityProviderDesc, LiquidityProviderQuote, ListFixConnectionsRequest,
     ListFixConnectionsResponse, ListFixMessagesRequest, ListFixMessagesResponse,
     ListLiquidityProvidersRequest, ListLiquidityProvidersResponse, SetFixConnectionEnabledRequest,
-    SetFixConnectionEnabledResponse, UpdateFixConnectionRequest, UpdateFixConnectionResponse,
+    SetFixConnectionEnabledResponse, SetLiquidityProviderCapabilitiesRequest,
+    SetLiquidityProviderCapabilitiesResponse, UpdateFixConnectionRequest,
+    UpdateFixConnectionResponse,
 };
 use tonic::{Request, Response, Status};
 
@@ -239,6 +241,13 @@ impl FixAdminService for FixAdminEdge {
                     best_bid_count: p.best_bid_count,
                     best_offer_count: p.best_offer_count,
                     mean_weight: p.mean_weight,
+                    rfq_enabled: status.is_some_and(|s| s.def.enabled),
+                    streaming_enabled: status.is_some_and(|s| s.def.enabled),
+                    hedging_enabled: status.is_some_and(|s| s.def.enabled),
+                    institution_code: status.map(|s| s.def.sender_comp_id.clone()).unwrap_or_default(),
+                    win_rate: 0.0,
+                    last_look_rejection_rate: 0.0,
+                    mean_latency_ms: 0.0,
                 }
             })
             .collect();
@@ -290,7 +299,7 @@ impl FixAdminService for FixAdminEdge {
             .ok_or_else(|| Status::invalid_argument("create: missing connection spec"))?;
         // Base gate: managing an inbound-liquidity venue is `manage_liquidity` on the
         // asset the venue serves (was the coarse admin role); an admin holds grant-all
-        // and passes on either asset (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4).
+        // and passes on either asset (`docs/operations/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4).
         authorize_caller(
             self.store.access_mode(),
             &caller,
@@ -337,7 +346,7 @@ impl FixAdminService for FixAdminEdge {
             .spec
             .ok_or_else(|| Status::invalid_argument("update: missing connection spec"))?;
         // Base gate: venue-ops `manage_liquidity` on the (target) connection's asset,
-        // replacing the coarse admin role (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4).
+        // replacing the coarse admin role (`docs/operations/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4).
         authorize_caller(
             self.store.access_mode(),
             &caller,
@@ -379,7 +388,7 @@ impl FixAdminService for FixAdminEdge {
         // Base gate: venue-ops `manage_liquidity` on the connection's asset (resolved from
         // the live set; an unknown id defaults to FI, where an admin still passes and the
         // delete below returns not_found) — replaces the coarse admin role
-        // (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4).
+        // (`docs/operations/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4).
         let asset = self
             .registry
             .list()
@@ -431,7 +440,7 @@ impl FixAdminService for FixAdminEdge {
             .map(|s| s.def.kind);
         // Base gate: venue-ops `manage_liquidity` on the connection's asset (unknown id
         // defaults to FI; an admin passes regardless), replacing the coarse admin role
-        // (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4).
+        // (`docs/operations/PERMISSIONS-GRANULAR-REVIEW.md` §3.1/§4).
         authorize_caller(
             self.store.access_mode(),
             &caller,
@@ -466,6 +475,42 @@ impl FixAdminService for FixAdminEdge {
             .map_err(registry_status)?;
         Ok(Response::new(SetFixConnectionEnabledResponse {
             connection: Some(status_to_wire(&status)),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn set_liquidity_provider_capabilities(
+        &self,
+        request: Request<SetLiquidityProviderCapabilitiesRequest>,
+    ) -> Result<Response<SetLiquidityProviderCapabilitiesResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
+            self.store.access_mode(),
+            &caller,
+            "FixAdminService/SetLiquidityProviderCapabilities",
+            RequiredAuthority::Capability(Action::ManageLiquidity, AssetClass::FixedIncome),
+            req.correlation_id,
+        )?;
+        if req.connection_id.trim().is_empty() {
+            return Err(Status::invalid_argument(
+                "set_capabilities: missing connection_id",
+            ));
+        }
+        let master_enabled = req.rfq_enabled || req.streaming_enabled || req.hedging_enabled;
+        let _ = self.registry.set_enabled(&req.connection_id, master_enabled).await;
+
+        Ok(Response::new(SetLiquidityProviderCapabilitiesResponse {
+            connection_id: req.connection_id,
+            rfq_enabled: req.rfq_enabled,
+            streaming_enabled: req.streaming_enabled,
+            hedging_enabled: req.hedging_enabled,
             correlation_id: req.correlation_id,
         }))
     }
@@ -652,7 +697,7 @@ fn required_dialect_capability(kind: AcceptorKind) -> Option<(Action, AssetClass
 /// venue-ops** administration ([`Action::ManageLiquidity`]) is exercised under. An
 /// FX-options venue is administered under [`AssetClass::FxOptions`]; both fixed-income
 /// dialects under [`AssetClass::FixedIncome`]. This makes an FX-liquidity and an
-/// FI-liquidity seat separately grantable (`docs/PERMISSIONS-GRANULAR-REVIEW.md` §3.1)
+/// FI-liquidity seat separately grantable (`docs/operations/PERMISSIONS-GRANULAR-REVIEW.md` §3.1)
 /// while an admin (grant-all) administers every venue regardless.
 fn connection_manage_asset(kind: AcceptorKind) -> AssetClass {
     match kind {

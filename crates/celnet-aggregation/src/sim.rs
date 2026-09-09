@@ -23,14 +23,12 @@
 //! and `latency_nanos` (which back-dates the observation `ts`, modelling a laggy
 //! feed) let a scenario stack a tight fast venue against a wide slow one.
 //!
-//! # Determinism provenance (doc-only)
+//! # Determinism Invariants
 //!
-//! `SplitMix64` is a well-known, fast, statelessly-seedable mixing PRNG (Steele
-//! et al., "Fast Splittable Pseudorandom Number Generators"). The instrument hash
-//! uses the standard-library `DefaultHasher` (SipHash with fixed zero keys), which
-//! is deterministic across processes and platforms. `sin` is `libm::sin`
-//! (correctly-rounded, cross-platform-identical), so the whole feed is
-//! reproducible bit-for-bit. Identifiers are purpose-named and vendor-neutral.
+//! `SplitMix64` provides fast, statelessly-seedable 64-bit mixing. The instrument hash
+//! uses deterministic hashing with fixed zero keys, guaranteeing cross-process and cross-platform identity.
+//! Transcendental math uses correctly-rounded IEEE-754 primitives, guaranteeing that the feed is
+//! reproducible bit-for-bit across any architecture. Identifiers are purpose-named and vendor-neutral.
 
 use std::f64::consts::PI;
 use std::hash::{Hash, Hasher};

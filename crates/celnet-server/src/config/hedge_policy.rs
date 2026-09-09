@@ -13,7 +13,7 @@
 //! derives `Serialize`/`Deserialize`, so it is stored directly on the identity store
 //! exactly as `risk_routing_graph` is — no mirror type needed for the graph.
 //!
-//! `docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4 / §8.4.
+//! `docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4 / §8.4.
 
 use celnet_hedge_routing::{
     HedgeExitMode, HedgeLpPanel, HedgeVehicleRegistry, HedgeVehicleRule, HedgingModel, LimitMetric,
@@ -242,7 +242,7 @@ impl HedgeScopeKind {
 
 /// How a live hedge decision is **executed** once the policy resolves an external exit
 /// action — the "Both — config per policy" control
-/// (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §6). Replaces the former
+/// (`docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §6). Replaces the former
 /// boolean `advisory_only`: [`Advisory`](HedgeExecutionMode::Advisory) is the old dry-run
 /// posture; the three live modes each name a concrete venue path the executor drives.
 ///
@@ -403,7 +403,7 @@ impl ScopedThreshold {
 }
 
 /// What a hedge **policy graph** binds to — the scope of an exit-policy decision graph
-/// (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4/§5). A fill in book `B`
+/// (`docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md` §4/§5). A fill in book `B`
 /// is governed by the **most-specific** applicable policy: `B`'s own [`Book`](Self::Book)
 /// policy, else the nearest ancestor [`Bucket`](Self::Bucket) policy (a Bucket names a
 /// risk-book subtree ROOT id and governs the whole subtree), else the [`Firm`](Self::Firm)
@@ -482,7 +482,7 @@ impl ScopedHedgeGraph {
 
 /// A **standing hedging LP panel** bound to a scope — the include/exclude
 /// liquidity-provider selection every external exit action inherits for that
-/// desk / book / instrument (`docs/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md`
+/// desk / book / instrument (`docs/hedging/AUTO-HEDGING-AND-INTERNALISATION-REQUIREMENTS.md`
 /// §4/§6.2). Resolves **most-specific-wins** (instrument > book > desk), the same
 /// precedence style as [`ScopedThreshold`].
 ///

@@ -55,7 +55,7 @@ export interface CubeDrill {
 
 export interface CubeWorkspaceProps {
   /** Drill from a cell to its smile in the host (Surface) view. */
-  onDrill: (d: CubeDrill) => void;
+  onDrill?: ((d: CubeDrill) => void) | undefined;
 }
 
 /** The two pivots the cube can show. */
@@ -140,7 +140,7 @@ export function CubeWorkspace({ onDrill }: CubeWorkspaceProps): React.ReactEleme
 
 /* ── Smile pivot: rows = tenor, cols = delta pillar, heat = vol (one pair) ── */
 
-function SmilePivot({ onDrill }: { onDrill: (d: CubeDrill) => void }): React.ReactElement {
+function SmilePivot({ onDrill }: { onDrill?: ((d: CubeDrill) => void) | undefined }): React.ReactElement {
   const { grid, loading, error } = useCube();
 
   // Visible vol band across all filled cells — the ramp normalises against it so
@@ -196,7 +196,7 @@ function SmilePivot({ onDrill }: { onDrill: (d: CubeDrill) => void }): React.Rea
                     cell.vol === null ? " — unmarked" : ` · ${fmtVol(cell.vol)}`
                   }`}
                   onClick={
-                    cell.vol === null
+                    cell.vol === null || !onDrill
                       ? undefined
                       : () =>
                           onDrill({ pair: grid.pair, tenorYears: row.tenorYears, delta: cell.delta })
@@ -230,7 +230,7 @@ function UniversePivot({
 }: {
   metric: UnivMetric;
   setMetric: (m: UnivMetric) => void;
-  onDrill: (d: CubeDrill) => void;
+  onDrill?: ((d: CubeDrill) => void) | undefined;
 }): React.ReactElement {
   const app = useApp();
   const pairs = app.universe.all;
@@ -299,7 +299,7 @@ function UniverseRow({
   up: UniversePair;
   metric: UnivMetric;
   signed: boolean;
-  onDrill: (d: CubeDrill) => void;
+  onDrill?: ((d: CubeDrill) => void) | undefined;
 }): React.ReactElement {
   const { grid, loading, error } = useCube(up.pair);
 
@@ -330,7 +330,7 @@ function UniverseRow({
             label={value === null && loading ? "·" : fmtCell(value, signed)}
             title={title}
             onClick={
-              value === null
+              value === null || !onDrill
                 ? undefined
                 : () =>
                     onDrill({
