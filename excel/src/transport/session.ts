@@ -110,6 +110,15 @@ export class UserSession {
   }
 
   /**
+   * Authenticate via an external bearer token (e.g. Office SSO / container pass-through).
+   */
+  async signInWithToken(token: string): Promise<LoginResult> {
+    const result = await this.conn.loginWithToken(token);
+    this.signIn(result);
+    return result;
+  }
+
+  /**
    * Clear the local identity + token. The caller performs the best-effort
    * server-side invalidation (`Connection.logout`) BEFORE calling this, so even if
    * that round-trip fails the client is unambiguously signed out locally.

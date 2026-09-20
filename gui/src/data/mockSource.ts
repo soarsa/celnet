@@ -3760,6 +3760,25 @@ export class MockTransport implements CelnetTransport {
     return { token, user: { ...found.user }, expiresNanos, capabilities };
   }
 
+  async loginWithToken(_token: string): Promise<LoginResult> {
+    const found = this.mockUsers[0];
+    if (!found || found.user.disabled) {
+      throw new Error("invalid session token");
+    }
+    this.mockTokenSeq += 1n;
+    const token = `mock-session-${this.mockTokenSeq.toString()}`;
+    this.mockTokens.add(token);
+    const expiresNanos = nowNanos() + 12n * 60n * 60n * 1_000_000_000n;
+    const capabilities = mockResolveEffective(
+      found.user.role,
+      this.mockRoleBase(found.user.role),
+      found.grants,
+      found.denies,
+    );
+    this.currentUserEmail = found.user.email;
+    return { token, user: { ...found.user }, expiresNanos, capabilities };
+  }
+
   async logout(): Promise<boolean> {
     const token = this.sessionToken;
     const ended = token !== null && this.mockTokens.delete(token);
@@ -6425,7 +6444,7 @@ export class MockTransport implements CelnetTransport {
       targetQuantity: sliceQty,
       filledQuantity: idx === 0 ? sliceQty : 0,
       avgFillPrice: request.arrivalPrice,
-      status: (idx === 0 ? "FILLED" : "PENDING") as const,
+      status: (idx === 0 ? "FILLED" : "PENDING") as "FILLED" | "PENDING",
     }));
     return {
       parentOrderId: parentId,

@@ -67,6 +67,10 @@ const FIDELITY_SPECS = [
   // Curves multi-curve manager (dashboard / definition editor / pillars / delete-guard)
   // — offline (mock transport), no cargo edge.
   /curvesManager\.e2e\.ts/,
+  // Externalized authentication & modular studio pass-through test — offline, no cargo edge.
+  /externalizedAuthPassThrough\.e2e\.ts/,
+  // Micro-Apps, multi-instance, and FDC3 channel linking suite — offline, no cargo edge.
+  /microAppsMultiInstance\.e2e\.ts/,
 ];
 
 /**
@@ -102,6 +106,7 @@ export default defineConfig({
   reporter: [["list"]],
   use: {
     baseURL: `http://127.0.0.1:${PREVIEW_PORT}`,
+    headless: true,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },

@@ -10,13 +10,13 @@
  * the design system reserves for splash/about/login surfaces.
  */
 
-import { useState } from "react";
 import { CelerLockup } from "../components/CelerMark";
+import { isDeskModal } from "../lib/deskPlatform";
 import styles from "./LoginScreen.module.css";
 
 export interface LoginScreenProps {
   /**
-   * Invoked when the trader signs in. The app re-establishes the session from a
+   * Invoked when the trader reconnects. The app re-establishes the session from a
    * clean state (a full reload re-dials the configured WS edge), so a recovered
    * backend is picked up without any stale socket/subscription state.
    */
@@ -26,7 +26,7 @@ export interface LoginScreenProps {
 }
 
 export function LoginScreen({ onSignIn, reason }: LoginScreenProps): React.ReactElement {
-  const [seat, setSeat] = useState("");
+  const inDesk = isDeskModal() || (typeof window !== "undefined" && window.location.protocol === "deskmodal-plugin:");
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -38,44 +38,22 @@ export function LoginScreen({ onSignIn, reason }: LoginScreenProps): React.React
       <section className={styles.panel} aria-labelledby="login-heading">
         <CelerLockup size={28} className={styles.lockup} />
         <h1 id="login-heading" className={styles.heading}>
-          Sign in to continue
+          {inDesk ? "Trading Edge Disconnected" : "Session Disconnected"}
         </h1>
         <p className={styles.sub}>
           {reason ?? "Your session ended after the connection to the trading edge was lost."}
         </p>
 
         <form className={styles.form} onSubmit={handleSubmit}>
-          <label className={styles.field}>
-            <span className={styles.label}>Seat</span>
-            <input
-              className={styles.input}
-              type="text"
-              name="seat"
-              autoComplete="username"
-              placeholder="desk / trader id"
-              value={seat}
-              onChange={(e) => setSeat(e.target.value)}
-              autoFocus
-            />
-          </label>
-          <label className={styles.field}>
-            <span className={styles.label}>Passcode</span>
-            <input
-              className={styles.input}
-              type="password"
-              name="passcode"
-              autoComplete="current-password"
-              placeholder="••••••••"
-            />
-          </label>
           <button type="submit" className={styles.submit}>
-            Sign in
+            {inDesk ? "Reconnect via DeskModal SSO" : "Reconnect to Trading Edge"}
           </button>
         </form>
 
         <p className={styles.footnote}>
-          Authentication is enforced at the deployment edge; this screen re-opens the
-          session against the configured trading edge.
+          {inDesk
+            ? "Authentication and identity claims are externalized to DeskModal and passed through to CelNet services."
+            : "Authentication is enforced at the deployment edge or enterprise gateway; reconnecting re-establishes the session."}
         </p>
       </section>
     </main>

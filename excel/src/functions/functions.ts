@@ -139,6 +139,7 @@ import {
 } from "./runtime";
 import type { EntryPointId } from "../contract/access";
 import { brokerQuoteSetToWire, ccyPairToWire, conventionsToWire, smileFromWire, type WireObject } from "../contract/wsCodec";
+import { smileModel } from "../contract/enums";
 import {
   oisRatesInstrument,
   type Instrument,
@@ -1707,7 +1708,7 @@ export async function MARGIN(
       valueAtRisk: Number(reply["value_at_risk"] ?? 0),
       stressComponent: Number(reply["stress_component"] ?? 0),
       currency: String(reply["currency"] ?? "USD"),
-      calculatedEpochNanos: BigInt(reply["calculated_epoch_nanos"] ?? 0),
+      calculatedEpochNanos: BigInt((reply["calculated_epoch_nanos"] as any) ?? 0),
     };
     return formatMarginSpill(resp);
   } catch (err) {
@@ -1822,7 +1823,7 @@ export async function ALGO(
       status: (reply["status"] as AlgoOrderStatus) ?? "ACTIVE",
       implementationShortfallBps: Number(reply["implementation_shortfall_bps"] ?? 0),
       slices: childSlices,
-      createdEpochNanos: BigInt(reply["created_epoch_nanos"] ?? 0),
+      createdEpochNanos: BigInt((reply["created_epoch_nanos"] as any) ?? 0),
     };
     return formatAlgoOrderSpill(resp);
   } catch (err) {
@@ -1851,7 +1852,7 @@ export async function ALGOORDERS(): Promise<SpillMatrix> {
       status: (o["status"] as AlgoOrderStatus) ?? "ACTIVE",
       implementationShortfallBps: Number(o["implementation_shortfall_bps"] ?? 0),
       slices: [],
-      createdEpochNanos: BigInt(o["created_epoch_nanos"] ?? 0),
+      createdEpochNanos: BigInt((o["created_epoch_nanos"] as any) ?? 0),
     }));
     const resp: ListAlgoOrdersResponse = { orders };
     return formatAlgoOrdersListSpill(resp);
@@ -1873,13 +1874,13 @@ export async function CLUSTER(): Promise<SpillMatrix> {
       nodeId: String(m["node_id"] ?? ""),
       endpoint: String(m["endpoint"] ?? ""),
       status: (m["status"] as NodeLifecycleStatus) ?? "ACTIVE",
-      activeInFlightTrades: BigInt(m["active_in_flight_trades"] ?? 0),
-      joinedEpochNanos: BigInt(m["joined_epoch_nanos"] ?? 0),
+      activeInFlightTrades: BigInt((m["active_in_flight_trades"] as any) ?? 0),
+      joinedEpochNanos: BigInt((m["joined_epoch_nanos"] as any) ?? 0),
     }));
     const resp: ClusterTopologyResponse = {
       clusterId: String(reply["cluster_id"] ?? "celnet-primary"),
       leaderId: String(reply["leader_id"] ?? "node-1"),
-      activeGeneration: BigInt(reply["active_generation"] ?? 1),
+      activeGeneration: BigInt((reply["active_generation"] as any) ?? 1),
       members,
       jointConsensusActive: Boolean(reply["joint_consensus_active"]),
     };
@@ -1898,12 +1899,12 @@ export async function UPGRADESTATUS(): Promise<SpillMatrix> {
   try {
     const reply = await getConnection().getUpgradeStatus();
     const resp: UpgradeStatusResponse = {
-      activeGeneration: BigInt(reply["active_generation"] ?? 1),
+      activeGeneration: BigInt((reply["active_generation"] as any) ?? 1),
       currentVersion: String(reply["current_version"] ?? "1.0.0"),
       shadowVersion: String(reply["shadow_version"] ?? "1.0.1"),
       twinComparisonPassed: Boolean(reply["twin_comparison_passed"] ?? true),
-      maxUlpDivergence: BigInt(reply["max_ulp_divergence"] ?? 0),
-      evaluatedTradesCount: BigInt(reply["evaluated_trades_count"] ?? 0),
+      maxUlpDivergence: BigInt((reply["max_ulp_divergence"] as any) ?? 0),
+      evaluatedTradesCount: BigInt((reply["evaluated_trades_count"] as any) ?? 0),
       cutoverStatus: String(reply["cutover_status"] ?? "COMPLETED"),
     };
     return formatUpgradeStatusSpill(resp);
@@ -1913,10 +1914,10 @@ export async function UPGRADESTATUS(): Promise<SpillMatrix> {
 }
 
 /**
- * Export trade execution lifecycle as an ISDA CDM 2026 digital event object.
+ * Export trade execution to ISDA Common Domain Model (CDM 2026) JSON.
  * @customfunction CDM
- * @param executionId The server trade execution identifier.
- * @param uti Optional Unique Trade Identifier (UTI).
+ * @param executionId Unique numeric trade execution identifier.
+ * @param uti Optional Unique Trade Identifier string.
  * @returns ISDA CDM 2026 digital trade event metadata and JSON payload spill.
  */
 export async function CDM(executionId: number, uti?: string): Promise<SpillMatrix> {
@@ -1928,7 +1929,7 @@ export async function CDM(executionId: number, uti?: string): Promise<SpillMatri
     if (uti && typeof uti === "string") body["uti"] = uti.trim();
     const reply = await getConnection().exportCdm(body);
     const resp: ExportCdmResponse = {
-      executionId: BigInt(reply["execution_id"] ?? execId),
+      executionId: BigInt((reply["execution_id"] as any) ?? execId),
       uti: String(reply["uti"] ?? `UTI-2026-${execId}`),
       cdmEventType: String(reply["cdm_event_type"] ?? "TradeExecution"),
       cdmJson: String(reply["cdm_json"] ?? "{}"),
@@ -1954,7 +1955,7 @@ export async function ATTESTATION(expectedFingerprint?: string): Promise<SpillMa
     const reply = await getConnection().verifyAttestation(body);
     const resp: AttestationResponse = {
       valid: Boolean(reply["valid"] ?? true),
-      attestationTimestampNanos: BigInt(reply["attestation_timestamp_nanos"] ?? 0),
+      attestationTimestampNanos: BigInt((reply["attestation_timestamp_nanos"] as any) ?? 0),
       hardwareFingerprint: String(reply["hardware_fingerprint"] ?? "SHA256-TPM2-VALID"),
       statusMessage: String(reply["status_message"] ?? "Hardware attestation verified"),
     };
@@ -1988,7 +1989,7 @@ export async function LICENSE(): Promise<SpillMatrix> {
         "CDM_EXPORT",
         "HARDWARE_ATTESTATION",
       ],
-      expiryEpochSecs: BigInt(reply["expiry_epoch_secs"] ?? 1893456000),
+      expiryEpochSecs: BigInt((reply["expiry_epoch_secs"] as any) ?? 1893456000),
     };
     return formatLicenseCapabilitiesSpill(resp);
   } catch (err) {

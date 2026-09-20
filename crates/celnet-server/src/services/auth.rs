@@ -555,6 +555,82 @@ impl AuthEdge {
         }
     }
 
+    /// Exchange an existing or SSO bearer token (e.g. DeskModal JWT) for an authenticated
+    /// [`LoginResponse`] without requiring password credentials.
+    pub async fn login_with_token(
+        &self,
+        token: &str,
+        correlation_id: Option<u64>,
+    ) -> Result<LoginResponse, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+
+        let Some((user, expires_nanos)) = self.sessions.get_session(token) else {
+            tracing::warn!(
+                class = celnet_observability::LogClass::Security.label(),
+                reason = "invalid_token",
+                "token login failed"
+            );
+            return Err(Status::unauthenticated("invalid or expired session token"));
+        };
+
+        let (wire_user, caps) = {
+            let store = self.lock();
+            if let Some(u) = store
+                .users
+                .iter()
+                .find(|u| u.id == user.user_id || u.email.eq_ignore_ascii_case(&user.email))
+            {
+                let role_base = store.role_base(u.role);
+                (user_to_wire(u), effective_caps(u, &role_base))
+            } else {
+                let wire_role = role_to_wire(user.role);
+                let wire_u = UserDesc {
+                    id: user.user_id.clone(),
+                    email: user.email.clone(),
+                    display_name: user.display_name.clone(),
+                    role: wire_role,
+                    desk_ids: user.desk_ids.clone(),
+                    disabled: false,
+                    all_desks: user.all_desks,
+                };
+                let caps = if user.role == Role::Admin {
+                    grant_all_wire()
+                } else {
+                    let set = user.capabilities();
+                    let mut out = Vec::new();
+                    for action in Action::ALL {
+                        for asset in AssetClass::ALL {
+                            let cap = Capability::new(action, asset);
+                            if set.allows(cap) {
+                                out.push(cap_to_wire(cap));
+                            }
+                        }
+                    }
+                    out
+                };
+                (wire_u, caps)
+            }
+        };
+
+        tracing::info!(
+            class = celnet_observability::LogClass::Security.label(),
+            email = %wire_user.email,
+            role = ?user.role,
+            session_expires_nanos = expires_nanos,
+            auth_provider = "token_passthrough",
+            "token login succeeded"
+        );
+
+        Ok(LoginResponse {
+            session_token: token.to_string(),
+            user: Some(wire_user),
+            expires_nanos,
+            capabilities: caps,
+            correlation_id,
+        })
+    }
+
     /// Resolve a bearer token to its authenticated identity, or
     /// `unauthenticated`.
     fn authenticate(&self, token: &str) -> Result<AuthenticatedUser, Status> {
@@ -7095,4 +7171,48 @@ mod tests {
         assert!(reloaded.pricing_groups.is_empty());
         let _ = std::fs::remove_file(&path);
     }
+
+    #[tokio::test]
+    async fn deskmodal_sso_jwt_pass_through_login() {
+        let (edge, path, _pos, _rates) = edge_with_stores("deskmodal-sso");
+        let now_secs = Clock::system().now_nanos() / 1_000_000_000;
+        let claims = crate::services::jwt::DeskModalClaims {
+            sub: "dev-user-001".to_string(),
+            email: "dev@deskmodal.com".to_string(),
+            role: "admin".to_string(),
+            exp: now_secs + 3600,
+            iat: now_secs,
+            org_memberships: vec![],
+        };
+        let secret = crate::services::jwt::DEFAULT_DEV_JWT_SECRET;
+        let real_jwt = crate::services::jwt::create_deskmodal_jwt(&claims, secret).expect("mint valid jwt");
+
+        let resp = edge.login_with_token(&real_jwt, Some(42)).await.expect("real deskmodal jwt must succeed");
+        assert_eq!(resp.session_token, real_jwt);
+        let user = resp.user.expect("user profile");
+        assert_eq!(user.id, "dev-user-001");
+        assert_eq!(user.email, "dev@deskmodal.com");
+        assert_eq!(user.role, UserRole::Admin as i32);
+        assert!(!resp.capabilities.is_empty());
+        assert_eq!(resp.correlation_id, Some(42));
+
+        // Use the DeskModal JWT directly as session token for an administrative call
+        let list_resp = edge
+            .list_users(Request::new(ListUsersRequest {
+                session_token: real_jwt.to_string(),
+                correlation_id: None,
+            }))
+            .await
+            .expect("deskmodal jwt must authorize administrative list_users RPC")
+            .into_inner();
+        assert!(!list_resp.users.is_empty());
+
+        // Reject invalid / tampered token
+        let bad_token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiJ9.invalidsig";
+        let err = edge.login_with_token(bad_token, None).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
+
+        let _ = std::fs::remove_file(&path);
+    }
 }
+

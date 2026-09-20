@@ -119,17 +119,17 @@ describe("Excel SDK All Capabilities & Formatting", () => {
       createdEpochNanos: 1772841600000000000n,
     };
     const spill = formatAlgoOrderSpill(algoResp);
-    expect(spill[0][0]).toBe("Order ID");
-    expect(spill[1][0]).toBe("ALGO-TWAP-99");
-    expect(spill[1][1]).toBe("EURUSD");
-    expect(spill[1][2]).toBe("BUY");
+    expect(spill[0]![0]).toBe("Order ID");
+    expect(spill[1]![0]).toBe("ALGO-TWAP-99");
+    expect(spill[1]![1]).toBe("EURUSD");
+    expect(spill[1]![2]).toBe("BUY");
 
     const listResp: ListAlgoOrdersResponse = {
       orders: [algoResp],
     };
     const listSpill = formatAlgoOrdersListSpill(listResp);
     expect(listSpill.length).toBe(2);
-    expect(listSpill[1][0]).toBe("ALGO-TWAP-99");
+    expect(listSpill[1]![0]).toBe("ALGO-TWAP-99");
   });
 
   it("formats ClusterTopology spill correctly", () => {
@@ -220,7 +220,6 @@ describe("Excel SDK All Capabilities & Formatting", () => {
         return sock;
       },
     });
-    conn.open();
     sock!.open();
 
     // 1. Calculate margin RPC
@@ -229,7 +228,7 @@ describe("Excel SDK All Capabilities & Formatting", () => {
     expect(marginFrames.length).toBe(1);
     sock!.deliver({
       type: "calculate_margin_response",
-      correlation_id: marginFrames[0].correlation_id,
+      correlation_id: marginFrames[0]!.correlation_id,
       portfolio_id: "PORT-1",
       total_initial_margin: 250000,
     });
@@ -242,7 +241,7 @@ describe("Excel SDK All Capabilities & Formatting", () => {
     expect(preTradeFrames.length).toBe(1);
     sock!.deliver({
       type: "simulate_pre_trade_margin_response",
-      correlation_id: preTradeFrames[0].correlation_id,
+      correlation_id: preTradeFrames[0]!.correlation_id,
       outcome: "APPROVED",
       delta_margin: 50000,
     });
@@ -255,7 +254,7 @@ describe("Excel SDK All Capabilities & Formatting", () => {
     expect(algoFrames.length).toBe(1);
     sock!.deliver({
       type: "submit_algo_order_response",
-      correlation_id: algoFrames[0].correlation_id,
+      correlation_id: algoFrames[0]!.correlation_id,
       parent_order_id: "ORDER-ALGO-1",
     });
     const rAlgo = await pAlgo;
@@ -267,7 +266,7 @@ describe("Excel SDK All Capabilities & Formatting", () => {
     expect(clusterFrames.length).toBe(1);
     sock!.deliver({
       type: "get_cluster_topology_response",
-      correlation_id: clusterFrames[0].correlation_id,
+      correlation_id: clusterFrames[0]!.correlation_id,
       cluster_id: "cluster-1",
     });
     const rCluster = await pCluster;

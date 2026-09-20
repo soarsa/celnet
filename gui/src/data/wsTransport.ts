@@ -2059,6 +2059,15 @@ export class WsTransport implements CelnetTransport {
     return loginResultFromWire(reply);
   }
 
+  async loginWithToken(token: string): Promise<LoginResult> {
+    const reply = await this.conn.request(
+      "login_token",
+      { token },
+      "login_result",
+    );
+    return loginResultFromWire(reply);
+  }
+
   async logout(): Promise<boolean> {
     const reply = await this.conn.request("logout", logoutRequestToWire(), "logout_result");
     return reply["ended"] === true;
@@ -2902,7 +2911,7 @@ export class WsTransport implements CelnetTransport {
       valueAtRisk: Number(reply["value_at_risk"] ?? 0),
       stressComponent: Number(reply["stress_component"] ?? 0),
       currency: String(reply["currency"] ?? "USD"),
-      calculatedEpochNanos: BigInt(reply["calculated_epoch_nanos"] ?? 0),
+      calculatedEpochNanos: BigInt(Number(reply["calculated_epoch_nanos"] ?? 0)),
     };
   }
 
@@ -2969,7 +2978,7 @@ export class WsTransport implements CelnetTransport {
         avgFillPrice: Number(s["avg_fill_price"] ?? request.arrivalPrice),
         status: (s["status"] as any) ?? "PENDING",
       })),
-      createdEpochNanos: BigInt(reply["created_epoch_nanos"] ?? 0),
+      createdEpochNanos: BigInt(Number(reply["created_epoch_nanos"] ?? 0)),
     };
   }
 
@@ -2989,7 +2998,7 @@ export class WsTransport implements CelnetTransport {
         status: (o["status"] as any) ?? "ACTIVE",
         implementationShortfallBps: Number(o["implementation_shortfall_bps"] ?? 0),
         slices: [],
-        createdEpochNanos: BigInt(o["created_epoch_nanos"] ?? 0),
+        createdEpochNanos: BigInt(Number(o["created_epoch_nanos"] ?? 0)),
       })),
     };
   }
@@ -3000,13 +3009,13 @@ export class WsTransport implements CelnetTransport {
     return {
       clusterId: String(reply["cluster_id"] ?? ""),
       leaderId: String(reply["leader_id"] ?? ""),
-      activeGeneration: BigInt(reply["active_generation"] ?? 1),
+      activeGeneration: BigInt(Number(reply["active_generation"] ?? 1)),
       members: rawMembers.map((m) => ({
         nodeId: String(m["node_id"] ?? ""),
         endpoint: String(m["endpoint"] ?? ""),
         status: (m["status"] as any) ?? "ACTIVE",
-        activeInFlightTrades: BigInt(m["active_in_flight_trades"] ?? 0),
-        joinedEpochNanos: BigInt(m["joined_epoch_nanos"] ?? 0),
+        activeInFlightTrades: BigInt(Number(m["active_in_flight_trades"] ?? 0)),
+        joinedEpochNanos: BigInt(Number(m["joined_epoch_nanos"] ?? 0)),
       })),
       jointConsensusActive: Boolean(reply["joint_consensus_active"]),
     };
@@ -3015,12 +3024,12 @@ export class WsTransport implements CelnetTransport {
   async getUpgradeStatus(): Promise<UpgradeStatusResponse> {
     const reply = await this.conn.request("get_upgrade_status", {}, "get_upgrade_status_response");
     return {
-      activeGeneration: BigInt(reply["active_generation"] ?? 1),
+      activeGeneration: BigInt(Number(reply["active_generation"] ?? 1)),
       currentVersion: String(reply["current_version"] ?? "1.0.0"),
       shadowVersion: String(reply["shadow_version"] ?? "1.0.1"),
       twinComparisonPassed: Boolean(reply["twin_comparison_passed"] ?? true),
-      maxUlpDivergence: BigInt(reply["max_ulp_divergence"] ?? 0),
-      evaluatedTradesCount: BigInt(reply["evaluated_trades_count"] ?? 0),
+      maxUlpDivergence: BigInt(Number(reply["max_ulp_divergence"] ?? 0)),
+      evaluatedTradesCount: BigInt(Number(reply["evaluated_trades_count"] ?? 0)),
       cutoverStatus: String(reply["cutover_status"] ?? "COMPLETED"),
     };
   }
@@ -3030,7 +3039,7 @@ export class WsTransport implements CelnetTransport {
     if (uti) body["uti"] = uti;
     const reply = await this.conn.request("export_cdm", body, "export_cdm_response");
     return {
-      executionId: BigInt(reply["execution_id"] ?? executionId),
+      executionId: BigInt(Number(reply["execution_id"] ?? executionId)),
       uti: String(reply["uti"] ?? `UTI-2026-${executionId}`),
       cdmEventType: String(reply["cdm_event_type"] ?? "TradeExecution"),
       cdmJson: String(reply["cdm_json"] ?? "{}"),
@@ -3043,7 +3052,7 @@ export class WsTransport implements CelnetTransport {
     const reply = await this.conn.request("verify_attestation", body, "verify_attestation_response");
     return {
       valid: Boolean(reply["valid"] ?? true),
-      attestationTimestampNanos: BigInt(reply["attestation_timestamp_nanos"] ?? 0),
+      attestationTimestampNanos: BigInt(Number(reply["attestation_timestamp_nanos"] ?? 0)),
       hardwareFingerprint: String(reply["hardware_fingerprint"] ?? "SHA256-TPM2-VALID"),
       statusMessage: String(reply["status_message"] ?? "Hardware attestation verified"),
     };
@@ -3057,7 +3066,7 @@ export class WsTransport implements CelnetTransport {
       subject: String(reply["subject"] ?? "institutional-trading-desk"),
       tier: String(reply["tier"] ?? "ENTERPRISE"),
       activeCapabilities: rawCaps,
-      expiryEpochSecs: BigInt(reply["expiry_epoch_secs"] ?? 1893456000),
+      expiryEpochSecs: BigInt(Number(reply["expiry_epoch_secs"] ?? 1893456000)),
     };
   }
 

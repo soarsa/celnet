@@ -44,6 +44,7 @@ import type { AssetClass } from "../products/types";
 import { useStreamSession, type StreamApi } from "../hooks/useStreamSession";
 import { useAuth, type AuthApi } from "../hooks/useAuth";
 import { getFdc3Agent, instrumentToFdc3, fdc3ToInstrument } from "../lib/fdc3";
+import { isAppMode as detectAppMode, getInstanceId } from "../lib/deskPlatform";
 import {
   currentLevel,
   FIRM_SCOPE_ROOT,
@@ -337,6 +338,13 @@ interface AppState {
   setSelected: (sel: Selection | null) => void;
   /** Select an instrument AND jump to the Risk workspace (one-click drill-to-risk). */
   drillToRisk: (instrument: Instrument, label: string) => void;
+  // --- Micro-App Mode & Multi-Instance (DeskModal Integration) ---
+  /** Whether running in standalone app mode (without shell rails). */
+  isAppMode: boolean;
+  /** The unique instance ID for this window (e.g. from ?instanceId=...). */
+  instanceId: string;
+  /** Toggle between micro-app canvas and full shell. */
+  toggleAppMode: () => void;
 }
 
 const Ctx = createContext<AppState | null>(null);
@@ -369,7 +377,26 @@ function bootViewState(): ViewState | null {
   if (typeof window === "undefined") return null;
   const params = new URLSearchParams(window.location.search);
   const hasViewParam = VIEW_PARAM_KEYS.some((k) => params.has(k));
-  return hasViewParam ? decodeView(params) : null;
+  if (hasViewParam) return decodeView(params);
+
+  // Check window global override set by DeskModal entrypoint HTML files
+  const defaultView = (window as unknown as { __CELNET_DEFAULT_VIEW__?: string }).__CELNET_DEFAULT_VIEW__;
+  if (defaultView) {
+    return decodeView(`view=${defaultView}`);
+  }
+
+  // Auto-detect based on pathname (e.g., deskmodal-plugin://.../pricing/index.html)
+  if (window.location && window.location.pathname) {
+    const p = window.location.pathname.toLowerCase();
+    if (p.includes("/pricing")) return decodeView("view=studio_pricing");
+    if (p.includes("/markets")) return decodeView("view=studio_markets");
+    if (p.includes("/rfq") || p.includes("/distribution")) return decodeView("view=studio_distribution");
+    if (p.includes("/blotter")) return decodeView("view=studio_blotter");
+    if (p.includes("/risk")) return decodeView("view=studio_risk");
+    if (p.includes("/curves") || p.includes("/policy")) return decodeView("view=studio_policy");
+  }
+
+  return null;
 }
 
 const NOOP = (): void => {};
@@ -467,7 +494,112 @@ export function AppProvider({
   // its seeded default so first load still renders a structure.
   const [selected, setSelected] = useState<Selection | null>(null);
 
+  // Micro-App mode and Multi-Instance isolation
+  const [appMode, setAppMode] = useState<boolean>(() => detectAppMode());
+  const instanceId = useMemo(() => getInstanceId(), []);
+  const toggleAppMode = useCallback(() => setAppMode((m) => !m), []);
+
   const pairCtx = PAIRS[pairIndex]!;
+
+  // Inbound FDC3 context listener + Intent router
+  useEffect(() => {
+    const agent = getFdc3Agent();
+
+    // 1. Check URL parameters for initial symbol/channel
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const urlChannel = p.get("channel");
+      if (urlChannel) {
+        void agent.joinUserChannel(urlChannel);
+      }
+      const urlSym = p.get("sym") || p.get("pair") || p.get("instrument");
+      if (urlSym) {
+        const clean = urlSym.replace(/[-_]/g, "/").toUpperCase();
+        const found = PAIRS.findIndex((pc) => {
+          const l = `${pc.pair.base}/${pc.pair.quote}`.toUpperCase();
+          const flat = `${pc.pair.base}${pc.pair.quote}`.toUpperCase();
+          return l === clean || flat === clean;
+        });
+        if (found >= 0) {
+          setPairIndex(found);
+          setNonFxUnderlier(null);
+        }
+      }
+    } catch {}
+
+    // 2. Subscribe to inbound fdc3.instrument broadcasts from other windows / DeskModal
+    const contextSub = agent.addContextListener("fdc3.instrument", (context) => {
+      const ticker = fdc3ToInstrument(context);
+      if (!ticker) return;
+      const clean = ticker.replace(/[-_]/g, "/").toUpperCase();
+      const found = PAIRS.findIndex((pc) => {
+        const l = `${pc.pair.base}/${pc.pair.quote}`.toUpperCase();
+        const flat = `${pc.pair.base}${pc.pair.quote}`.toUpperCase();
+        return l === clean || flat === clean;
+      });
+      if (found >= 0) {
+        setPairIndex(found);
+        setNonFxUnderlier(null);
+      }
+    });
+
+    // 3. Subscribe to standard FDC3 intents
+    const intentSub1 = agent.addIntentListener("ViewAnalysis", (context) => {
+      setWorkspaceRaw("studio_pricing");
+      const ticker = fdc3ToInstrument(context);
+      if (ticker) {
+        const clean = ticker.replace(/[-_]/g, "/").toUpperCase();
+        const found = PAIRS.findIndex((pc) => `${pc.pair.base}/${pc.pair.quote}`.toUpperCase() === clean);
+        if (found >= 0) {
+          setPairIndex(found);
+          setNonFxUnderlier(null);
+        }
+      }
+    });
+
+    const intentSub2 = agent.addIntentListener("ViewInstrument", (context) => {
+      setWorkspaceRaw("studio_markets");
+      const ticker = fdc3ToInstrument(context);
+      if (ticker) {
+        const clean = ticker.replace(/[-_]/g, "/").toUpperCase();
+        const found = PAIRS.findIndex((pc) => `${pc.pair.base}/${pc.pair.quote}`.toUpperCase() === clean);
+        if (found >= 0) {
+          setPairIndex(found);
+          setNonFxUnderlier(null);
+        }
+      }
+    });
+
+    const intentSub3 = agent.addIntentListener("Trade", (context) => {
+      setWorkspaceRaw("studio_distribution");
+      const ticker = fdc3ToInstrument(context);
+      if (ticker) {
+        const clean = ticker.replace(/[-_]/g, "/").toUpperCase();
+        const found = PAIRS.findIndex((pc) => `${pc.pair.base}/${pc.pair.quote}`.toUpperCase() === clean);
+        if (found >= 0) {
+          setPairIndex(found);
+          setNonFxUnderlier(null);
+        }
+      }
+    });
+
+    const intentSub4 = agent.addIntentListener("deskmodal.ViewOrders", () => {
+      setWorkspaceRaw("studio_blotter");
+    });
+
+    const intentSub5 = agent.addIntentListener("celnet.ViewRisk", () => {
+      setWorkspaceRaw("studio_risk");
+    });
+
+    return () => {
+      contextSub.unsubscribe();
+      intentSub1.unsubscribe();
+      intentSub2.unsubscribe();
+      intentSub3.unsubscribe();
+      intentSub4.unsubscribe();
+      intentSub5.unsubscribe();
+    };
+  }, []);
 
   // The registry-ready universe over the current seeded pairs (pure; memoized).
   const universe = useMemo(() => buildUniverse(PAIRS), []);
@@ -904,6 +1036,9 @@ export function AppProvider({
     selected,
     setSelected,
     drillToRisk,
+    isAppMode: appMode,
+    instanceId,
+    toggleAppMode,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

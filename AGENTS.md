@@ -10,7 +10,7 @@ is the concise entry; the full operating guide is **[CLAUDE.md](CLAUDE.md)**.
 
 Read **[CLAUDE.md](CLAUDE.md)** before writing any code. It contains the hard
 guardrails (git policy, no mocks, vendor-neutral naming, gate tiers, scale
-requirements) that every agent must follow without exception.
+requirements, zero-disruption headless testing) that every agent must follow without exception.
 
 ---
 

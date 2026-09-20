@@ -64,6 +64,7 @@ import { PricingControlProvider } from "./PricingControlProvider";
 import { PricingHaltBanner } from "../components/PricingHaltBanner";
 import { PricingControlMenu } from "../components/PricingControlMenu";
 import { SignInDialog } from "../components/SignInDialog";
+import { MicroAppHeader } from "../components/MicroAppHeader";
 import {
   buildCommands,
   CONSOLIDATED_ALIAS_ENTRIES,
@@ -455,12 +456,58 @@ export function Shell(): React.ReactElement {
     return () => window.removeEventListener("keydown", onKey);
   }, [commands]);
 
-  // The Shell self-provides settings so its settings-consuming children (the
-  // header gear + NotificationCenter) resolve even when the Shell is mounted in
-  // isolation (component tests render `<AppProvider><Shell/></AppProvider>`
-  // directly). In the running app this nests harmlessly under the root provider
-  // in main.tsx — both hydrate from the same versioned localStorage key, and the
-  // inner instance shadows the outer for this subtree (idiomatic provider nesting).
+  // Micro-App Mode: When running inside DeskModal (or launched as a dedicated desk app),
+  // strip the monolithic shell navigation (left rail, domain tabs, heavy switcher) and render
+  // the focused, full-screen Micro-App canvas with the FDC3 MicroAppHeader toolbar.
+  if (app.isAppMode) {
+    const ActiveStudio = WORKSPACE_VIEW[app.workspace] ?? UnifiedPricingStudio;
+    return (
+      <SettingsProvider>
+        <PricingControlProvider>
+          <TourProvider>
+            <div
+              className={styles.shell}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gridTemplateColumns: "1fr",
+                width: "100vw",
+                height: "100vh",
+                background: "var(--bg-app, #07090e)",
+                overflow: "hidden",
+              }}
+            >
+              <PricingHaltBanner />
+              <MicroAppHeader />
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  width: "100%",
+                  overflow: "hidden",
+                  position: "relative",
+                  display: "flex",
+                }}
+              >
+                <ActiveStudio />
+              </div>
+              <CommandPalette
+                open={app.paletteOpen}
+                commands={allCommands}
+                onClose={() => app.setPaletteOpen(false)}
+              />
+              <ScopeSwitcher />
+              <SignInDialog />
+              <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+              <HelpCenter open={helpCenterOpen} onClose={() => setHelpCenterOpen(false)} />
+              <DefaultRoutePrompt />
+            </div>
+          </TourProvider>
+        </PricingControlProvider>
+      </SettingsProvider>
+    );
+  }
+
   return (
     <SettingsProvider>
     <PricingControlProvider>

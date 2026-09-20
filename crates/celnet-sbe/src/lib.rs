@@ -8,8 +8,13 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod direct_buffer;
+pub mod dispatcher;
 pub mod gateway;
 pub mod multicast;
+
+pub use direct_buffer::{DirectBuffer, MutableDirectBuffer};
+pub use dispatcher::{SbeDispatcher, SbeMessageRef};
 
 use thiserror::Error;
 

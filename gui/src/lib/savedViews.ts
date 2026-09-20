@@ -182,7 +182,10 @@ export function encodeViewString(state: ViewState): string {
 export function decodeView(input: URLSearchParams | string): ViewState {
   const p = typeof input === "string" ? new URLSearchParams(input) : input;
 
-  const wsRaw = p.get(PARAM.workspace);
+  let wsRaw = p.get(PARAM.workspace);
+  if (wsRaw === "studio_rfq") {
+    wsRaw = "studio_distribution";
+  }
   const workspace: WorkspaceId = isWorkspace(wsRaw) ? wsRaw : "stream";
 
   const domRaw = p.get(PARAM.domain);

@@ -36,7 +36,7 @@ import { WsTransport } from "./wsTransport";
  * celnet-server WS mirror are NOT co-located on one origin. Production derives a
  * same-origin URL instead (see {@link sameOriginWsUrl}).
  */
-const DEV_WS_URL = "ws://127.0.0.1:8081";
+const DEV_WS_URL = "ws://127.0.0.1:8085";
 
 /** Which transport this session selected, plus a human label for diagnostics. */
 export interface TransportSelection {

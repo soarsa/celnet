@@ -276,21 +276,57 @@ impl SessionRegistry {
         })
     }
 
-    /// Resolve a bearer token to its authenticated identity, or `None` if the
-    /// token is unknown or expired. An expired token is dropped here (lazy
-    /// expiry) so a stale credential cannot be replayed.
+    /// Resolve a bearer token to its authenticated identity and expiration (epoch nanos),
+    /// or `None` if the token is unknown or expired. An expired token is dropped here
+    /// (lazy expiry) so a stale credential cannot be replayed.
     #[must_use]
-    pub fn validate(&self, token: &str) -> Option<AuthenticatedUser> {
+    pub fn get_session(&self, token: &str) -> Option<(AuthenticatedUser, i64)> {
         let now = self.clock.now_nanos();
         let mut map = self.inner.lock().expect("session registry mutex poisoned");
-        match map.get(token) {
-            Some(s) if s.expires_nanos > now => Some(s.user.clone()),
-            Some(_) => {
+        if let Some(s) = map.get(token) {
+            if s.expires_nanos > now {
+                return Some((s.user.clone(), s.expires_nanos));
+            } else {
                 map.remove(token);
-                None
+                return None;
             }
-            None => None,
         }
+
+        // If not present in process session map, check if token is a DeskModal JWT (RFC 7519)
+        if token.starts_with("ey") || token.contains('.') {
+            let secret = crate::services::jwt::get_jwt_secret();
+            let now_secs = now / 1_000_000_000;
+            if let Ok(claims) = crate::services::jwt::verify_deskmodal_jwt(token, secret, now_secs) {
+                let user = crate::services::jwt::claims_to_authenticated_user(&claims);
+                let expires_nanos = claims.exp.saturating_mul(1_000_000_000);
+                tracing::info!(
+                    class = celnet_observability::LogClass::Security.label(),
+                    scope = "celnet.auth",
+                    user_id = %user.user_id,
+                    email = %user.email,
+                    role = ?user.role,
+                    auth_provider = "deskmodal_sso",
+                    "DeskModal JWT pass-through authentication succeeded"
+                );
+                map.insert(
+                    token.to_string(),
+                    Session {
+                        user: user.clone(),
+                        expires_nanos,
+                    },
+                );
+                return Some((user, expires_nanos));
+            }
+        }
+
+        None
+    }
+
+    /// Resolve a bearer token to its authenticated identity, or `None` if the
+    /// token is unknown or expired.
+    #[must_use]
+    pub fn validate(&self, token: &str) -> Option<AuthenticatedUser> {
+        self.get_session(token).map(|(u, _)| u)
     }
 
     /// Invalidate a single session (logout). Returns whether a session was

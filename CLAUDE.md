@@ -107,6 +107,17 @@ Greenfield, started 30 May 2026.
     **without diminishing performance** — the pinned zero-alloc hot core stays
     log/lock/alloc-free; telemetry offloads over a bounded queue. Continuously assess
     horizontal/distributed scale-out vs the latency/throughput budgets (`docs/SCALE-OUT.md`).
+12. **Zero desktop disruption / Non-interfering headless testing.** Never disrupt the human
+    operator's workstation or concurrent agents.
+    - **NEVER use `cliclick`**, `xdotool`, or OS-level HID manipulation tools that hook
+      `CGEventPost(kCGHIDEventTap, ...)`.
+    - **NEVER use `osascript ... activate`** or commands that force window focus or steal
+      keyboard/mouse input from the user's active applications.
+    - **NEVER spawn visible test windows on the user's primary display.**
+    - **All GUI testing MUST run headlessly** via Playwright Headless Shell (`chromium_headless_shell`),
+      in-memory CDP (`Input.dispatchMouseEvent`), Vitest/jsdom, or isolated offscreen/virtual
+      framebuffers. Offscreen snapshots and accessibility audits (@axe-core) run completely
+      in-memory.
 
 ## Running the toolchain
 
@@ -192,4 +203,4 @@ All status lives in disk files, not here (keeps per-session context small —
 
 **Resume anchor — one line only; replace in place each milestone, never grow it:**
 
-- 2026-09-09 — **✅ SOVEREIGN PLATFORM SCOPE, BENCHMARKS, FDC3 v2.1 & ISDA CDM 2026 COMPLIANCE COMPLETE (65+ crates). Gates green: zero compiler warnings/errors, zero mocks, deterministic bit-identity.** (1) **Wire & IPC**: SBE (<16 ns) & lock-free SHM (11.28 ns). (2) **Quantitative**: Cheyette 2F swaptions (41.2 ns) & Rough Vol signatures (1.84 µs). (3) **Risk & Margining**: CME SPAN 2 FHS VaR (3.03 µs) & SIMM 2.6 cross-margin netting (64.5 µs). (4) **Consensus**: pure-Rust Raft (18.4 ms failover). (5) **Desktop & Standards**: FDC3 v2.1 context bus, C-ABI zero-COM Excel (23.8M ops/s), and ISDA CDM 2026 digital lifecycle event lineage. Master specs: docs/architecture/CELNET-SOVEREIGN-PLATFORM-SCOPE-IMPROVEMENTS-BENCHMARKS-AND-DIRECTION.pdf and docs/architecture/CELNET-FDC3-AND-ISDA-CDM-COMPLIANCE-SPECIFICATION.md.
+- 2026-09-20 — **✅ SOVEREIGN MICRO-APP REARCHITECTURE FOR DESKMODAL COMPLETE (6 autonomous trading desks, multi-instance parameterization, FDC3 v2.1 channel linking & intent routing, zero desktop disruption). Gates green: 5/5 Playwright headless E2E passed.** Master critique: docs/architecture/CELNET-DESKMODAL-GUI-APP-REARCHITECTURE-CRITIQUE.md.

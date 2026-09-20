@@ -647,6 +647,9 @@ export interface CelnetTransport {
   /** AuthService.Login — exchange email + password for a session + the user profile. */
   login(email: string, password: string): Promise<LoginResult>;
 
+  /** AuthService.LoginWithToken — authenticate via existing bearer token (e.g. DeskModal SSO JWT). */
+  loginWithToken(token: string): Promise<LoginResult>;
+
   /** AuthService.Logout — invalidate the installed bearer token; resolves to whether a live session ended. */
   logout(): Promise<boolean>;
 

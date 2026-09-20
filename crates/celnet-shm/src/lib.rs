@@ -16,6 +16,11 @@ use std::sync::atomic::{AtomicU64, Ordering, fence};
 use memmap2::{Mmap, MmapMut};
 use thiserror::Error;
 
+use celnet_sbe::{
+    OptionQuote, OptionQuoteFlyweight, PriceTick, PriceTickFlyweight, SbeDispatcher, SbeMessageRef,
+    encode_option_quote, encode_price_tick,
+};
+
 /// Magic byte constant identifying Celnet Shared Memory (`"CELN_SHM"`).
 pub const SHM_MAGIC: u64 = 0x4345_4C4E_5F53_484D;
 /// Current layout version.
@@ -232,6 +237,26 @@ impl ShmProducer {
 
         touched_pages
     }
+
+    /// Publish an SBE-encoded `OptionQuote` directly into the ring buffer.
+    pub fn publish_sbe_quote(&mut self, quote: &OptionQuote) -> Result<u64, ShmError> {
+        let mut buf = [0u8; celnet_sbe::OPTION_QUOTE_TOTAL_SIZE];
+        let len = encode_option_quote(quote, &mut buf).map_err(|_| ShmError::PayloadTooLarge {
+            max: self.slot_size,
+            actual: celnet_sbe::OPTION_QUOTE_TOTAL_SIZE,
+        })?;
+        self.publish(&buf[..len])
+    }
+
+    /// Publish an SBE-encoded `PriceTick` directly into the ring buffer.
+    pub fn publish_sbe_tick(&mut self, tick: &PriceTick) -> Result<u64, ShmError> {
+        let mut buf = [0u8; celnet_sbe::PRICE_TICK_TOTAL_SIZE];
+        let len = encode_price_tick(tick, &mut buf).map_err(|_| ShmError::PayloadTooLarge {
+            max: self.slot_size,
+            actual: celnet_sbe::PRICE_TICK_TOTAL_SIZE,
+        })?;
+        self.publish(&buf[..len])
+    }
 }
 
 /// Multi-consumer shared-memory broadcast ring reader.
@@ -398,6 +423,120 @@ impl ShmConsumer {
         n
     }
 
+    /// Read the next unread message in-place without memory allocation or copying.
+    ///
+    /// The provided closure `viewer` is executed with a slice viewing the payload
+    /// directly inside the mapped shared memory buffer. If the producer overwrites
+    /// the slot concurrently, the seqlock detects the stamp mutation and retries,
+    /// ensuring the viewer only produces a committed, un-torn result.
+    #[allow(unsafe_code)]
+    pub fn try_recv_view<R, F: FnMut(&[u8]) -> R>(&mut self, mut viewer: F) -> Result<R, ShmRecvError> {
+        let head_ptr = self.mmap[64..72].as_ptr() as *const AtomicU64;
+        // SAFETY: offset 64 is 8-byte aligned.
+        let head_atomic = unsafe { &*head_ptr };
+        let head = head_atomic.load(Ordering::Acquire);
+
+        if self.cursor >= head {
+            return Err(ShmRecvError::Empty);
+        }
+
+        // Check if consumer was lapped (conflation)
+        let oldest_live = head.saturating_sub(self.capacity as u64);
+        if self.cursor < oldest_live {
+            let gap = oldest_live - self.cursor;
+            self.skipped += gap;
+            self.cursor = oldest_live;
+        }
+
+        loop {
+            let seq = self.cursor;
+            let idx = (seq & self.mask) as usize;
+            let slot_offset = SHM_HEADER_SIZE + idx * self.slot_stride;
+
+            let stamp_ptr = self.mmap[slot_offset..slot_offset + 8].as_ptr() as *const AtomicU64;
+            // SAFETY: slot_offset is aligned and within mapped memory.
+            let stamp_atomic = unsafe { &*stamp_ptr };
+
+            let want = seq << 1;
+            let stamp_before = stamp_atomic.load(Ordering::Acquire);
+
+            if stamp_before != want {
+                let head2 = head_atomic.load(Ordering::Acquire);
+                let oldest_live2 = head2.saturating_sub(self.capacity as u64);
+                if self.cursor < oldest_live2 {
+                    self.skipped += oldest_live2 - self.cursor;
+                    self.cursor = oldest_live2;
+                    continue;
+                }
+                if self.cursor >= head2 {
+                    return Err(ShmRecvError::Empty);
+                }
+                spin_loop();
+                continue;
+            }
+
+            // In-place payload slice
+            let payload_offset = slot_offset + 64;
+            let payload_len = u32::from_le_bytes(
+                self.mmap[payload_offset..payload_offset + 4]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+
+            let payload_slice = &self.mmap[payload_offset + 4..payload_offset + 4 + payload_len];
+
+            // Execute the zero-copy viewer closure
+            let result = viewer(payload_slice);
+
+            // Memory fence before checking trailing seqlock stamp
+            fence(Ordering::Acquire);
+
+            let stamp_after = stamp_atomic.load(Ordering::Acquire);
+            if stamp_after != want {
+                // Mid-read overwrite detected -> retry with latest slot data
+                spin_loop();
+                continue;
+            }
+
+            self.cursor = seq + 1;
+            self.received += 1;
+            return Ok(result);
+        }
+    }
+
+    /// Read next unread message as an SBE `OptionQuoteFlyweight` directly in-place.
+    pub fn try_recv_sbe_quote_view<R, F: FnMut(&OptionQuoteFlyweight<'_>) -> R>(
+        &mut self,
+        mut viewer: F,
+    ) -> Result<R, ShmRecvError> {
+        self.try_recv_view(|slice| {
+            let fw = OptionQuoteFlyweight::wrap(slice).map_err(|_| ShmRecvError::Empty)?;
+            Ok(viewer(&fw))
+        })?
+    }
+
+    /// Read next unread message as an SBE `PriceTickFlyweight` directly in-place.
+    pub fn try_recv_sbe_tick_view<R, F: FnMut(&PriceTickFlyweight<'_>) -> R>(
+        &mut self,
+        mut viewer: F,
+    ) -> Result<R, ShmRecvError> {
+        self.try_recv_view(|slice| {
+            let fw = PriceTickFlyweight::wrap(slice).map_err(|_| ShmRecvError::Empty)?;
+            Ok(viewer(&fw))
+        })?
+    }
+
+    /// Dispatch next unread message via the zero-allocation SBE message dispatcher.
+    pub fn try_recv_sbe_dispatch<R, F: FnMut(SbeMessageRef<'_>) -> R>(
+        &mut self,
+        mut handler: F,
+    ) -> Result<R, ShmRecvError> {
+        self.try_recv_view(|slice| {
+            let msg = SbeDispatcher::dispatch(slice).map_err(|_| ShmRecvError::Empty)?;
+            Ok(handler(msg))
+        })?
+    }
+
     /// Number of items successfully received.
     #[inline(always)]
     pub fn received(&self) -> u64 {
@@ -420,6 +559,12 @@ impl ShmConsumer {
     #[inline(always)]
     pub fn slot_size(&self) -> usize {
         self.slot_size
+    }
+
+    /// Ring capacity in slots.
+    #[inline(always)]
+    pub fn capacity(&self) -> usize {
+        self.capacity
     }
 
     /// Pre-fault and warm up all virtual memory pages backing the shared memory ring buffer.
@@ -542,5 +687,40 @@ mod tests {
         let n = consumer.try_recv(&mut buf).unwrap();
         assert_eq!(n, slot_size);
         assert_eq!(buf, payload);
+    }
+
+    #[test]
+    fn shm_zero_copy_view_and_sbe_dispatch() {
+        let temp = NamedTempFile::new().unwrap();
+        let path = temp.path();
+
+        let mut producer = ShmProducer::create(path, 16, 256).unwrap();
+        let mut consumer = ShmConsumer::open_replay(path).unwrap();
+
+        let tick = PriceTick {
+            epoch_nanos: 1_725_000_000,
+            pair_id: 10,
+            flags: 1,
+            bid: 1.0850,
+            ask: 1.0852,
+        };
+
+        producer.publish_sbe_tick(&tick).unwrap();
+
+        // Zero-copy in-place read with closure
+        let bid = consumer
+            .try_recv_sbe_tick_view(|fw| fw.bid())
+            .expect("read tick succeeds");
+        assert_eq!(bid, 1.0850);
+
+        // Test SBE message dispatch
+        producer.publish_sbe_tick(&tick).unwrap();
+        let matched = consumer
+            .try_recv_sbe_dispatch(|msg| match msg {
+                SbeMessageRef::PriceTick(fw) => fw.pair_id() == 10,
+                _ => false,
+            })
+            .expect("dispatch succeeds");
+        assert!(matched);
     }
 }

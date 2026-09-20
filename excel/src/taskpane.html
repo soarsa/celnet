@@ -48,16 +48,11 @@
         <h2 id="auth-title">Sign in</h2>
 
         <div id="auth-signedout">
-          <div class="frow">
-            <label class="full" for="auth-email">Email
-              <input id="auth-email" type="email" autocomplete="username" spellcheck="false" placeholder="trader@celnet.com" />
-            </label>
-            <label class="full" for="auth-password">Password
-              <input id="auth-password" type="password" autocomplete="current-password" placeholder="••••••••" />
-            </label>
+          <div class="row">
+            <span class="footnote">Zero-credential architecture: authentication is managed externally by Office 365 or your enterprise gateway and passed through to CelNet.</span>
           </div>
-          <div class="btnrow">
-            <button id="auth-signin" class="btn primary" type="button">Sign in</button>
+          <div class="btnrow" style="margin-top: 10px;">
+            <button id="auth-signin" class="btn primary" type="button">Sign in with Enterprise SSO</button>
           </div>
           <div class="row"><span id="auth-state" class="state" role="status" aria-live="polite"></span></div>
           <div class="footnote">Sign in to deal. Price-preview cells stay available signed-out (the server enforces every request).</div>

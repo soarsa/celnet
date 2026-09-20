@@ -588,14 +588,52 @@ function boot(): void {
   });
 
   // ---- sign-in / capability gating ----------------------------------------
-  // Interactive AuthService.Login over the shared transport; the captured
-  // effective capabilities DISABLE-gate the dealing affordances by action × asset.
-  // Anonymous keeps the price-preview workflow; the dealing controls require a
+  // Externalized Enterprise SSO / Office 365 pass-through over the shared transport.
+  // The captured effective capabilities DISABLE-gate dealing affordances by action × asset.
+  // Anonymous keeps the price-preview workflow; dealing controls require a
   // signed-in identity (the "sign in to deal" posture). The server still enforces.
-  const authEmail = el<HTMLInputElement>("auth-email");
-  const authPassword = el<HTMLInputElement>("auth-password");
   const signInBtn = el<HTMLButtonElement>("auth-signin");
   const signOutBtn = el<HTMLButtonElement>("auth-signout");
+
+  /**
+   * Resolve an external authentication bearer token from Office SSO, URL query
+   * parameters, host injection, or container storage.
+   */
+  async function resolveExternalToken(): Promise<string | null> {
+    // 1. Office JS native Single Sign-On (Office.auth.getAccessToken)
+    const officeGlobal = (window as unknown as { Office?: { auth?: { getAccessToken: (opts?: unknown) => Promise<string> } } }).Office;
+    if (officeGlobal?.auth?.getAccessToken) {
+      try {
+        const token = await officeGlobal.auth.getAccessToken({
+          allowSignInPrompt: true,
+          forMSGraphAccess: false,
+        });
+        if (token && token.length > 20) return token;
+      } catch (e) {
+        console.warn("[CelNet Excel] Office.auth.getAccessToken prompt fallback:", e);
+      }
+    }
+
+    // 2. URL search parameters (?token=... or ?jwt=...)
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const tokenParam = urlParams.get("token") || urlParams.get("jwt") || urlParams.get("access_token");
+      if (tokenParam && tokenParam.length > 20) return tokenParam;
+    } catch {}
+
+    // 3. Injected host global
+    const w = window as unknown as { __CELNET_AUTH_TOKEN__?: string; __DESKMODAL_AUTH_TOKEN__?: string };
+    if (w.__CELNET_AUTH_TOKEN__) return w.__CELNET_AUTH_TOKEN__;
+    if (w.__DESKMODAL_AUTH_TOKEN__) return w.__DESKMODAL_AUTH_TOKEN__;
+
+    // 4. Local storage or environment fallback
+    try {
+      const stored = localStorage.getItem("celnet.excel.auth_token");
+      if (stored && stored.length > 20) return stored;
+    } catch {}
+
+    return null;
+  }
 
   /** Disable + EXPLAIN one button by its entry-point capability (never hide, never silent). */
   const gateButton = (id: EntryPointId, btnId: string, alsoDisabled = false): void => {
@@ -634,29 +672,41 @@ function boot(): void {
     applyGating();
   };
 
-  signInBtn.addEventListener("click", () => {
-    void (async () => {
-      const email = authEmail.value.trim();
-      const password = authPassword.value;
-      if (email.length === 0 || password.length === 0) {
-        setState("auth-state", "enter your email and password", "warn");
+  const handleSignIn = async (): Promise<void> => {
+    signInBtn.disabled = true;
+    setState("auth-state", "connecting to enterprise SSO…", "warn");
+    try {
+      const token = await resolveExternalToken();
+      if (token) {
+        await session.signInWithToken(token);
+        setState("auth-state", "", "");
         return;
       }
-      signInBtn.disabled = true;
-      setState("auth-state", "signing in…", "warn");
-      try {
-        const result = await conn.login(email, password);
-        session.signIn(result);
-        authPassword.value = ""; // never retain the secret in the field
-        setState("auth-state", "", "");
-      } catch (err) {
-        // Bad credentials / disabled account / transport error — named, never silent.
-        setState("auth-state", message(err), "bad");
-      } finally {
-        signInBtn.disabled = false;
-      }
-    })();
+
+      // If no token acquired from SSO, provide clear feedback
+      setState("auth-state", "No active SSO token found in Office or Gateway.", "bad");
+    } catch (err) {
+      setState("auth-state", message(err), "bad");
+    } finally {
+      signInBtn.disabled = false;
+    }
+  };
+
+  signInBtn.addEventListener("click", () => {
+    void handleSignIn();
   });
+
+  // Silent auto-pass-through on load if external token is present
+  void (async () => {
+    try {
+      const token = await resolveExternalToken();
+      if (token && !session.isSignedIn()) {
+        await session.signInWithToken(token);
+      }
+    } catch (e) {
+      console.warn("[CelNet Excel] Silent auto-pass-through:", e);
+    }
+  })();
 
   signOutBtn.addEventListener("click", () => {
     void (async () => {

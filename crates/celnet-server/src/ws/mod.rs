@@ -1237,12 +1237,29 @@ async fn handle_unary(
         // dates) and `BuildCurve`'s pillar arrays — so the swap is contract-preserving.
         // With this family every WS unary verb runs on the generated codec.
         "login" => {
-            let req = decode!(generated_codec::decode_login_request(o));
-            call!(
-                services.auth.login(Request::new(req)),
-                "login_result",
-                generated_codec::encode_login_response
-            )
+            if let Some(token) = o.get("token").and_then(|v| v.as_str()).filter(|t| !t.is_empty()) {
+                match services.auth.login_with_token(token, correlation_id).await {
+                    Ok(resp) => codec::tagged("login_result", generated_codec::encode_login_response(&resp)),
+                    Err(status) => status_error(&status, correlation_id),
+                }
+            } else {
+                let req = decode!(generated_codec::decode_login_request(o));
+                call!(
+                    services.auth.login(Request::new(req)),
+                    "login_result",
+                    generated_codec::encode_login_response
+                )
+            }
+        }
+        "login_token" => {
+            let token = match o.get("token").and_then(|v| v.as_str()) {
+                Some(t) if !t.is_empty() => t,
+                _ => return codec::error_frame("missing or empty token", correlation_id),
+            };
+            match services.auth.login_with_token(token, correlation_id).await {
+                Ok(resp) => codec::tagged("login_result", generated_codec::encode_login_response(&resp)),
+                Err(status) => status_error(&status, correlation_id),
+            }
         }
         "logout" => {
             let req = decode!(generated_codec::decode_logout_request(o));

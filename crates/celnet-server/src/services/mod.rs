@@ -58,6 +58,7 @@ pub mod trace;
 pub mod transfer_apply;
 
 pub mod deploy;
+pub mod jwt;
 pub mod sessions;
 
 pub mod auth;

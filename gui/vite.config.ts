@@ -61,6 +61,7 @@ function versionManifest(hash: string, buildTime: string): Plugin {
 // place a real gRPC-Web/Connect or WebSocket client is wired; everything else is
 // fed by the deterministic in-app mock/replay source so the app runs standalone.
 export default defineConfig({
+  base: "./",
   plugins: [react(), versionManifest(BUILD_HASH, BUILD_TIME)],
   define: {
     __CELNET_BUILD_HASH__: JSON.stringify(BUILD_HASH),

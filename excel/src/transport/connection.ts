@@ -1474,6 +1474,12 @@ export class Connection {
   // Unlike the GUI's connection, the Excel `request` helper does not auto-inject the
   // token, so `logout` carries it explicitly to identify the session to invalidate.
 
+  /** `AuthService.LoginWithToken` — authenticate using an external bearer token. */
+  async loginWithToken(token: string): Promise<LoginResult> {
+    const reply = await this.request("login_token", { token }, "login_result");
+    return loginResultFromWire(reply);
+  }
+
   /** `AuthService.Login` — exchange email + password for a session (token + caller capabilities). */
   async login(email: string, password: string): Promise<LoginResult> {
     const reply = await this.request("login", loginRequestToWire(email, password), "login_result");

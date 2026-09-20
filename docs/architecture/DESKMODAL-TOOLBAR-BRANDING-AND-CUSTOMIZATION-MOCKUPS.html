@@ -1,0 +1,1876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeskModal Toolbar — Branding, Customization & Multi-OS Architecture</title>
+<style>
+  :root {
+    --bg-page: #080b11;
+    --surface-card: #0f141f;
+    --surface-card-hover: #151b2a;
+    --border-subtle: #1e2638;
+    --border-strong: #2e3a54;
+    --text-primary: #f0f4fc;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --brand-accent: #0ea5e9;
+    --brand-accent-glow: rgba(14, 165, 233, 0.25);
+    --green-up: #10b981;
+    --red-down: #f43f5e;
+    --amber-warn: #f59e0b;
+    --mono-font: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Consolas, monospace;
+    --sans-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--sans-font);
+    background-color: var(--bg-page);
+    color: var(--text-primary);
+    line-height: 1.55;
+    padding: 32px 24px 80px 24px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .container {
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+
+  /* Header Badge & Title */
+  .badge-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: rgba(14, 165, 233, 0.15);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+  }
+  .tag-os {
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
+    border: 1px solid rgba(192, 132, 252, 0.3);
+  }
+
+  h1 {
+    font-size: 2.2rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: #ffffff;
+    margin-bottom: 10px;
+  }
+  .subtitle {
+    font-size: 1.1rem;
+    color: var(--text-secondary);
+    max-width: 880px;
+    margin-bottom: 32px;
+  }
+
+  /* Interactive Simulator Sandbox */
+  .sandbox-panel {
+    background: #0b0f17;
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 40px;
+    box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7);
+  }
+  .sandbox-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 24px;
+  }
+  .sandbox-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #e2e8f0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .controls-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+  }
+  .control-select-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .btn-group {
+    display: inline-flex;
+    background: #151b28;
+    padding: 3px;
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+  }
+  .btn-toggle {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .btn-toggle:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .btn-toggle.active {
+    background: var(--brand-accent);
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(14, 165, 233, 0.4);
+  }
+
+  /* OS Window Simulator Stage */
+  .os-stage {
+    background: radial-gradient(circle at top right, #131b2e 0%, #080c14 100%);
+    border-radius: 10px;
+    border: 1px solid #1e293b;
+    min-height: 480px;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  }
+
+  /* OS Window Titlebar */
+  .os-titlebar {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    user-select: none;
+    background: rgba(15, 23, 42, 0.75);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .os-window-caption {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+  /* macOS Controls */
+  .macos-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .traffic-light {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+  }
+  .traffic-red { background: #ff5f56; }
+  .traffic-yellow { background: #ffbd2e; }
+  .traffic-green { background: #27c93f; }
+
+  /* Windows 11 Controls */
+  .windows-controls {
+    display: flex;
+    align-items: center;
+  }
+  .win-btn {
+    width: 40px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #94a3b8;
+    font-size: 10px;
+    cursor: pointer;
+  }
+  .win-btn:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+  .win-btn-close:hover { background: #e81123; color: #fff; }
+
+  /* Linux Hyprland / GNOME Controls */
+  .linux-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .linux-pill {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #334155;
+    border: 1px solid #475569;
+  }
+
+  /* Desktop Canvas Area */
+  .desktop-canvas {
+    flex: 1;
+    position: relative;
+    padding: 16px;
+    background-image: 
+      radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    background-size: 24px 24px;
+    display: flex;
+    gap: 12px;
+    min-height: 420px;
+  }
+
+  /* Background Grid Dummy Windows to demonstrate FDC3 & Non-Interference */
+  .dummy-chart-tile {
+    flex: 1;
+    position: relative;
+    background: rgba(13, 18, 28, 0.85);
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 380px;
+  }
+  .dummy-chart-header {
+    height: 32px;
+    background: #0f172a;
+    border-bottom: 1px solid #1e293b;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    font-size: 0.75rem;
+    color: #94a3b8;
+  }
+  .dummy-chart-body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #334155;
+    font-size: 0.85rem;
+    font-family: var(--mono-font);
+  }
+
+  /* ==========================================================================
+     THE LIVE TOOLBAR COMPONENT MOCKUP
+     ========================================================================== */
+
+  /* Mode A: Command Ribbon (Top Full-Width) */
+  .toolbar-ribbon {
+    width: 100%;
+    height: var(--bar-height, 34px);
+    background: var(--tb-bg, rgba(11, 15, 25, 0.95));
+    backdrop-filter: var(--tb-filter, blur(16px));
+    border-bottom: 1px solid var(--tb-border, #1e293b);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 10px;
+    z-index: 50;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    font-family: var(--tb-font, var(--sans-font));
+  }
+
+  /* Mode B: Vertical Rail (Left) */
+  .toolbar-vertical {
+    width: 44px;
+    height: 100%;
+    background: var(--tb-bg, rgba(11, 15, 25, 0.95));
+    border-right: 1px solid var(--tb-border, #1e293b);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+    z-index: 50;
+    box-shadow: 4px 0 12px rgba(0, 0, 0, 0.3);
+  }
+  .toolbar-vertical .cluster-left,
+  .toolbar-vertical .cluster-center,
+  .toolbar-vertical .cluster-right {
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+  }
+  .toolbar-vertical .tb-command-pill {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    justify-content: center;
+  }
+  .toolbar-vertical .tb-command-pill input,
+  .toolbar-vertical .tb-command-pill .tb-kbd-hint,
+  .toolbar-vertical #brandNameText,
+  .toolbar-vertical .tb-brand-btn svg,
+  .toolbar-vertical .tb-workspace-pill span,
+  .toolbar-vertical .tb-workspace-pill svg:last-child,
+  .toolbar-vertical .tb-app-stack span:not(.tb-stack-count),
+  .toolbar-vertical #fdc3Text,
+  .toolbar-vertical #fdc3Btn svg,
+  .toolbar-vertical .tb-telemetry-pill span:not(.tb-pulse-green) {
+    display: none;
+  }
+  .toolbar-vertical .tb-app-stack,
+  .toolbar-vertical .tb-brand-btn,
+  .toolbar-vertical .tb-workspace-pill,
+  .toolbar-vertical .tb-fdc3-pill,
+  .toolbar-vertical .tb-telemetry-pill {
+    padding: 6px;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+  }
+  .toolbar-vertical .tb-clock {
+    font-size: 0.65rem;
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    padding: 6px 0;
+  }
+
+  /* Mode C: Floating Launchpad Dock */
+  .toolbar-floating {
+    position: absolute;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    height: 46px;
+    background: var(--tb-bg, rgba(15, 21, 34, 0.92));
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--tb-border, rgba(255, 255, 255, 0.12));
+    border-radius: 24px;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 8px;
+    box-shadow: 0 12px 32px -4px rgba(0, 0, 0, 0.6);
+    z-index: 50;
+  }
+
+  /* Cluster Rows & Items */
+  .cluster-left, .cluster-center, .cluster-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .cluster-vertical-top, .cluster-vertical-center, .cluster-vertical-bottom {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* Brand Button */
+  .tb-brand-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    border: none;
+    padding: 4px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--tb-text, #f8fafc);
+    font-weight: 700;
+    font-size: 0.8rem;
+    letter-spacing: -0.01em;
+    transition: background 0.15s;
+    position: relative;
+  }
+  .tb-brand-btn:hover {
+    background: var(--tb-hover, rgba(255, 255, 255, 0.08));
+  }
+  .brand-logo-mark {
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--brand-mark-bg, linear-gradient(135deg, #0ea5e9 0%, #3b82f6 100%));
+    color: #fff;
+    font-size: 11px;
+    font-weight: 900;
+  }
+
+  /* Workspace Switcher Pill */
+  .tb-workspace-pill {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--tb-pill-bg, rgba(255, 255, 255, 0.06));
+    border: 1px solid var(--tb-pill-border, rgba(255, 255, 255, 0.08));
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--tb-text-muted, #94a3b8);
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+  }
+  .tb-workspace-pill:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+  }
+
+  /* Mnemonic Command & Ticker Jump Pill */
+  .tb-command-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--tb-input-bg, rgba(0, 0, 0, 0.35));
+    border: 1px solid var(--tb-pill-border, rgba(255, 255, 255, 0.1));
+    border-radius: 6px;
+    padding: 3px 12px;
+    width: 220px;
+    cursor: text;
+    transition: all 0.15s ease;
+  }
+  .tb-command-pill:hover, .tb-command-pill:focus-within {
+    border-color: var(--brand-accent);
+    background: rgba(0, 0, 0, 0.55);
+    width: 280px;
+  }
+  .tb-command-pill input {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #fff;
+    font-size: 0.75rem;
+    font-family: var(--mono-font);
+    width: 100%;
+  }
+  .tb-command-pill input::placeholder {
+    color: #64748b;
+  }
+  .tb-kbd-hint {
+    font-size: 0.65rem;
+    background: rgba(255, 255, 255, 0.1);
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: #94a3b8;
+    font-family: var(--mono-font);
+  }
+
+  /* App Stack Button */
+  .tb-app-stack {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--tb-text, #cbd5e1);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+  }
+  .tb-app-stack:hover {
+    background: var(--tb-hover, rgba(255, 255, 255, 0.08));
+    color: #fff;
+  }
+  .tb-app-stack.active {
+    background: rgba(14, 165, 233, 0.15);
+    border-color: rgba(14, 165, 233, 0.4);
+    color: #38bdf8;
+  }
+  .tb-stack-count {
+    font-size: 0.65rem;
+    background: var(--tb-badge-bg, rgba(255, 255, 255, 0.12));
+    color: #cbd5e1;
+    padding: 1px 5px;
+    border-radius: 10px;
+    font-weight: 700;
+  }
+
+  /* FDC3 User Channel Widget */
+  .tb-fdc3-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--tb-fdc3-bg, rgba(239, 68, 68, 0.15));
+    border: 1px solid var(--tb-fdc3-border, rgba(239, 68, 68, 0.35));
+    color: var(--tb-fdc3-color, #fca5a5);
+    padding: 3px 9px;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    font-family: var(--mono-font);
+    cursor: pointer;
+    position: relative;
+  }
+  .tb-fdc3-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--tb-fdc3-dot, #ef4444);
+    box-shadow: 0 0 6px var(--tb-fdc3-dot, #ef4444);
+  }
+
+  /* Telemetry & Latency Pill */
+  .tb-telemetry-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--tb-pill-bg, rgba(255, 255, 255, 0.04));
+    border: 1px solid var(--tb-pill-border, rgba(255, 255, 255, 0.08));
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    color: #94a3b8;
+    font-family: var(--mono-font);
+    cursor: pointer;
+    position: relative;
+  }
+  .tb-pulse-green {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green-up);
+    box-shadow: 0 0 6px var(--green-up);
+  }
+
+  /* Clock */
+  .tb-clock {
+    font-size: 0.72rem;
+    font-family: var(--mono-font);
+    color: var(--tb-text-muted, #94a3b8);
+    font-weight: 600;
+    padding: 0 6px;
+  }
+
+  /* Interactive Dropdown / Popover Flyouts */
+  .tb-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    background: #0d131f;
+    border: 1px solid #27354f;
+    border-radius: 8px;
+    box-shadow: 0 16px 36px -4px rgba(0, 0, 0, 0.8);
+    padding: 6px;
+    z-index: 100;
+    min-width: 220px;
+    display: none;
+  }
+  .tb-popover.open { display: block; }
+  .tb-popover-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    color: #cbd5e1;
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+  .tb-popover-item:hover {
+    background: #1e293b;
+    color: #fff;
+  }
+  .tb-popover-header {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: #64748b;
+    padding: 4px 8px;
+    letter-spacing: 0.05em;
+  }
+
+  /* Theme Packages Variables */
+  /* 1. Aurora Dark (DeskModal Standard) */
+  .theme-aurora {
+    --tb-bg: rgba(11, 17, 28, 0.95);
+    --tb-border: #1e293b;
+    --tb-text: #f1f5f9;
+    --tb-text-muted: #94a3b8;
+    --tb-hover: rgba(255, 255, 255, 0.08);
+    --tb-pill-bg: rgba(255, 255, 255, 0.05);
+    --tb-pill-border: rgba(255, 255, 255, 0.09);
+    --tb-input-bg: rgba(0, 0, 0, 0.4);
+    --brand-mark-bg: linear-gradient(135deg, #0ea5e9, #3b82f6);
+  }
+
+  /* 2. Terminal Amber (Bloomberg Professional) */
+  .theme-terminal {
+    --tb-bg: #000000;
+    --tb-border: #d97706;
+    --tb-text: #fbbf24;
+    --tb-text-muted: #d97706;
+    --tb-hover: rgba(245, 158, 11, 0.15);
+    --tb-pill-bg: #111111;
+    --tb-pill-border: #78350f;
+    --tb-input-bg: #050505;
+    --tb-font: var(--mono-font);
+    --brand-mark-bg: #f59e0b;
+  }
+
+  /* 3. Gold & Navy (Tier-1 Bank Whitelabel) */
+  .theme-bank {
+    --tb-bg: #08101e;
+    --tb-border: #23344f;
+    --tb-text: #f8fafc;
+    --tb-text-muted: #94a3b8;
+    --tb-hover: rgba(212, 175, 55, 0.12);
+    --tb-pill-bg: rgba(255, 255, 255, 0.04);
+    --tb-pill-border: rgba(212, 175, 55, 0.3);
+    --tb-input-bg: #050a14;
+    --brand-mark-bg: linear-gradient(135deg, #d4af37, #aa820a);
+  }
+
+  /* 4. High-Contrast WCAG AAA */
+  .theme-high-contrast {
+    --tb-bg: #000000;
+    --tb-border: #ffffff;
+    --tb-text: #ffffff;
+    --tb-text-muted: #e2e8f0;
+    --tb-hover: #222222;
+    --tb-pill-bg: #000000;
+    --tb-pill-border: #ffffff;
+    --tb-input-bg: #000000;
+    --brand-mark-bg: #ffffff;
+  }
+
+  /* Content Cards & Documentation Sections */
+  .section-card {
+    background: var(--surface-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+  .section-card h2 {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #f8fafc;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section-card h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #38bdf8;
+    margin: 20px 0 10px 0;
+  }
+  .section-card p {
+    color: var(--text-secondary);
+    margin-bottom: 14px;
+  }
+
+  /* Comparison Grid */
+  .matrix-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin: 20px 0;
+  }
+  .matrix-card {
+    background: #111724;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .matrix-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #f1f5f9;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .matrix-card ul {
+    list-style-type: none;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+  }
+  .matrix-card li {
+    margin-bottom: 6px;
+    padding-left: 16px;
+    position: relative;
+  }
+  .matrix-card li::before {
+    content: "•";
+    position: absolute;
+    left: 4px;
+    color: var(--brand-accent);
+  }
+
+  /* Code Blocks */
+  pre {
+    background: #080c14;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 16px;
+    font-family: var(--mono-font);
+    font-size: 0.8rem;
+    color: #cbd5e1;
+    overflow-x: auto;
+    margin: 14px 0;
+  }
+  code {
+    font-family: var(--mono-font);
+    background: rgba(255, 255, 255, 0.08);
+    padding: 2px 5px;
+    border-radius: 4px;
+    font-size: 0.85em;
+    color: #38bdf8;
+  }
+
+  .interactive-hint {
+    background: rgba(14, 165, 233, 0.1);
+    border: 1px dashed rgba(14, 165, 233, 0.4);
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 0.8rem;
+    color: #7dd3fc;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  /* ==========================================================================
+     SPLIT-TREE TILING & MODAL HUD STYLING (ZERO DESK SPACE OBFUSCATION)
+     ========================================================================== */
+  .split-tiling-grid {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    flex: 1;
+    min-height: 400px;
+    transition: all 0.2s ease;
+  }
+  .tile-panel {
+    background: rgba(13, 18, 28, 0.9);
+    border: 1px solid var(--tb-border, #1e293b);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    position: relative;
+  }
+  .tile-main {
+    flex: 1.4;
+  }
+  .tile-column-split {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .tile-header {
+    height: 30px;
+    background: rgba(15, 23, 42, 0.85);
+    border-bottom: 1px solid #1e293b;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 10px;
+    font-size: 0.72rem;
+    color: #94a3b8;
+    user-select: none;
+  }
+  .tile-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .tile-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #10b981;
+  }
+  .tile-status-dot.fdc3-red {
+    background: #ef4444;
+    box-shadow: 0 0 5px #ef4444;
+  }
+  .tile-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .tile-badge {
+    font-family: var(--mono-font);
+    font-size: 0.65rem;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #38bdf8;
+  }
+  .tile-btn {
+    background: rgba(56, 189, 248, 0.1);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    color: #38bdf8;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 0.68rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.15s ease;
+  }
+  .tile-btn:hover {
+    background: rgba(56, 189, 248, 0.25);
+    color: #fff;
+  }
+  .tile-body {
+    flex: 1;
+    padding: 10px;
+    font-family: var(--mono-font);
+    font-size: 0.75rem;
+    color: #cbd5e1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Graph SVG Simulation */
+  .sim-graph-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .sim-graph-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.68rem;
+    color: #94a3b8;
+    margin-bottom: 6px;
+  }
+  .sim-vol-svg {
+    width: 100%;
+    height: 160px;
+    background: rgba(8, 12, 20, 0.6);
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.03);
+  }
+
+  /* L2 Depth Table Simulation */
+  .sim-l2-depth {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .l2-row {
+    display: flex;
+    align-items: center;
+    position: relative;
+    height: 20px;
+    font-size: 0.72rem;
+    padding: 0 6px;
+  }
+  .l2-row .bid { color: #10b981; font-weight: 700; width: 65px; z-index: 2; }
+  .l2-row .ask { color: #f43f5e; font-weight: 700; width: 65px; z-index: 2; }
+  .l2-row .qty { color: #cbd5e1; width: 50px; z-index: 2; text-align: right; }
+  .depth-bar-bid {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: rgba(16, 185, 129, 0.18);
+    border-right: 2px solid rgba(16, 185, 129, 0.5);
+    z-index: 1;
+  }
+  .depth-bar-ask {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    background: rgba(244, 63, 94, 0.18);
+    border-left: 2px solid rgba(244, 63, 94, 0.5);
+    z-index: 1;
+  }
+
+  /* Blotter Table Simulation */
+  .sim-blotter {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .blotter-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    background: rgba(255, 255, 255, 0.02);
+    padding: 4px 6px;
+    border-radius: 3px;
+    border-left: 2px solid #38bdf8;
+  }
+  .blotter-row .time { color: #64748b; }
+  .blotter-row .buy { color: #10b981; font-weight: 700; }
+  .blotter-row .sell { color: #f43f5e; font-weight: 700; }
+
+  /* Modal HUD Window (Ephemeral Action Layer) */
+  .modal-hud-overlay {
+    position: absolute;
+    top: 36px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(4, 6, 12, 0.6);
+    backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    animation: fadeInModal 0.15s ease-out;
+  }
+  @keyframes fadeInModal {
+    from { opacity: 0; transform: scale(0.97); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  .modal-hud-window {
+    width: 440px;
+    background: #0d1322;
+    border: 1px solid var(--brand-accent, #38bdf8);
+    border-radius: 10px;
+    box-shadow: 0 24px 60px -8px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(56, 189, 248, 0.2);
+    overflow: hidden;
+  }
+  .modal-hud-header {
+    height: 38px;
+    background: #131b2e;
+    border-bottom: 1px solid #1e293b;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+  }
+  .modal-title {
+    font-size: 0.8rem;
+    color: #f1f5f9;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .modal-pill-tag {
+    background: var(--brand-accent, #0ea5e9);
+    color: #fff;
+    font-size: 0.62rem;
+    font-weight: 700;
+    padding: 2px 5px;
+    border-radius: 3px;
+    text-transform: uppercase;
+  }
+  .modal-close-btn {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: all 0.15s ease;
+  }
+  .modal-close-btn:hover {
+    background: rgba(244, 63, 94, 0.15);
+    color: #f43f5e;
+  }
+  .modal-hud-content {
+    padding: 16px;
+  }
+  .modal-field-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .modal-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .modal-field label {
+    font-size: 0.68rem;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .modal-input {
+    background: #080c14;
+    border: 1px solid #1e293b;
+    border-radius: 5px;
+    color: #f8fafc;
+    font-family: var(--mono-font);
+    font-size: 0.8rem;
+    padding: 6px 8px;
+    outline: none;
+  }
+  .modal-input:focus {
+    border-color: var(--brand-accent, #38bdf8);
+  }
+  .modal-price-val {
+    font-family: var(--mono-font);
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #10b981;
+    padding: 4px 0;
+  }
+  .modal-greeks-strip {
+    background: #080c14;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+    padding: 8px 12px;
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono-font);
+    font-size: 0.72rem;
+    color: #94a3b8;
+    margin-bottom: 16px;
+  }
+  .modal-greeks-strip strong {
+    color: #38bdf8;
+  }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+  .btn-modal-sec {
+    background: transparent;
+    border: 1px solid #334155;
+    color: #cbd5e1;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+  .btn-modal-sec:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .btn-modal-primary {
+    background: var(--brand-accent, #0284c7);
+    border: 1px solid var(--brand-accent, #38bdf8);
+    color: #fff;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(14, 165, 233, 0.3);
+  }
+  .btn-modal-primary:hover {
+    filter: brightness(1.15);
+  }
+
+  /* Auto-Hide Toolbar (Zero Desk Space Obfuscation) */
+  .toolbar-autohide-active {
+    margin-top: -34px !important;
+    opacity: 0.1 !important;
+    pointer-events: none;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .edge-reveal-strip {
+    display: none;
+    position: absolute;
+    top: 36px;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, transparent, var(--brand-accent, #38bdf8), transparent);
+    z-index: 60;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .edge-reveal-strip:hover {
+    height: 10px;
+    background: var(--brand-accent, #38bdf8);
+    box-shadow: 0 0 12px var(--brand-accent, #38bdf8);
+  }
+  .edge-reveal-label {
+    display: none;
+    position: absolute;
+    top: 42px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 2px 10px;
+    font-size: 0.65rem;
+    color: #7dd3fc;
+    z-index: 61;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- Header Block -->
+  <div class="badge-row">
+    <span class="tag">Architecture & UX Specification</span>
+    <span class="tag tag-os">Windows · macOS · Linux</span>
+    <span class="tag" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border-color: rgba(52, 211, 153, 0.3);">FDC3 v2.2 Mesh</span>
+  </div>
+
+  <h1>DeskModal Toolbar: Sovereign Branding, Customization & Multi-OS Architecture</h1>
+  <p class="subtitle">
+    An interactive design review exploring how DeskModal's toolbar evolves from a consumer dock imitation into an institutional-grade, white-labelable <strong>Sovereign Trading Command Bar</strong> across macOS, Windows 11, and Linux.
+  </p>
+
+  <!-- Interactive Sandbox Simulator -->
+  <div class="sandbox-panel">
+    <div class="sandbox-header">
+      <div class="sandbox-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <span>Interactive Workspace Simulator</span>
+      </div>
+
+      <!-- Controls Matrix -->
+      <div class="controls-group">
+        <!-- OS Selector -->
+        <div>
+          <span class="control-select-label">Operating System:</span>
+          <div class="btn-group" id="osGroup">
+            <button class="btn-toggle active" onclick="setOS('macos')">macOS</button>
+            <button class="btn-toggle" onclick="setOS('windows')">Windows 11</button>
+            <button class="btn-toggle" onclick="setOS('linux')">Linux (Wayland)</button>
+          </div>
+        </div>
+
+        <!-- Form Factor Selector -->
+        <div>
+          <span class="control-select-label">Layout Form Factor:</span>
+          <div class="btn-group" id="layoutGroup">
+            <button class="btn-toggle active" onclick="setLayout('ribbon')">Command Ribbon (Top)</button>
+            <button class="btn-toggle" onclick="setLayout('vertical')">Vertical Rail (Left)</button>
+            <button class="btn-toggle" onclick="setLayout('floating')">Floating Dock</button>
+          </div>
+        </div>
+
+        <!-- Brand Theme Selector -->
+        <div>
+          <span class="control-select-label">Brand Theme Pack:</span>
+          <div class="btn-group" id="themeGroup">
+            <button class="btn-toggle active" onclick="setTheme('aurora')">Aurora Dark</button>
+            <button class="btn-toggle" onclick="setTheme('terminal')">Terminal Amber</button>
+            <button class="btn-toggle" onclick="setTheme('bank')">Tier-1 Bank (Gold/Navy)</button>
+            <button class="btn-toggle" onclick="setTheme('high-contrast')">WCAG AAA</button>
+          </div>
+        </div>
+
+        <!-- Modality & Desk Space Selector -->
+        <div>
+          <span class="control-select-label">Modality & Space:</span>
+          <div class="btn-group" id="spaceGroup">
+            <button class="btn-toggle active" onclick="setSpaceMode('tiling')">Cockpit Tiling (Split-Tree)</button>
+            <button class="btn-toggle" onclick="setSpaceMode('modal')">Modal Action HUD</button>
+            <button class="btn-toggle" onclick="setSpaceMode('autohide')">Zero-Footprint (Auto-Hide)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="interactive-hint">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      <span><strong>Try it live:</strong> Click <strong>Cockpit Tiling</strong>, <strong>Modal Action HUD</strong>, or <strong>Zero-Footprint</strong> to see how DeskModal tiles non-overlapping trading desks or presents high-focus action HUDs without ever obfuscating screen space!</span>
+    </div>
+
+    <!-- The OS Stage Window -->
+    <div class="os-stage theme-aurora" id="osStage">
+      <!-- Edge Reveal Strip for Zero-Footprint Auto-Hide Mode -->
+      <div class="edge-reveal-strip" id="edgeRevealStrip" onmouseenter="revealToolbar(true)" onclick="revealToolbar(true)"></div>
+      <div class="edge-reveal-label" id="edgeRevealLabel">✦ DeskModal Command Bar (Hover or ⌘K to reveal)</div>
+
+      <!-- Titlebar Area -->
+      <div class="os-titlebar" id="osTitlebar">
+        <div class="macos-controls" id="macosControls">
+          <div class="traffic-light traffic-red"></div>
+          <div class="traffic-light traffic-yellow"></div>
+          <div class="traffic-light traffic-green"></div>
+        </div>
+        <div class="os-window-caption" id="osCaption">DeskModal 2.0 — FX Volatility & Derivatives Workbench</div>
+        <div class="windows-controls" id="windowsControls" style="display: none;">
+          <div class="win-btn">—</div>
+          <div class="win-btn">□</div>
+          <div class="win-btn win-btn-close">✕</div>
+        </div>
+        <div class="linux-controls" id="linuxControls" style="display: none;">
+          <div class="linux-pill"></div>
+          <div class="linux-pill"></div>
+          <div class="linux-pill"></div>
+        </div>
+      </div>
+
+      <!-- Live Mockup of the Sovereign Command Bar -->
+      <div id="toolbarHost" class="toolbar-ribbon" onmouseleave="handleToolbarLeave()">
+        <!-- Left Cluster: System & Workspace -->
+        <div class="cluster-left">
+          <!-- Platform Menu Trigger -->
+          <div style="position: relative;">
+            <button class="tb-brand-btn" onclick="toggleMenu('systemMenu')">
+              <div class="brand-logo-mark" id="brandMarkIcon">DM</div>
+              <span id="brandNameText">DeskModal</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="tb-popover" id="systemMenu">
+              <div class="tb-popover-header">System Platform Menu</div>
+              <div class="tb-popover-item"><span>Workspaces & Layouts</span><span class="tb-kbd-hint">⌘W</span></div>
+              <div class="tb-popover-item"><span>App Market</span><span class="tb-stack-count" style="background:#0284c7;color:#fff;">2 Updates</span></div>
+              <div class="tb-popover-item"><span>Global Preferences...</span><span class="tb-kbd-hint">⌘,</span></div>
+              <div class="tb-popover-item" style="border-top:1px solid #1e293b;margin-top:4px;padding-top:6px;"><span>Restart SBE/SHM Daemon</span><span class="tb-kbd-hint">IPC</span></div>
+              <div class="tb-popover-item"><span>System Diagnostics & Latency</span></div>
+              <div class="tb-popover-item"><span>About DeskModal</span></div>
+              <div class="tb-popover-item" style="color:#f43f5e;"><span>Quit DeskModal</span><span class="tb-kbd-hint">⌘Q</span></div>
+            </div>
+          </div>
+
+          <!-- Workspace Pill -->
+          <div style="position: relative;">
+            <button class="tb-workspace-pill" onclick="toggleMenu('workspaceMenu')">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+              <span>FX Vol Desk</span>
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="tb-popover" id="workspaceMenu">
+              <div class="tb-popover-header">Switch Active Workspace</div>
+              <div class="tb-popover-item" style="color:#38bdf8;font-weight:700;"><span>✓ FX Volatility Desk</span><span class="tb-kbd-hint">Current</span></div>
+              <div class="tb-popover-item"><span>Rates & Swaptions Trading</span></div>
+              <div class="tb-popover-item"><span>Cross-Asset Risk & VaR</span></div>
+              <div class="tb-popover-item"><span>Executive Portfolio Overview</span></div>
+              <div class="tb-popover-item" style="border-top:1px solid #1e293b;margin-top:4px;padding-top:6px;color:#38bdf8;"><span>+ Save New Workspace...</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Center Cluster: Command Search & App Stacks -->
+        <div class="cluster-center">
+          <!-- Command & Ticker Jump -->
+          <div class="tb-command-pill">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" placeholder="Jump ticker or app..." value="EURUSD" id="commandInput" onkeydown="handleCommandKey(event)">
+            <span class="tb-kbd-hint">⌘K</span>
+          </div>
+
+          <!-- App Stacks (Flyouts) -->
+          <!-- Stack 1: CelNet Studio (6 Sovereign Desks) -->
+          <div style="position: relative;">
+            <button class="tb-app-stack active" onclick="toggleMenu('celnetMenu')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+              <span>CelNet</span>
+              <span class="tb-stack-count">6</span>
+            </button>
+            <div class="tb-popover" id="celnetMenu" style="min-width:240px;">
+              <div class="tb-popover-header">CelNet Sovereign Desks</div>
+              <div class="tb-popover-item"><span>Options Pricing & Structuring</span><span class="tb-kbd-hint">Desk 01</span></div>
+              <div class="tb-popover-item"><span>Markets & Streaming Depth</span><span class="tb-kbd-hint">Desk 02</span></div>
+              <div class="tb-popover-item"><span>RFQ & Dealer Negotiation</span><span class="tb-kbd-hint">Desk 03</span></div>
+              <div class="tb-popover-item"><span>Risk Cube & Scenario VaR</span><span class="tb-kbd-hint">Desk 04</span></div>
+              <div class="tb-popover-item"><span>Deals & Lifecycle Blotter</span><span class="tb-kbd-hint">Desk 05</span></div>
+              <div class="tb-popover-item"><span>Curve & Swaption Analytics</span><span class="tb-kbd-hint">Desk 06</span></div>
+              <div class="tb-popover-item" style="border-top:1px solid #1e293b;margin-top:4px;padding-top:6px;color:#38bdf8;"><span>Open All Desks as Grid</span></div>
+            </div>
+          </div>
+
+          <!-- Stack 2: TradeSurface (8 Tools) -->
+          <div style="position: relative;">
+            <button class="tb-app-stack" onclick="toggleMenu('tradesurfaceMenu')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+              <span>TradeSurface</span>
+              <span class="tb-stack-count">8</span>
+            </button>
+            <div class="tb-popover" id="tradesurfaceMenu" style="min-width:220px;">
+              <div class="tb-popover-header">TradeSurface Market Tools</div>
+              <div class="tb-popover-item"><span>Multi-Asset Candlestick Chart</span></div>
+              <div class="tb-popover-item"><span>Consolidated L2 Depth Ladder</span></div>
+              <div class="tb-popover-item"><span>Market Feeds & Tapes</span></div>
+              <div class="tb-popover-item"><span>Multi-Asset Watchlist</span></div>
+              <div class="tb-popover-item"><span>Macro Earnings Calendar</span></div>
+              <div class="tb-popover-item"><span>Breaking News Terminal</span></div>
+            </div>
+          </div>
+
+          <!-- Standalone App: OptiScript -->
+          <button class="tb-app-stack">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            <span>OptiScript</span>
+          </button>
+        </div>
+
+        <!-- Right Cluster: FDC3, Telemetry, Notifications, Clock -->
+        <div class="cluster-right">
+          <!-- FDC3 User Channel Widget -->
+          <div style="position: relative;">
+            <button class="tb-fdc3-pill" id="fdc3Btn" onclick="toggleMenu('fdc3Menu')">
+              <span class="tb-fdc3-dot" id="fdc3Dot"></span>
+              <span id="fdc3Text">Red: EURUSD</span>
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="tb-popover" id="fdc3Menu" style="min-width: 190px; right: 0; left: auto;">
+              <div class="tb-popover-header">FDC3 2.2 User Channels</div>
+              <div class="tb-popover-item" onclick="setChannel('Red', '#ef4444', 'rgba(239,68,68,0.15)', 'rgba(239,68,68,0.35)', '#fca5a5')">
+                <span style="display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:#ef4444;"></span>Red (EURUSD)</span>
+                <span class="tb-kbd-hint">●</span>
+              </div>
+              <div class="tb-popover-item" onclick="setChannel('Orange', '#f97316', 'rgba(249,115,22,0.15)', 'rgba(249,115,22,0.35)', '#fdba74')">
+                <span style="display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:#f97316;"></span>Orange (USDJPY)</span>
+                <span class="tb-kbd-hint">■</span>
+              </div>
+              <div class="tb-popover-item" onclick="setChannel('Green', '#10b981', 'rgba(16,185,129,0.15)', 'rgba(16,185,129,0.35)', '#6ee7b7')">
+                <span style="display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:#10b981;"></span>Green (GBPUSD)</span>
+                <span class="tb-kbd-hint">▲</span>
+              </div>
+              <div class="tb-popover-item" onclick="setChannel('Blue', '#3b82f6', 'rgba(59,130,246,0.15)', 'rgba(59,130,246,0.35)', '#93c5fd')">
+                <span style="display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:#3b82f6;"></span>Blue (XAUUSD)</span>
+                <span class="tb-kbd-hint">◆</span>
+              </div>
+              <div class="tb-popover-item" onclick="setChannel('Global', '#64748b', 'rgba(100,116,139,0.15)', 'rgba(100,116,139,0.35)', '#cbd5e1')" style="border-top:1px solid #1e293b;margin-top:4px;padding-top:6px;">
+                <span style="display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:#64748b;"></span>Global (Unlinked)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Microservice Telemetry Pill -->
+          <div style="position: relative;">
+            <button class="tb-telemetry-pill" onclick="toggleMenu('telemetryMenu')">
+              <span class="tb-pulse-green"></span>
+              <span>12µs SHM</span>
+              <span style="color:#64748b;">·</span>
+              <span style="color:#10b981;">WS OK</span>
+            </button>
+            <div class="tb-popover" id="telemetryMenu" style="min-width:260px; right:0; left:auto;">
+              <div class="tb-popover-header">Platform Health & IPC Telemetry</div>
+              <div class="tb-popover-item"><span>CelNet Pricing Engine (SHM)</span><span style="color:#10b981;font-family:var(--mono-font);">11.28 ns</span></div>
+              <div class="tb-popover-item"><span>WebSocket Bridge (:8085)</span><span style="color:#10b981;font-family:var(--mono-font);">0.82 ms</span></div>
+              <div class="tb-popover-item"><span>Market Feeds Aggregator</span><span style="color:#10b981;font-family:var(--mono-font);">Healthy</span></div>
+              <div class="tb-popover-item"><span>FDC3 2.2 Context Mesh</span><span style="color:#10b981;font-family:var(--mono-font);">Linked (Red)</span></div>
+            </div>
+          </div>
+
+          <!-- Notification Bell -->
+          <button class="tb-workspace-pill" style="padding:4px 6px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            <span class="tb-stack-count" style="background:#f43f5e;color:#fff;">2</span>
+          </button>
+
+          <!-- Clock -->
+          <div class="tb-clock" id="liveClock">14:32:05 UTC</div>
+        </div>
+      </div>
+
+      <!-- Desktop Body Mockup showing underlying workspace -->
+      <div class="desktop-canvas">
+        <!-- Live Split-Tree Binary Tiling Grid -->
+        <div class="split-tiling-grid" id="splitTilingGrid">
+          <!-- Left Tile: CelNet Options Pricing & Volatility Desk (60%) -->
+          <div class="tile-panel tile-main">
+            <div class="tile-header">
+              <span class="tile-title">
+                <span class="tile-status-dot fdc3-red"></span>
+                <strong>CelNet Desk 01</strong> — Options Volatility Smile & Greeks Surface
+              </span>
+              <div class="tile-actions">
+                <span class="tile-badge">GARMAN-KOHLHAGEN</span>
+                <button class="tile-btn" title="Open as floating Modal HUD" onclick="setSpaceMode('modal')">⚡ Quick RFQ</button>
+              </div>
+            </div>
+            <div class="tile-body">
+              <div class="sim-graph-container">
+                <div class="sim-graph-labels">
+                  <span>Spot: <strong>1.0845</strong></span>
+                  <span>ATM Vol: <strong>7.82%</strong></span>
+                  <span>25Δ RR: <strong>-0.45%</strong></span>
+                  <span>10Δ Fly: <strong>+0.22%</strong></span>
+                </div>
+                <svg viewBox="0 0 460 160" class="sim-vol-svg">
+                  <!-- Grid -->
+                  <line x1="20" y1="30" x2="440" y2="30" stroke="#1e293b" stroke-dasharray="3 3"/>
+                  <line x1="20" y1="75" x2="440" y2="75" stroke="#1e293b" stroke-dasharray="3 3"/>
+                  <line x1="20" y1="120" x2="440" y2="120" stroke="#1e293b" stroke-dasharray="3 3"/>
+                  <line x1="230" y1="10" x2="230" y2="150" stroke="#1e293b" stroke-dasharray="3 3"/>
+                  <!-- Smile Curve -->
+                  <path d="M 30,135 Q 140,150 230,152 T 430,120" fill="none" stroke="var(--brand-accent, #38bdf8)" stroke-width="2.5"/>
+                  <circle cx="230" cy="152" r="4" fill="var(--brand-accent, #38bdf8)"/>
+                  <text x="240" y="148" fill="#94a3b8" font-size="10" font-family="monospace">ATM 1.0845 (7.82%)</text>
+                  <text x="35" y="125" fill="#ef4444" font-size="9" font-family="monospace">25Δ Put: 8.12%</text>
+                  <text x="360" y="110" fill="#10b981" font-size="9" font-family="monospace">25Δ Call: 7.67%</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Split Column (40%): L2 Book + Executed Blotter -->
+          <div class="tile-column-split">
+            <!-- Top Right: TradeSurface L2 Book Depth -->
+            <div class="tile-panel" style="flex: 1;">
+              <div class="tile-header">
+                <span class="tile-title">
+                  <span class="tile-status-dot fdc3-red"></span>
+                  <strong>TradeSurface</strong> — L2 Consolidated Depth
+                </span>
+                <span class="tile-badge" style="color:#10b981;">10 GIG-E</span>
+              </div>
+              <div class="tile-body sim-l2-depth">
+                <div class="l2-row"><span class="bid">1.0847</span><span class="qty">5.0M</span><div class="depth-bar-bid" style="width:70%;"></div></div>
+                <div class="l2-row"><span class="bid">1.0846</span><span class="qty">12.5M</span><div class="depth-bar-bid" style="width:95%;"></div></div>
+                <div class="l2-row"><span class="ask">1.0848</span><span class="qty">8.0M</span><div class="depth-bar-ask" style="width:75%;"></div></div>
+                <div class="l2-row"><span class="ask">1.0849</span><span class="qty">15.0M</span><div class="depth-bar-ask" style="width:100%;"></div></div>
+              </div>
+            </div>
+
+            <!-- Bottom Right: CelNet Deals Blotter -->
+            <div class="tile-panel" style="flex: 1;">
+              <div class="tile-header">
+                <span class="tile-title">
+                  <span class="tile-status-dot"></span>
+                  <strong>Deals Blotter</strong> — Desk 05 Live Fills
+                </span>
+                <span class="tile-badge">REAL-TIME</span>
+              </div>
+              <div class="tile-body sim-blotter">
+                <div class="blotter-row"><span class="time">14:31:02</span><span>EUR/USD 1.0850 C</span><span class="buy">BUY 10M</span><span>12.4 bps</span></div>
+                <div class="blotter-row"><span class="time">14:30:45</span><span>EUR/USD 1.0750 P</span><span class="sell">SELL 5M</span><span>8.1 bps</span></div>
+                <div class="blotter-row"><span class="time">14:29:18</span><span>EUR/USD 1.0900 C</span><span class="buy">BUY 25M</span><span>14.2 bps</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Modal HUD Overlay: Instant RFQ & Order Ticket -->
+        <div class="modal-hud-overlay" id="modalHud" style="display: none;">
+          <div class="modal-hud-window">
+            <div class="modal-hud-header">
+              <div class="modal-title">
+                <span class="modal-pill-tag">MODAL HUD</span>
+                <strong>Instant RFQ & Order Ticket</strong> — EUR/USD 1M Option
+              </div>
+              <button class="modal-close-btn" onclick="setSpaceMode('tiling')">✕ (Esc)</button>
+            </div>
+            <div class="modal-hud-content">
+              <div class="modal-field-grid">
+                <div class="modal-field">
+                  <label>Notional (EUR)</label>
+                  <input type="text" value="10,000,000" class="modal-input">
+                </div>
+                <div class="modal-field">
+                  <label>Strike</label>
+                  <input type="text" value="1.0850" class="modal-input">
+                </div>
+                <div class="modal-field">
+                  <label>Tenor</label>
+                  <input type="text" value="1M (20-Oct)" class="modal-input">
+                </div>
+                <div class="modal-field">
+                  <label>Live Dealer Price</label>
+                  <div class="modal-price-val">12.4 / 12.8 bps</div>
+                </div>
+              </div>
+              <div class="modal-greeks-strip">
+                <span>Δ: <strong>0.524</strong></span>
+                <span>Γ: <strong>0.041</strong></span>
+                <span>Vega: <strong>$14,210</strong></span>
+                <span>Theta: <strong>-$1,840/d</strong></span>
+              </div>
+              <div class="modal-actions">
+                <button class="btn-modal-sec" onclick="setSpaceMode('tiling')">Cancel (Esc)</button>
+                <button class="btn-modal-primary" onclick="alert('Trade Executed: 10M EUR/USD 1.0850 Call via SBE SHM'); setSpaceMode('tiling');">Execute at 12.6 bps ⚡</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Technical Architectural Documentation -->
+  <div class="section-card">
+    <h2>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+      1. Enterprise Branding Architecture (`brand-service` cdylib)
+    </h2>
+    <p>
+      DeskModal does not treat branding as an afterthought or a superficial CSS stylesheet. Branding is powered by a dedicated, compiled Rust cdylib service (<code>plugins/brand-service/</code>) running as a REQUIRED system actor inside the Tauri host process. It publishes state across the FDC3 bus via <code>deskmodal.brand.changed</code> and enforces tenant governance.
+    </p>
+
+    <div class="matrix-grid">
+      <div class="matrix-card">
+        <div class="matrix-title">Single Source of Broadcast Truth</div>
+        <ul>
+          <li><strong>Rust cdylib Service</strong>: Powered by <code>ArcSwap&lt;ActiveBrandSelection&gt;</code> for lock-free, zero-allocation reads on hot rendering loops.</li>
+          <li><strong>FDC3 Brand Mesh</strong>: Broadcasts 7 dedicated channels (changed, installed, preview, os_conformance_changed) to all webviews.</li>
+          <li><strong>Crash-Safe Persistence</strong>: Atomic 60s debounced JSON persistence with schema-evolution merge closures.</li>
+        </ul>
+      </div>
+
+      <div class="matrix-card">
+        <div class="matrix-title">Enterprise DLP & Lockdown Policy</div>
+        <ul>
+          <li><strong>Firm-Enforced Whitelabeling</strong>: IT administrators can lock firm branding via <code>brand.locked: true</code> in <code>desk.toml</code>.</li>
+          <li><strong>Ed25519 Signed Bundles</strong>: Brand packs are cryptographically signed <code>.dmbrand</code> archives verified before ingestion.</li>
+          <li><strong>Dynamic CSS Injection</strong>: Transforms 12 token categories (~120 sub-tokens) into native CSS custom properties at runtime.</li>
+        </ul>
+      </div>
+
+      <div class="matrix-card">
+        <div class="matrix-title">12 Brand Token Categories</div>
+        <ul>
+          <li><strong>Color Palette</strong>: Dark & Light OKLCH color spaces guaranteeing WCAG 2.2 AA/AAA contrast.</li>
+          <li><strong>Typography</strong>: Font scale (xs..3xl), monospace tabular numbers for trading screens.</li>
+          <li><strong>Trading Tokens</strong>: Up-tick, down-tick, cross, neutral, and FDC3 channel geometric shapes.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cross-Platform OS Adaptation -->
+  <div class="section-card">
+    <h2>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+      2. Multi-OS Native Ergonomics: macOS, Windows 11, and Linux
+    </h2>
+    <p>
+      DeskModal is built with Tauri 2.0 to deliver native desktop integration across all three major operating systems. The toolbar dynamically conforms to host OS conventions rather than forcing a foreign look-and-feel:
+    </p>
+
+    <div class="matrix-grid">
+      <div class="matrix-card">
+        <div class="matrix-title">Apple macOS (Darwin / Cocoa)</div>
+        <ul>
+          <li><strong>Vibrancy & Materials</strong>: Utilizes <code>NSVisualEffectView</code> with <code>under-window</code> and <code>behind-window</code> blending modes.</li>
+          <li><strong>Traffic Lights Alignment</strong>: In Top Ribbon mode, the bar accounts for window traffic lights with an 80px leading inset.</li>
+          <li><strong>Display Notch Avoidance</strong>: Sits flush below the macOS system menu bar without obstructing the camera notch on modern MacBook Pros.</li>
+          <li><strong>System Notifications</strong>: <code>NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification</code> integration for real-time reduce-motion and high-contrast response.</li>
+        </ul>
+      </div>
+
+      <div class="matrix-card">
+        <div class="matrix-title">Microsoft Windows 11 / 10</div>
+        <ul>
+          <li><strong>Mica & Acrylic Materials</strong>: Windows 11 Mica / Acrylic backdrop integration via <code>DwmSetWindowAttribute</code>.</li>
+          <li><strong>Taskbar Docking</strong>: Automatic edge-snap that respects the Windows Taskbar position (bottom, left, or top) and multi-monitor virtual desktops.</li>
+          <li><strong>Snap Layouts Integration</strong>: Interoperates with Windows 11 Snap Groups and Snap Assist without window clipping.</li>
+          <li><strong>High Contrast & forced-colors</strong>: Responds to <code>WM_THEMECHANGED</code> and <code>SPI_SETHIGHCONTRAST</code> for WCAG AAA accessibility.</li>
+        </ul>
+      </div>
+
+      <div class="matrix-card">
+        <div class="matrix-title">Linux (X11 & Wayland)</div>
+        <ul>
+          <li><strong>Wayland Layer-Shell</strong>: Native support for <code>wlr-layer-shell-unstable-v1</code>, allowing the toolbar to dock cleanly outside the window tiling grid.</li>
+          <li><strong>Tiling WM Harmony</strong>: Zero-disruption companion for i3, Sway, and Hyprland; behaves as an anchored status bar without competing for floating focus.</li>
+          <li><strong>Freedesktop & GTK Sync</strong>: GSettings watch on <code>org.gnome.desktop.interface</code> and KDE <code>kdeglobals</code> D-Bus signals for system dark/light switching.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- App Stacks & Manifest Spec -->
+  <div class="section-card">
+    <h2>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>
+      3. App Stacks: Solving the "20-Icon Wall" Scalability Bottleneck
+    </h2>
+    <p>
+      In complex institutional platforms, plugins contribute multiple sovereign sub-apps (e.g. CelNet contributes 6 desks, TradeSurface contributes 8 tools). Flattening these into the toolbar creates an overwhelming wall of icons. We introduce <strong>App Stacks</strong> in the plugin manifest:
+    </p>
+
+    <pre><code># Example: plugins/celnet-studio/plugin.toml
+[plugin.toolbar]
+position = "primary"
+group = "celnet.derivatives"
+group_title = "CelNet Derivatives"
+group_icon = "icons/celnet-suite.svg"
+badge_style = "count"     # Renders a subtle "(6)" badge on the stack pill
+priority = 10             # Determines horizontal placement order
+
+# Child desks automatically nest inside the CelNet Derivatives Stack
+[[apps.entries]]
+appId = "celnet.studio.pricing"
+name = "Options Pricing Studio"
+stack_role = "primary"
+
+[[apps.entries]]
+appId = "celnet.studio.markets"
+name = "Markets & Streaming Depth"
+stack_role = "member"</code></pre>
+  </div>
+
+  <!-- Section 4: Modal vs Tileable Architecture & Zero Desk Space Obfuscation -->
+  <div class="section-card">
+    <h2>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12h18"/><path d="M12 12v9"/></svg>
+      4. The Modal vs. Tileable Calculus: Eliminating Desktop Obfuscation
+    </h2>
+    <p>
+      DeskModal derives its foundational identity from a critical architectural duality: <strong>Windows must be either Modal or Tileable, and the container must NEVER obfuscate valuable desk space</strong>. On tier-1 trading desks, screen space is occupied by live market curves, pricing ladders, order feeds, and blotters. A desktop container that hogs space, creates overlapping window clutter ("z-order occlusion hell"), or steals focus is immediately discarded by traders.
+    </p>
+
+    <div class="matrix-grid">
+      <div class="matrix-card">
+        <div class="matrix-title">Dual Window Modality Matrix</div>
+        <ul>
+          <li><strong>Persona A: Ephemeral Modal HUDs</strong>: Dedicated to rapid, transient actions (e.g. <em>Quick RFQ Order Tickets, Greeks Sensitivity Sliders, FDC3 Intent Resolvers</em>). They pop instantly under cursor focus, execute via SBE/SHM, and dismiss immediately upon completion or <code>Esc</code>. They do not spawn persistent taskbar entries or disturb the trader's layout.</li>
+          <li><strong>Persona B: Persistent Split-Tree Tiles</strong>: Dedicated to analytical and execution desks (e.g. <em>Garman-Kohlhagen Options Pricing, L2 Depth Ladders, Real-Time Blotters</em>). Managed by <code>deskmodal-window-manager::split_tree</code>, windows dock with 0px or 2px gutters in binary BSP trees. Resizing a splitter adjusts adjacent tiles proportionally with zero overlap.</li>
+          <li><strong>Zero Overlap Guarantee</strong>: No window ever hides behind another window. Every visible pixel represents active, functional financial telemetry.</li>
+        </ul>
+      </div>
+
+      <div class="matrix-card">
+        <div class="matrix-title">Zero Desk Space Obfuscation</div>
+        <ul>
+          <li><strong>Razor-Thin Top Strip (34px)</strong>: Docks flush into the display's dead margins (adjacent to the macOS camera notch, or flush against the Windows taskbar).</li>
+          <li><strong>Proximity Auto-Hide & Edge Reveal</strong>: When the trader desires 100% full-screen canvas utilization, the command bar tucks away into an un-obtrusive 3px edge glow strip. Hovering the edge or pressing <code>⌘K</code> drops the bar smoothly down for instant command routing.</li>
+          <li><strong>OS Work-Area Reservation</strong>: DeskModal sets the host OS usable work area via Win32 <code>SPI_SETWORKAREA</code>, macOS Cocoa <code>NSScreen.visibleFrame</code>, and Linux <code>wlr-layer-shell-unstable-v1</code>, ensuring third-party applications snap cleanly around the bar rather than colliding with it.</li>
+        </ul>
+      </div>
+
+      <div class="matrix-card">
+        <div class="matrix-title">Native Third-Party Window Adoption (`deskmodal-snap`)</div>
+        <ul>
+          <li><strong>Foreign Window Tiling</strong>: Institutional traders cannot abandon Bloomberg Terminal, Excel spreadsheets, or Symphony chat. <code>deskmodal-snap::adoption.rs</code> captures native OS window handles (<code>HWND</code>, <code>CGWindowID</code>, X11 IDs) via glob pattern matching.</li>
+          <li><strong>Unified Snap Groups</strong>: Third-party windows are adopted directly into DeskModal's split-tree tiling grid, moving, resizing, and minimizing together as a synchronized multi-window workstation.</li>
+          <li><strong>Subclass Intercepts</strong>: On Windows, Win32 <code>WM_MOVING</code> and <code>WM_SIZING</code> message hooks ensure adopted Bloomberg/Excel windows track the DeskModal splitters without visual latency or jitter.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Interactive JS Logic -->
+<script>
+  let currentOS = 'macos';
+  let currentLayout = 'ribbon';
+  let currentTheme = 'aurora';
+  let currentSpaceMode = 'tiling';
+
+  function updateClock() {
+    const now = new Date();
+    const utc = now.toUTCString().split(' ')[4];
+    document.getElementById('liveClock').textContent = `${utc} UTC`;
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+  function setOS(os) {
+    currentOS = os;
+    document.querySelectorAll('#osGroup .btn-toggle').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+
+    const macosCtrl = document.getElementById('macosControls');
+    const winCtrl = document.getElementById('windowsControls');
+    const linuxCtrl = document.getElementById('linuxControls');
+    const caption = document.getElementById('osCaption');
+
+    if (os === 'macos') {
+      macosCtrl.style.display = 'flex';
+      winCtrl.style.display = 'none';
+      linuxCtrl.style.display = 'none';
+      caption.textContent = 'DeskModal 2.0 (macOS Cocoa) — FX Volatility & Derivatives';
+      caption.style.textAlign = 'center';
+    } else if (os === 'windows') {
+      macosCtrl.style.display = 'none';
+      winCtrl.style.display = 'flex';
+      linuxCtrl.style.display = 'none';
+      caption.textContent = 'DeskModal 2.0 (Windows 11 Mica) — FX Volatility & Derivatives';
+      caption.style.textAlign = 'left';
+    } else {
+      macosCtrl.style.display = 'none';
+      winCtrl.style.display = 'none';
+      linuxCtrl.style.display = 'flex';
+      caption.textContent = 'DeskModal 2.0 (Wayland / Hyprland) — FX Volatility & Derivatives';
+      caption.style.textAlign = 'center';
+    }
+  }
+
+  function setLayout(layout) {
+    currentLayout = layout;
+    document.querySelectorAll('#layoutGroup .btn-toggle').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+
+    const host = document.getElementById('toolbarHost');
+    const stage = document.getElementById('osStage');
+    const canvas = document.querySelector('.desktop-canvas');
+
+    if (layout === 'ribbon') {
+      host.className = 'toolbar-ribbon';
+      host.style.position = '';
+      host.style.left = '';
+      host.style.transform = '';
+      host.style.bottom = '';
+      stage.insertBefore(host, canvas);
+    } else if (layout === 'vertical') {
+      host.className = 'toolbar-vertical';
+      host.style.position = '';
+      host.style.left = '';
+      host.style.transform = '';
+      host.style.bottom = '';
+      canvas.style.flexDirection = 'row';
+      canvas.prepend(host);
+    } else if (layout === 'floating') {
+      host.className = 'toolbar-floating';
+      host.style.position = 'absolute';
+      host.style.bottom = '16px';
+      host.style.left = '50%';
+      host.style.transform = 'translateX(-50%)';
+      canvas.appendChild(host);
+    }
+  }
+
+  function setTheme(theme) {
+    currentTheme = theme;
+    document.querySelectorAll('#themeGroup .btn-toggle').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+
+    const stage = document.getElementById('osStage');
+    stage.className = `os-stage theme-${theme}`;
+
+    const brandName = document.getElementById('brandNameText');
+    const brandMark = document.getElementById('brandMarkIcon');
+
+    if (theme === 'aurora') {
+      brandName.textContent = 'DeskModal';
+      brandMark.textContent = 'DM';
+    } else if (theme === 'terminal') {
+      brandName.textContent = 'TERMINAL';
+      brandMark.textContent = 'BBG';
+    } else if (theme === 'bank') {
+      brandName.textContent = 'BARCLAYS';
+      brandMark.textContent = 'BC';
+    } else if (theme === 'high-contrast') {
+      brandName.textContent = 'DESKMODAL';
+      brandMark.textContent = 'DM';
+    }
+  }
+
+  function setSpaceMode(mode) {
+    currentSpaceMode = mode;
+    document.querySelectorAll('#spaceGroup .btn-toggle').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+
+    const modalHud = document.getElementById('modalHud');
+    const host = document.getElementById('toolbarHost');
+    const revealStrip = document.getElementById('edgeRevealStrip');
+    const revealLabel = document.getElementById('edgeRevealLabel');
+
+    if (mode === 'tiling') {
+      modalHud.style.display = 'none';
+      host.classList.remove('toolbar-autohide-active');
+      revealStrip.style.display = 'none';
+      revealLabel.style.display = 'none';
+    } else if (mode === 'modal') {
+      modalHud.style.display = 'flex';
+      host.classList.remove('toolbar-autohide-active');
+      revealStrip.style.display = 'none';
+      revealLabel.style.display = 'none';
+    } else if (mode === 'autohide') {
+      modalHud.style.display = 'none';
+      host.classList.add('toolbar-autohide-active');
+      revealStrip.style.display = 'block';
+      revealLabel.style.display = 'block';
+    }
+  }
+
+  function revealToolbar(reveal) {
+    if (currentSpaceMode !== 'autohide') return;
+    const host = document.getElementById('toolbarHost');
+    const revealLabel = document.getElementById('edgeRevealLabel');
+    if (reveal) {
+      host.classList.remove('toolbar-autohide-active');
+      revealLabel.style.display = 'none';
+    }
+  }
+
+  function handleToolbarLeave() {
+    if (currentSpaceMode === 'autohide') {
+      const host = document.getElementById('toolbarHost');
+      const revealLabel = document.getElementById('edgeRevealLabel');
+      host.classList.add('toolbar-autohide-active');
+      revealLabel.style.display = 'block';
+    }
+  }
+
+  function toggleMenu(menuId) {
+    const popover = document.getElementById(menuId);
+    const isOpen = popover.classList.contains('open');
+    // Close all popovers first
+    document.querySelectorAll('.tb-popover').forEach(p => p.classList.remove('open'));
+    if (!isOpen) {
+      popover.classList.add('open');
+    }
+  }
+
+  function setChannel(name, dotColor, bg, border, textColor) {
+    const btn = document.getElementById('fdc3Btn');
+    const dot = document.getElementById('fdc3Dot');
+    const text = document.getElementById('fdc3Text');
+
+    dot.style.background = dotColor;
+    dot.style.boxShadow = `0 0 6px ${dotColor}`;
+    btn.style.background = bg;
+    btn.style.borderColor = border;
+    btn.style.color = textColor;
+    text.textContent = `${name}: EURUSD`;
+    toggleMenu('fdc3Menu');
+  }
+
+  // Close menus on outside click or Escape
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('.tb-brand-btn') && 
+        !e.target.closest('.tb-workspace-pill') && 
+        !e.target.closest('.tb-app-stack') && 
+        !e.target.closest('.tb-fdc3-pill') && 
+        !e.target.closest('.tb-telemetry-pill') && 
+        !e.target.closest('.tb-popover')) {
+      document.querySelectorAll('.tb-popover').forEach(p => p.classList.remove('open'));
+    }
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.tb-popover').forEach(p => p.classList.remove('open'));
+      if (currentSpaceMode === 'modal') {
+        setSpaceMode('tiling');
+      }
+    }
+  });
+
+  function handleCommandKey(e) {
+    if (e.key === 'Enter') {
+      const ticker = e.target.value.trim().toUpperCase();
+      if (ticker) {
+        document.getElementById('fdc3Text').textContent = `Red: ${ticker}`;
+        e.target.blur();
+      }
+    }
+  }
+</script>
+
+</body>
+</html>

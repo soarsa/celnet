@@ -97,11 +97,60 @@ export type Fdc3Context =
 export type Fdc3ChannelColor =
   | "global"
   | "red"
+  | "orange"
+  | "yellow"
   | "green"
   | "blue"
-  | "orange"
+  | "magenta"
   | "purple"
-  | "yellow";
+  | "cyan";
+
+export interface Fdc3ChannelMetadata {
+  id: string;
+  name: string;
+  color: string;
+  colorVar: string;
+  bgVar: string;
+}
+
+export const FDC3_USER_CHANNELS: readonly Fdc3ChannelMetadata[] = [
+  { id: "global", name: "Global", color: "#94a3b8", colorVar: "--text-muted", bgVar: "rgba(148,163,184,0.15)" },
+  { id: "fdc3.channel.1", name: "Red", color: "#f87171", colorVar: "--brand-coral", bgVar: "rgba(248,113,113,0.15)" },
+  { id: "fdc3.channel.2", name: "Orange", color: "#fb923c", colorVar: "--brand-amber", bgVar: "rgba(251,146,60,0.15)" },
+  { id: "fdc3.channel.3", name: "Yellow", color: "#facc15", colorVar: "--brand-yellow", bgVar: "rgba(250,204,21,0.15)" },
+  { id: "fdc3.channel.4", name: "Green", color: "#4ade80", colorVar: "--brand-mint", bgVar: "rgba(74,222,128,0.15)" },
+  { id: "fdc3.channel.5", name: "Blue", color: "#38bdf8", colorVar: "--brand-blue", bgVar: "rgba(56,189,248,0.15)" },
+  { id: "fdc3.channel.6", name: "Magenta", color: "#e879f9", colorVar: "--brand-magenta", bgVar: "rgba(232,121,249,0.15)" },
+  { id: "fdc3.channel.7", name: "Purple", color: "#c084fc", colorVar: "--brand-purple", bgVar: "rgba(192,132,252,0.15)" },
+  { id: "fdc3.channel.8", name: "Cyan", color: "#2dd4bf", colorVar: "--brand-cyan", bgVar: "rgba(45,212,191,0.15)" },
+];
+
+export function normalizeChannelId(channel: string): string {
+  const c = channel.toLowerCase().trim();
+  if (c === "red" || c === "1") return "fdc3.channel.1";
+  if (c === "orange" || c === "2") return "fdc3.channel.2";
+  if (c === "yellow" || c === "3") return "fdc3.channel.3";
+  if (c === "green" || c === "4") return "fdc3.channel.4";
+  if (c === "blue" || c === "5") return "fdc3.channel.5";
+  if (c === "magenta" || c === "6") return "fdc3.channel.6";
+  if (c === "purple" || c === "7") return "fdc3.channel.7";
+  if (c === "cyan" || c === "8") return "fdc3.channel.8";
+  if (c === "global" || c === "default") return "global";
+  return c;
+}
+
+export function channelIdToMetadata(channelId: string): Fdc3ChannelMetadata {
+  const norm = normalizeChannelId(channelId);
+  return (
+    FDC3_USER_CHANNELS.find((c) => c.id === norm) || {
+      id: norm,
+      name: norm.toUpperCase(),
+      color: "#94a3b8",
+      colorVar: "--text-muted",
+      bgVar: "rgba(148,163,184,0.15)",
+    }
+  );
+}
 
 export interface Fdc3Channel {
   id: string;
@@ -120,7 +169,7 @@ export interface Fdc3Channel {
 }
 
 export interface Fdc3DesktopAgent {
-  joinUserChannel(channelId: Fdc3ChannelColor): Promise<void>;
+  joinUserChannel(channelId: string): Promise<void>;
   getCurrentChannel(): Promise<Fdc3Channel | null>;
   getUserChannels(): Promise<Fdc3Channel[]>;
   broadcast(context: Fdc3Context): Promise<void>;
@@ -137,7 +186,7 @@ export interface Fdc3DesktopAgent {
 
 // In-browser BroadcastChannel Fallback for cross-window / cross-tab multi-monitor setups
 class WebBroadcastDesktopAgent implements Fdc3DesktopAgent {
-  private currentChannelId: Fdc3ChannelColor = "green";
+  private currentChannelId: string = "fdc3.channel.4"; // default to Green (channel 4)
   private broadcastChannel: BroadcastChannel | null = null;
   private listeners: Map<string, Set<(ctx: Fdc3Context) => void>> = new Map();
   private intentListeners: Map<string, Set<(ctx: Fdc3Context) => unknown>> = new Map();
@@ -198,17 +247,22 @@ class WebBroadcastDesktopAgent implements Fdc3DesktopAgent {
     }
   }
 
-  async joinUserChannel(channelId: Fdc3ChannelColor): Promise<void> {
-    this.currentChannelId = channelId;
+  async joinUserChannel(channelId: string): Promise<void> {
+    const norm = normalizeChannelId(channelId);
+    this.currentChannelId = norm;
+    try {
+      sessionStorage.setItem("celnet:fdc3:channel", norm);
+    } catch {}
   }
 
   async getCurrentChannel(): Promise<Fdc3Channel | null> {
+    const meta = channelIdToMetadata(this.currentChannelId);
     return {
       id: this.currentChannelId,
       type: "user",
       displayMetadata: {
-        name: this.currentChannelId.toUpperCase(),
-        color: this.currentChannelId,
+        name: meta.name,
+        color: meta.color,
       },
       broadcast: async (ctx: Fdc3Context) => this.broadcast(ctx),
       getCurrentContext: async (type?: string) => {
@@ -220,20 +274,19 @@ class WebBroadcastDesktopAgent implements Fdc3DesktopAgent {
   }
 
   async getUserChannels(): Promise<Fdc3Channel[]> {
-    const colors: Fdc3ChannelColor[] = ["global", "red", "green", "blue", "orange", "purple", "yellow"];
-    return colors.map((c) => ({
-      id: c,
+    return FDC3_USER_CHANNELS.map((meta) => ({
+      id: meta.id,
       type: "user",
-      displayMetadata: { name: c.toUpperCase(), color: c },
+      displayMetadata: { name: meta.name, color: meta.color },
       broadcast: async (ctx) => {
         if (this.broadcastChannel) {
-          this.broadcastChannel.postMessage({ type: "broadcast", channelId: c, context: ctx });
+          this.broadcastChannel.postMessage({ type: "broadcast", channelId: meta.id, context: ctx });
         }
-        if (this.currentChannelId === c) {
+        if (this.currentChannelId === meta.id) {
           this.dispatchContext(ctx);
         }
       },
-      getCurrentContext: async (t) => (t ? this.channelCache.get(`${c}:${t}`) || null : null),
+      getCurrentContext: async (t) => (t ? this.channelCache.get(`${meta.id}:${t}`) || null : null),
       addContextListener: (t, h) => this.addContextListener(t, h),
     }));
   }

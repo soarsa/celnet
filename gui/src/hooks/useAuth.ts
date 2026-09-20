@@ -28,6 +28,7 @@ import type {
 } from "../data/contract";
 import type { CelnetTransport } from "../data/transport";
 import { can as capabilitySetHas } from "../lib/capabilityMatrix";
+import { emitDeskTelemetry, getDeskModalAuthToken } from "../lib/deskPlatform";
 
 /** Narrow an unknown thrown value to a display string. */
 function messageOf(error: unknown): string {
@@ -66,6 +67,8 @@ export interface AuthApi {
   error: string | null;
   /** Sign in; resolves on success, rejects (and sets `error`) on failure. */
   login: (email: string, password: string) => Promise<void>;
+  /** Sign in with existing bearer token (e.g. DeskModal SSO pass-through). */
+  loginWithToken: (token: string) => Promise<void>;
   /** Sign out (best-effort server invalidation); always clears the local identity. */
   logout: () => Promise<void>;
   /** Clear the current error (e.g. when reopening the sign-in dialog). */
@@ -115,21 +118,53 @@ export function useAuth(transport: CelnetTransport): AuthApi {
     }
   }, [transport]);
 
-  // Server-side session expiry: the edge rejected our held bearer token (e.g. a
-  // server restart / blue-green cutover emptied the session registry, or the token
-  // TTL'd out). The transport has already dropped the dead token so the socket
-  // reconnects anonymously and STAYS open (a tokened reconnect would be closed by
-  // the edge every cycle — the reconnect-loop this guards against). Here we clear
-  // the local identity so the app falls back to the sign-in screen for a fresh
-  // login, and surface why. A no-op on transports without the observer (the mock).
+  const loginWithToken = useCallback(
+    async (token: string): Promise<void> => {
+      setBusy(true);
+      setError(null);
+      try {
+        const result = await transport.loginWithToken(token);
+        transport.setSessionToken(result.token);
+        setUser(result.user);
+        setCapabilities(result.capabilities);
+        emitDeskTelemetry("celnet.auth.sso_success", {
+          user_id: result.user.id,
+          email: result.user.email,
+          role: result.user.role,
+        });
+      } catch (e: unknown) {
+        const msg = messageOf(e);
+        setError(msg);
+        throw new Error(msg);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [transport],
+  );
+
+  // Server-side session expiry: if the edge rejected our token, first attempt
+  // a silent renewal via the external host (DeskModal SSO / enterprise gateway).
+  // Only fall back to error state if host renewal fails.
   useEffect(() => {
     const dispose = transport.onSessionExpired?.(() => {
-      setUser(null);
-      setCapabilities([]);
-      setError("Your session expired — please sign in again.");
+      void (async () => {
+        try {
+          const freshToken = await getDeskModalAuthToken();
+          if (freshToken) {
+            await loginWithToken(freshToken);
+            return;
+          }
+        } catch {
+          // host renewal failed
+        }
+        setUser(null);
+        setCapabilities([]);
+        setError("Your session expired — please sign in again.");
+      })();
     });
     return dispose;
-  }, [transport]);
+  }, [transport, loginWithToken]);
 
   const clearError = useCallback(() => setError(null), []);
 
@@ -143,6 +178,48 @@ export function useAuth(transport: CelnetTransport): AuthApi {
     [user, capabilities],
   );
 
+  // Host SSO & External Token Pass-Through: If running inside DeskModal or an external
+  // bearer token is provided by container/gateway/URL, automatically authenticate.
+  useEffect(() => {
+    let cancelled = false;
+    async function autoHostLogin() {
+      try {
+        const token = await getDeskModalAuthToken();
+        if (token && !cancelled) {
+          await loginWithToken(token);
+        }
+      } catch (e) {
+        console.warn("[CelNet] Host auto-login check:", e);
+      }
+    }
+    void autoHostLogin();
+
+    // Background silent refresh daemon: poll host container token every 4 minutes (before TTL elapses)
+    const interval = setInterval(() => {
+      if (!cancelled) {
+        void autoHostLogin();
+      }
+    }, 4 * 60 * 1000);
+
+    // Event-driven host token refresh via window message (DACP / WCP bridge)
+    const onMessage = (event: MessageEvent) => {
+      if (
+        (event.data?.type === "deskmodal:auth-refreshed" ||
+          event.data?.type === "authSessionRefreshed") &&
+        typeof event.data?.token === "string"
+      ) {
+        void loginWithToken(event.data.token);
+      }
+    };
+    window.addEventListener("message", onMessage);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("message", onMessage);
+    };
+  }, [loginWithToken]);
+
   return {
     user,
     signedIn: user !== null,
@@ -152,6 +229,7 @@ export function useAuth(transport: CelnetTransport): AuthApi {
     busy,
     error,
     login,
+    loginWithToken,
     logout,
     clearError,
   };

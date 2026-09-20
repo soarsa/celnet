@@ -17,6 +17,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { CelerLockup } from "./CelerMark";
 import { Button } from "./Button";
+import { isDeskModal, getDeskModalAuthToken } from "../lib/deskPlatform";
 import styles from "./SignInDialog.module.css";
 
 export function SignInDialog(): React.ReactElement | null {
@@ -61,7 +62,21 @@ export function SignInDialog(): React.ReactElement | null {
 
   if (!signInOpen) return null;
 
+  const inDesk = isDeskModal() || (typeof window !== "undefined" && window.location.protocol === "deskmodal-plugin:");
   const canSubmit = email.trim().length > 0 && password.length > 0 && !auth.busy;
+
+  const handleHostSSO = async (): Promise<void> => {
+    try {
+      const token = await getDeskModalAuthToken();
+      if (!token) {
+        throw new Error("No active session found in DeskModal host container.");
+      }
+      await auth.loginWithToken(token);
+      setSignInOpen(false);
+    } catch (e) {
+      console.warn("[CelNet] DeskModal SSO failed:", e);
+    }
+  };
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -85,54 +100,144 @@ export function SignInDialog(): React.ReactElement | null {
         <div className={styles.head}>
           <CelerLockup size={24} className={styles.lockup} />
           <h2 id={titleId} className={styles.title}>
-            Sign in
+            {inDesk ? "DeskModal Session & Identity" : "Sign in"}
           </h2>
           <p className={styles.sub}>
-            Authenticate to administer users and desks, and to see your desk&apos;s inbound RFQ
-            traffic.
+            {inDesk
+              ? "Authentication and role claims are managed by the DeskModal desktop agent and passed through to CelNet services."
+              : "Authenticate to administer users and desks, and to see your desk's inbound RFQ traffic."}
           </p>
         </div>
 
-        <form className={styles.form} onSubmit={handleSubmit}>
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Email</span>
-            <input
-              ref={emailRef}
-              className={styles.input}
-              type="email"
-              name="email"
-              autoComplete="username"
-              placeholder="admin@celnet.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </label>
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Password</span>
-            <input
-              className={styles.input}
-              type="password"
-              name="password"
-              autoComplete="current-password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </label>
-          {auth.error && (
-            <p className={styles.error} role="alert">
-              {auth.error}
-            </p>
-          )}
-          <div className={styles.foot}>
-            <Button type="button" variant="ghost" onClick={() => setSignInOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" disabled={!canSubmit}>
-              {auth.busy ? "Signing in…" : "Sign in"}
-            </Button>
+        {inDesk ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px", marginTop: "12px" }}>
+            {auth.user ? (
+              <div
+                style={{
+                  background: "var(--color-bg-subtle, rgba(255, 255, 255, 0.05))",
+                  border: "1px solid var(--color-border, rgba(255, 255, 255, 0.1))",
+                  borderRadius: "8px",
+                  padding: "16px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "8px",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: "12px", color: "var(--color-text-muted, #888)", textTransform: "uppercase" }}>
+                    Authenticated Principal
+                  </span>
+                  <span
+                    style={{
+                      background: "rgba(16, 185, 129, 0.2)",
+                      color: "#10b981",
+                      borderRadius: "4px",
+                      padding: "2px 8px",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Active SSO
+                  </span>
+                </div>
+                <div style={{ fontSize: "15px", fontWeight: 600, color: "var(--color-text-primary, #fff)" }}>
+                  {auth.user.email}
+                </div>
+                <div style={{ fontSize: "12px", color: "var(--color-text-secondary, #bbb)" }}>
+                  Role: <strong style={{ color: "var(--accent, #ff7357)" }}>{auth.user.role}</strong>
+                  {auth.user.deskIds.length > 0 && ` · Desks: ${auth.user.deskIds.join(", ")}`}
+                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  background: "var(--color-bg-subtle, rgba(255, 255, 255, 0.05))",
+                  border: "1px solid var(--color-border, rgba(255, 255, 255, 0.1))",
+                  borderRadius: "8px",
+                  padding: "16px",
+                  textAlign: "center",
+                }}
+              >
+                <p style={{ fontSize: "13px", color: "var(--color-text-secondary, #aaa)", margin: "0 0 12px 0" }}>
+                  {auth.busy
+                    ? "Connecting to CelNet trading edge via DeskModal session token…"
+                    : "Zero-credential authentication: your session token will be acquired directly from the DeskModal container."}
+                </p>
+                <Button
+                  type="button"
+                  variant="primary"
+                  disabled={auth.busy}
+                  onClick={() => void handleHostSSO()}
+                >
+                  {auth.busy ? "Verifying Host Session…" : "Authenticate via DeskModal SSO"}
+                </Button>
+              </div>
+            )}
+
+            {auth.error && (
+              <p className={styles.error} role="alert">
+                {auth.error}
+              </p>
+            )}
+
+            <div className={styles.foot}>
+              <Button type="button" variant="ghost" onClick={() => setSignInOpen(false)}>
+                Close
+              </Button>
+              {auth.user && (
+                <Button
+                  type="button"
+                  variant="primary"
+                  disabled={auth.busy}
+                  onClick={() => void handleHostSSO()}
+                >
+                  Refresh Host Session
+                </Button>
+              )}
+            </div>
           </div>
-        </form>
+        ) : (
+          <form className={styles.form} onSubmit={handleSubmit}>
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Email</span>
+              <input
+                ref={emailRef}
+                className={styles.input}
+                type="email"
+                name="email"
+                autoComplete="username"
+                placeholder="admin@celnet.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </label>
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Password</span>
+              <input
+                className={styles.input}
+                type="password"
+                name="password"
+                autoComplete="current-password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </label>
+            {auth.error && (
+              <p className={styles.error} role="alert">
+                {auth.error}
+              </p>
+            )}
+            <div className={styles.foot}>
+              <Button type="button" variant="ghost" onClick={() => setSignInOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" disabled={!canSubmit}>
+                {auth.busy ? "Signing in…" : "Sign in"}
+              </Button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );
