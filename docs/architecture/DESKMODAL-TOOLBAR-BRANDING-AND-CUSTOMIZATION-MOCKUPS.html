@@ -1194,6 +1194,18 @@
             <button class="btn-toggle" onclick="setSpaceMode('autohide')">Zero-Footprint (Auto-Hide)</button>
           </div>
         </div>
+
+        <!-- Universal Workspace Domain / Persona Selector -->
+        <div>
+          <span class="control-select-label">Workspace Domain:</span>
+          <div class="btn-group" id="personaGroup">
+            <button class="btn-toggle active" onclick="setPersona('trading')">Quant & Trading</button>
+            <button class="btn-toggle" onclick="setPersona('engineering')">Engineering & DevOps</button>
+            <button class="btn-toggle" onclick="setPersona('datascience')">Data Science & AI</button>
+            <button class="btn-toggle" onclick="setPersona('operations')">Operations (NOC)</button>
+            <button class="btn-toggle" onclick="setPersona('enterprise')">Executive & Enterprise</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1255,22 +1267,23 @@
           <div style="position: relative;">
             <button class="tb-workspace-pill" onclick="toggleMenu('workspaceMenu')">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-              <span>FX Vol Desk</span>
+              <span id="workspacePillText">FX Vol Desk</span>
               <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
             </button>
             <div class="tb-popover" id="workspaceMenu">
               <div class="tb-popover-header">Switch Active Workspace</div>
               <div class="tb-popover-item" style="color:#38bdf8;font-weight:700;"><span>✓ FX Volatility Desk</span><span class="tb-kbd-hint">Current</span></div>
-              <div class="tb-popover-item"><span>Rates & Swaptions Trading</span></div>
-              <div class="tb-popover-item"><span>Cross-Asset Risk & VaR</span></div>
-              <div class="tb-popover-item"><span>Executive Portfolio Overview</span></div>
+              <div class="tb-popover-item" onclick="setPersona('engineering');toggleMenu('workspaceMenu');"><span>Engineering & DevOps</span></div>
+              <div class="tb-popover-item" onclick="setPersona('datascience');toggleMenu('workspaceMenu');"><span>Data Science & AI</span></div>
+              <div class="tb-popover-item" onclick="setPersona('operations');toggleMenu('workspaceMenu');"><span>Operations (NOC)</span></div>
+              <div class="tb-popover-item" onclick="setPersona('enterprise');toggleMenu('workspaceMenu');"><span>Executive & Enterprise</span></div>
               <div class="tb-popover-item" style="border-top:1px solid #1e293b;margin-top:4px;padding-top:6px;color:#38bdf8;"><span>+ Save New Workspace...</span></div>
             </div>
           </div>
         </div>
 
         <!-- Center Cluster: Command Search & App Stacks -->
-        <div class="cluster-center">
+        <div class="cluster-center" id="clusterCenter">
           <!-- Command & Ticker Jump -->
           <div class="tb-command-pill">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -1278,49 +1291,51 @@
             <span class="tb-kbd-hint">⌘K</span>
           </div>
 
-          <!-- App Stacks (Flyouts) -->
-          <!-- Stack 1: CelNet Studio (6 Sovereign Desks) -->
-          <div style="position: relative;">
-            <button class="tb-app-stack active" onclick="toggleMenu('celnetMenu')">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
-              <span>CelNet</span>
-              <span class="tb-stack-count">6</span>
-            </button>
-            <div class="tb-popover" id="celnetMenu" style="min-width:240px;">
-              <div class="tb-popover-header">CelNet Sovereign Desks</div>
-              <div class="tb-popover-item"><span>Options Pricing & Structuring</span><span class="tb-kbd-hint">Desk 01</span></div>
-              <div class="tb-popover-item"><span>Markets & Streaming Depth</span><span class="tb-kbd-hint">Desk 02</span></div>
-              <div class="tb-popover-item"><span>RFQ & Dealer Negotiation</span><span class="tb-kbd-hint">Desk 03</span></div>
-              <div class="tb-popover-item"><span>Risk Cube & Scenario VaR</span><span class="tb-kbd-hint">Desk 04</span></div>
-              <div class="tb-popover-item"><span>Deals & Lifecycle Blotter</span><span class="tb-kbd-hint">Desk 05</span></div>
-              <div class="tb-popover-item"><span>Curve & Swaption Analytics</span><span class="tb-kbd-hint">Desk 06</span></div>
-              <div class="tb-popover-item" style="border-top:1px solid #1e293b;margin-top:4px;padding-top:6px;color:#38bdf8;"><span>Open All Desks as Grid</span></div>
+          <!-- App Stacks Container -->
+          <div id="toolbarStacks" style="display:flex;align-items:center;gap:4px;">
+            <!-- Stack 1: CelNet Studio (6 Sovereign Desks) -->
+            <div style="position: relative;">
+              <button class="tb-app-stack active" onclick="toggleMenu('celnetMenu')">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+                <span>CelNet</span>
+                <span class="tb-stack-count">6</span>
+              </button>
+              <div class="tb-popover" id="celnetMenu" style="min-width:240px;">
+                <div class="tb-popover-header">CelNet Sovereign Desks</div>
+                <div class="tb-popover-item"><span>Options Pricing & Structuring</span><span class="tb-kbd-hint">Desk 01</span></div>
+                <div class="tb-popover-item"><span>Markets & Streaming Depth</span><span class="tb-kbd-hint">Desk 02</span></div>
+                <div class="tb-popover-item"><span>RFQ & Dealer Negotiation</span><span class="tb-kbd-hint">Desk 03</span></div>
+                <div class="tb-popover-item"><span>Risk Cube & Scenario VaR</span><span class="tb-kbd-hint">Desk 04</span></div>
+                <div class="tb-popover-item"><span>Deals & Lifecycle Blotter</span><span class="tb-kbd-hint">Desk 05</span></div>
+                <div class="tb-popover-item"><span>Curve & Swaption Analytics</span><span class="tb-kbd-hint">Desk 06</span></div>
+                <div class="tb-popover-item" style="border-top:1px solid #1e293b;margin-top:4px;padding-top:6px;color:#38bdf8;"><span>Open All Desks as Grid</span></div>
+              </div>
             </div>
-          </div>
 
-          <!-- Stack 2: TradeSurface (8 Tools) -->
-          <div style="position: relative;">
-            <button class="tb-app-stack" onclick="toggleMenu('tradesurfaceMenu')">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
-              <span>TradeSurface</span>
-              <span class="tb-stack-count">8</span>
-            </button>
-            <div class="tb-popover" id="tradesurfaceMenu" style="min-width:220px;">
-              <div class="tb-popover-header">TradeSurface Market Tools</div>
-              <div class="tb-popover-item"><span>Multi-Asset Candlestick Chart</span></div>
-              <div class="tb-popover-item"><span>Consolidated L2 Depth Ladder</span></div>
-              <div class="tb-popover-item"><span>Market Feeds & Tapes</span></div>
-              <div class="tb-popover-item"><span>Multi-Asset Watchlist</span></div>
-              <div class="tb-popover-item"><span>Macro Earnings Calendar</span></div>
-              <div class="tb-popover-item"><span>Breaking News Terminal</span></div>
+            <!-- Stack 2: TradeSurface (8 Tools) -->
+            <div style="position: relative;">
+              <button class="tb-app-stack" onclick="toggleMenu('tradesurfaceMenu')">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                <span>TradeSurface</span>
+                <span class="tb-stack-count">8</span>
+              </button>
+              <div class="tb-popover" id="tradesurfaceMenu" style="min-width:220px;">
+                <div class="tb-popover-header">TradeSurface Market Tools</div>
+                <div class="tb-popover-item"><span>Multi-Asset Candlestick Chart</span></div>
+                <div class="tb-popover-item"><span>Consolidated L2 Depth Ladder</span></div>
+                <div class="tb-popover-item"><span>Market Feeds & Tapes</span></div>
+                <div class="tb-popover-item"><span>Multi-Asset Watchlist</span></div>
+                <div class="tb-popover-item"><span>Macro Earnings Calendar</span></div>
+                <div class="tb-popover-item"><span>Breaking News Terminal</span></div>
+              </div>
             </div>
-          </div>
 
-          <!-- Standalone App: OptiScript -->
-          <button class="tb-app-stack">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-            <span>OptiScript</span>
-          </button>
+            <!-- Standalone App: OptiScript -->
+            <button class="tb-app-stack">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              <span>OptiScript</span>
+            </button>
+          </div>
         </div>
 
         <!-- Right Cluster: FDC3, Telemetry, Notifications, Clock -->
@@ -1358,11 +1373,11 @@
 
           <!-- Microservice Telemetry Pill -->
           <div style="position: relative;">
-            <button class="tb-telemetry-pill" onclick="toggleMenu('telemetryMenu')">
+            <button class="tb-telemetry-pill" id="telemetryPill" onclick="toggleMenu('telemetryMenu')">
               <span class="tb-pulse-green"></span>
-              <span>12µs SHM</span>
+              <span id="telemetryPillShm">12µs SHM</span>
               <span style="color:#64748b;">·</span>
-              <span style="color:#10b981;">WS OK</span>
+              <span id="telemetryPillWs" style="color:#10b981;">WS OK</span>
             </button>
             <div class="tb-popover" id="telemetryMenu" style="min-width:260px; right:0; left:auto;">
               <div class="tb-popover-header">Platform Health & IPC Telemetry</div>
@@ -1823,6 +1838,449 @@ stack_role = "member"</code></pre>
     document.querySelectorAll('.tb-popover').forEach(p => p.classList.remove('open'));
     if (!isOpen) {
       popover.classList.add('open');
+    }
+  }
+
+  let currentPersona = 'trading';
+
+  const PERSONA_CONFIGS = {
+    trading: {
+      caption: 'DeskModal 2.0 — Quantitative Finance, FX Volatility & Derivatives Workbench',
+      workspace: 'FX Vol Desk',
+      commandQuery: 'EURUSD',
+      commandPlaceholder: 'Jump ticker or app...',
+      channel: 'Red: EURUSD',
+      channelDot: '#ef4444',
+      telemetryShm: '12µs SHM',
+      telemetryWs: 'WS OK',
+      stacksHtml: `
+        <div style="position: relative;">
+          <button class="tb-app-stack active" onclick="toggleMenu('celnetMenu')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+            <span>CelNet</span>
+            <span class="tb-stack-count">6</span>
+          </button>
+        </div>
+        <div style="position: relative;">
+          <button class="tb-app-stack" onclick="toggleMenu('tradesurfaceMenu')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+            <span>TradeSurface</span>
+            <span class="tb-stack-count">8</span>
+          </button>
+        </div>
+        <button class="tb-app-stack">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          <span>OptiScript</span>
+        </button>
+      `,
+      gridHtml: `
+        <div class="tile-panel tile-main">
+          <div class="tile-header">
+            <span class="tile-title"><span class="tile-status-dot fdc3-red"></span><strong>CelNet Desk 01</strong> — Options Volatility Smile & Greeks Surface</span>
+            <div class="tile-actions"><span class="tile-badge">GARMAN-KOHLHAGEN</span><button class="tile-btn" onclick="setSpaceMode('modal')">⚡ Quick RFQ</button></div>
+          </div>
+          <div class="tile-body">
+            <div class="sim-graph-container">
+              <div class="sim-graph-labels"><span>Spot: <strong>1.0845</strong></span><span>ATM Vol: <strong>7.82%</strong></span><span>25Δ RR: <strong>-0.45%</strong></span><span>10Δ Fly: <strong>+0.22%</strong></span></div>
+              <svg viewBox="0 0 460 160" class="sim-vol-svg">
+                <line x1="20" y1="30" x2="440" y2="30" stroke="#1e293b" stroke-dasharray="3 3"/>
+                <line x1="20" y1="75" x2="440" y2="75" stroke="#1e293b" stroke-dasharray="3 3"/>
+                <line x1="20" y1="120" x2="440" y2="120" stroke="#1e293b" stroke-dasharray="3 3"/>
+                <line x1="230" y1="10" x2="230" y2="150" stroke="#1e293b" stroke-dasharray="3 3"/>
+                <path d="M 30,135 Q 140,150 230,152 T 430,120" fill="none" stroke="var(--brand-accent, #38bdf8)" stroke-width="2.5"/>
+                <circle cx="230" cy="152" r="4" fill="var(--brand-accent, #38bdf8)"/>
+                <text x="240" y="148" fill="#94a3b8" font-size="10" font-family="monospace">ATM 1.0845 (7.82%)</text>
+              </svg>
+            </div>
+          </div>
+        </div>
+        <div class="tile-column-split">
+          <div class="tile-panel" style="flex:1;">
+            <div class="tile-header"><span class="tile-title"><span class="tile-status-dot fdc3-red"></span><strong>TradeSurface</strong> — L2 Consolidated Depth</span><span class="tile-badge" style="color:#10b981;">10 GIG-E</span></div>
+            <div class="tile-body sim-l2-depth">
+              <div class="l2-row"><span class="bid">1.0847</span><span class="qty">5.0M</span><div class="depth-bar-bid" style="width:70%;"></div></div>
+              <div class="l2-row"><span class="bid">1.0846</span><span class="qty">12.5M</span><div class="depth-bar-bid" style="width:95%;"></div></div>
+              <div class="l2-row"><span class="ask">1.0848</span><span class="qty">8.0M</span><div class="depth-bar-ask" style="width:75%;"></div></div>
+              <div class="l2-row"><span class="ask">1.0849</span><span class="qty">15.0M</span><div class="depth-bar-ask" style="width:100%;"></div></div>
+            </div>
+          </div>
+          <div class="tile-panel" style="flex:1;">
+            <div class="tile-header"><span class="tile-title"><span class="tile-status-dot"></span><strong>Deals Blotter</strong> — Desk 05 Live Fills</span><span class="tile-badge">REAL-TIME</span></div>
+            <div class="tile-body sim-blotter">
+              <div class="blotter-row"><span class="time">14:31:02</span><span>EUR/USD 1.0850 C</span><span class="buy">BUY 10M</span><span>12.4 bps</span></div>
+              <div class="blotter-row"><span class="time">14:30:45</span><span>EUR/USD 1.0750 P</span><span class="sell">SELL 5M</span><span>8.1 bps</span></div>
+            </div>
+          </div>
+        </div>
+      `,
+      hudHtml: `
+        <div class="modal-hud-window">
+          <div class="modal-hud-header">
+            <div class="modal-title"><span class="modal-pill-tag">MODAL HUD</span> Instant RFQ &amp; Order Ticket &nbsp;—&nbsp; EUR/USD 1M Option</div>
+            <button class="modal-close-btn" onclick="setSpaceMode('tiling')">✕ (Esc)</button>
+          </div>
+          <div class="modal-hud-body">
+            <div class="form-row-2col">
+              <div class="form-field"><label class="field-label">NOTIONAL (EUR)</label><input type="text" class="field-input" value="10,000,000"></div>
+              <div class="form-field"><label class="field-label">STRIKE</label><input type="text" class="field-input" value="1.0850"></div>
+            </div>
+            <div class="form-field"><label class="field-label">LIVE DEALER PRICE</label><div class="hud-rate-box"><span class="rate-large">12.4 / 12.8 bps</span><span class="rate-sub">SHM Direct Feed</span></div></div>
+            <div class="modal-actions-bar">
+              <button class="btn-modal-sec" onclick="setSpaceMode('tiling')">Cancel (Esc)</button>
+              <button class="btn-modal-primary" onclick="setSpaceMode('tiling')">Execute at 12.6 bps ⚡</button>
+            </div>
+          </div>
+        </div>
+      `
+    },
+    engineering: {
+      caption: 'DeskModal 2.0 — Software Engineering, DevOps & Microservices Workbench',
+      workspace: 'Cloud & Microservices',
+      commandQuery: 'feat/sbe-shm-mesh',
+      commandPlaceholder: 'Search code, PRs, branch, repo (⌘K)...',
+      channel: 'Blue: branch/feat-sbe',
+      channelDot: '#3b82f6',
+      telemetryShm: '11µs IPC',
+      telemetryWs: 'Build OK',
+      stacksHtml: `
+        <div style="position: relative;">
+          <button class="tb-app-stack active">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            <span>DevTools</span>
+            <span class="tb-stack-count">5</span>
+          </button>
+        </div>
+        <div style="position: relative;">
+          <button class="tb-app-stack">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+            <span>Containers</span>
+            <span class="tb-stack-count">3</span>
+          </button>
+        </div>
+        <button class="tb-app-stack">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          <span>Terminals</span>
+        </button>
+      `,
+      gridHtml: `
+        <div class="tile-panel tile-main">
+          <div class="tile-header">
+            <span class="tile-title"><span class="tile-status-dot" style="background:#3b82f6;"></span><strong>pricing_daemon.rs</strong> — Zero-Allocation SBE Shared Memory Ring</span>
+            <div class="tile-actions"><span class="tile-badge">RUST 1.86</span><button class="tile-btn" onclick="setSpaceMode('modal')">⚡ Quick Commit</button></div>
+          </div>
+          <div class="tile-body" style="background:#090d16;padding:12px;font-family:monospace;font-size:12px;color:#cbd5e1;line-height:1.6;">
+            <div style="color:#64748b;">// High-throughput lockless SBE ring buffer consumer (11.28ns avg latency)</div>
+            <div><span style="color:#f43f5e;">pub unsafe fn</span> <span style="color:#38bdf8;">poll_order_ring</span>(ring: &amp;ShmRingBuffer) -&gt; Option&lt;OrderMessage&gt; {</div>
+            <div style="padding-left:16px;">let head = ring.head.load(Ordering::Acquire);</div>
+            <div style="padding-left:16px;">if head == ring.tail.load(Ordering::Relaxed) { <span style="color:#f43f5e;">return</span> None; }</div>
+            <div style="padding-left:16px;">let msg = std::ptr::read_volatile(ring.buffer.as_ptr().add(head));</div>
+            <div style="padding-left:16px;">ring.head.store((head + 1) &amp; RING_MASK, Ordering::Release);</div>
+            <div style="padding-left:16px;"><span style="color:#10b981;">Some</span>(msg)</div>
+            <div>}</div>
+          </div>
+        </div>
+        <div class="tile-column-split">
+          <div class="tile-panel" style="flex:1;">
+            <div class="tile-header"><span class="tile-title"><span class="tile-status-dot" style="background:#10b981;"></span><strong>Git PR #142</strong> — SBE/SHM microsecond IPC</span><span class="tile-badge" style="color:#10b981;">CI GREEN</span></div>
+            <div class="tile-body" style="padding:10px;font-size:11px;color:#94a3b8;font-family:monospace;">
+              <div style="color:#10b981;">+ 12 files changed, 482 insertions(+)</div>
+              <div style="margin-top:6px;">✓ cargo test --release: 142 passed</div>
+              <div>✓ pnpm vitest: 95 suites passed (1198 tests)</div>
+              <div>✓ memory arena benchmark: 0 allocations in hot path</div>
+            </div>
+          </div>
+          <div class="tile-panel" style="flex:1;">
+            <div class="tile-header"><span class="tile-title"><strong>Terminal Stream</strong> — build &amp; daemon logs</span><span class="tile-badge">PID 60822</span></div>
+            <div class="tile-body" style="background:#05070c;padding:10px;font-family:monospace;font-size:10px;color:#38bdf8;">
+              <div>[INFO] SBE memory-mapped ring initialized at /dev/shm/celnet-0</div>
+              <div style="color:#10b981;">[READY] WebSocket bridge listening on 127.0.0.1:8085</div>
+              <div>[TRACE] Heartbeat rx: 11ns (0 dropped packets)</div>
+            </div>
+          </div>
+        </div>
+      `,
+      hudHtml: `
+        <div class="modal-hud-window">
+          <div class="modal-hud-header">
+            <div class="modal-title"><span class="modal-pill-tag">MODAL HUD</span> Fast Git Commit &amp; PR Dispatch — feat/sbe-shm-mesh</div>
+            <button class="modal-close-btn" onclick="setSpaceMode('tiling')">✕ (Esc)</button>
+          </div>
+          <div class="modal-hud-body">
+            <div class="form-field"><label class="field-label">COMMIT MESSAGE</label><input type="text" class="field-input" value="feat(ipc): zero-copy SBE shared memory ring buffer integration"></div>
+            <div class="form-row-2col">
+              <div class="form-field"><label class="field-label">TARGET BRANCH</label><input type="text" class="field-input" value="origin/main"></div>
+              <div class="form-field"><label class="field-label">STAGED FILES</label><div class="hud-rate-box" style="padding:6px 12px;font-size:12px;color:#10b981;">4 files staged (0 uncommitted)</div></div>
+            </div>
+            <div class="modal-actions-bar">
+              <button class="btn-modal-sec" onclick="setSpaceMode('tiling')">Cancel (Esc)</button>
+              <button class="btn-modal-primary" onclick="setSpaceMode('tiling')">Commit &amp; Push (⌘Enter)</button>
+            </div>
+          </div>
+        </div>
+      `
+    },
+    datascience: {
+      caption: 'DeskModal 2.0 — Data Science, AI & Quantitative Analytics Workbench',
+      workspace: 'Predictive AI & Analytics',
+      commandQuery: 'vol_surface_dnn.ipynb',
+      commandPlaceholder: 'Query datasets, models, notebooks (⌘K)...',
+      channel: 'Purple: ds/vol-dnn',
+      channelDot: '#8b5cf6',
+      telemetryShm: 'Spark: 32C',
+      telemetryWs: 'GPU: 84%',
+      stacksHtml: `
+        <div style="position: relative;">
+          <button class="tb-app-stack active">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/></svg>
+            <span>DataLab</span>
+            <span class="tb-stack-count">4</span>
+          </button>
+        </div>
+        <div style="position: relative;">
+          <button class="tb-app-stack">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+            <span>Pipelines</span>
+            <span class="tb-stack-count">3</span>
+          </button>
+        </div>
+        <button class="tb-app-stack">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 12h10"/><path d="M12 7v10"/></svg>
+          <span>MLflow</span>
+        </button>
+      `,
+      gridHtml: `
+        <div class="tile-panel tile-main">
+          <div class="tile-header">
+            <span class="tile-title"><span class="tile-status-dot" style="background:#8b5cf6;"></span><strong>vol_surface_dnn.ipynb</strong> — Deep Volatility Calibration Model</span>
+            <div class="tile-actions"><span class="tile-badge">PyTorch 2.4</span><button class="tile-btn" onclick="setSpaceMode('modal')">⚡ SQL Query</button></div>
+          </div>
+          <div class="tile-body" style="background:#090d16;padding:12px;font-family:monospace;font-size:12px;color:#cbd5e1;line-height:1.6;">
+            <div><span style="color:#f43f5e;">import</span> torch.nn <span style="color:#f43f5e;">as</span> nn</div>
+            <div>model = nn.Sequential(nn.Linear(5, 128), nn.SiLU(), nn.Linear(128, 64), nn.Linear(64, 1))</div>
+            <div style="color:#10b981;margin-top:8px;"># Epoch 45/50 [================&gt;] loss: 0.0014 - val_loss: 0.0016</div>
+            <div style="color:#38bdf8;"># Surface calibration error &lt; 0.18 bps across all moneyness buckets</div>
+          </div>
+        </div>
+        <div class="tile-column-split">
+          <div class="tile-panel" style="flex:1;">
+            <div class="tile-header"><span class="tile-title"><strong>BigQuery Lab</strong> — Options Ticks</span><span class="tile-badge">2.4 TB/s</span></div>
+            <div class="tile-body" style="padding:10px;font-family:monospace;font-size:11px;color:#94a3b8;">
+              <div style="color:#eab308;">SELECT strike, expiry, implied_vol FROM ticks WHERE asset = 'EURUSD'</div>
+              <div style="margin-top:6px;color:#10b981;">Query completed: 4.8M rows processed in 0.42s</div>
+            </div>
+          </div>
+          <div class="tile-panel" style="flex:1;">
+            <div class="tile-header"><span class="tile-title"><strong>Model Convergence</strong> — Loss Metric</span><span class="tile-badge">TENSORBOARD</span></div>
+            <div class="tile-body" style="padding:10px;font-family:monospace;font-size:11px;color:#38bdf8;">
+              <div>Train Loss: 0.00142 · Eval MSE: 0.00019</div>
+              <div>GPU VRAM: 14.2 GB / 24 GB · 84% Load</div>
+            </div>
+          </div>
+        </div>
+      `,
+      hudHtml: `
+        <div class="modal-hud-window">
+          <div class="modal-hud-header">
+            <div class="modal-title"><span class="modal-pill-tag">MODAL HUD</span> Instant BigQuery SQL Scratchpad</div>
+            <button class="modal-close-btn" onclick="setSpaceMode('tiling')">✕ (Esc)</button>
+          </div>
+          <div class="modal-hud-body">
+            <div class="form-field"><label class="field-label">SQL QUERY</label><textarea class="field-input" style="height:70px;font-family:monospace;">SELECT tenor, strike, garman_kohlhagen_vol FROM fx_option_ticks WHERE quote_date = CURRENT_DATE() LIMIT 500;</textarea></div>
+            <div class="modal-actions-bar">
+              <button class="btn-modal-sec" onclick="setSpaceMode('tiling')">Cancel (Esc)</button>
+              <button class="btn-modal-primary" onclick="setSpaceMode('tiling')">Run Query (⌘Enter)</button>
+            </div>
+          </div>
+        </div>
+      `
+    },
+    operations: {
+      caption: 'DeskModal 2.0 — NOC Command Center & Cloud Infrastructure',
+      workspace: 'Incident Command NOC',
+      commandQuery: 'incident-8402-p1',
+      commandPlaceholder: 'Search service, pod, alert, ticket (⌘K)...',
+      channel: 'Red: inc/p1-8402',
+      channelDot: '#ef4444',
+      telemetryShm: '99.999% SLA',
+      telemetryWs: '0 P1 Outages',
+      stacksHtml: `
+        <div style="position: relative;">
+          <button class="tb-app-stack active">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+            <span>KubeDash</span>
+            <span class="tb-stack-count">4</span>
+          </button>
+        </div>
+        <div style="position: relative;">
+          <button class="tb-app-stack">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            <span>Observability</span>
+            <span class="tb-stack-count">4</span>
+          </button>
+        </div>
+        <button class="tb-app-stack">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          <span>SecOps</span>
+        </button>
+      `,
+      gridHtml: `
+        <div class="tile-panel tile-main">
+          <div class="tile-header">
+            <span class="tile-title"><span class="tile-status-dot fdc3-red"></span><strong>Global Mesh Topology</strong> — US-East, EU-Central, AP-South</span>
+            <div class="tile-actions"><span class="tile-badge" style="color:#10b981;">HEALTHY</span><button class="tile-btn" onclick="setSpaceMode('modal')">⚡ PagerDuty Ack</button></div>
+          </div>
+          <div class="tile-body" style="background:#090d16;padding:12px;font-family:monospace;font-size:12px;color:#cbd5e1;line-height:1.6;">
+            <div>Cluster: <strong style="color:#38bdf8;">us-east-prod-k8s</strong> · 96 Worker Nodes · 1,480 Pods</div>
+            <div style="color:#10b981;margin-top:6px;">✓ Core Pricing Engine Daemon: 16/16 Pods Ready (CPU 32%)</div>
+            <div style="color:#10b981;">✓ WebSocket Edge Aggregator: 8/8 Pods Ready (Latency 0.8ms)</div>
+            <div style="color:#10b981;">✓ Redis Mesh Cluster: 6 Nodes In-Sync (P99 0.2ms)</div>
+          </div>
+        </div>
+        <div class="tile-column-split">
+          <div class="tile-panel" style="flex:1;">
+            <div class="tile-header"><span class="tile-title"><strong>Distributed Tracing</strong> — P99 Latencies</span><span class="tile-badge">OTEL</span></div>
+            <div class="tile-body" style="padding:10px;font-family:monospace;font-size:11px;color:#94a3b8;">
+              <div>API Gateway: 0.42ms</div>
+              <div>SHM Ring Poller: 0.012ms</div>
+              <div>Persistence Store: 1.14ms</div>
+            </div>
+          </div>
+          <div class="tile-panel" style="flex:1;">
+            <div class="tile-header"><span class="tile-title"><strong>Live Incidents</strong> — Triage Queue</span><span class="tile-badge">ALL CLEAR</span></div>
+            <div class="tile-body" style="padding:10px;font-family:monospace;font-size:11px;color:#10b981;">
+              <div>0 Active P1 Incidents</div>
+              <div>0 Degraded Microservices</div>
+            </div>
+          </div>
+        </div>
+      `,
+      hudHtml: `
+        <div class="modal-hud-window">
+          <div class="modal-hud-header">
+            <div class="modal-title"><span class="modal-pill-tag">MODAL HUD</span> PagerDuty Triage &amp; Incident Dispatch</div>
+            <button class="modal-close-btn" onclick="setSpaceMode('tiling')">✕ (Esc)</button>
+          </div>
+          <div class="modal-hud-body">
+            <div class="form-field"><label class="field-label">INCIDENT SUMMARY</label><input type="text" class="field-input" value="[Resolved] Gateway TLS renewal completed without traffic interruption"></div>
+            <div class="modal-actions-bar">
+              <button class="btn-modal-sec" onclick="setSpaceMode('tiling')">Cancel (Esc)</button>
+              <button class="btn-modal-primary" onclick="setSpaceMode('tiling')">Acknowledge &amp; Close (⌘Enter)</button>
+            </div>
+          </div>
+        </div>
+      `
+    },
+    enterprise: {
+      caption: 'DeskModal 2.0 — Enterprise Workspace & Executive Operations',
+      workspace: 'Executive Suite & Strategy',
+      commandQuery: 'Global Alpha Fund',
+      commandPlaceholder: 'Search contacts, deals, documents (⌘K)...',
+      channel: 'Green: client/global-alpha',
+      channelDot: '#10b981',
+      telemetryShm: 'Cloud Sync',
+      telemetryWs: 'SSO Active',
+      stacksHtml: `
+        <div style="position: relative;">
+          <button class="tb-app-stack active">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span>Workplace</span>
+            <span class="tb-stack-count">5</span>
+          </button>
+        </div>
+        <div style="position: relative;">
+          <button class="tb-app-stack">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <span>CRM</span>
+            <span class="tb-stack-count">3</span>
+          </button>
+        </div>
+        <button class="tb-app-stack">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          <span>Reports</span>
+        </button>
+      `,
+      gridHtml: `
+        <div class="tile-panel tile-main">
+          <div class="tile-header">
+            <span class="tile-title"><span class="tile-status-dot" style="background:#10b981;"></span><strong>Executive KPI &amp; Revenue Matrix</strong> — Q3 Global Portfolio</span>
+            <div class="tile-actions"><span class="tile-badge" style="color:#10b981;">+24% YOY</span><button class="tile-btn" onclick="setSpaceMode('modal')">⚡ Quick Memo</button></div>
+          </div>
+          <div class="tile-body" style="background:#090d16;padding:14px;font-size:12px;color:#cbd5e1;line-height:1.7;">
+            <div>ARR: <strong style="color:#38bdf8;">$84.5M</strong> · Net Retention Rate: <strong style="color:#10b981;">128%</strong> · Gross Margin: <strong style="color:#10b981;">82%</strong></div>
+            <div style="color:#94a3b8;margin-top:6px;">Strategic Expansion: APAC Quantitative Desks fully onboarded on CelNet SBE/SHM infrastructure.</div>
+          </div>
+        </div>
+        <div class="tile-column-split">
+          <div class="tile-panel" style="flex:1;">
+            <div class="tile-header"><span class="tile-title"><strong>Client Dealflow</strong> — Global Alpha Fund</span><span class="tile-badge">CLOSING</span></div>
+            <div class="tile-body" style="padding:10px;font-size:11px;color:#94a3b8;">
+              <div>Contract: Enterprise Core Platform Tier-1</div>
+              <div style="color:#10b981;margin-top:4px;">Stage: Legal &amp; Compliance Sign-off</div>
+            </div>
+          </div>
+          <div class="tile-panel" style="flex:1;">
+            <div class="tile-header"><span class="tile-title"><strong>Action Items</strong> — Leadership Board</span><span class="tile-badge">3 PENDING</span></div>
+            <div class="tile-body" style="padding:10px;font-size:11px;color:#cbd5e1;">
+              <div>✓ Approve Q4 Infrastructure Capex</div>
+              <div>• Review Multi-OS DeskModal Client Pilot</div>
+            </div>
+          </div>
+        </div>
+      `,
+      hudHtml: `
+        <div class="modal-hud-window">
+          <div class="modal-hud-header">
+            <div class="modal-title"><span class="modal-pill-tag">MODAL HUD</span> Executive Decision Memo &amp; Dispatch</div>
+            <button class="modal-close-btn" onclick="setSpaceMode('tiling')">✕ (Esc)</button>
+          </div>
+          <div class="modal-hud-body">
+            <div class="form-field"><label class="field-label">MEMO TITLE</label><input type="text" class="field-input" value="Authorize Multi-OS DeskModal Deployment for Tier-1 Financial &amp; Engineering Desks"></div>
+            <div class="modal-actions-bar">
+              <button class="btn-modal-sec" onclick="setSpaceMode('tiling')">Cancel (Esc)</button>
+              <button class="btn-modal-primary" onclick="setSpaceMode('tiling')">Approve &amp; Dispatch (⌘Enter)</button>
+            </div>
+          </div>
+        </div>
+      `
+    }
+  };
+
+  function setPersona(persona) {
+    currentPersona = persona;
+    document.querySelectorAll('#personaGroup .btn-toggle').forEach(b => b.classList.remove('active'));
+    if (typeof event !== 'undefined' && event && event.target) {
+      event.target.classList.add('active');
+    }
+
+    const cfg = PERSONA_CONFIGS[persona] || PERSONA_CONFIGS.trading;
+    document.getElementById('osCaption').textContent = cfg.caption;
+    document.getElementById('workspacePillText').textContent = cfg.workspace;
+    const cmdInput = document.getElementById('commandInput');
+    if (cmdInput) {
+      cmdInput.value = cfg.commandQuery;
+      cmdInput.placeholder = cfg.commandPlaceholder;
+    }
+    document.getElementById('fdc3Text').textContent = cfg.channel;
+    document.getElementById('fdc3Dot').style.background = cfg.channelDot;
+    document.getElementById('telemetryPillShm').textContent = cfg.telemetryShm;
+    document.getElementById('telemetryPillWs').textContent = cfg.telemetryWs;
+
+    // Stacks
+    const stacksHost = document.getElementById('toolbarStacks');
+    if (stacksHost) {
+      stacksHost.innerHTML = cfg.stacksHtml;
+    }
+
+    // Grid
+    const gridHost = document.getElementById('splitTilingGrid');
+    if (gridHost) {
+      gridHost.innerHTML = cfg.gridHtml;
+    }
+
+    // Modal HUD
+    const hudHost = document.getElementById('modalHud');
+    if (hudHost) {
+      hudHost.innerHTML = cfg.hudHtml;
     }
   }
 
