@@ -1126,6 +1126,192 @@
     pointer-events: none;
     white-space: nowrap;
   }
+
+  /* Decoupled Multi-Window Topology Simulator Mode */
+  .topology-explainer-bar {
+    display: none;
+    background: linear-gradient(90deg, rgba(14, 165, 233, 0.15), rgba(168, 85, 247, 0.15));
+    border-bottom: 1px solid rgba(56, 189, 248, 0.3);
+    padding: 8px 14px;
+    font-size: 0.72rem;
+    color: #e2e8f0;
+    align-items: center;
+    justify-content: space-between;
+    z-index: 55;
+    animation: fadeInModal 0.2s ease;
+  }
+  .topology-explainer-bar .topo-pill {
+    font-family: var(--mono-font);
+    font-weight: 700;
+    font-size: 0.65rem;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: rgba(14, 165, 233, 0.25);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.4);
+  }
+  .os-stage.mode-decoupled {
+    background: #05070d;
+  }
+  .os-stage.mode-decoupled .topology-explainer-bar {
+    display: flex;
+  }
+  .os-stage.mode-decoupled #toolbarHost {
+    margin: 24px auto 16px auto !important;
+    width: 94% !important;
+    max-width: 960px !important;
+    border-radius: 9999px !important;
+    box-shadow: 0 16px 36px -4px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(56, 189, 248, 0.4) !important;
+    position: relative;
+    z-index: 50;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .os-stage.mode-decoupled #toolbarHost::before {
+    content: "Window A: Sovereign Toolbar Window [Tauri: 'main'] — Borderless, Detached & Always-On-Top";
+    position: absolute;
+    top: -22px;
+    left: 20px;
+    font-size: 0.62rem;
+    font-family: var(--mono-font);
+    color: #38bdf8;
+    background: rgba(15, 23, 42, 0.95);
+    border: 1px solid rgba(56, 189, 248, 0.4);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+  .os-stage.mode-decoupled .desktop-canvas {
+    display: flex;
+    flex-direction: row;
+    gap: 16px;
+    padding: 16px 14px 14px 14px;
+    position: relative;
+    height: calc(100% - 98px);
+  }
+  .os-stage.mode-decoupled #splitTilingGrid {
+    flex: 1 1 58%;
+    border-radius: 8px;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+    position: relative;
+    margin-top: 14px;
+  }
+  .os-stage.mode-decoupled #splitTilingGrid::before {
+    content: "Window C: Coordinated Tiled Workspace [Tauri: 'container-c-work'] (Binary Split-Tree BSP)";
+    position: absolute;
+    top: -22px;
+    left: 0;
+    font-size: 0.62rem;
+    font-family: var(--mono-font);
+    color: #10b981;
+    background: rgba(6, 26, 17, 0.95);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    z-index: 10;
+  }
+  .os-stage.mode-decoupled #modalHud {
+    display: flex !important;
+    position: relative !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    flex: 1 1 42%;
+    align-items: stretch !important;
+    justify-content: stretch !important;
+    margin-top: 14px;
+  }
+  .os-stage.mode-decoupled #modalHud .modal-hud-window {
+    width: 100% !important;
+    border: 1px solid rgba(168, 85, 247, 0.6) !important;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(168, 85, 247, 0.3) !important;
+    position: relative;
+  }
+  .os-stage.mode-decoupled #modalHud::before {
+    content: "Window B: Ephemeral Action HUD [Tauri: 'hud-action'] (Floats Across Screens)";
+    position: absolute;
+    top: -22px;
+    left: 0;
+    font-size: 0.62rem;
+    font-family: var(--mono-font);
+    color: #c084fc;
+    background: rgba(28, 12, 43, 0.95);
+    border: 1px solid rgba(168, 85, 247, 0.4);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    z-index: 10;
+  }
+
+  /* Form Field and Modal HUD Content Styles */
+  .modal-hud-body {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .form-row-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .field-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-family: var(--mono-font);
+  }
+  .field-input {
+    background: #080c14;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+    color: #f8fafc;
+    font-family: var(--mono-font);
+    font-size: 0.8rem;
+    padding: 8px 10px;
+    outline: none;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .field-input:focus {
+    border-color: var(--brand-accent, #38bdf8);
+  }
+  .hud-rate-box {
+    background: #080c14;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .rate-large {
+    font-family: var(--mono-font);
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #10b981;
+  }
+  .rate-sub {
+    font-size: 0.68rem;
+    color: #64748b;
+  }
+  .modal-actions-bar {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 6px;
+  }
 </style>
 </head>
 <body>
@@ -1137,11 +1323,12 @@
     <span class="tag">Architecture & UX Specification</span>
     <span class="tag tag-os">Windows · macOS · Linux</span>
     <span class="tag" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border-color: rgba(52, 211, 153, 0.3);">FDC3 v2.2 Mesh</span>
+    <span class="tag" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border-color: rgba(168, 85, 247, 0.3);">Decoupled Multi-Window</span>
   </div>
 
-  <h1>DeskModal Toolbar: Sovereign Branding, Customization & Multi-OS Architecture</h1>
+  <h1>DeskModal: Sovereign Command Bar, Multi-Domain Personas & Decoupled Window Topology</h1>
   <p class="subtitle">
-    An interactive design review exploring how DeskModal's toolbar evolves from a consumer dock imitation into an institutional-grade, white-labelable <strong>Sovereign Trading Command Bar</strong> across macOS, Windows 11, and Linux.
+    An institutional desktop operating runtime across macOS, Windows 11, and Linux. Featuring domain-agnostic app stacks (Engineering, Data Science, NOC, Enterprise, Trading) and a <strong>Tripartite Decoupled Window Topology</strong> where the Sovereign Toolbar, Ephemeral Modals, and Tiled Cockpits operate as independent native OS surfaces without obfuscating desk space.
   </p>
 
   <!-- Interactive Sandbox Simulator -->
@@ -1191,6 +1378,7 @@
           <div class="btn-group" id="spaceGroup">
             <button class="btn-toggle active" onclick="setSpaceMode('tiling')">Cockpit Tiling (Split-Tree)</button>
             <button class="btn-toggle" onclick="setSpaceMode('modal')">Modal Action HUD</button>
+            <button class="btn-toggle" onclick="setSpaceMode('decoupled')">Decoupled Multi-Window (Separated)</button>
             <button class="btn-toggle" onclick="setSpaceMode('autohide')">Zero-Footprint (Auto-Hide)</button>
           </div>
         </div>
@@ -1211,7 +1399,7 @@
 
     <div class="interactive-hint">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-      <span><strong>Try it live:</strong> Click <strong>Cockpit Tiling</strong>, <strong>Modal Action HUD</strong>, or <strong>Zero-Footprint</strong> to see how DeskModal tiles non-overlapping trading desks or presents high-focus action HUDs without ever obfuscating screen space!</span>
+      <span><strong>Try it live:</strong> Click <strong>Decoupled Multi-Window</strong> to see how the Toolbar operates as its <strong>OWN sovereign window</strong> separate from Modal HUDs and Tiled Panes! Or switch <strong>Workspace Domain</strong> to see Engineering, Data Science, NOC, and Enterprise suites in action.</span>
     </div>
 
     <!-- The OS Stage Window -->
@@ -1237,6 +1425,21 @@
           <div class="linux-pill"></div>
           <div class="linux-pill"></div>
           <div class="linux-pill"></div>
+        </div>
+      </div>
+
+      <!-- Topology Explainer Bar for Decoupled Multi-Window Mode -->
+      <div class="topology-explainer-bar" id="topologyExplainerBar">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="topo-pill">DECOUPLED MULTI-WINDOW TOPOLOGY</span>
+          <span>The Toolbar is its <strong>OWN sovereign OS window</strong>, completely decoupled from Modal HUDs and Tiled Workspaces.</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;font-size:0.68rem;color:#94a3b8;">
+          <span>Window A: Toolbar</span>
+          <span>•</span>
+          <span>Window B: Modal HUD</span>
+          <span>•</span>
+          <span>Window C: Tiled Cockpit</span>
         </div>
       </div>
 
@@ -1636,41 +1839,55 @@ name = "Markets & Streaming Depth"
 stack_role = "member"</code></pre>
   </div>
 
-  <!-- Section 4: Modal vs Tileable Architecture & Zero Desk Space Obfuscation -->
+  <!-- Section 4: Tripartite Decoupled Window Topology & Zero Desk Space Obfuscation -->
   <div class="section-card">
     <h2>
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12h18"/><path d="M12 12v9"/></svg>
-      4. The Modal vs. Tileable Calculus: Eliminating Desktop Obfuscation
+      4. Tripartite Decoupled Window Topology: Sovereign Toolbar, Ephemeral Modals & Tiled Cockpits
     </h2>
     <p>
-      DeskModal derives its foundational identity from a critical architectural duality: <strong>Windows must be either Modal or Tileable, and the container must NEVER obfuscate valuable desk space</strong>. On tier-1 trading desks, screen space is occupied by live market curves, pricing ladders, order feeds, and blotters. A desktop container that hogs space, creates overlapping window clutter ("z-order occlusion hell"), or steals focus is immediately discarded by traders.
+      DeskModal derives its foundational identity from a fundamental architectural truth: <strong>Windows are either Modal or Tileable, and the desktop runtime must NEVER obfuscate valuable desk space</strong>. Crucially, <strong>the Toolbar is its OWN sovereign, separate native window</strong> (Tauri <code>decorations: false, transparent: true, alwaysOnTop: true</code>), completely decoupled from both modal windows and tiled workspace panes. This eliminates the "monolithic container penalty" common to Electron shells and browser portals.
     </p>
 
     <div class="matrix-grid">
       <div class="matrix-card">
-        <div class="matrix-title">Dual Window Modality Matrix</div>
+        <div class="matrix-title">Window A: Sovereign Toolbar Window</div>
         <ul>
-          <li><strong>Persona A: Ephemeral Modal HUDs</strong>: Dedicated to rapid, transient actions (e.g. <em>Quick RFQ Order Tickets, Greeks Sensitivity Sliders, FDC3 Intent Resolvers</em>). They pop instantly under cursor focus, execute via SBE/SHM, and dismiss immediately upon completion or <code>Esc</code>. They do not spawn persistent taskbar entries or disturb the trader's layout.</li>
-          <li><strong>Persona B: Persistent Split-Tree Tiles</strong>: Dedicated to analytical and execution desks (e.g. <em>Garman-Kohlhagen Options Pricing, L2 Depth Ladders, Real-Time Blotters</em>). Managed by <code>deskmodal-window-manager::split_tree</code>, windows dock with 0px or 2px gutters in binary BSP trees. Resizing a splitter adjusts adjacent tiles proportionally with zero overlap.</li>
-          <li><strong>Zero Overlap Guarantee</strong>: No window ever hides behind another window. Every visible pixel represents active, functional financial telemetry.</li>
+          <li><strong>Independent Native Window</strong>: Tauri <code>label: "main"</code> runs on its own event loop, completely detached from app panes.</li>
+          <li><strong>Never Obfuscates Canvas</strong>: Docks edge-to-edge (34px) or auto-hides to a 3px hairline glow strip. Zero pixels wasted inside workspaces.</li>
+          <li><strong>Cross-Monitor Mobility</strong>: Can be positioned on Monitor 1 while workspaces span Monitors 2 & 3.</li>
+          <li><strong>Persistent Resilience</strong>: Stays alive and broadcast-ready even if an app pane reloads or encounters an unhandled exception.</li>
         </ul>
       </div>
 
       <div class="matrix-card">
-        <div class="matrix-title">Zero Desk Space Obfuscation</div>
+        <div class="matrix-title">Window B: Ephemeral Modal Windows</div>
         <ul>
-          <li><strong>Razor-Thin Top Strip (34px)</strong>: Docks flush into the display's dead margins (adjacent to the macOS camera notch, or flush against the Windows taskbar).</li>
-          <li><strong>Proximity Auto-Hide & Edge Reveal</strong>: When the trader desires 100% full-screen canvas utilization, the command bar tucks away into an un-obtrusive 3px edge glow strip. Hovering the edge or pressing <code>⌘K</code> drops the bar smoothly down for instant command routing.</li>
-          <li><strong>OS Work-Area Reservation</strong>: DeskModal sets the host OS usable work area via Win32 <code>SPI_SETWORKAREA</code>, macOS Cocoa <code>NSScreen.visibleFrame</code>, and Linux <code>wlr-layer-shell-unstable-v1</code>, ensuring third-party applications snap cleanly around the bar rather than colliding with it.</li>
+          <li><strong>Independent Focused Surfaces</strong>: Spawns as focused WebviewWindows (e.g. <code>⌘K</code> Omni-Search, Quick PR Dispatch, RFQ Order Tickets, Settings).</li>
+          <li><strong>Separate from Toolbar</strong>: Opening a modal never stretches, expands, or warps the toolbar window into an awkward box.</li>
+          <li><strong>Zero Workspace Disruption</strong>: Floats freely across screens without resizing or disturbing background tiled splitters.</li>
+          <li><strong>Instant Dismissal</strong>: Closes instantaneously on <code>Escape</code> or submit, returning 100% focus to the underlying cockpit.</li>
         </ul>
       </div>
 
       <div class="matrix-card">
-        <div class="matrix-title">Native Third-Party Window Adoption (`deskmodal-snap`)</div>
+        <div class="matrix-title">Window C: Coordinated Tiled Workspaces</div>
         <ul>
-          <li><strong>Foreign Window Tiling</strong>: Institutional traders cannot abandon Bloomberg Terminal, Excel spreadsheets, or Symphony chat. <code>deskmodal-snap::adoption.rs</code> captures native OS window handles (<code>HWND</code>, <code>CGWindowID</code>, X11 IDs) via glob pattern matching.</li>
-          <li><strong>Unified Snap Groups</strong>: Third-party windows are adopted directly into DeskModal's split-tree tiling grid, moving, resizing, and minimizing together as a synchronized multi-window workstation.</li>
-          <li><strong>Subclass Intercepts</strong>: On Windows, Win32 <code>WM_MOVING</code> and <code>WM_SIZING</code> message hooks ensure adopted Bloomberg/Excel windows track the DeskModal splitters without visual latency or jitter.</li>
+          <li><strong>Binary Split-Tree Tiling</strong>: Managed by <code>deskmodal-window-manager::split_tree</code> with 0px or 2px gutters. Zero window overlap ("z-order occlusion hell" eliminated).</li>
+          <li><strong>100% Canvas for Work</strong>: No navigation chrome or bulky dock embedded inside the workspace panes.</li>
+          <li><strong>Multi-Display Tearouts</strong>: Tabs tear out (<code>tearout-&lt;uuid&gt;</code>) into independent OS windows across multi-monitor desks.</li>
+          <li><strong>Foreign Window Adoption</strong>: <code>deskmodal-snap</code> adopts native IDEs, Bloomberg, Excel, and Terminals directly into the tiling grid.</li>
+        </ul>
+      </div>
+
+      <div class="matrix-card">
+        <div class="matrix-title">Universal Multi-Domain Applicability</div>
+        <ul>
+          <li><strong>Engineering & DevOps</strong>: Rust microservice + PR diff + Cargo logs, with Quick Commit HUD.</li>
+          <li><strong>Data Science & AI</strong>: PyTorch notebook + BigQuery SQL + Loss curves, with Query Runner HUD.</li>
+          <li><strong>Operations (NOC)</strong>: K8s mesh topology + OpenTelemetry traces + Incident queue, with PagerDuty Escalation HUD.</li>
+          <li><strong>Executive Management</strong>: ARR/NRR matrix + Dealflow pipeline + Board action items, with Decision Memo HUD.</li>
+          <li><strong>Quant & Trading</strong>: Options volatility smile + L2 depth ladder + Deals blotter, with Quick RFQ Order HUD.</li>
         </ul>
       </div>
     </div>
@@ -1787,12 +2004,17 @@ stack_role = "member"</code></pre>
   function setSpaceMode(mode) {
     currentSpaceMode = mode;
     document.querySelectorAll('#spaceGroup .btn-toggle').forEach(b => b.classList.remove('active'));
-    event.target.classList.add('active');
+    if (typeof event !== 'undefined' && event && event.target) {
+      event.target.classList.add('active');
+    }
 
     const modalHud = document.getElementById('modalHud');
     const host = document.getElementById('toolbarHost');
     const revealStrip = document.getElementById('edgeRevealStrip');
     const revealLabel = document.getElementById('edgeRevealLabel');
+    const stage = document.getElementById('osStage');
+
+    stage.classList.remove('mode-decoupled');
 
     if (mode === 'tiling') {
       modalHud.style.display = 'none';
@@ -1809,6 +2031,12 @@ stack_role = "member"</code></pre>
       host.classList.add('toolbar-autohide-active');
       revealStrip.style.display = 'block';
       revealLabel.style.display = 'block';
+    } else if (mode === 'decoupled') {
+      stage.classList.add('mode-decoupled');
+      modalHud.style.display = 'flex';
+      host.classList.remove('toolbar-autohide-active');
+      revealStrip.style.display = 'none';
+      revealLabel.style.display = 'none';
     }
   }
 

@@ -1,25 +1,26 @@
 # DeskModal Toolbar & Launcher — Comprehensive Ergonomic Critique & Target Architecture Evolution
 
-**Document Version:** 1.0.0  
+**Document Version:** 1.1.0  
 **Status:** Canonical Design Specification & Architectural Critique  
-**Audience:** DeskModal Core Platform Architects, UI/UX Leads, Trading Systems Engineers  
+**Audience:** DeskModal Core Platform Architects, UI/UX Leads, Systems Engineers  
 **Target Platform:** DeskModal Desktop Agent (Rust / Tauri 2.0 / React 19)  
 
 ---
 
 ## 1. Executive Summary
 
-The DeskModal launcher toolbar is the primary operational anchor and window navigator of the entire DeskModal enterprise desktop ecosystem. It is responsible for orchestrating multi-window layouts, launching sovereign micro-apps (such as CelNet's derivatives trading desks and TradeSurface's charting tools), managing workspaces, and anchoring FDC3 interop.
+The DeskModal launcher toolbar is the primary operational anchor and window navigator of the entire DeskModal enterprise desktop ecosystem. It is responsible for orchestrating multi-window layouts, launching sovereign micro-apps (spanning Engineering & DevOps, Data Science & AI, Operations & NOC, Enterprise Management, and Quantitative Trading), managing workspaces, and anchoring FDC3 interop.
 
-However, a deep forensic review of the current implementation reveals a fundamental architectural and ergonomic tension: **the toolbar is caught between being an imitation of the consumer macOS Dock (floating glass pill, icon magnification, bouncing feedback, drag-to-spawn) and an institutional trading station control bar (Bloomberg Launchpad, OpenFin Workspace, Refinitiv Eikon).**
+However, a deep forensic review of the legacy implementation reveals a fundamental architectural and ergonomic tension: **the toolbar was caught between being an imitation of the consumer macOS Dock (floating glass pill, icon magnification, bouncing feedback, drag-to-spawn) and an institutional, multi-domain desktop command bar.**
 
-In a mission-critical trading workstation:
-1. **Screen real estate is scarce and zero-sum**: Every vertical and horizontal pixel must earn its right to exist against price charts, order books, and risk matrices.
-2. **Motor memory and Fitts's Law dominate**: Unpredictable moving targets (magnification scaling) and ambiguous drag zones cause physical mis-clicks during volatile market conditions.
+In mission-critical professional workstations across domains:
+1. **Screen real estate is scarce and zero-sum**: Every vertical and horizontal pixel must earn its right to exist against code editors, terminals, data notebooks, cluster topology graphs, or pricing ladders.
+2. **Motor memory and Fitts's Law dominate**: Unpredictable moving targets (magnification scaling) and ambiguous drag zones cause physical mis-clicks during high-velocity operations.
 3. **Information density must be semantic, not decorative**: Monochromatic icon walls force "mystery meat" navigation, while identical glyphs (e.g. Spaces, Market, and Analytics all using 4-square grid icons) create cognitive friction.
-4. **Desktop context must be universally observable**: The toolbar currently lacks any visual indication of FDC3 desktop channels, active symbol underliers, microservice health, or IPC latency.
+4. **Desktop context must be universally observable**: The toolbar must provide persistent situational awareness: FDC3 desktop channels, active context (symbol, git branch, dataset, incident), microservice health, and IPC latency.
+5. **Window decoupling is foundational**: The toolbar, modal action HUDs, and tiled workspace panes must be **structurally decoupled native surfaces** so that navigation never obfuscates or resizes active work.
 
-This document delivers an exhaustive critique of the current DeskModal toolbar and formulates the **Sovereign Trading Command Bar** target architecture — a modular, high-density, multi-modal control ribbon that unifies FDC3 orchestration, system telemetry, plugin grouping, and instantaneous keyboard-driven navigation.
+This document delivers an exhaustive critique of the legacy toolbar and formulates the **Sovereign Command Bar & Multi-Domain Desktop Operating Runtime** target architecture — a modular, high-density, multi-modal control ribbon that unifies FDC3 orchestration, system telemetry, dynamic plugin grouping, and instantaneous keyboard-driven navigation across all desktop operating systems.
 
 ---
 
@@ -315,61 +316,77 @@ To implement this target architecture cleanly without architectural regression, 
 
 ---
 
-## 8. The DeskModal Duality: Modal HUDs vs. Split-Tree Tiling & Zero Desk Space Obfuscation
+## 8. Tripartite Decoupled Window Topology: Sovereign Toolbar, Ephemeral Modals & Tiled Cockpits
 
-The very name **DeskModal** reflects a foundational architectural philosophy: **Windows are either Modal or Tileable, and the desktop container must NEVER obfuscate desk space**.
+The very name **DeskModal** reflects a foundational architectural truth: **Windows are either Modal or Tileable, and the desktop runtime must NEVER obfuscate desk space**.
 
-On tier-1 institutional trading desks, desktop real estate is sacred. Multiple high-resolution displays are filled with real-time financial telemetry: live order books, volatility smiles, pricing ladders, execution blotters, and news feeds. A bulky application frame or floating consumer dock that obscures charts, induces window overlap, or forces traders into "z-order occlusion hell" is immediately discarded.
+Crucially, DeskModal possesses a structural superpower that sets it apart from traditional monolithic portals (like OpenFin, Electron single-window wrappers, or browser tabs): **the Toolbar is its OWN sovereign native OS window, completely decoupled from modal windows as well as tiled workspace windows**.
 
-DeskModal eliminates desk space obfuscation through three architectural pillars:
+### The Tripartite Native Window Topology
 
-### 1. The Dual Window Modality Matrix
 ```
-                            ┌───────────────────────────────┐
-                            │      DeskModal Container      │
-                            └───────┬───────────────┬───────┘
-                                    │               │
-                 Ephemeral / Transient             Persistent Cockpit
-                                    │               │
-                                    ▼               ▼
-                 ┌──────────────────────┐    ┌────────────────────────┐
-                 │   Modal Action HUD   │    │ Binary Split-Tree Tile │
-                 │  (Order Ticket, RFQ) │    │  (Pricing, L2, Blotter)│
-                 └──────────┬───────────┘    └───────────┬────────────┘
-                            │                            │
-             • Pops under cursor / ⌘K      • Snaps in BSP binary tree
-             • Executes via SBE/SHM        • 0px / 2px gutters
-             • Dismisses on Esc/Submit     • Proportional splitter math
-             • Zero taskbar clutter        • Never hides behind windows
+                                  ┌────────────────────────────────────────┐
+                                  │      Host OS Display Space (Monitors)   │
+                                  └───────────────────┬────────────────────┘
+                                                      │
+         ┌────────────────────────────────────────────┼────────────────────────────────────────┐
+         │                                            │                                        │
+         ▼                                            ▼                                        ▼
+┌───────────────────────────────┐        ┌──────────────────────────────┐        ┌──────────────────────────────┐
+│  Tier 1: Sovereign Toolbar    │        │  Tier 2: Ephemeral Modals    │        │  Tier 3: Tiled Workspaces    │
+│  (Tauri: label="main")        │        │  (Tauri: label="hud-*")      │        │  (Tauri: label="container-*")│
+├───────────────────────────────┤        ├──────────────────────────────┤        ├──────────────────────────────┤
+│ • Own native frameless window │        │ • Separate focused OS window │        │ • Binary split-tree (BSP)    │
+│ • Always-on-top, transparent  │        │ • Pops under cursor on any   │        │ • 0px / 2px non-overlap      │
+│ • Docks to any edge or floats │        │   monitor (multi-display)    │        │ • 100% canvas for active work│
+│ • Proximity auto-hide (3px)   │        │ • Executes & dismisses (Esc) │        │ • Tabs tear out to new OS    │
+│ • Zero pixels eaten in apps   │        │ • Never alters tile layout   │        │   windows (`tearout-<uuid>`) │
+│ • Survives app crashes/reloads│        │ • Zero persistent clutter    │        │ • Foreign window adoption    │
+└───────────────────────────────┘        └──────────────────────────────┘        └──────────────────────────────┘
 ```
 
-- **Persona A: Ephemeral Modal HUDs (`deskmodal-window-manager::popup.rs`)**:
-  - *Purpose*: Focused, rapid execution actions: Quick RFQ Order Tickets, Greeks Sensitivity Sliders, FDC3 Intent Resolvers, Workspace Switchers (`⌘W`), Command Palettes (`⌘K`).
-  - *Ergonomics*: Floats centered or anchored to the parent tile with soft background dimming (`backdrop-filter: blur(6px)`).
-  - *Lifecycle*: Appears instantly, executes via SBE/SHM microsecond IPC, and dismisses on `Esc`, submit, or outside click. Leaves zero lingering footprint.
-- **Persona B: Persistent Split-Tree Tiles (`deskmodal-window-manager::split_tree.rs`)**:
-  - *Purpose*: Persistent observational and analytical engines: CelNet Options Volatility Smile, TradeSurface L2 Consolidated Depth, Live Deals Blotter, Risk Cube VaR.
-  - *Ergonomics*: Managed by a binary space partitioning (BSP) tree. Tiles snap edge-to-edge with 0px or 2px gutters.
-  - *Zero Occlusion Guarantee*: Windows never overlap, stack, or hide behind one another. Dragging a splitter (`splitter.rs`) resizes adjacent tiles proportionally with zero rendering lag.
+### Architectural Superpowers of Decoupling
 
-### 2. Zero Desk Space Obfuscation ("The Phantom Host")
-- **34px Dead-Margin Docking**: Docks flush against the screen's dead boundaries (adjacent to the macOS camera notch, flush above the Windows Taskbar, or pinned to the Wayland screen edge).
-- **Proximity Auto-Hide & Edge Reveal**: For full-screen analytical focus, the command bar tucks away completely, fading into an unobtrusive 3px edge glow strip. Hovering the edge or pressing `⌘K` smoothly drops the bar down for rapid navigation.
-- **OS Work-Area Reservation**: DeskModal sets the host OS work area via Win32 `SPI_SETWORKAREA`, macOS Cocoa `NSScreen.visibleFrame`, and Linux `wlr-layer-shell-unstable-v1`. Third-party applications naturally snap and maximize *around* DeskModal rather than colliding with it.
+1. **The Toolbar as a Sovereign Anchor (Decoupled from Modals & Tiles)**:
+   - In legacy web/Electron shells, the toolbar is a `<header>` element inside the app's DOM. If an app crashes, locks up in a heavy computation loop, or needs a reload, the entire navigation bar freezes or reloads with it.
+   - In DeskModal, the Toolbar lives in its own dedicated Tauri `WebviewWindow` (`label: "main"`, `decorations: false`, `alwaysOnTop: true`, `transparent: true`). It runs on its own event loop and can be positioned on the top, bottom, or side edge—or float as a detached capsule.
+   - **Zero Canvas Obfuscation**: Because the toolbar is decoupled, tiled workspaces get 100% of their window canvas without navigation chrome cluttering their headers. When auto-hidden, it collapses to a 3px hairline edge strip.
 
-### 3. Native Third-Party Window Adoption (`deskmodal-snap::adoption.rs`)
-Traders cannot abandon Bloomberg Terminal, Microsoft Excel, or Symphony. Instead of fighting these applications:
-- **Handle Capture**: `deskmodal-snap` captures foreign OS window handles (`HWND`, `CGWindowID`, X11 window IDs) via title and process glob matching.
-- **Tiled Co-Movement**: Foreign windows are adopted into DeskModal's split-tree grid, moving, resizing, and minimizing as first-class members of the trading cockpit.
-- **Win32 Subclass Intercepts**: Subclass hooks (`WM_MOVING`, `WM_SIZING`) ensure adopted Bloomberg/Excel windows track DeskModal splitters without tearing or visual stutter.
+2. **Modal Windows as Ephemeral Floating Surfaces (Decoupled from the Toolbar)**:
+   - When a user presses `⌘K` for omni-search, opens a Quick Commit & PR Dispatch HUD, fires a fast RFQ order ticket, or opens Settings, DeskModal spawns an ephemeral native window or focused HUD.
+   - **Crucial Benefit**: Opening a modal does *not* hijack, expand, or warp the toolbar window into an awkward balloon. The toolbar remains clean and anchored, while the modal floats directly over the user's active point of interest—even on a secondary or tertiary monitor!
+   - **Zero Tile Interruption**: The modal never compresses, reflows, or resizes the background workspace tiles. When dismissed via `Escape` or submit, the modal closes cleanly, leaving the workspace in its exact state.
+
+3. **Tiled Windows as Coordinated Workspaces (Decoupled & Tearable)**:
+   - Sustained multi-tasking surfaces are managed by `LayoutEngine` and `deskmodal-window-manager::split_tree`.
+   - Windows tile in binary trees with 0px or 2px gutters. Resizing splitters dynamically updates sibling panes with zero window overlap ("z-order occlusion hell" eliminated).
+   - **Tearout Capability (`tearout-<uuid>`)**: Any tile can be torn off from the grid into an independent floating OS window and snapped onto another display, while still participating in the shared FDC3 2.2 context mesh and SBE/SHM pub/sub fabric.
+
+### Universal Multi-Domain Applications
+
+DeskModal's tripartite decoupled topology is domain-agnostic, providing equal superpowers across diverse professional environments:
+
+| Professional Domain | Sovereign Toolbar Anchor | Ephemeral Modal Action HUD | Coordinated Tiled Cockpit |
+|---|---|---|---|
+| **Engineering & DevOps** | Git branch pill, build status, SHM daemon health, Quick app launcher | Fast Commit & PR Dispatch HUD (`⌘Enter`), Environment variable switcher | Rust microservice editor + Git PR review diff + Live cargo build log terminal |
+| **Data Science & AI** | Dataset context, GPU cluster utilization, Python runtime heartbeat | SQL Query Quick Runner HUD, Model Hyperparameter tuner | Jupyter/PyTorch notebook + BigQuery SQL Lab + Real-time validation loss curves |
+| **Operations (NOC)** | Incident severity alert, cluster latency (1.2ms), mesh telemetry | PagerDuty Incident Escalation HUD, Runbook trigger | K8s service mesh topology + OpenTelemetry trace viewer + Live cluster incident queue |
+| **Executive & Enterprise** | Q3 ARR/NRR ticker, fiscal calendar, approval notifications | Executive Decision Memo HUD, Fast Board Approval dispatch | Executive KPI revenue matrix + CRM dealflow pipeline + Leadership action items |
+| **Quant & Trading** | FDC3 channel (Red: EURUSD), pricing socket (12µs SHM), market clock | Quick RFQ Order Ticket HUD, Greeks sensitivity slider | Garman-Kohlhagen options pricer + L2 market depth ladder + Live execution blotter |
+
+### Native Third-Party Window Adoption (`deskmodal-snap`)
+Professionals cannot abandon their native OS tools—VS Code, JetBrains, Terminal, Bloomberg Terminal, Microsoft Excel, or Slack:
+- **Foreign Handle Capture**: `deskmodal-snap` captures foreign OS window handles (`HWND`, `CGWindowID`, X11 window IDs) matching process globs.
+- **Tiled Co-Movement**: Foreign windows are adopted into DeskModal's split-tree grid, moving, resizing, and minimizing as synchronized workspace members.
+- **Subclass Intercepts**: On Windows, Win32 `WM_MOVING` and `WM_SIZING` hooks ensure adopted windows track DeskModal splitters without visual latency or tearing.
 
 ---
 
 ## 9. Conclusion
 
-The DeskModal toolbar is the operational heartbeat of the trading desktop. By divesting from consumer macOS Dock aesthetics (magnification, ambiguous drag dividers, and monochromatic icon walls) and embracing the **Sovereign Trading Command Bar** architecture with **Modal HUDs, Split-Tree Tiling, and Zero Desk Space Obfuscation**, DeskModal achieves:
-- **Zero Wasted Space**: 34px dense command ribbon with auto-hide capability, giving 100% of the display to active financial instruments.
+DeskModal is a next-generation desktop operating runtime. By divesting from consumer macOS Dock aesthetics (magnification, ambiguous drag dividers, and monochromatic icon walls) and embracing the **Sovereign Command Bar** architecture with a **Tripartite Decoupled Window Topology (Sovereign Toolbar, Ephemeral Modals, Coordinated Tiling)**:
+- **Zero Wasted Space**: 34px dense command ribbon with proximity auto-hide capability, preserving 100% of the display for active productive surfaces.
+- **Complete Window Decoupling**: The Toolbar is an independent sovereign window that never traps, alters, or squashes modal HUDs or workspace tiles.
 - **Flawless Modality**: Fast, ephemeral modal action HUDs that execute and dismiss without disturbing background tiling layouts.
-- **Tiled Precision**: Binary split-tree layout engine ensuring zero window overlap and first-class adoption of Bloomberg and Excel.
-- **Enterprise Situational Awareness**: Real-time FDC3 channel coordination and microsecond IPC latency telemetry visible at a glance.
-- **Infinite Scalability**: Multi-app plugin suites (like CelNet's 6 desks and TradeSurface's 8 tools) organize into elegant, instantaneous app stacks.
+- **Tiled Precision**: Binary split-tree layout engine ensuring zero window overlap, tearout multi-display capability, and first-class adoption of native IDEs, Bloomberg, and Excel.
+- **Universal Multi-Domain Power**: A single cohesive substrate powering Engineering, Data Science, NOC Operations, Enterprise Leadership, and Quantitative Trading desks alike.
