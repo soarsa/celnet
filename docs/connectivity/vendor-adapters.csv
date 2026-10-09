@@ -156,8 +156,8 @@ refinitiv_ad_price,T2,Reuters-Refinitiv,Pricing,PRICE,CONFORMING,RET-AD 3.4 Pric
 iex_equities_order,T2,IEX,Equities OE,ORDER,DEFERRED,IEX FIX Spec,,Out of FX scope unless expansion
 
 # ─── Tier 3 (long-tail — build on demand) ──────────────────────────────────────
-twentyfourx_esp_order,T3,24Exchange,Spot ESP,ORDER,CONFORMING,24X-Celer Cert ESP-RFQ-TAKER.docx,,Cert plan only — .docx extracted 7 msg types via textutil; FIX 4.4 catalogue defaults
-twentyfourx_rfq,T3,24Exchange,RFQ,RFQ,CONFORMING,24X-Celer Cert ESP-RFQ-TAKER.docx,,Shared cert plan; FIX 4.4 catalogue defaults via --conn-type rfq
+twentyfourx_esp_order,T3,24Exchange,Spot ESP,ORDER,CONFORMING,24X-CelNet Cert ESP-RFQ-TAKER.docx,,Cert plan only — .docx extracted 7 msg types via textutil; FIX 4.4 catalogue defaults
+twentyfourx_rfq,T3,24Exchange,RFQ,RFQ,CONFORMING,24X-CelNet Cert ESP-RFQ-TAKER.docx,,Shared cert plan; FIX 4.4 catalogue defaults via --conn-type rfq
 bgc_voice_rfq,T3,BGC,Voice RFQ,RFQ,CONFORMING,BGC & GFI FIX Spec v1.2.1,,
 bierbaum_client_order,T3,Bierbaum,Client OE,ORDER,CONFORMING,BierbaumPro Client v2.0.4,,
 bierbaum_stp,T3,Bierbaum,STP,STP,CONFORMING,BierbaumPro STP FIX v1.3,,
@@ -216,8 +216,8 @@ tera_md_price,T3,Tera / TerraExchange,MD,PRICE,CONFORMING,TeraExchange MD FIX v1
 tradair_taker_order,T3,Tradair,Taker,ORDER,CONFORMING,TradAir Taker FIX API v1.3.5,,
 tradair_rfs,T3,Tradair,RFS,RFQ,CONFORMING,TradAir Taker FIX API v1.3.5,,Shared spec with tradair_taker_order; --conn-type rfq injection
 tradertools_oe_order,T3,Tradertools,OE,ORDER,CONFORMING,TraderTools FIX Spec May 2017,,
-ukfx_datasoft_esp_price,T3,UKFX_Datasoft,ESP,PRICE,CONFORMING,Celer Certification ESP-RFQ-TAKER Apr2021.docx,,Cert plan only — .docx via textutil; FIX 4.4 catalogue defaults
-ukfx_datasoft_rfq,T3,UKFX_Datasoft,RFQ Taker,RFQ,CONFORMING,Celer Certification ESP-RFQ-TAKER Apr2021.docx,,Shared cert plan
+ukfx_datasoft_esp_price,T3,UKFX_Datasoft,ESP,PRICE,CONFORMING,CelNet Certification ESP-RFQ-TAKER Apr2021.docx,,Cert plan only — .docx via textutil; FIX 4.4 catalogue defaults
+ukfx_datasoft_rfq,T3,UKFX_Datasoft,RFQ Taker,RFQ,CONFORMING,CelNet Certification ESP-RFQ-TAKER Apr2021.docx,,Shared cert plan
 vidarr_capital_order,T3,Vidarr,Capital,ORDER,CONFORMING,Vidarr Capital FIX Spec v1.3.0,,
 virtu_vfx_price,T3,Virtu,VFX MD,PRICE,CONFORMING,VFX_fix v2.1.1,,Shared spec with virtu_vfx_order
 virtu_vfx_order,T3,Virtu,VFX OE,ORDER,CONFORMING,VFX_fix v2.1.1,,
