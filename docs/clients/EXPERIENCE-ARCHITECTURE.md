@@ -17,7 +17,7 @@
 > "uniqueness" is argument-from-absence (no public evidence), never proof. Audience:
 > a trader who runs a desk/book at a global bank. Target: May-2026 SOTA.
 >
-> **Decided by product owner (fixed inputs):** Brand = Celer Technologies; single logo
+> **Decided by product owner (fixed inputs):** Brand = Celnet; single logo
 > in the left rail; mark-less wordmark in the toolbar; no macOS traffic lights. No
 > user-admin yet → **SHOW ALL** firm-wide today, designed so an entitlement filter slots
 > in with zero rework. The trend graphic becomes a labelled configurable **TrendMode**

@@ -701,8 +701,8 @@
    "summary": "Celnet ships three first-class client surfaces \u2014 a React/WebGPU trader GUI (gui/), an Office.js Excel add-in exposing CELNET.* worksheet functions (excel/), and a typed async Rust SDK (celnet-client) \u2014 all consuming the SAME single celnet-proto contract (API-first client parity). The GUI is a single-window, five-workspace shell (Ticket/Stream/Surface/Risk/Book) that defaults to the LIVE WebSocket mirror against a running celnet-server (ws://127.0.0.1:8081), with mock/replay demoted to an explicit ?mock opt-in. Every number rendered is the server's libm-core value, so a price is bit-identical across GUI, Excel, SDK, and CLI. Shipped GUI features include a persistent pair navigator/watchlist + real pair dropdown, an aggregated desk-wide Book view, surface marking with a real arb-gated Publish (edits transmitted via the same MarkSurface API), a Risk scenario grid with book-shaped bucketed-vega/cross-gamma/theta-roll, and click-to-trade off streamed lines. The SDK provides RFQ idempotency, a multiplexed RFS session with gap-detect/resync/reconnect-liveness, and typed error branching. Two surface-relevant contract fields (smile-model selector, position/P&L attribution) are honestly In-flight or Designed, with GUI showing honest provenance/empty-states rather than fabricated data.",
    "capabilities": [
     {
-     "name": "GUI single-window 5-workspace shell (Celer Technologies brand)",
-     "description": "React shell with a persistent left rail of five workspaces (Ticket \u23181, Stream \u23182, Surface \u23183, Risk \u23184, Book \u23185), a command palette (\u2318K) + pair switch (\u2318P), and a global keyboard grammar. All workspaces stay mounted (visibility-toggled, not remounted) so in-progress Risk/Book state survives a switch (P0-11). Branded as a Celer Technologies product: coral pinwheel CelerMark once in the rail, mark-less wordmark in the toolbar, no traffic lights.",
+     "name": "GUI single-window 5-workspace shell",
+     "description": "React shell with a persistent left rail of five workspaces (Ticket \u23181, Stream \u23182, Surface \u23183, Risk \u23184, Book \u23185), a command palette (\u2318K) + pair switch (\u2318P), and a global keyboard grammar. All workspaces stay mounted (visibility-toggled, not remounted) so in-progress Risk/Book state survives a switch (P0-11). Mark in the rail, wordmark in the toolbar.",
      "state": "Shipped",
      "evidence": "gui/src/app/Shell.tsx (RAIL/WORKSPACE_VIEWS, persistent-mount canvas, \u2318K/\u23181-5/\u2318P); gui/src/components/CelerMark.tsx; ledger 2026-05-31 GUI rebrand (commits 1854ab4, f89e96e, 82b32ac)",
      "confidence": "high"
@@ -1065,7 +1065,7 @@
   "proposed_outline": [
    {
     "section": "1. Executive Summary \u2014 Celnet at a Glance",
-    "covers": "One-paragraph positioning: a state-of-the-art Rust FX-options pricing & risk platform, a Celer Technologies product, that out-functions / out-intuits / out-performs incumbents on the axes that are built. Headline proof points (microsecond pricing, QuantLib-gated correctness, open quant SDK, API-first client parity). Explicit Shipped / In-flight / Designed legend used throughout the brochure so no claim is ambiguous."
+    "covers": "One-paragraph positioning: a state-of-the-art Rust FX-options pricing & risk platform that out-functions / out-intuits / out-performs incumbents on the axes that are built. Headline proof points (microsecond pricing, QuantLib-gated correctness, open quant SDK, API-first client parity). Explicit Shipped / In-flight / Designed legend used throughout the brochure so no claim is ambiguous."
    },
    {
     "section": "2. Capability Map \u2014 What Celnet Does",
@@ -1105,7 +1105,7 @@
    },
    {
     "section": "11. The Trader GUI",
-    "covers": "React/WebGPU single-window five-workspace shell (Ticket/Stream/Surface/Risk/Book) on the Celer Technologies brand; live-WS-by-default transport; pair navigator (watchlist strip + dropdown); aggregated desk-wide Book + Book\u2192Risk drill; surface marking with real arb-gated Publish via the MarkSurface API; Risk scenario grid with book-shaped disclosure; RFS blotter with click-to-trade; honest-data discipline (empty-states / disabled trend modes where the contract carries no feed)."
+    "covers": "React/WebGPU single-window five-workspace shell (Ticket/Stream/Surface/Risk/Book); live-WS-by-default transport; pair navigator (watchlist strip + dropdown); aggregated desk-wide Book + Book\u2192Risk drill; surface marking with real arb-gated Publish via the MarkSurface API; Risk scenario grid with book-shaped disclosure; RFS blotter with click-to-trade; honest-data discipline (empty-states / disabled trend modes where the contract carries no feed)."
    },
    {
     "section": "12. Celer Trader & Estate Integration",
@@ -1144,7 +1144,7 @@
    "Shipped / In-flight / Designed swimlane for the whole platform: numerical core + parity + plugin-host + edge + clients (Shipped) \u2192 risk-hierarchy crates + contract extensions + calendar ON/IMM fix (In-flight) \u2192 cross-fleet fan-out + AAD/GPU adjoint Greeks + live estate wiring (Designed/Deferred)"
   ],
   "screenshots": [
-   "GUI shell overview \u2014 the single-window five-workspace shell with the left rail (Ticket/Stream/Surface/Risk/Book \u23181-5), Celer Technologies coral pinwheel mark, mark-less toolbar wordmark, ScopeBreadcrumb, PairMenu, and the persistent PairStrip watchlist",
+   "GUI shell overview \u2014 the single-window five-workspace shell with the left rail (Ticket/Stream/Surface/Risk/Book \u23181-5), Celnet mark, mark-less toolbar wordmark, ScopeBreadcrumb, PairMenu, and the persistent PairStrip watchlist",
    "Ticket workspace \u2014 a vanilla option pricing ticket showing premium + the full Greek set with resolved conventions and surface_version footer",
    "Stream workspace (RFS blotter) \u2014 the living multiplexed two-way table with only-changed-numbers flashing, honest per-row stream-health glyphs (\u25c9/\u25d0/\u25cb), and a click-to-trade Executed/StreamReject toast",
    "Surface workspace \u2014 the 3D vol mesh + per-tenor smile + broker marking grid (ATM/25\u0394&10\u0394 RR&BF, all five editable handles) with the live calibrateLadder preview and the whole-surface arbitrage banner before Publish",

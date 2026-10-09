@@ -2,7 +2,7 @@
 
 # 11. The Trader GUI
 
-The Celnet trader GUI is a single-window desk application built on React with a WebGPU rendering path, wearing the Celer Technologies brand. It is **live by default**: on launch it opens a streaming WebSocket session to the engine and stays connected, so every number on screen is the server's value — bit-identical to the same call made from the Rust SDK, the CLI, or the Excel add-in. There is no privileged front-end path; the GUI is simply the most expressive client of the one Celnet contract.
+The Celnet trader GUI is a single-window desk application built on React with a WebGPU rendering path. It is **live by default**: on launch it opens a streaming WebSocket session to the engine and stays connected, so every number on screen is the server's value — bit-identical to the same call made from the Rust SDK, the CLI, or the Excel add-in. There is no privileged front-end path; the GUI is simply the most expressive client of the one Celnet contract.
 
 The whole desk lives behind **one window and five workspaces** — Ticket, Stream, Surface, Risk, Book — reachable from a persistent left rail or by keyboard (`⌘1`…`⌘5`). Workspaces never unmount as you switch: an in-progress scenario, a half-marked surface, or a pinned comparison survives every flip between lanes, and the active pane cross-fades in over the others. Everything else a trader needs to navigate — *what slice of the firm, which pair, and any action at all* — sits in the title bar and a global command palette.
 

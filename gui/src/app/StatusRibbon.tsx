@@ -285,7 +285,7 @@ export function StatusRibbon(): React.ReactElement {
       <span className={styles.sep} aria-hidden>
         ·
       </span>
-      {/* Celer login-footer signature: a real build hash · UTC build time. */}
+      {/* Login-footer signature: a real build hash · UTC build time. */}
       <span
         className={`num ${styles.build}`}
         title="build provenance — git short SHA · UTC build time"

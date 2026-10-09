@@ -82,18 +82,16 @@ Run from the repo root. (Currently all four are UP.)
 - the `wss://…:8443` endpoint override injected in `taskpane.html`/`functions.html`
   (production uses a deploy gateway, not :8443);
 - `excel/tools/wss-bridge.mjs`, `excel/tools/serve-dist.mjs` (dev bring-up tools);
-- `excel/tools/build_trader_workbook.py` (the workbook generator);
-- `celer-logo.png` (rasterized brand mark, root — move under assets or gitignore).
+- `excel/tools/build_trader_workbook.py` (the workbook generator).
 
 ## Trader workbook — `~/Desktop/Celnet-Trader.xlsx` (multi-asset refresh)
 
 - Generator: `excel/tools/build_trader_workbook.py` (venv:
   `/tmp/celnet-xlsx-venv/bin/python excel/tools/build_trader_workbook.py [out.xlsx]`;
-  venv has `xlsxwriter`+`pillow`+`openpyxl`). Logo resolved from the repo-root
-  `celer-logo.png` (graceful fallback). Designed competitor-first (Bloomberg OVDV
+  venv has `xlsxwriter`+`pillow`+`openpyxl`). Designed competitor-first (Bloomberg OVDV
   bump-and-watch, Murex one-screen term-sheets) → a SOTA multi-asset demo.
-- **Dark Celer theme** (navy canvas, coral #ff7357 / indigo #6b6bf5 accents,
-  pinwheel + Anaheim wordmark, 6px coral cap-rail, build-stamp). It tells **one
+- **Dark theme** (navy canvas, coral #ff7357 / indigo #6b6bf5 accents,
+  wordmark, 6px coral cap-rail, build-stamp). It tells **one
   trading day** across **10 sheets** (tab strip = the day): Cover & Legend ·
   Market & Vol (live observables + editable ATM/RR/BF smile marking → MARKSURFACE +
   the vol term-structure chart + SURFACE VV-vs-SABR) · **FX Majors** (the full 24-arm

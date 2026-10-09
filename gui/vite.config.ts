@@ -10,7 +10,7 @@ declare function require(id: string): {
 declare const process: { env: Record<string, string | undefined> };
 
 // A REAL short build hash + UTC build timestamp, stamped into the status ribbon
-// (the Celer login-footer signature detail). The hash is the current git short
+// (the login-footer signature detail). The hash is the current git short
 // SHA when available; off a git tree (e.g. a packaged artifact) it falls back to
 // the package version — never a fabricated value.
 function buildHash(): string {

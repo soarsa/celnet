@@ -33,7 +33,7 @@
   margin-bottom: var(--space-4);
   flex: 0 0 auto;
 }
-/* The Celer pinwheel mark renders in brand coral (set on the SVG via its own
+/* The Celnet brand mark renders in brand coral (set on the SVG via its own
  * module) with a soft brand glow — no longer a gradient diamond glyph. */
 .mark {
   color: var(--brand);

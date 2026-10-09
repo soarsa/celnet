@@ -68,7 +68,7 @@ Pre-rebrand GUI using the generic teal logo. Size: 1200x676 (celnet-gui*), 1200x
 |---|---|---|---|
 | `celnet-gui.png` | Stream workspace — early GUI, mock/replay | Teal logo, no trend sparklines, resyncing; earliest committed stream screenshot | `3b21850e630cf3bf6799054c350423ca67c0328f58c7ec8607d3e891d391893e` |
 | `celnet-gui-live.png` | Stream workspace — early GUI, live WS | Teal logo, live WS wired, trend sparklines active, seq 3611 | `d70691a93ad0d16851e4e31a105f484cfaa95eb0d219a2970a9f2f8e28b48d61` |
-| `fe-ready.png` | Stream workspace — full Celnet rebrand, live WS | Final Celnet header + "CELER TECHNOLOGIES" subtitle, Premium column, 5-column filter bar | `0156005809ea8388d99c5b31ac174cc17aa466f85ac072eefdf90a4bfbec64f0` |
+| `fe-ready.png` | Stream workspace — full Celnet rebrand, live WS | Final Celnet header, Premium column, 5-column filter bar | `0156005809ea8388d99c5b31ac174cc17aa466f85ac072eefdf90a4bfbec64f0` |
 
 ### Ticket workspace (`ticket`)
 
@@ -76,14 +76,8 @@ Pre-rebrand GUI using the generic teal logo. Size: 1200x676 (celnet-gui*), 1200x
 |---|---|---|---|
 | `ticket.png` | Ticket workspace — Risk Reversal structuring | EUR/USD Risk Reversal, 1M, Leg 1 BUY Call 25Δ K 1.0947, Leg 2 SELL Put 25Δ K 1.0632, awaiting quote | `cbbb8d8298dd11cb4fdb8133766bd9abb1c09a19891f9c4574a990ca9da40e0e` |
 
-### Brand assets (`celer-logo`, `celer-trader-login`)
-
-| File | View | State | SHA-256 |
-|---|---|---|---|
-| `celer-logo.png` | Celer pinwheel logo (200×200) | Stand-alone coral brand mark; used as favicon / taskbar icon reference | `e7495c6759af88fa88897b0b68a612d2d78f43f430fba23fd90431c00dddac16` |
-| `celer-trader-login.png` | Celer Trader login screen | DEV-HEAD-SNAPSHOT build label, Celer logo centred, Username/Password fields | `f655ea708432a2a1aa5f071f2dc885140f34ef5758cf791aa4d0c181364dcf4e` |
-
 ---
+
 
 ## Capability shots (sibling directory)
 

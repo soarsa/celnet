@@ -1,7 +1,6 @@
 # Celnet — Capabilities, Architecture & Celer Integration
 
-> **A Celer Technologies product.**
-> Celnet is a state-of-the-art FX-**options** pricing & risk platform: ultra-low-latency, mission-critical and hot-upgradable. One clean, API-first contract sits behind a React/WebGPU trader GUI, an Excel add-in, a Rust SDK and a CLI — and integrates natively into the Celer trade-lifecycle estate as the FX-options pricing system-of-record.
+> Celnet is a state-of-the-art FX-**options** pricing & risk platform: ultra-low-latency, mission-critical and hot-upgradable. One clean, API-first contract sits behind a React/WebGPU trader GUI, an Excel add-in, a Rust SDK and a CLI.
 
 > **The competitive thesis.** Celnet is not a thin challenger closing gaps — it is a functionally complete, evidence-backed superset of what a derivatives desk stitches together today: vanilla → the full first-generation exotics → structured & path-dependent products → American/Bermudan early exercise → correlated multi-asset baskets → an LSV booking model + standalone Heston, all on **one unversioned contract**, parity-gated against independent oracles, reachable **bit-identically** from five clients. It pairs that catalogue depth with edges the deep-catalogue incumbents structurally lack — an open in-engine quant SDK, a pinned zero-alloc nanosecond hot core, server-side hierarchical risk, and an honest evidence trail (a runnable parity matrix, frozen golden tables, mutation + fuzz). **All 18-products are reachable across the client surfaces, proven by [`CLIENT-PARITY-MATRIX.md`](clients/CLIENT-PARITY-MATRIX.md).**
 
@@ -107,4 +106,4 @@ Celnet's capability claims are grounded in shipped code, and its evidence is lab
 
 ---
 
-<sub>Brand: Celer Technologies (coral `#ff7357` · indigo `#6b6bf5` · Anaheim). The platform is **34 one-way-acyclic crates** behind one unversioned five-service contract with a byte-identical WebSocket mirror; all 18-products reach all five clients per [`CLIENT-PARITY-MATRIX.md`](clients/CLIENT-PARITY-MATRIX.md). Diagrams are vector-rendered from the sources in [`assets/celnet-capabilities/_src/`](assets/celnet-capabilities/_src/); screenshots are captured from the live Celnet GUI and Excel add-in. Figures and chapters cross-link both ways.</sub>
+<sub>Brand: Celnet (coral `#ff7357` · indigo `#6b6bf5` · Anaheim). The platform is **34 one-way-acyclic crates** behind one unversioned five-service contract with a byte-identical WebSocket mirror; all 18-products reach all five clients per [`CLIENT-PARITY-MATRIX.md`](clients/CLIENT-PARITY-MATRIX.md). Diagrams are vector-rendered from the sources in [`assets/celnet-capabilities/_src/`](assets/celnet-capabilities/_src/); screenshots are captured from the live Celnet GUI and Excel add-in. Figures and chapters cross-link both ways.</sub>

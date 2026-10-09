@@ -9,7 +9,7 @@ metadata:
 
 ## RESOLUTION (2026-08-10) — durable fix applied via gcloud, box healthy.
 The box is a **standalone GCE instance** `celnet-app-3` (zone `us-east4-c`, project
-`project-88e14d51-c027-4795-99d`, visible to gcloud acct `bencuthbert@tbarindustries.com`).
+`project-88e14d51-c027-4795-99d`).
 **There is NO managed instance group and NO instance template** — `automaticRestart:true`
 restarts the SAME VM (same disk), it does NOT recreate from an image. So the earlier fear
 below ("recreation wipes ansible swap → needs privileged site.yml") was WRONG for this setup:

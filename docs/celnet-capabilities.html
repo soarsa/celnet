@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Celnet — Platform Capabilities · a Celer Technologies product</title>
+<title>Celnet — Platform Capabilities</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anaheim:wght@400..800&amp;display=swap" rel="stylesheet">
@@ -278,14 +278,14 @@
   <svg class="mark" viewBox="0 0 501 500" role="img" aria-label="Celer pinwheel mark">
     <path fill="#ffffff" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/>
   </svg>
-  <div class="vlabel">Celer Technologies</div>
+  <div class="vlabel">Celnet</div>
 </div>
 
 <div class="page">
 
 <!-- COVER / HERO -->
 <header class="brand" id="top">
-  <div class="wordmark"><b>Celnet</b> &nbsp;/&nbsp; a Celer Technologies product</div>
+  <div class="wordmark"><b>Celnet</b></div>
   <h1>Celnet — <span class="g">The Cross-Asset Derivatives Platform</span></h1>
   <p class="tag">A state-of-the-art, multi-asset derivatives pricing &amp; risk platform that out-covers,
   out-prices and out-performs the single-dealer FX-options incumbents such as SynOption. FX is the
@@ -302,7 +302,7 @@
     <span class="chip"><b>5</b> bit-identical clients</span>
     <span class="chip"><b>~26</b> capability checks vs independent oracles</span>
   </div>
-  <div class="hero-stamp">build <b>51b78ca</b> · 2026-06-08T14:34:32Z UTC · all gates green · a Celer Technologies product</div>
+  <div class="hero-stamp">build <b>51b78ca</b> · 2026-06-08T14:34:32Z UTC · all gates green</div>
 </header>
 
 <div class="shell">
@@ -357,7 +357,7 @@
   <h2>1. Celnet at a Glance</h2>
   <p class="signpost"><em>The whole platform in one screen — what Celnet is, the cross-asset thesis, and the map of the eight chapters that follow.</em></p>
 
-  <p>Celnet is a <strong>state-of-the-art, cross-asset derivatives pricing and risk platform</strong> — a Celer Technologies product — engineered to out-cover, out-price, out-intuit and out-perform the single-dealer FX-options incumbents such as SynOption, and to meet the heavy front-to-back platforms on span while keeping a desk's conventions. It is <strong>multi-asset by architecture, not by bolt-on</strong>: a deliberate <a href="#carry-architecture">carry-producing-market architecture</a> splits the one fused FX seam into three orthogonal layers — asset-class identity, a carry that <em>produces</em> the forward and discount, and asset-class-agnostic payoff engines — so a new asset class is a new carry builder with zero payoff-engine edits. FX is the live, gate-validated default that stays byte-identical; precious metals, digital-assets/crypto (including inverse coin-settled contracts), equity/index, commodity and a rates seam are first-class cross-asset coverage on the <em>same</em> engine and the <em>same</em> contract, each grounded in a validated method and an independent oracle. The result is asset-class coverage that <strong>exceeds the single-dealer venues</strong> — the whole asset spectrum on one engine where they cover one band — detailed in <a href="#multi-asset">§4 (Multi-Asset)</a> and <a href="#sota-foundations">§5 (State of the Art)</a>.</p>
+  <p>Celnet is a <strong>state-of-the-art, cross-asset derivatives pricing and risk platform</strong> engineered to out-cover, out-price, out-intuit and out-perform the single-dealer FX-options incumbents such as SynOption, and to meet the heavy front-to-back platforms on span while keeping a desk's conventions. It is <strong>multi-asset by architecture, not by bolt-on</strong>: a deliberate <a href="#carry-architecture">carry-producing-market architecture</a> splits the one fused FX seam into three orthogonal layers — asset-class identity, a carry that <em>produces</em> the forward and discount, and asset-class-agnostic payoff engines — so a new asset class is a new carry builder with zero payoff-engine edits. FX is the live, gate-validated default that stays byte-identical; precious metals, digital-assets/crypto (including inverse coin-settled contracts), equity/index, commodity and a rates seam are first-class cross-asset coverage on the <em>same</em> engine and the <em>same</em> contract, each grounded in a validated method and an independent oracle. The result is asset-class coverage that <strong>exceeds the single-dealer venues</strong> — the whole asset spectrum on one engine where they cover one band — detailed in <a href="#multi-asset">§4 (Multi-Asset)</a> and <a href="#sota-foundations">§5 (State of the Art)</a>.</p>
 
   <p>That cross-asset engine carries a <strong>functionally complete, evidence-backed superset</strong> of what a desk currently stitches together from a closed terminal, a separate analytics library, and a separate booking system. Where those archetypes force three systems with three sources of truth, Celnet is one coherent platform in which the maths, the marking workflow, the firm-wide risk cube, and the trade-lifecycle integration all share a single model and a single contract. On each asset class it prices the complete book a real desk trades — vanilla through the full first-generation exotics catalogue, the structured and path-dependent products, American/Bermudan early exercise, correlated multi-asset baskets, a linear forward/swap/NDF book and the structured Pivot, and a particle-calibrated local-stochastic-volatility (LSV) booking model — marks and calibrates live smiles and surfaces across five smile families, runs firm-wide scenario, regulatory-capital, and limit risk (<a href="#risk-management">§3</a>), aggregates multi-dealer RFQ panels, and streams two-way prices to high-performance counterparties. Every one of those capabilities lives behind a single, clean, unversioned contract and is reachable identically from five clients (<a href="#clients-overview">§7</a>): the React/WebGPU trader GUI, the typed Rust SDK, the admin CLI, the Excel <code>CELNET.*</code> add-in, and a byte-identical WebSocket JSON mirror.</p>
 
@@ -1699,7 +1699,7 @@
   <p class="signpost"><em>The React/WebGPU front-end as just another client — five workspaces (Ticket / Stream / Surface / Risk / Book) driving the live contract, with no privileged path the other clients lack.</em></p>
 
   <p>The Celnet trader GUI is a single-window desk application built on React with a
-  WebGPU rendering path, wearing the Celer Technologies brand. It is <strong>live by
+  WebGPU rendering path. It is <strong>live by
   default</strong>: on launch it opens a streaming WebSocket session to the engine and
   stays connected, so every number on screen is the server's value — bit-identical to the
   same call from the SDK, the CLI, or Excel. There is no privileged front-end path; the
@@ -2057,7 +2057,7 @@
 </div><!-- /.shell -->
 
 <footer class="stamp">
-  <span><b>Celnet</b> — a Celer Technologies product · platform capabilities</span>
+  <span><b>Celnet</b> · platform capabilities</span>
   <span>build <b>51b78ca</b> · 2026-06-08T14:34:32Z UTC · all gates green</span>
 </footer>
 

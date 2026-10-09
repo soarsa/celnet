@@ -9,7 +9,7 @@ members = ["crates/*"]
 edition = "2024"
 rust-version = "1.96"
 license = "LicenseRef-Proprietary"
-authors = ["Celer Technologies"]
+authors = ["soarsa <mail@adriansoars.com>"]
 
 [workspace.dependencies]
 # Internal crates — registered centrally so parallel "lane" agents never edit this

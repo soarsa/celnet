@@ -1,5 +1,5 @@
-[2026-07-01T20:14:34+0200] [fix-sim] run dir /Users/benjamincuthbert/code/soars/celnet/deploy/fix-sim-run ; log /Users/benjamincuthbert/code/soars/celnet/deploy/fix-sim-run/log/fix-sim.log
-[2026-07-01T20:14:34+0200] [fix-sim] acceptor app.uat.celnet.uk:56001 ; identity CELER_FXO -> CELNET
+[2026-07-01T20:14:34+0200] [fix-sim] run dir /Users/adrian/code/celnet/deploy/fix-sim-run ; log /Users/adrian/code/celnet/deploy/fix-sim-run/log/fix-sim.log
+[2026-07-01T20:14:34+0200] [fix-sim] acceptor app.uat.celnet.uk:56001 ; identity FXO_SIM -> CELNET
 [2026-07-01T20:14:34+0200] [fix-sim] no fix-sim binary yet — building the celnet-fix example RFQ client (v0 simulator)...
 [1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.53s
-[2026-07-01T20:14:35+0200] [fix-sim] example built: /Users/benjamincuthbert/code/soars/celnet/target/debug/examples/fix_rfq_client
+[2026-07-01T20:14:35+0200] [fix-sim] example built: /Users/adrian/code/celnet/target/debug/examples/fix_rfq_client

@@ -19,7 +19,7 @@
       }
     </script>
     <!-- Brand + motion token layer MUST load before taskpane.css: taskpane.css
-         consumes the var(--brand / --accent / …) tokens and the .celer-* /
+         consumes the var(--brand / --accent / …) tokens and the .celnet-* /
          motion animation classes this file declares (single source of truth for
          every hex/OKLCH value + keyframe in the pane). -->
     <link rel="stylesheet" href="./taskpane/celer-tokens.css" />
@@ -34,7 +34,7 @@
   <body>
     <main id="app" class="app">
       <header class="hdr">
-        <svg class="mark" viewBox="0 0 501 500" aria-hidden="true"><path fill="var(--brand)" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+        <svg class="mark" viewBox="0 0 500 500" aria-hidden="true"><path fill="var(--brand)" d="M420 120 A 210 210 0 1 0 420 380 L 350 330 A 130 130 0 1 1 350 170 Z"/></svg>
         <h1>Celnet <span class="light">Ticket</span></h1>
         <span id="conn" class="pill pill-off" role="status" aria-live="polite">disconnected</span>
       </header>

@@ -17,7 +17,7 @@ interface ImportMeta {
 
 // Build-time stamp constants injected by Vite `define` (vite.config.ts). Real
 // values: the git short SHA (or package version off a git tree) and the UTC
-// build time. Surfaced in the status ribbon (Celer login-footer signature).
+// build time. Surfaced in the status ribbon (Login-footer signature).
 declare const __CELNET_BUILD_HASH__: string;
 declare const __CELNET_BUILD_TIME__: string;
 

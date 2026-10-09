@@ -19,7 +19,7 @@ To identify where CelNet is weaker than entrenched incumbents or where its capab
 2. **Fixed Income & Multi-Asset Execution Titans:** Bloomberg (FIT/TOMS/MARS/Broadway), ION Markets (MarketFactory, Fidessa), Tradeweb, MarketAxess.
 3. **Advanced Quantitative Risk & Analytics Engines:** Numerix (CrossAsset/Oneview), OpenGamma, Quantifi, Beacon Platform.
 4. **Ultra-Low Latency Messaging & Substrates:** Adaptive (Aeron / Hydra Platform), Lucera, OneTick.
-5. **Specialized Derivatives & FX Platforms:** Celer Technologies, Fenics (BGC), 360T (Deutsche Börse), SynOption.
+5. **Specialized Derivatives & FX Platforms:** Celnet, Fenics (BGC), 360T (Deutsche Börse), SynOption.
 6. **Algorithmic Execution & OEMS:** FlexTrade (FlexTRADER), Broadridge (Tbricks), Horizon Software.
 7. **Institutional Crypto ECNs:** Talos, FalconX, Wintermute, OrBit Markets.
 

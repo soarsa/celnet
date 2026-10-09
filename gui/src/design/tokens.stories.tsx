@@ -163,7 +163,7 @@ function TypeScale() {
                 flex: 1,
               }}
             >
-              Celer Aurora — {name}
+              Celnet Aurora — {name}
             </span>
             <span
               className="num"
@@ -440,7 +440,7 @@ function UtilityClasses() {
           </p>
         </div>
         <div>
-          <Label>.brand-label — uppercase letter-spaced Celer label treatment</Label>
+          <Label>.brand-label — uppercase letter-spaced label treatment</Label>
           <p className="brand-label" style={{ color: "var(--text-secondary)", marginTop: "var(--space-2)" }}>
             EUR/USD · Tenor 3M · Strike 25Δ Call
           </p>

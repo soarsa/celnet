@@ -8,7 +8,7 @@ Majors -> FX EM & NDF -> Metals -> Equity -> Commodity -> Crypto -> Cross-Asset
 RV -> Risk Cockpit). Every tab is a scenario a trader actually runs, never a
 function catalogue.
 
-Celer dark theme (memory: celer-brand-kit): deep-navy canvas, coral signature +
+Celnet dark theme (memory: brand-kit): deep-navy canvas, coral signature +
 indigo interactive accent, the pinwheel logo + Anaheim "Celnet / CELER
 TECHNOLOGIES" wordmark band, the 6px coral cap-rail, the build-stamp footer.
 
@@ -41,14 +41,14 @@ import xlsxwriter
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/Desktop/Celnet-Trader.xlsx")
 
-# ---- LOGO: resolve celer-logo.png robustly (repo-root, relative to script) -
+# ---- LOGO: resolve logo.png robustly (repo-root, relative to script) -
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, "..", ".."))
-LOGO = "/tmp/celer-logo.png"
+LOGO = ""
 for _cand in (
-    os.path.join(_REPO_ROOT, "celer-logo.png"),
-    os.path.join(_SCRIPT_DIR, "celer-logo.png"),
-    "/tmp/celer-logo.png",
+    os.path.join(_REPO_ROOT, "logo.png"),
+    os.path.join(_SCRIPT_DIR, "logo.png"),
+    "/tmp/logo.png",
 ):
     if os.path.exists(_cand):
         # Stage to /tmp so xlsxwriter's image embed always reads a stable path,
@@ -61,7 +61,7 @@ for _cand in (
         break
 # If none exist LOGO points at a non-existent /tmp path; brand() guards os.path.exists.
 
-# ---- Celer dark palette (memory: celer-brand-kit) --------------------------
+# ---- Dark palette (memory: brand-kit) --------------------------
 CANVAS = "#161A24"   # deep navy canvas
 BAND = "#1B1F2A"     # brand band (= logo bg, seamless)
 PANEL = "#1F2430"    # raised panel
@@ -151,7 +151,7 @@ def brand(ws, title, n):
     ws.merge_range(1, 0, 1, n, "", S["band"])
     if os.path.exists(LOGO):
         ws.insert_image(1, 0, LOGO, {"x_offset": 14, "y_offset": 7, "x_scale": 0.165, "y_scale": 0.165})
-    ws.write_rich_string(1, 1, S["word"], "Celnet  ", S["wsub"], "/  CELER TECHNOLOGIES")
+    ws.write_string(1, 1, "Celnet", S["word"])
     ws.set_row(2, 4)
     ws.merge_range(2, 0, 2, n, "", S["band"])
     ws.set_row(3, 20)

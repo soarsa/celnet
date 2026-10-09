@@ -6,7 +6,7 @@
  * entitlement boundary), so this form does not itself authenticate. Submitting it
  * re-enters the app, which re-dials the WS edge from a clean state.
  *
- * Branded with the Celer lockup (the mark + "Celnet" wordmark) — the same lockup
+ * Branded with the Celnet lockup (the mark + "Celnet" wordmark) — the same lockup
  * the design system reserves for splash/about/login surfaces.
  */
 

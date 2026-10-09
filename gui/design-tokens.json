@@ -1,10 +1,10 @@
 {
   "$schema": "https://tr.designtokens.org/format/",
-  "$description": "Celnet Aurora × Celer — the single styling source of truth, W3C DTCG (Design Tokens Community Group) format. A FORMALIZATION of the existing design system (gui/src/design/tokens.css + appearance.ts + density.ts + global.css): every $value is the existing value verbatim — coral/indigo/Anaheim map to the existing variables — so this is a neurosymbolic styling asset, NOT a restyle. The default ($value) of every theme-varying token is its DARK / normal-contrast / comfortable-density value (the `:root` defaults). The orthogonal appearance(dark|light) × contrast(normal|high) × density(comfortable|compact) cascade overrides live under `$extensions['com.celer.celnet'].themes`, keyed by the exact `:root[…]` selector they map to. The CSS custom-property each token emits is in `$extensions['com.celer.celnet'].cssVar`.",
+  "$description": "Celnet Aurora — the single styling source of truth, W3C DTCG (Design Tokens Community Group) format. A FORMALIZATION of the existing design system (gui/src/design/tokens.css + appearance.ts + density.ts + global.css): every $value is the existing value verbatim — coral/indigo/Anaheim map to the existing variables — so this is a neurosymbolic styling asset, NOT a restyle. The default ($value) of every theme-varying token is its DARK / normal-contrast / comfortable-density value (the `:root` defaults). The orthogonal appearance(dark|light) × contrast(normal|high) × density(comfortable|compact) cascade overrides live under `$extensions['com.celnet'].themes`, keyed by the exact `:root[…]` selector they map to. The CSS custom-property each token emits is in `$extensions['com.celnet'].cssVar`.",
   "$extensions": {
-    "com.celer.celnet": {
+    "com.celnet": {
       "system": "Celnet Aurora",
-      "brand": "Celer Technologies",
+      "brand": "Celnet",
       "spec": "GUI-DESIGN §3",
       "color-space": "oklch",
       "source": [
@@ -36,89 +36,89 @@
       "size": {
         "$type": "dimension",
         "$value": "28px",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--type-display" } }
+        "$extensions": { "com.celnet": { "cssVar": "--type-display" } }
       },
       "line-height": {
         "$type": "dimension",
         "$value": "32px",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--type-display-lh" } }
+        "$extensions": { "com.celnet": { "cssVar": "--type-display-lh" } }
       }
     },
     "title": {
       "size": {
         "$type": "dimension",
         "$value": "20px",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--type-title" } }
+        "$extensions": { "com.celnet": { "cssVar": "--type-title" } }
       },
       "line-height": {
         "$type": "dimension",
         "$value": "26px",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--type-title-lh" } }
+        "$extensions": { "com.celnet": { "cssVar": "--type-title-lh" } }
       }
     },
     "headline": {
       "size": {
         "$type": "dimension",
         "$value": "16px",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--type-headline" } }
+        "$extensions": { "com.celnet": { "cssVar": "--type-headline" } }
       },
       "line-height": {
         "$type": "dimension",
         "$value": "22px",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--type-headline-lh" } }
+        "$extensions": { "com.celnet": { "cssVar": "--type-headline-lh" } }
       }
     },
     "body": {
       "size": {
         "$type": "dimension",
         "$value": "13px",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--type-body" } }
+        "$extensions": { "com.celnet": { "cssVar": "--type-body" } }
       },
       "line-height": {
         "$type": "dimension",
         "$value": "18px",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--type-body-lh" } }
+        "$extensions": { "com.celnet": { "cssVar": "--type-body-lh" } }
       }
     },
     "callout": {
       "size": {
         "$type": "dimension",
         "$value": "12px",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--type-callout" } }
+        "$extensions": { "com.celnet": { "cssVar": "--type-callout" } }
       },
       "line-height": {
         "$type": "dimension",
         "$value": "16px",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--type-callout-lh" } }
+        "$extensions": { "com.celnet": { "cssVar": "--type-callout-lh" } }
       }
     },
     "caption": {
       "size": {
         "$type": "dimension",
         "$value": "11px",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--type-caption" } }
+        "$extensions": { "com.celnet": { "cssVar": "--type-caption" } }
       },
       "line-height": {
         "$type": "dimension",
         "$value": "14px",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--type-caption-lh" } }
+        "$extensions": { "com.celnet": { "cssVar": "--type-caption-lh" } }
       }
     },
     "micro": {
       "size": {
         "$type": "dimension",
         "$value": "10px",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--type-micro" } }
+        "$extensions": { "com.celnet": { "cssVar": "--type-micro" } }
       },
       "line-height": {
         "$type": "dimension",
         "$value": "12px",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--type-micro-lh" } }
+        "$extensions": { "com.celnet": { "cssVar": "--type-micro-lh" } }
       }
     }
   },
   "font": {
-    "$description": "Font families. Anaheim (Celer brand face) over the UI fallback; numerics ALWAYS stay on --font-mono.",
+    "$description": "Font families. Anaheim (brand face) over the UI fallback; numerics ALWAYS stay on --font-mono.",
     "family": {
       "ui": {
         "$type": "fontFamily",
@@ -131,19 +131,19 @@
           "sans-serif"
         ],
         "$description": "Default UI sans stack; immediate fallback for the brand face (no layout shift).",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--font-ui" } }
+        "$extensions": { "com.celnet": { "cssVar": "--font-ui" } }
       },
       "brand": {
         "$type": "fontFamily",
         "$value": ["Anaheim", "{font.family.ui}"],
-        "$description": "Celer brand typeface — display/title/headline/brand/labels. Anaheim loads via the Google Fonts <link> in index.html; --font-ui is the immediate fallback. Numerics NEVER use this.",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--font-brand" } }
+        "$description": "Brand typeface — display/title/headline/brand/labels. Anaheim loads via the Google Fonts <link> in index.html; --font-ui is the immediate fallback. Numerics NEVER use this.",
+        "$extensions": { "com.celnet": { "cssVar": "--font-brand" } }
       },
       "display": {
         "$type": "fontFamily",
         "$value": ["Space Grotesk", "{font.family.ui}"],
         "$description": "Modern grotesque for section headings/labels (July-2026 SOTA design language). Anaheim stays wordmark-only; numerics NEVER use display, they stay --font-mono. Space Grotesk loads via the Google Fonts <link> in index.html; --font-ui is the immediate fallback.",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--font-display" } }
+        "$extensions": { "com.celnet": { "cssVar": "--font-display" } }
       },
       "mono": {
         "$type": "fontFamily",
@@ -156,32 +156,32 @@
           "monospace"
         ],
         "$description": "The only face for ALL numerics (prices, greeks, spots). Tabular, slashed-zero figures.",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--font-mono" } }
+        "$extensions": { "com.celnet": { "cssVar": "--font-mono" } }
       }
     },
     "weight": {
       "regular": {
         "$type": "fontWeight",
         "$value": 400,
-        "$extensions": { "com.celer.celnet": { "cssVar": "--weight-regular" } }
+        "$extensions": { "com.celnet": { "cssVar": "--weight-regular" } }
       },
       "emphasis": {
         "$type": "fontWeight",
         "$value": 500,
-        "$extensions": { "com.celer.celnet": { "cssVar": "--weight-emphasis" } }
+        "$extensions": { "com.celnet": { "cssVar": "--weight-emphasis" } }
       },
       "header": {
         "$type": "fontWeight",
         "$value": 600,
-        "$extensions": { "com.celer.celnet": { "cssVar": "--weight-header" } }
+        "$extensions": { "com.celnet": { "cssVar": "--weight-header" } }
       }
     },
     "label": {
       "letter-spacing": {
         "$type": "dimension",
         "$value": "0.06em",
-        "$description": "The Celer label treatment — uppercase + ~0.06em tracking (.brand-label).",
-        "$extensions": { "com.celer.celnet": { "selector": ".brand-label" } }
+        "$description": "The label treatment — uppercase + ~0.06em tracking (.brand-label).",
+        "$extensions": { "com.celnet": { "selector": ".brand-label" } }
       }
     },
     "num": {
@@ -189,7 +189,7 @@
         "$type": "dimension",
         "$value": "-0.01em",
         "$description": "Tabular numeric tracking (.num — tabular-nums slashed-zero).",
-        "$extensions": { "com.celer.celnet": { "selector": ".num" } }
+        "$extensions": { "com.celnet": { "selector": ".num" } }
       }
     }
   },
@@ -198,42 +198,42 @@
     "1": {
       "$type": "dimension",
       "$value": "2px",
-      "$extensions": { "com.celer.celnet": { "cssVar": "--space-1" } }
+      "$extensions": { "com.celnet": { "cssVar": "--space-1" } }
     },
     "2": {
       "$type": "dimension",
       "$value": "4px",
-      "$extensions": { "com.celer.celnet": { "cssVar": "--space-2" } }
+      "$extensions": { "com.celnet": { "cssVar": "--space-2" } }
     },
     "3": {
       "$type": "dimension",
       "$value": "8px",
-      "$extensions": { "com.celer.celnet": { "cssVar": "--space-3" } }
+      "$extensions": { "com.celnet": { "cssVar": "--space-3" } }
     },
     "4": {
       "$type": "dimension",
       "$value": "12px",
-      "$extensions": { "com.celer.celnet": { "cssVar": "--space-4" } }
+      "$extensions": { "com.celnet": { "cssVar": "--space-4" } }
     },
     "5": {
       "$type": "dimension",
       "$value": "16px",
-      "$extensions": { "com.celer.celnet": { "cssVar": "--space-5" } }
+      "$extensions": { "com.celnet": { "cssVar": "--space-5" } }
     },
     "6": {
       "$type": "dimension",
       "$value": "24px",
-      "$extensions": { "com.celer.celnet": { "cssVar": "--space-6" } }
+      "$extensions": { "com.celnet": { "cssVar": "--space-6" } }
     },
     "7": {
       "$type": "dimension",
       "$value": "32px",
-      "$extensions": { "com.celer.celnet": { "cssVar": "--space-7" } }
+      "$extensions": { "com.celnet": { "cssVar": "--space-7" } }
     },
     "8": {
       "$type": "dimension",
       "$value": "48px",
-      "$extensions": { "com.celer.celnet": { "cssVar": "--space-8" } }
+      "$extensions": { "com.celnet": { "cssVar": "--space-8" } }
     }
   },
   "density": {
@@ -243,7 +243,7 @@
       "$value": "38px",
       "$description": "grid/blotter row height (StreamWorkspace ROW_HEIGHT origin)",
       "$extensions": {
-        "com.celer.celnet": {
+        "com.celnet": {
           "cssVar": "--row-h",
           "themes": { "density-compact": "26px" }
         }
@@ -254,7 +254,7 @@
       "$value": "{space.1}",
       "$description": "inter-row separation in dense lists",
       "$extensions": {
-        "com.celer.celnet": {
+        "com.celnet": {
           "cssVar": "--row-gap",
           "themes": { "density-compact": "0px" }
         }
@@ -265,7 +265,7 @@
       "$value": "{space.4}",
       "$description": "horizontal cell padding",
       "$extensions": {
-        "com.celer.celnet": {
+        "com.celnet": {
           "cssVar": "--cell-pad-x",
           "themes": { "density-compact": "{space.3}" }
         }
@@ -276,7 +276,7 @@
       "$value": "{space.3}",
       "$description": "vertical cell padding",
       "$extensions": {
-        "com.celer.celnet": {
+        "com.celnet": {
           "cssVar": "--cell-pad-y",
           "themes": { "density-compact": "{space.2}" }
         }
@@ -287,7 +287,7 @@
       "$value": "28px",
       "$description": "inspector-strip / inline-control height",
       "$extensions": {
-        "com.celer.celnet": {
+        "com.celnet": {
           "cssVar": "--control-h",
           "themes": { "density-compact": "22px" }
         }
@@ -299,22 +299,22 @@
     "sm": {
       "$type": "dimension",
       "$value": "6px",
-      "$extensions": { "com.celer.celnet": { "cssVar": "--r-sm" } }
+      "$extensions": { "com.celnet": { "cssVar": "--r-sm" } }
     },
     "md": {
       "$type": "dimension",
       "$value": "10px",
-      "$extensions": { "com.celer.celnet": { "cssVar": "--r-md" } }
+      "$extensions": { "com.celnet": { "cssVar": "--r-md" } }
     },
     "lg": {
       "$type": "dimension",
       "$value": "16px",
-      "$extensions": { "com.celer.celnet": { "cssVar": "--r-lg" } }
+      "$extensions": { "com.celnet": { "cssVar": "--r-lg" } }
     },
     "full": {
       "$type": "dimension",
       "$value": "999px",
-      "$extensions": { "com.celer.celnet": { "cssVar": "--r-full" } }
+      "$extensions": { "com.celnet": { "cssVar": "--r-full" } }
     }
   },
   "motion": {
@@ -323,29 +323,29 @@
       "flash-decay": {
         "$type": "duration",
         "$value": "450ms",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--flash-decay" } }
+        "$extensions": { "com.celnet": { "cssVar": "--flash-decay" } }
       },
       "quote-in": {
         "$type": "duration",
         "$value": "180ms",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--quote-in" } }
+        "$extensions": { "com.celnet": { "cssVar": "--quote-in" } }
       },
       "workspace-switch": {
         "$type": "duration",
         "$value": "200ms",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--workspace-switch" } }
+        "$extensions": { "com.celnet": { "cssVar": "--workspace-switch" } }
       }
     },
     "easing": {
       "out": {
         "$type": "cubicBezier",
         "$value": [0.22, 1, 0.36, 1],
-        "$extensions": { "com.celer.celnet": { "cssVar": "--ease-out" } }
+        "$extensions": { "com.celnet": { "cssVar": "--ease-out" } }
       },
       "spring": {
         "$type": "cubicBezier",
         "$value": [0.34, 1.56, 0.64, 1],
-        "$extensions": { "com.celer.celnet": { "cssVar": "--ease-spring" } }
+        "$extensions": { "com.celnet": { "cssVar": "--ease-spring" } }
       }
     }
   },
@@ -354,9 +354,9 @@
     "shadow-panel": {
       "$type": "shadow",
       "$value": "0 2px 8px oklch(0 0 0 / 0.3), 0 0 0 0.5px oklch(0 0 0 / 0.32), inset 0 0.5px 0 oklch(1 0 0 / 0.06)",
-      "$description": "Tight-dark-stack panel elevation (July-2026, mockups/celer.css): deeper ambient + inset top-light hairline; elevation reads from hairline+shadow, not lightness steps.",
+      "$description": "Tight-dark-stack panel elevation (July-2026, mockups/theme.css): deeper ambient + inset top-light hairline; elevation reads from hairline+shadow, not lightness steps.",
       "$extensions": {
-        "com.celer.celnet": {
+        "com.celnet": {
           "cssVar": "--shadow-panel",
           "themes": {
             "light": "0 1px 2px oklch(0 0 0 / 0.08), 0 0 0 0.5px oklch(0 0 0 / 0.1)"
@@ -368,7 +368,7 @@
       "$type": "shadow",
       "$value": "0 8px 28px oklch(0 0 0 / 0.42), 0 1px 2px oklch(0 0 0 / 0.3)",
       "$extensions": {
-        "com.celer.celnet": {
+        "com.celnet": {
           "cssVar": "--shadow-float",
           "themes": {
             "light": "0 8px 28px oklch(0 0 0 / 0.16), 0 1px 2px oklch(0 0 0 / 0.1)"
@@ -380,7 +380,7 @@
       "$type": "shadow",
       "$value": "0 24px 64px oklch(0 0 0 / 0.55), 0 2px 8px oklch(0 0 0 / 0.4)",
       "$extensions": {
-        "com.celer.celnet": {
+        "com.celnet": {
           "cssVar": "--shadow-hud",
           "themes": {
             "light": "0 24px 64px oklch(0 0 0 / 0.22), 0 2px 8px oklch(0 0 0 / 0.14)"
@@ -391,9 +391,9 @@
     "hairline": {
       "$type": "border",
       "$value": "1px solid oklch(1 0 0 / 0.07)",
-      "$description": "Strengthened to a full 1px at 7% white for the tight dark surface stack (mockups/celer.css); light appearance keeps 0.5px.",
+      "$description": "Strengthened to a full 1px at 7% white for the tight dark surface stack (mockups/theme.css); light appearance keeps 0.5px.",
       "$extensions": {
-        "com.celer.celnet": {
+        "com.celnet": {
           "cssVar": "--hairline",
           "themes": { "light": "0.5px solid oklch(0 0 0 / 0.1)" }
         }
@@ -403,7 +403,7 @@
       "$type": "dimension",
       "$value": "20px",
       "$extensions": {
-        "com.celer.celnet": {
+        "com.celnet": {
           "cssVar": "--blur-float",
           "themes": { "reduced-transparency": "0px" }
         }
@@ -413,7 +413,7 @@
       "$type": "dimension",
       "$value": "40px",
       "$extensions": {
-        "com.celer.celnet": {
+        "com.celnet": {
           "cssVar": "--blur-hud",
           "themes": { "reduced-transparency": "0px" }
         }
@@ -423,12 +423,12 @@
   "color": {
     "$description": "All color is OKLCH for perceptual uniformity. The $value of every token is its DARK / normal-contrast value (`:root` default). Light, increased-contrast, and combined overrides — verbatim from the source selectors — are in each token's $extensions.themes (light / contrast-high / light-contrast-high).",
     "bg": {
-      "$description": "Surfaces — tight dark stack (July-2026 SOTA, mockups/celer.css): inset 0.165 < base 0.2 < raised 0.255 < overlay 0.29, hue ~264 under the indigo accent. Darkened below the Celer brand-kit navy anchors (#1B1F2A / #282C3E) so hairline+shadow elevation carries the depth. A11Y GATE: the darkening changes every text-on-surface contrast pair — the axe a11y e2e (gui/e2e/a11y.e2e.ts) MUST re-verify at t2.",
+      "$description": "Surfaces — tight dark stack (July-2026 SOTA, mockups/theme.css): inset 0.165 < base 0.2 < raised 0.255 < overlay 0.29, hue ~264 under the indigo accent. Darkened below the Brand-kit navy anchors (#1B1F2A / #282C3E) so hairline+shadow elevation carries the depth. A11Y GATE: the darkening changes every text-on-surface contrast pair — the axe a11y e2e (gui/e2e/a11y.e2e.ts) MUST re-verify at t2.",
       "base": {
         "$type": "color",
         "$value": "oklch(0.2 0.015 264)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--bg-base",
             "themes": { "light": "oklch(0.99 0.003 264)" }
           }
@@ -438,7 +438,7 @@
         "$type": "color",
         "$value": "oklch(0.255 0.02 264)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--bg-raised",
             "themes": { "light": "oklch(0.975 0.004 264)" }
           }
@@ -449,7 +449,7 @@
         "$value": "oklch(0.29 0.024 264 / 0.7)",
         "$description": "Translucent overlay; collapses to bg-overlay-solid under increased-contrast and reduced-transparency.",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--bg-overlay",
             "themes": {
               "light": "oklch(1 0 0 / 0.86)",
@@ -463,7 +463,7 @@
         "$type": "color",
         "$value": "oklch(0.29 0.024 264)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--bg-overlay-solid",
             "themes": { "light": "oklch(1 0 0)" }
           }
@@ -473,7 +473,7 @@
         "$type": "color",
         "$value": "oklch(0.165 0.013 264)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--bg-inset",
             "themes": { "light": "oklch(0.96 0.005 264)" }
           }
@@ -486,7 +486,7 @@
         "$type": "color",
         "$value": "oklch(0.97 0.008 264)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--text-primary",
             "themes": {
               "light": "oklch(0.22 0.02 264)",
@@ -499,9 +499,9 @@
       "secondary": {
         "$type": "color",
         "$value": "oklch(0.8 0.03 276)",
-        "$description": "Celer secondary text ≈ #979CB7 (periwinkle-grey).",
+        "$description": "Secondary text ≈ #979CB7 (periwinkle-grey).",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--text-secondary",
             "themes": {
               "light": "oklch(0.46 0.03 276)",
@@ -515,7 +515,7 @@
         "$type": "color",
         "$value": "oklch(0.74 0.025 276)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--text-tertiary",
             "themes": {
               "light": "oklch(0.6 0.025 276)",
@@ -526,12 +526,12 @@
       }
     },
     "brand": {
-      "$description": "Celer brand coral #ff7357 — logo/pulse/active-pair marker (NOT a semantic up/down). The identity colour holds across appearances (only intensity shifts).",
+      "$description": "Brand coral #ff7357 — logo/pulse/active-pair marker (NOT a semantic up/down). The identity colour holds across appearances (only intensity shifts).",
       "default": {
         "$type": "color",
         "$value": "oklch(0.72 0.17 35)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--brand",
             "themes": {
               "light": "oklch(0.66 0.18 35)",
@@ -546,7 +546,7 @@
         "$value": "oklch(0.72 0.17 35 / 0.16)",
         "$description": "Low-alpha brand tint.",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--brand-soft",
             "themes": {
               "light": "oklch(0.66 0.18 35 / 0.12)",
@@ -557,12 +557,12 @@
       }
     },
     "accent": {
-      "$description": "Celer indigo/periwinkle #6b6bf5 — focus rings, selection, primary buttons, links.",
+      "$description": "Indigo/periwinkle #6b6bf5 — focus rings, selection, primary buttons, links.",
       "default": {
         "$type": "color",
         "$value": "oklch(0.62 0.19 280)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--accent",
             "themes": {
               "light": "oklch(0.55 0.2 280)",
@@ -576,7 +576,7 @@
         "$type": "color",
         "$value": "oklch(0.62 0.19 280 / 0.2)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--accent-soft",
             "themes": {
               "light": "oklch(0.55 0.2 280 / 0.12)",
@@ -593,7 +593,7 @@
         "$type": "color",
         "$value": "oklch(0.78 0.16 155)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--bid",
             "themes": {
               "light": "oklch(0.55 0.15 155)",
@@ -607,7 +607,7 @@
         "$type": "color",
         "$value": "oklch(0.7 0.17 25)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--offer",
             "themes": {
               "light": "oklch(0.55 0.19 27)",
@@ -621,7 +621,7 @@
         "$type": "color",
         "$value": "oklch(0.82 0.16 75)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--warn",
             "themes": { "light": "oklch(0.62 0.16 70)" }
           }
@@ -631,7 +631,7 @@
         "$type": "color",
         "$value": "oklch(0.65 0.21 25)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--danger",
             "themes": { "light": "oklch(0.52 0.22 27)" }
           }
@@ -644,7 +644,7 @@
         "$type": "color",
         "$value": "oklch(0.85 0.18 155 / 0.5)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--flash-up",
             "themes": { "light": "oklch(0.7 0.16 155 / 0.32)" }
           }
@@ -654,7 +654,7 @@
         "$type": "color",
         "$value": "oklch(0.78 0.19 25 / 0.5)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--flash-dn",
             "themes": { "light": "oklch(0.68 0.18 27 / 0.32)" }
           }
@@ -662,12 +662,12 @@
       }
     },
     "ramp": {
-      "$description": "Diverging heatmap ramp (cool indigo → neutral → warm green), perceptually uniform. The cool pole tracks the Celer indigo accent hue (~280).",
+      "$description": "Diverging heatmap ramp (cool indigo → neutral → warm green), perceptually uniform. The cool pole tracks the Indigo accent hue (~280).",
       "neg-2": {
         "$type": "color",
         "$value": "oklch(0.55 0.15 280)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--ramp-neg-2",
             "themes": { "light": "oklch(0.6 0.16 280)" }
           }
@@ -677,7 +677,7 @@
         "$type": "color",
         "$value": "oklch(0.68 0.09 278)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--ramp-neg-1",
             "themes": { "light": "oklch(0.78 0.08 278)" }
           }
@@ -687,7 +687,7 @@
         "$type": "color",
         "$value": "oklch(0.8 0.01 264)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--ramp-mid",
             "themes": { "light": "oklch(0.95 0.005 264)" }
           }
@@ -697,7 +697,7 @@
         "$type": "color",
         "$value": "oklch(0.74 0.1 145)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--ramp-pos-1",
             "themes": { "light": "oklch(0.82 0.1 145)" }
           }
@@ -707,7 +707,7 @@
         "$type": "color",
         "$value": "oklch(0.62 0.16 150)",
         "$extensions": {
-          "com.celer.celnet": {
+          "com.celnet": {
             "cssVar": "--ramp-pos-2",
             "themes": { "light": "oklch(0.62 0.16 150)" }
           }
@@ -719,64 +719,64 @@
       "seq-1": {
         "$type": "color",
         "$value": "oklch(0.32 0.10 285)",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--seq-1" } }
+        "$extensions": { "com.celnet": { "cssVar": "--seq-1" } }
       },
       "seq-2": {
         "$type": "color",
         "$value": "oklch(0.44 0.11 262)",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--seq-2" } }
+        "$extensions": { "com.celnet": { "cssVar": "--seq-2" } }
       },
       "seq-3": {
         "$type": "color",
         "$value": "oklch(0.55 0.09 210)",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--seq-3" } }
+        "$extensions": { "com.celnet": { "cssVar": "--seq-3" } }
       },
       "seq-4": {
         "$type": "color",
         "$value": "oklch(0.66 0.11 168)",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--seq-4" } }
+        "$extensions": { "com.celnet": { "cssVar": "--seq-4" } }
       },
       "seq-5": {
         "$type": "color",
         "$value": "oklch(0.79 0.15 135)",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--seq-5" } }
+        "$extensions": { "com.celnet": { "cssVar": "--seq-5" } }
       },
       "seq-6": {
         "$type": "color",
         "$value": "oklch(0.90 0.17 108)",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--seq-6" } }
+        "$extensions": { "com.celnet": { "cssVar": "--seq-6" } }
       },
       "div-neg2": {
         "$type": "color",
         "$value": "oklch(0.58 0.13 248)",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--div-neg2" } }
+        "$extensions": { "com.celnet": { "cssVar": "--div-neg2" } }
       },
       "div-neg1": {
         "$type": "color",
         "$value": "oklch(0.70 0.07 240)",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--div-neg1" } }
+        "$extensions": { "com.celnet": { "cssVar": "--div-neg1" } }
       },
       "div-mid": {
         "$type": "color",
         "$value": "oklch(0.5 0.006 264)",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--div-mid" } }
+        "$extensions": { "com.celnet": { "cssVar": "--div-mid" } }
       },
       "div-pos1": {
         "$type": "color",
         "$value": "oklch(0.72 0.11 62)",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--div-pos1" } }
+        "$extensions": { "com.celnet": { "cssVar": "--div-pos1" } }
       },
       "div-pos2": {
         "$type": "color",
         "$value": "oklch(0.68 0.16 45)",
-        "$extensions": { "com.celer.celnet": { "cssVar": "--div-pos2" } }
+        "$extensions": { "com.celnet": { "cssVar": "--div-pos2" } }
       }
     },
     "grid-line": {
       "$type": "color",
       "$value": "oklch(1 0 0 / 0.06)",
       "$extensions": {
-        "com.celer.celnet": {
+        "com.celnet": {
           "cssVar": "--grid-line",
           "themes": {
             "light": "oklch(0 0 0 / 0.07)",
@@ -790,7 +790,7 @@
       "$type": "color",
       "$value": "oklch(1 0 0 / 0.06)",
       "$extensions": {
-        "com.celer.celnet": {
+        "com.celnet": {
           "cssVar": "--highlight-top",
           "themes": { "light": "oklch(1 0 0 / 0.7)" }
         }
@@ -801,12 +801,12 @@
       "thumb": {
         "$type": "color",
         "$value": "oklch(0.6 0.01 250 / 0.3)",
-        "$extensions": { "com.celer.celnet": { "selector": "::-webkit-scrollbar-thumb" } }
+        "$extensions": { "com.celnet": { "selector": "::-webkit-scrollbar-thumb" } }
       },
       "thumb-hover": {
         "$type": "color",
         "$value": "oklch(0.6 0.01 250 / 0.5)",
-        "$extensions": { "com.celer.celnet": { "selector": "::-webkit-scrollbar-thumb:hover" } }
+        "$extensions": { "com.celnet": { "selector": "::-webkit-scrollbar-thumb:hover" } }
       }
     },
     "aurora-wash": {
@@ -814,7 +814,7 @@
       "green-bloom": {
         "$type": "color",
         "$value": "oklch(0.78 0.16 155 / 0.04)",
-        "$extensions": { "com.celer.celnet": { "selector": "body::background-image" } }
+        "$extensions": { "com.celnet": { "selector": "body::background-image" } }
       }
     }
   }

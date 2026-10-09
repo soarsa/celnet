@@ -24,7 +24,7 @@ body {
   text-rendering: optimizeLegibility;
   overflow: hidden;
   /* A subtle aurora wash in the deep background — depth, not chrome. The cool
-   * pole carries the Celer indigo accent; a faint coral brand bloom sits top-left
+   * pole carries the indigo accent; a faint coral brand bloom sits top-left
    * (echoing the pinwheel mark), kept low-alpha so it never competes with data. */
   background-image:
     radial-gradient(
@@ -45,7 +45,7 @@ body {
   background-attachment: fixed;
 }
 
-/* Brand/display type uses the Celer face. Headings and explicitly-branded
+/* Brand/display type uses the brand face. Headings and explicitly-branded
  * elements adopt --font-brand; numerics ALWAYS stay on --font-mono via `.num`. */
 h1,
 h2,
@@ -54,7 +54,7 @@ h3,
   font-family: var(--font-brand);
 }
 
-/* Letter-spaced uppercase label — the Celer label treatment (~0.06em). */
+/* Letter-spaced uppercase label — the brand label treatment (~0.06em). */
 .brand-label {
   font-family: var(--font-brand);
   text-transform: uppercase;

@@ -39,7 +39,7 @@ CelNet represents an institutional leap in sovereign multi-asset execution, deri
 ## PAGE 2 // GIT AUDIT: LAST GITHUB COMMIT VS. THE EVOLUTIONARY LEAP
 
 ### 2.1 Audit of Last GitHub Commit (`bba57367`)
-- **Commit Hash**: `bba57367` (committed Aug 19, 2026 by Benjamin Cuthbert)
+- **Commit Hash**: `bba57367` (committed Aug 19, 2026 by soarsa)
 - **Commit Message**: `Hedge flow tiles & blotter ledger reconciliation`
 - **Scope at that Baseline**: Covered client-facing blotter synchronization, front-office web tiles, basic linear rates execution, and legacy gRPC/WebSocket bridging.
 - **Architectural Bottlenecks Identified**:

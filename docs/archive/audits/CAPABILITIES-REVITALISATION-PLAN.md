@@ -435,7 +435,7 @@ honest boundary, openable with zero build step.
 
 **Structure (in order):**
 1. **Brand header** — left coral→indigo rail, Anaheim webfont, pinwheel mark (brand-kit viewBox
-   `0 0 501 500` path) ONCE in the rail; mark-less "Celnet / a Celer Technologies product"
+   `0 0 501 500` path) ONCE in the rail; mark-less "Celnet / a Celnet product"
    wordmark (no traffic-light dots); build-hash · UTC footer.
 2. **Executive summary** — the §1 thesis + 4-6 proof cards (catalogue depth, one contract / 5
    clients, nanosecond core, server-side risk, open SDK, honest evidence trail).

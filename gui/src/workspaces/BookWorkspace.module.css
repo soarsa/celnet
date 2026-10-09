@@ -1,4 +1,4 @@
-/* BookWorkspace — desk-wide aggregated risk. Aurora materials + Celer identity:
+/* BookWorkspace — desk-wide aggregated risk. Aurora materials + Celnet identity:
    Anaheim letter-spaced labels, mono numerics, coral only for section/brand
    accents, semantic bid/offer green/red for risk signs. */
 
@@ -120,7 +120,7 @@
   position: relative;
   overflow: hidden;
 }
-/* coral accent rule = Celer brand mark on each card (identity, not a risk sign) */
+/* coral accent rule = brand mark on each card (identity, not a risk sign) */
 .card::before {
   content: "";
   position: absolute;

@@ -1,5 +1,5 @@
 /*
- * celer-tokens.css — Celer brand + semantic + motion token layer for the
+ * celnet-tokens.css — Celnet brand + semantic + motion token layer for the
  * Excel task pane.
  *
  * SINGLE SOURCE OF TRUTH for all hex/OKLCH values in the pane. taskpane.css
@@ -10,7 +10,7 @@
  * TOKEN CONTRACT (mirrors gui/src/design/tokens.css — keep in sync):
  *
  *   --brand        coral  #ff7357 → oklch(0.72 0.17 35)
- *                  The Celer identity colour: logo/pinwheel fill, brand pulse,
+ *                  The identity colour: logo/pinwheel fill, brand pulse,
  *                  active-underlier accent, the live last-look ring.
  *                  NOT a semantic up/down colour. Bid/offer stay green/red.
  *   --brand-deep   darkened coral for pressed/hover states.
@@ -19,7 +19,7 @@
  *                  Focus rings, connection-pill connected state, primary btns.
  *   --accent-soft  low-alpha indigo for button wash.
  *   --navy / --raised / --field  navy surface ramp.
- *   --font-brand   "Anaheim" — Celer display/wordmark/label face.
+ *   --font-brand   "Anaheim" — brand display/wordmark/label face.
  *   --font-mono    tabular-nums numeric face.
  *
  * SEMANTIC COLOURS (bid=green, offer=coral-red — never swap these):
@@ -88,14 +88,14 @@
    ============================================================ */
 
 :root {
-  /* Celer coral — oklch(0.72 0.17 35) ≈ #ff7357.
+  /* Brand coral — oklch(0.72 0.17 35) ≈ #ff7357.
    * hex fallback retained for non-oklch IE/legacy contexts (Office WebView
    * on older Windows may not support oklch). Always prefer var(--brand). */
   --brand:        oklch(0.72 0.17 35);
   --brand-deep:   oklch(0.64 0.19 33);
   --brand-soft:   oklch(0.72 0.17 35 / 0.16);
 
-  /* Celer indigo — oklch(0.62 0.19 280) ≈ #6b6bf5. */
+  /* Brand indigo — oklch(0.62 0.19 280) ≈ #6b6bf5. */
   --accent:       oklch(0.62 0.19 280);
   --accent-soft:  oklch(0.62 0.19 280 / 0.20);
 
@@ -157,17 +157,17 @@
    ============================================================ */
 
 .quote-flash-up {
-  animation: celer-flash-up var(--flash-decay) var(--ease-out);
+  animation: celnet-flash-up var(--flash-decay) var(--ease-out);
 }
 .quote-flash-dn {
-  animation: celer-flash-dn var(--flash-decay) var(--ease-out);
+  animation: celnet-flash-dn var(--flash-decay) var(--ease-out);
 }
 
 /* The wash animates background AND briefly lifts text to primary so the
  * coloured flash-background does not collide with the same-hue bid/offer text
  * (same fix applied in gui/PriceTile.module.css). fill-mode defaults to none
  * so the persistent class never strands a low-contrast state at rest. */
-@keyframes celer-flash-up {
+@keyframes celnet-flash-up {
   0% {
     background-color: var(--flash-up);
     color: var(--text);
@@ -177,7 +177,7 @@
   }
 }
 
-@keyframes celer-flash-dn {
+@keyframes celnet-flash-dn {
   0% {
     background-color: var(--flash-dn);
     color: var(--text);
@@ -195,10 +195,10 @@
    ============================================================ */
 
 .quote-appear {
-  animation: celer-quote-in var(--quote-in) var(--ease-spring);
+  animation: celnet-quote-in var(--quote-in) var(--ease-spring);
 }
 
-@keyframes celer-quote-in {
+@keyframes celnet-quote-in {
   from {
     opacity: 0;
     transform: translateY(4px);
@@ -217,11 +217,11 @@
    ============================================================ */
 
 .brand-pulse {
-  animation: celer-brand-breath 2.4s var(--ease-out) infinite;
+  animation: celnet-brand-breath 2.4s var(--ease-out) infinite;
   color: var(--brand);
 }
 
-@keyframes celer-brand-breath {
+@keyframes celnet-brand-breath {
   0%, 100% { opacity: 0.55; }
   50%       { opacity: 1;    }
 }
@@ -235,11 +235,11 @@
    ============================================================ */
 
 .mark-spin {
-  animation: celer-mark-spin 600ms var(--ease-out) 1 forwards;
+  animation: celnet-mark-spin 600ms var(--ease-out) 1 forwards;
   transform-origin: center;
 }
 
-@keyframes celer-mark-spin {
+@keyframes celnet-mark-spin {
   from { transform: rotate(0deg);   }
   to   { transform: rotate(360deg); }
 }
@@ -253,11 +253,11 @@
    ============================================================ */
 
 .mark-heartbeat {
-  animation: celer-mark-beat 2s var(--ease-out) infinite;
+  animation: celnet-mark-beat 2s var(--ease-out) infinite;
   transform-origin: center;
 }
 
-@keyframes celer-mark-beat {
+@keyframes celnet-mark-beat {
   0%, 100% { transform: scale(1);    opacity: 0.6; }
   50%       { transform: scale(1.15); opacity: 1;   }
 }
@@ -329,10 +329,10 @@
 
 .btn-trade-buy.btn-clicked,
 .btn-trade-sell.btn-clicked {
-  animation: celer-btn-pop 320ms var(--ease-spring);
+  animation: celnet-btn-pop 320ms var(--ease-spring);
 }
 
-@keyframes celer-btn-pop {
+@keyframes celnet-btn-pop {
   0%   { transform: scale(1);    }
   45%  { transform: scale(0.94); }
   100% { transform: scale(1);    }
@@ -342,10 +342,10 @@
  * removes after animationend). Signals quote readiness without distraction. */
 .btn-trade-buy.btn-enabled,
 .btn-trade-sell.btn-enabled {
-  animation: celer-btn-enable var(--quote-in) var(--ease-spring);
+  animation: celnet-btn-enable var(--quote-in) var(--ease-spring);
 }
 
-@keyframes celer-btn-enable {
+@keyframes celnet-btn-enable {
   from { opacity: 0.4; transform: scale(0.96); }
   to   { opacity: 1;   transform: scale(1);    }
 }
@@ -366,10 +366,10 @@
 
 .pill-on::before {
   background: currentColor;
-  animation: celer-pill-dot 2.2s var(--ease-out) infinite;
+  animation: celnet-pill-dot 2.2s var(--ease-out) infinite;
 }
 
-@keyframes celer-pill-dot {
+@keyframes celnet-pill-dot {
   0%, 100% { opacity: 1;    transform: scale(1);    }
   50%       { opacity: 0.55; transform: scale(0.85); }
 }

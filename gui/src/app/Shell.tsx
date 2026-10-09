@@ -514,8 +514,8 @@ export function Shell(): React.ReactElement {
     <TourProvider>
     <div className={styles.shell}>
       <aside className={styles.rail} aria-label="workspaces">
-        <div className={styles.brand} title="Celnet — a Celer Technologies product">
-          <CelerMark size={30} className={styles.mark} title="Celnet — a Celer Technologies product" />
+        <div className={styles.brand} title="Celnet">
+          <CelerMark size={30} className={styles.mark} title="Celnet" />
         </div>
         {/*
          * Grouped, scrolling rail: the active domain's visible rows (navRail — hidden

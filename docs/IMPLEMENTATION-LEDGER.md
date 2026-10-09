@@ -915,8 +915,8 @@
   to consume the **server** aggregate (closes the client-side-aggregation parity gap), keyed on the
   now-on-the-wire attribution chain; then AAD/GPU + cross-fleet fan-out + GUI scale views.
 
-- 2026-05-31 — **GUI → Celer-product rebrand + experience-architecture design corpus.** (1) GUI
-  rebranded to **Celer Technologies** (coral `--brand` + indigo `--accent`, Anaheim, pinwheel mark
+- 2026-05-31 — **GUI → Celnet design system + experience-architecture design corpus.** (1) GUI
+  styled to **Celnet** (coral `--brand` + indigo `--accent`, Anaheim, geometric mark
   once in the rail, mark-less toolbar wordmark, no traffic lights, real build-stamp); added a **pair
   watchlist strip**, a real **pair dropdown** (`PairMenu`), and an **aggregated Book** view (commits
   `1854ab4`, `f89e96e`). (2) Four multi-agent research/critique workflows → design corpus:

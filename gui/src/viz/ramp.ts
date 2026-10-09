@@ -14,8 +14,8 @@ interface Oklch {
   h: number;
 }
 
-// Stops mirror the rebranded --ramp-* design tokens (Celer dark appearance): the
-// cool (negative) pole tracks the Celer indigo accent hue (~280), the mid is a
+// Stops mirror the rebranded --ramp-* design tokens (dark appearance): the
+// cool (negative) pole tracks the indigo accent hue (~280), the mid is a
 // near-neutral on the navy hue (264), the warm (positive) pole stays green.
 // The negative (cool) pole is kept LIGHT ENOUGH that the heatmap's near-black cell
 // ink clears WCAG AA 4.5:1 even at the depth-shaded (0.92) darkest cell — the old

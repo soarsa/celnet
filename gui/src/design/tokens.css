@@ -1,5 +1,5 @@
 /*
- * Celnet Aurora × Celer — design tokens (GUI-DESIGN §3).
+ * Celnet Aurora — design tokens (GUI-DESIGN §3).
  *
  * Semantic tokens only; components never reach for raw hex. All color is OKLCH
  * for perceptual uniformity so semantic up/down greens/reds are equally vivid in
@@ -7,21 +7,21 @@
  * Light, and Increased-Contrast (AAA numerics). prefers-reduced-motion and
  * prefers-reduced-transparency are honoured at the bottom.
  *
- * Celer brand layer (authoritative brand kit):
- *   --brand        coral  #ff7357 → oklch(0.72 0.17 35)  — the signature Celer
+ * Brand layer:
+ *   --brand        coral  #ff7357 → oklch(0.72 0.17 35)  — the signature
  *                  colour: logo/pinwheel, brand pulse, the "live" accent, the
  *                  active-pair marker. NOT a semantic up/down; bid/offer stay
  *                  green/red. --brand-soft is its low-alpha tint.
- *   --accent       Celer indigo/periwinkle #6b6bf5 → oklch(0.62 0.19 280) —
+ *   --accent       indigo/periwinkle #6b6bf5 → oklch(0.62 0.19 280) —
  *                  focus rings, selection, primary buttons, links. Replaces the
  *                  previous azure (hue ~250).
  *   navy surfaces  hue ~264 to sit under the indigo accent; the July-2026 tight
  *                  dark stack (inset 0.165 / base 0.2 / raised 0.255 / overlay
- *                  0.29, per mockups/celer.css) darkens below the original
+ *                  0.29, per mockups/theme.css) darkens below the original
  *                  brand-kit anchors (#1B1F2A / #282C3E) so hairline+shadow
  *                  elevation carries the depth.
  *   --text-secondary periwinkle-grey #979CB7. Labels are uppercase + ~0.06em.
- *   --font-brand   "Anaheim" (Celer brand typeface) over the UI fallback; used
+ *   --font-brand   "Anaheim" (brand typeface) over the UI fallback; used
  *                  for display/title/headline/brand/labels. --font-mono (SF Mono)
  *                  stays the only face for ALL numerics (prices, greeks, spots).
  */
@@ -47,7 +47,7 @@
 
   --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui,
     sans-serif;
-  /* Celer brand typeface — used for display/title/headline/brand/labels. Numerics
+  /* Brand typeface — used for display/title/headline/brand/labels. Numerics
    * NEVER use this; they stay on --font-mono. Anaheim loads via the Google Fonts
    * <link> in index.html; --font-ui is the immediate fallback (no layout shift). */
   --font-brand: "Anaheim", var(--font-ui);
@@ -98,7 +98,7 @@
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
   /* --- elevation (materials) ---
-   * Tight-dark-stack elevation (July-2026 SOTA, mockups/celer.css): the darker
+   * Tight-dark-stack elevation (July-2026 SOTA, mockups/theme.css): the darker
    * surfaces carry less tonal separation, so the panel shadow deepens and gains
    * an inset top-light hairline, and the seam hairline strengthens to a full
    * 1px at 7% white — elevation reads from the hairline + shadow, not from
@@ -136,7 +136,7 @@
   --bg-inset: oklch(0.185 0.013 264);
 
   --text-primary: oklch(0.975 0.008 264);
-  /* Celer secondary text ≈ #979CB7 (periwinkle-grey), lifted to stay above the
+  /* Secondary text ≈ #979CB7 (periwinkle-grey), lifted to stay above the
    * AA-tuned tertiary and keep the secondary>tertiary hierarchy. Aug-2026: 0.8→0.84
    * so it still clears AAA 7:1 on the lifted surfaces (base 10.69:1, raised 8.76:1,
    * overlay-solid 7.60:1; computed OKLCH→sRGB→WCAG). */
@@ -153,11 +153,11 @@
    * The axe a11y e2e (gui/e2e/a11y.e2e.ts) MUST re-verify at t2. */
   --text-tertiary: oklch(0.8 0.025 276);
 
-  /* Celer brand coral #ff7357 — logo/pulse/active-pair marker (NOT up/down). */
+  /* Brand coral #ff7357 — logo/pulse/active-pair marker (NOT up/down). */
   --brand: oklch(0.72 0.17 35);
   --brand-soft: oklch(0.72 0.17 35 / 0.16);
 
-  /* Celer indigo/periwinkle #6b6bf5 — focus, selection, primary, links. */
+  /* indigo/periwinkle #6b6bf5 — focus, selection, primary, links. */
   --accent: oklch(0.62 0.19 280);
   --accent-soft: oklch(0.62 0.19 280 / 0.2);
 
@@ -170,7 +170,7 @@
   --flash-dn: oklch(0.78 0.19 25 / 0.5);
 
   /* diverging heatmap ramp (cool indigo → neutral → warm green), perceptually
-   * uniform. The cool pole tracks the Celer indigo accent hue (~280). */
+   * uniform. The cool pole tracks the indigo accent hue (~280). */
   --ramp-neg-2: oklch(0.55 0.15 280);
   --ramp-neg-1: oklch(0.68 0.09 278);
   --ramp-mid: oklch(0.8 0.01 264);

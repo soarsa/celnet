@@ -39,7 +39,7 @@ INSTALL_ONELINER="https://raw.githubusercontent.com/${LODESTAR_REPO}/main/instal
 # Plugins this repo actually uses, by marketplace. Deliberately EXCLUDED:
 #   • claude-codewiki — its marketplace is a local directory, not a shareable git source.
 #   • expo — disabled estate-wide (no React Native here).
-#   • atlassian / gitlab — left to each developer's own preference (celer-estate optional).
+#   • atlassian / gitlab — left to each developer's own preference.
 PLUGINS_OFFICIAL=(plugin-dev rust-analyzer-lsp typescript-lsp pyright-lsp playwright chrome-devtools-mcp frontend-design)
 PLUGINS_BUF=(protobuf)
 BUF_MARKETPLACE_REPO="bufbuild/claude-plugins"
