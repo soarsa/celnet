@@ -1,7 +1,7 @@
 /**
  * The WebSocket seam — one transport, two hosts.
  *
- * The add-in's transport must run unchanged in two places (CLAUDE.md: a clean
+ * The add-in's transport must run unchanged in two places (GUIDE.md: a clean
  * seam so the same transport runs in the browser-host and in a node harness):
  *  - inside the Office.js custom-function runtime / task pane, where the global
  *    browser `WebSocket` exists;

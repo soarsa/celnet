@@ -1,13 +1,13 @@
 ---
 name: arch-program-status
-description: Main-line architecture program (items A–L) is mostly LANDED on origin/main; only G/D/J + orchestration tail remain — the CLAUDE.md resume anchor is stale
+description: Main-line architecture program (items A–L) is mostly LANDED on origin/main; only G/D/J + orchestration tail remain — the GUIDE.md resume anchor is stale
 metadata: 
   node_type: memory
   type: project
   originSessionId: 5ff9525a-81fa-41e7-a4f8-745f35d76a80
 ---
 
-The **CLAUDE.md resume anchor is STALE** (it predates a large team push). As of
+The **GUIDE.md resume anchor is STALE** (it predates a large team push). As of
 `origin/main` HEAD **`7878048`** (verified 2026-06-30, after fast-forwarding local main
 which was 38 commits behind), the architecture program **items A, C, E, F, H, L are all
 DONE and landed** on origin/main (merge `682eefd→0da3eeb`, "arch/ship-program", full t2

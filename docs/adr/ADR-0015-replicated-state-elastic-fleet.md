@@ -15,7 +15,7 @@
 - **Extends:** ADR-0011 (CelNet-estate ingress — the `DeploymentMode` / fleet boot seams).
   **Constrained by:** ADR-0016 (hot-core embargoes + latency SLO gate) — the
   `Arc<*Curve>`/`Arc<*Surface>`-in-`MarketState` embargo is the hard boundary this ADR's
-  surface-distribution feed must honour. Honours CLAUDE.md guardrails #6 (scale is a
+  surface-distribution feed must honour. Honours GUIDE.md guardrails #6 (scale is a
   requirement), #7 (OSS/free only), #9 (one unversioned contract), #10 (zero legacy),
   #11 (scale-out aware, zero-cost observability).
 
@@ -238,7 +238,7 @@ one documented next increment" from deferred to in-scope for elasticity.
 Keep the in-process `BroadcastRing` SPMC seqlock ring (`celnet-fanout/src/ring.rs:424`) as
 the **in-process** fan-out — it is Disruptor-shaped and already correct. For the
 **cross-host** many-counterparty tier, build in order, each gated on a **measured**
-single-shard unicast limit (never speculatively — CLAUDE.md #6/#7):
+single-shard unicast limit (never speculatively — GUIDE.md #6/#7):
 
 1. `SO_REUSEPORT` sharded accept + `io_uring` datapath (the OSS-first kernel-bypass tier;
    `io_uring` is a "hybrid bypass" closing on DPDK while being far easier to operate);

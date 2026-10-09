@@ -52,7 +52,7 @@ const HANDLES: Handle[] = ["atmVol", "rr25", "bf25", "rr10", "bf10"];
  * contract's `MarkSurfaceRequest.smile_model` field routes the selection to the
  * server's calibration engine (VV/SABR/SVI/SSVI), which marks under the chosen
  * family and echoes it back in each smile's TYPED `arbitrage.model` provenance
- * field. The labels are purpose-named (vendor/method-neutral, CLAUDE.md rule 8).
+ * field. The labels are purpose-named (vendor/method-neutral, GUIDE.md rule 8).
  */
 const SMILE_MODELS: { id: SmileModel; label: string; hint: string }[] = [
   { id: "MARKET_HEDGE", label: "Market hedge", hint: "Desk market-hedge construction (default)" },
@@ -73,7 +73,7 @@ const SMILE_MODELS: { id: SmileModel; label: string; hint: string }[] = [
  * workspace rewrite. Today ONLY FX carries marked surfaces (the five delta-space
  * calibration families above); every other class is an honest empty list and the
  * workspace renders the typed unavailable state — a non-FX surface is NEVER
- * fabricated (CLAUDE.md rule 2).
+ * fabricated (GUIDE.md rule 2).
  */
 const CLASS_SMILE_FAMILIES: Record<
   AssetClass,
@@ -563,7 +563,7 @@ export function SurfaceWorkspace(): React.ReactElement {
   // (the contract's vols are absolute, 0.10 = 10 vol), rows in tenor order,
   // columns in wing order (10ΔP … ATM … 10ΔC). An arb-violating tenor surfaces
   // as danger markers across its whole row — the arb report is per-smile, so a
-  // single-vertex attribution would be fabricated (CLAUDE.md rule 2).
+  // single-vertex attribution would be fabricated (GUIDE.md rule 2).
   const surfaceViz = useMemo(() => {
     if (!preview) return null;
     const rows = preview.smiles.map((s) => ({

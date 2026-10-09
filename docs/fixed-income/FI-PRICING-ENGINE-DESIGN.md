@@ -5,7 +5,7 @@
   records the target shape + fit. **Not yet implemented.** Companion: `docs/adr/
   ADR-0018-fixed-income-as-a-new-asset-class-leaf.md`. Extends ADR-0008 (multi-asset
   carry), ADR-0010 (FI rates onto the carry seam); honours ADR-0007 (one unversioned
-  contract) and CLAUDE.md guardrails #6 (scale/latency), #8 (vendor-neutral naming),
+  contract) and GUIDE.md guardrails #6 (scale/latency), #8 (vendor-neutral naming),
   #11 (trader-centric, zero-cost observability).
 - **Branch:** authored on `feature/fi-reference-data` (the FI platform expansion lane).
   This is a design artifact only — no core contract changes.

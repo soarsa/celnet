@@ -2,7 +2,7 @@
 //! RFQ/IOI requires pricing" (or "a quote was lifted / rejected / a request expired")
 //! the instant it lands, without polling.
 //!
-//! # Design (CLAUDE.md §11: bounded-queue offload, never stall a publisher)
+//! # Design (GUIDE.md §11: bounded-queue offload, never stall a publisher)
 //!
 //! [`NotificationBroker`] is a shared registry mapping each subscriber (one per
 //! connected client / WS connection, or one gRPC `StreamNotifications` call) to its
@@ -146,7 +146,7 @@ impl NotificationBroker {
                 match sub.tx.try_send(notification.clone()) {
                     Ok(()) => {}
                     Err(mpsc::error::TrySendError::Full(_)) => {
-                        // Skip-on-full: never block the publisher (CLAUDE.md §11).
+                        // Skip-on-full: never block the publisher (GUIDE.md §11).
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => closed.push(sub.id),
                 }

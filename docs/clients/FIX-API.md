@@ -14,7 +14,7 @@ downloadable from the Connections workspace toolbar:
   the human/agent-readable spec (session layer, the CompID-swap rule, the RFQ→
   Quote→lift→exec flow, single-leg + multileg instrument blocks, convention
   checks, reject semantics, a worked wire transcript, and a "build a client"
-  quickstart). This is the **claude spec** — point an agent at it to generate a client.
+  quickstart). This is the **agent spec** — point an agent at it to generate a client.
 - **QuickFIX data dictionary** — [`gui/public/fix/celnet-fix44.xml`](../../gui/public/fix/celnet-fix44.xml):
   the machine-readable FIX 4.4 dialect (MsgTypes, fields, required sets, enums,
   custom tags) to drop into any QuickFIX-family engine as the session

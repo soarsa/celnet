@@ -3,7 +3,7 @@
 - **Status:** Accepted (2026-06-08). Governs the W1 core wave and every later asset-class wave
   of `docs/MASTER-EVOLUTION-PROGRAM.md`.
 - **Supersedes/extends:** the FX-only Layer-0 shape. Honours ADR-0007 (one unversioned
-  contract — no `schema_version`) and CLAUDE.md guardrails #8/#9/#10/#11.
+  contract — no `schema_version`) and GUIDE.md guardrails #8/#9/#10/#11.
 
 ## Context
 

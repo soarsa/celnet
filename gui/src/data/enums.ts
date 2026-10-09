@@ -6,7 +6,7 @@
  * proto tag). One contract, two encodings: the GUI's typed string form is purely a
  * presentation projection of the proto enum numbers — these tables make the two
  * directions exact and reversible, so the live WS transport cannot drift from the
- * wire contract (CLAUDE.md rule 9: one current contract, no fork).
+ * wire contract (GUIDE.md rule 9: one current contract, no fork).
  *
  * Every number here is the proto enum member's tag in `proto/celnet.proto`; the
  * doc on each table cites the proto enum it mirrors. Decoding clamps an unknown

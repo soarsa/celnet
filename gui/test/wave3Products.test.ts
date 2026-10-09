@@ -3,7 +3,7 @@
  * Target-Redemption Forward (TARF), accumulator and lookback are encoded onto the
  * SAME `Instrument.product` oneof as vanilla/strategy, with the EXACT appended wire
  * field NAMES (`tarf`/`accumulator`/`lookback`, proto field numbers 19/20/21 — no
- * schema_version, no renumber; CLAUDE.md rule 9). The TARF and accumulator REUSE
+ * schema_version, no renumber; GUIDE.md rule 9). The TARF and accumulator REUSE
  * the same nested `FixingSchedule` message (`schedule`). The standalone build
  * prices each honestly: a continuous-monitored lookback by the exact closed form
  * (no Monte-Carlo std-error), every other Wave-3 product by an antithetic

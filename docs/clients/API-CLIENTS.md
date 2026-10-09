@@ -3,7 +3,7 @@
 > Design doc for the single current Celnet wire contract (`celnet-proto`), the async edge
 > (`celnet-server`), and the typed Rust client SDK (`celnet-client`). It states what is
 > *implemented and tested* today and what is *designed/deferred*, grounded in the actual
-> `celnet.proto` and `celnet-client` surface (CLAUDE.md rule 10 — docs match code). There
+> `celnet.proto` and `celnet-client` surface (GUIDE.md rule 10 — docs match code). There
 > is exactly **one** current contract: no version field, no negotiation (rule 9).
 
 ---

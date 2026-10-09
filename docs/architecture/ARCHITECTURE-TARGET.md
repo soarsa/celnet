@@ -1,6 +1,6 @@
 # Celnet Target Architecture
 
-**Status:** ARCHITECTURAL TARGET SPECIFICATION — Baseline for multi-dimensional convergence plan (pricing, API, scale-out, latency, governance). Synthesized from a whole-platform, lodestar-anchored audit (5 dimensions × celnet-explorer agents; all 40 crates + gui + excel + deploy). Design-first — this defines the optimal target BEFORE implementation. Feeds a set of phased ADRs (0010 term-structure, 0012 done, + new 0013–0016 below). Honours CLAUDE.md guardrails #2/#6/#7/#8/#9/#10/#11.
+**Status:** ARCHITECTURAL TARGET SPECIFICATION — Baseline for multi-dimensional convergence plan (pricing, API, scale-out, latency, governance). Synthesized from a whole-platform, lodestar-anchored audit (5 dimensions × celnet-explorer agents; all 40 crates + gui + excel + deploy). Design-first — this defines the optimal target BEFORE implementation. Feeds a set of phased ADRs (0010 term-structure, 0012 done, + new 0013–0016 below). Honours GUIDE.md guardrails #2/#6/#7/#8/#9/#10/#11.
 
 ## 0. The central finding — Celnet is SOTA capabilities built as disconnected islands
 

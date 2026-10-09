@@ -1,7 +1,7 @@
 /**
  * Deterministic seed data for the NON-FX underlier universes the scope drill
  * navigates (book → asset class → underlier), alongside `seed.ts`'s `PAIRS`
- * (the FX universe). Same honesty contract as `PAIRS` (CLAUDE.md rule 2): every
+ * (the FX universe). Same honesty contract as `PAIRS` (GUIDE.md rule 2): every
  * row is TODAY'S seeded universe — plausible, clearly-labeled indicative levels,
  * never a live mark — and the shapes are the real contract `Underlying` arms, so
  * an estate market-data feed replaces this module with zero downstream rework.

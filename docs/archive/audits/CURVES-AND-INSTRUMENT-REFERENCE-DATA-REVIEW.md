@@ -16,7 +16,7 @@
   multi-dealer D2C platform).
 - **E.** Recommendations & sequencing.
 
-> **Naming guardrail (CLAUDE.md §8).** Proposed identifiers are purpose-named and
+> **Naming guardrail (GUIDE.md §8).** Proposed identifiers are purpose-named and
 > vendor-neutral. Third-party platforms/venues (MarketAxess, CME, TRACE, CDX,
 > Kafka, …) appear only as integration-target references in prose, never in
 > proposed API names.
@@ -413,7 +413,7 @@ adopting are called out separately from the *mechanisms* that conflict.
   **in-process Rust stores** — the identity/Entity/Book/User registry
   (`config/identity.rs`, JSON-persisted keyed maps) and the rates position store /
   deal blotter (in-process), plus **git-committed config**. The pinned hot core is
-  log/lock/alloc-free (CLAUDE.md §11); telemetry offloads over a bounded queue.
+  log/lock/alloc-free (GUIDE.md §11); telemetry offloads over a bounded queue.
 - **Trade-off:** in-proc gives the latency/throughput the architecture mandates;
   it trades away SQL's transactional durability and ad-hoc query/audit surface. The
   provided doc's ACID tables buy durability/audit at the cost of per-RFQ DB

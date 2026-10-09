@@ -9,7 +9,7 @@
 //!
 //! Bounded by construction: the load phase stops at a request budget *or* a hard
 //! wall-clock cap, whichever comes first, then drains and shuts the edge down.
-//! Run it under a shell timeout regardless (CLAUDE.md test hygiene):
+//! Run it under a shell timeout regardless (GUIDE.md test hygiene):
 //!
 //! ```bash
 //! source "$HOME/.cargo/env" && \

@@ -1,7 +1,7 @@
 /**
  * Shared, a11y-safe input controls for the fixed-income (rates) product families
  * (IRS / FRA / bond). Factored out of the per-family `InputBlock`s so the
- * segmented-tab pattern is homed once (CLAUDE.md rule 10 — no duplication).
+ * segmented-tab pattern is homed once (GUIDE.md rule 10 — no duplication).
  *
  * The active tab is signalled with HIGH-CONTRAST primary text + an accent UNDERLINE
  * (`styles.rTabActive` — `box-shadow: inset 0 -2px 0 var(--accent)`), never with

@@ -5,7 +5,7 @@
  * directive — so one field reaches every flow (price/quote/stream/scenario) — plus a
  * new `window_barrier` product arm (proto field 23) that is LOCAL_STOCH_VOL-only (it
  * has no closed form). Everything is APPENDED additively: no `schema_version`, no
- * renumber, the DEFAULT (analytic) path stays byte-identical (CLAUDE.md rule 9).
+ * renumber, the DEFAULT (analytic) path stays byte-identical (GUIDE.md rule 9).
  *
  * These exercise the REAL `src/data/wsCodec.ts`, `src/data/enums.ts`,
  * `src/data/seed.ts` and `src/data/pricing.ts` through their public surface with NO
@@ -227,7 +227,7 @@ describe("wave-6 offline pricer — never fabricates an LSV window-barrier price
   it("priceInstrument fails LOUDLY for a window barrier (server-side only)", () => {
     const inst = windowBarrierInstrument(PAIR, EXPIRY, 10, windowBarrier());
     // The offline mock has no LSV engine; rather than invent a value (which would
-    // be a fake — CLAUDE.md: no mocks/placeholders/overclaim), the offline pricer
+    // be a fake — GUIDE.md: no mocks/placeholders/overclaim), the offline pricer
     // throws. The TicketWorkspace gates the window barrier to the live transport so
     // this is never reached in the UI, but the contract here is "no fabrication".
     expect(() => priceInstrument(inst, MKT)).toThrow(/server-side only|LOCAL_STOCH_VOL/);

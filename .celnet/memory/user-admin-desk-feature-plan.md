@@ -25,7 +25,7 @@ Operator's verbatim ask: "lets add a user admin administration and desk grouping
 3. Default seeded admin user **admin@celnet.com / password** on first run (like the fix-connections seed). Support reset-password + general user CRUD.
 
 **Implementation notes / constraints:**
-- Password hashing: use **argon2** (pure-Rust, OSS Apache/MIT) — satisfies CLAUDE.md rule 7 (no commercial/proprietary). No plaintext storage ever.
+- Password hashing: use **argon2** (pure-Rust, OSS Apache/MIT) — satisfies GUIDE.md rule 7 (no commercial/proprietary). No plaintext storage ever.
 - Persist users/desks as JSON stores mirroring `FixConnectionStore` (atomic temp+rename), e.g. `users.json`/`desks.json`, paths from env knobs; gitignore the runtime files like `fix-connections.json` already is.
 - Security-sensitive: use the **security-reviewer** agent before committing; validate all inputs; rate-limit login; never log credentials/tokens.
 - Mirror the established feature shape: proto service → gRPC impl → WS mirror dispatch+codec → GUI contract/codec/transport/wsTransport/mockSource → hook → workspace/screen. Register a new left-rail "Admin"/"Users" workspace (3 `WorkspaceId` unions: `lib/commands.ts`, `app/AppContext.tsx`, `lib/savedViews.ts` + `WORKSPACES` array; RAIL in commands.ts auto-gets next ⌘N; `WORKSPACE_VIEW` in `app/Shell.tsx`).

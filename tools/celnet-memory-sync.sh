@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# tools/celnet-memory-sync.sh — mirror the per-machine Claude Code auto-memory into the
+# tools/celnet-memory-sync.sh — mirror the per-machine Agent auto-memory into the
 # git-committed repo so durable facts/decisions SURVIVE /clear, session termination and
 # restart, and are SHARED across developer PCs.
 #
-# WHY: the live auto-memory lives at ~/.claude/projects/<slug>/memory/ where <slug> is the
+# WHY: the live auto-memory lives at ~/.agents/projects/<slug>/memory/ where <slug> is the
 # repo's absolute checkout path with '/' -> '-'. It is therefore per-developer + per-machine
 # and NOT in git — a /clear does not touch it, but a fresh clone, a new machine, or a wiped
-# ~/.claude loses it entirely, and it is never shared between developers. This script keeps a
+# ~/.agents loses it entirely, and it is never shared between developers. This script keeps a
 # committed mirror at .celnet/memory/ (private repo) and syncs both ways.
 #
 #   restore   (fail-safe; SessionStart hook) — copy any mirror memory file MISSING from the
@@ -20,7 +20,7 @@ set -uo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 SLUG="$(printf '%s' "$REPO_ROOT" | sed 's#/#-#g')"
-LIVE="$HOME/.claude/projects/$SLUG/memory"
+LIVE="$HOME/.agents/projects/$SLUG/memory"
 MIRROR="$REPO_ROOT/.celnet/memory"
 MODE="${1:-restore}"
 

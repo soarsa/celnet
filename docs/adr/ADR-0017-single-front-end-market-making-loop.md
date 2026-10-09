@@ -5,7 +5,7 @@
   Records the intended experience architecture; the current `gui/` + `excel/` remain
   authoritative until each surface lands. Honours ADR-0007 (one unversioned contract),
   ADR-0008 (multi-asset carry architecture), ADR-0010 (FI/rates onto the carry seam),
-  ADR-0012 (unified gBSM kernel) and CLAUDE.md guardrails #8/#9/#10/#11.
+  ADR-0012 (unified gBSM kernel) and GUIDE.md guardrails #8/#9/#10/#11.
 - **Deliverable:** `single-front-end-experience`
   (`docs/acceptance/single-front-end-experience.acceptance.json`).
 

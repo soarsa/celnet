@@ -6,7 +6,7 @@
  * presentation-side stand-in that the transport seam (src/data/transport)
  * replaces with live RPC results when wired.
  *
- * No method/person names appear in identifiers (CLAUDE.md rule 8); the
+ * No method/person names appear in identifiers (GUIDE.md rule 8); the
  * Garman-Kohlhagen provenance is documented here, never in API names.
  */
 
@@ -365,7 +365,7 @@ export function priceInstrument(
       // The window barrier has NO closed form — it is priced ONLY by the server's
       // local-stochastic-volatility ADI-PDE / Monte-Carlo engine (pricing model
       // LOCAL_STOCH_VOL). The offline mock deliberately does NOT fabricate an LSV
-      // number (CLAUDE.md: no mocks/placeholders/overclaim). The TicketWorkspace
+      // number (GUIDE.md: no mocks/placeholders/overclaim). The TicketWorkspace
       // gates the window barrier to the live transport and never requests an
       // offline price for it, so this arm is unreachable offline; if some caller
       // does reach it, fail LOUDLY rather than invent a value.
@@ -481,7 +481,7 @@ function priceSwap(spec: FxSwap, m: MarketContext, t: number): PriceOutcome {
 // `y₁ < 1`, unbounded as `L → ∞` (`e^{−rt}·S_t` is a strict submartingale) —
 // so the offline pricer throws the same typed refusal the server returns
 // (INVALID_ARGUMENT), never a fabricated number. Method provenance (doc
-// comments only, CLAUDE.md rule 8): the perpetual American free-boundary closed
+// comments only, GUIDE.md rule 8): the perpetual American free-boundary closed
 // form of McKean (1965) / Merton (1973), cost-of-carry form per Haug (2007, 2nd
 // ed.).
 
@@ -712,7 +712,7 @@ function priceVolatilitySwap(_spec: VolatilitySwap, m: MarketContext): PriceOutc
 // the digital−vanilla decomposition). The live WS transport prices the genuine
 // server form; offline this reproduces it. Greeks are by central finite difference
 // on the closed form so the ticket's strip is populated honestly. Provenance is in
-// doc comments only (never in identifiers; CLAUDE.md rule 8).
+// doc comments only (never in identifiers; GUIDE.md rule 8).
 
 /** Resolve a `StrikeOrDelta` to an absolute strike (delta via the mock convention). */
 function resolveStrikeOrDelta(spec: StrikeOrDelta, m: MarketContext, t: number): number {
@@ -2033,11 +2033,11 @@ function priceLookback(spec: Lookback, m: MarketContext, t: number): PriceOutcom
 // BERMUDAN date (expiry always exercisable). This is a real, standard
 // early-exercise method — NOT a copy of the server's PSOR free-boundary FD, but
 // an INDEPENDENT numerical scheme that converges to the SAME value (so it
-// cross-checks the server rather than echoing it; CLAUDE.md: no mocks/
+// cross-checks the server rather than echoing it; GUIDE.md: no mocks/
 // placeholders). The server prices the trader-selected engine (the PSOR FD, or
 // Longstaff-Schwartz LSM when lsm_paths > 0); the live WS transport carries that
 // authoritative value. Provenance (Cox-Ross-Rubinstein 1979) is in this doc
-// comment only, never in an identifier (CLAUDE.md rule 8).
+// comment only, never in an identifier (GUIDE.md rule 8).
 
 /** Binomial layers for the offline American/Bermudan tree (dense ⇒ ~1e-2 vs FD). */
 const AMERICAN_BINOMIAL_STEPS = 800;
@@ -2174,7 +2174,7 @@ function priceAmerican(spec: AmericanOption, m: MarketContext, t: number): Price
 // rejects it as `NotPositiveDefinite`); we never silently regularise it.
 //
 // The provenance (Cholesky factorisation) is documented here only, never in an
-// API identifier (CLAUDE.md rule 8).
+// API identifier (GUIDE.md rule 8).
 
 /** Default antithetic path-pairs for a basket when the trader leaves `mcPaths = 0`. */
 const BASKET_DEFAULT_PAIRS = 16_384;

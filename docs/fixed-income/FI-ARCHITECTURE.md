@@ -12,7 +12,7 @@ layout) and [`../INTERFACES.md`](../INTERFACES.md) (dependency direction, proto 
 estate, does **not** fork a parallel silo.
 
 > **Guardrails honoured.** OSS-only; **vendor-neutral purpose-named** crate/module/type identifiers
-> (CLAUDE.md §8 — `celnet-rates`, not a method name); **single additive contract** (no versioning,
+> (GUIDE.md §8 — `celnet-rates`, not a method name); **single additive contract** (no versioning,
 > guardrail #9 — rates arms append to the one `celnet.proto`); validate-don't-assert
 > ([`FI-VERIFICATION-CONTRACT.md`](FI-VERIFICATION-CONTRACT.md)).
 

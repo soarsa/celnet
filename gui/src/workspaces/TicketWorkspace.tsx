@@ -548,7 +548,7 @@ export function TicketWorkspace({
     isRates || optionSpec?.noExpiry !== undefined || expiryMode === "TENOR" || brokenDate !== null;
 
   // Offline (the in-app mock) the LSV engine is NOT available — it is a server-side
-  // model (CLAUDE.md: no faked LSV numbers). Detect offline via the documented
+  // model (GUIDE.md: no faked LSV numbers). Detect offline via the documented
   // transport label ("mock/replay"; the live transport's label starts with "live").
   // When LSV is the effective model offline, pricing is gated to the live server.
   const isOffline = !app.transport.label.startsWith("live");

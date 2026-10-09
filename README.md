@@ -121,4 +121,4 @@ Detailed specifications, architectural blueprints, and quantitative guides are m
 - **[Fixed Income & Rates](docs/fixed-income/README.md)**: Multi-curve construction, cash bonds, credit pricing, and pricing groups.
 - **[Hedging & Execution](docs/hedging/README.md)**: Auto-hedging, inventory skewing, and risk transfer.
 - **[Client Surfaces & SDKs](docs/clients/README.md)**: Trading cockpits, Excel functions, FIX APIs, and SDK guides.
-- **[Operating Guide](CLAUDE.md)**: Core guardrails, testing laws, and development workflow.
+- **[Operating Guide](GUIDE.md)**: Core guardrails, testing laws, and development workflow.

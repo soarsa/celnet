@@ -29,7 +29,7 @@
 //!   layer, tracked in `FI-STATUS.md`.
 //! - **OAS** on callable bonds (this slice is option-free, where OAS ≡ Z-spread).
 //!
-//! Method/paper provenance lives in prose only — never in identifiers (CLAUDE.md §8).
+//! Method/paper provenance lives in prose only — never in identifiers (GUIDE.md §8).
 
 use crate::curve::Curve;
 use crate::solver::{SolverError, brent_root};

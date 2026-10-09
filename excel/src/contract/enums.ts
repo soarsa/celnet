@@ -1,5 +1,5 @@
 // ONE CONTRACT — minimal duplicate of `gui/src/data/enums.ts`, semantics-identical
-// (CLAUDE.md rule 9). The enum-number tables ARE the wire contract; do not diverge.
+// (GUIDE.md rule 9). The enum-number tables ARE the wire contract; do not diverge.
 /**
  * The wire projection of the vocabulary enums: the single source of truth that
  * maps the GUI's string-form enum members (src/data/contract.ts) to and from the
@@ -8,7 +8,7 @@
  * proto tag). One contract, two encodings: the GUI's typed string form is purely a
  * presentation projection of the proto enum numbers — these tables make the two
  * directions exact and reversible, so the live WS transport cannot drift from the
- * wire contract (CLAUDE.md rule 9: one current contract, no fork).
+ * wire contract (GUIDE.md rule 9: one current contract, no fork).
  *
  * Every number here is the proto enum member's tag in `proto/celnet.proto`; the
  * doc on each table cites the proto enum it mirrors. Decoding clamps an unknown

@@ -91,7 +91,7 @@ keyboard-first).
 ### Data layer (`src/data`) — the contract seam
 - `contract.ts` — a typed mirror of the **single, current** `celnet-proto`
   contract (`celnet.wire`): Instrument / Quote / Snapshot+Update / Greeks /
-  Smile / Scenario, etc. One contract, no versioning (CLAUDE.md rule 9).
+  Smile / Scenario, etc. One contract, no versioning (GUIDE.md rule 9).
 - `transport.ts` — the **isolated transport seam** (`CelnetTransport`): the only
   interface the app talks to. Two transports satisfy it, selected once at the app
   root by `transportConfig.ts`:
@@ -137,6 +137,6 @@ inter-frame render time, not decoration.
   drawn directly. What remains off-wire by design is **live per-trade P&L
   attribution** (the designed `GetPosition` / `AttributePnl` calls in
   `docs/GUI-DESIGN.md`): no realised/unrealised P&L column is drawn because that
-  number is not yet on the wire (no fake P&L — CLAUDE.md rule 2). The attribution
+  number is not yet on the wire (no fake P&L — GUIDE.md rule 2). The attribution
   chain (owner/book/desk) *is* on the wire and is shown.
 - Build artifacts (`node_modules/`, `dist/`) are gitignored.

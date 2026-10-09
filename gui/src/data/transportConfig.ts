@@ -24,7 +24,7 @@
  * self-signed cert accepted for the page origin is reused for the socket. Local
  * dev (vite on localhost) has no co-located mirror, so it falls back to
  * {@link DEV_WS_URL}. No runtime mixing: a session is one transport, matching the
- * platform's single-uniform-version deploy model (CLAUDE.md rule 9).
+ * platform's single-uniform-version deploy model (GUIDE.md rule 9).
  */
 
 import { createMockTransport } from "./mockSource";

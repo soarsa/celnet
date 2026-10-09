@@ -168,7 +168,7 @@ impl PricingEngine {
             .as_ref()
             .ok_or(PriceError::EmptyProduct)?;
 
-        // Booking-model selector (CLAUDE.md rule 9: a pricing directive, not an API
+        // Booking-model selector (GUIDE.md rule 9: a pricing directive, not an API
         // version). An absent or DEFAULT model takes the analytic path below
         // byte-identically; LOCAL_STOCH_VOL routes the supported products through the
         // LSV engine and rejects every other product clearly.

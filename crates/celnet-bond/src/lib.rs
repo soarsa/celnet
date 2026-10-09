@@ -46,7 +46,7 @@
 //!   sibling `celnet-credit` leaf (step 2); this leaf is curve-agnostic and takes whatever
 //!   [`celnet_rates::Curve`] it is handed.
 //!
-//! Method/paper provenance lives in prose only — never in identifiers (CLAUDE.md §8). Every public
+//! Method/paper provenance lives in prose only — never in identifiers (GUIDE.md §8). Every public
 //! output is validated against an independent oracle (closed-form annuity, published street vectors,
 //! and internal identities), not merely asserted plausible; see the crate's test suites.
 

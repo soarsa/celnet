@@ -1,14 +1,14 @@
 # Celnet — Agent Entrypoint
 
-Cross-agent orientation for the Celnet codebase. Every agent (Claude Code or any
+Cross-agent orientation for the Celnet codebase. Every agent (Agent or any
 lodestar-supported tool) starts here, then follows the pointers below. This file
-is the concise entry; the full operating guide is **[CLAUDE.md](CLAUDE.md)**.
+is the concise entry; the full operating guide is **[GUIDE.md](GUIDE.md)**.
 
 ---
 
 ## Operating guide
 
-Read **[CLAUDE.md](CLAUDE.md)** before writing any code. It contains the hard
+Read **[GUIDE.md](GUIDE.md)** before writing any code. It contains the hard
 guardrails (git policy, no mocks, vendor-neutral naming, gate tiers, scale
 requirements, zero-disruption headless testing) that every agent must follow without exception.
 
@@ -30,7 +30,7 @@ lodestar doctor --json
 # A sharp node-count drop => lodestar index --full <abs-path-to-repo>
 ```
 
-**Always use MCP tools, not the CLI**, from within a Claude Code session:
+**Always use MCP tools, not the CLI**, from within a Agent session:
 - `mcp__lodestar__search_graph` / `mcp__lodestar__search_code` — find symbols
 - `mcp__lodestar__get_code_snippet` — exact source by qualified name
 - `mcp__lodestar__trace_path` — callers, impact, data flow
@@ -49,8 +49,8 @@ shared across all machines by set-union merge — no conflicts.
 
 ## Subagent fleet
 
-Project-level subagents live in **[.claude/agents/](.claude/agents/)** and are
-auto-discovered on every clone. See `.claude/agents/README.md` for the full table.
+Project-level subagents live in **[.agents/agents/](.agents/agents/)** and are
+auto-discovered on every clone. See `.agents/agents/README.md` for the full table.
 
 | Agent | Role |
 |---|---|
@@ -62,7 +62,7 @@ auto-discovered on every clone. See `.claude/agents/README.md` for the full tabl
 
 **No Stage-2 judge** is configured (removed by operator decision) — the deterministic
 **Stage-1 constraint gate** is the primary verifier and needs no model. The
-verification-loop canon (`.claude/skills/verification-loop/SKILL.md`) + the
+verification-loop canon (`.agents/skills/verification-loop/SKILL.md`) + the
 `celnet-verifier` agent cover review where a behavioral check is genuinely needed.
 
 ---
@@ -83,8 +83,8 @@ lodestar index "$(pwd)"
 # 4. Pull shared knowledge (committed in .lodestar/knowledge/)
 git pull   # events/ merge by set-union — no conflict
 
-# 5. (Claude Code) trust/enable the PROJECT .mcp.json lodestar server. It carries the
-#    cortex env (LODESTAR_PROPOSALS=1 — the proactive drift stream); without it Claude
+# 5. (Agent) trust/enable the PROJECT .mcp.json lodestar server. It carries the
+#    cortex env (LODESTAR_PROPOSALS=1 — the proactive drift stream); without it Agent
 #    spawns the global registration (no env) and the cortex stays dark.
 #    Verify after restart:  mcp__lodestar__knowledge_config -> knowledge_log.subscribed:true
 

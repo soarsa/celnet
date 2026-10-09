@@ -3,7 +3,7 @@
 The contracts that parallel work-streams depend on. There is exactly **one clean, current
 contract** — no versioned APIs, no back-compat shims (we have no external users). Changing
 anything here means editing the interface crate **and every dependent in the same change**,
-updating this file, and announcing it in the `CLAUDE.md` ledger. Within a parallel-build
+updating this file, and announcing it in the `GUIDE.md` ledger. Within a parallel-build
 window the interface crates are treated as **stable** so streams don't churn; a deliberate
 interface change coordinates all affected crates at once (see `docs/ROADMAP.md` §3).
 

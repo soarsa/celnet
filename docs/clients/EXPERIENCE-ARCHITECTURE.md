@@ -11,7 +11,7 @@
 > [`TRADING-UNIVERSE-SCALE.md`](../architecture/TRADING-UNIVERSE-SCALE.md),
 > [`SURFACE-WORKFLOW.md`](../quant/SURFACE-WORKFLOW.md).
 >
-> **Honesty contract (CLAUDE.md rule 5).** Every claim below is tagged: **[built]** =
+> **Honesty contract (GUIDE.md rule 5).** Every claim below is tagged: **[built]** =
 > verified in code this session; **[proposal]** = design against a not-yet-built
 > substrate; **[gap]** = needs a feed/crate that does not exist; **[inf]** = competitor
 > "uniqueness" is argument-from-absence (no public evidence), never proof. Audience:
@@ -52,7 +52,7 @@ The whole product is coherent because a small number of rules hold *everywhere*.
    aggregate-leakage risk. The viewer/principal scope is therefore carried as **explicit
    context now**, even while it resolves to "everything."
 
-4. **Honest data only.** No fabricated numbers, ever (CLAUDE.md rule 2). Empty-states say
+4. **Honest data only.** No fabricated numbers, ever (GUIDE.md rule 2). Empty-states say
    "—"; provenance (model, conventions, `surface_version`, source feed, role) is always
    on the face; non-additive measures are visibly distinguished from additive ones; the
    Book numeraire caveat is stated, not hidden. This discipline is already lived in the
@@ -503,5 +503,5 @@ source. **(Does not edit ROADMAP — the orchestrator merges backlogs.)**
 
 11. **Interface-crate coordination.** P1-1, P1-2, P1-9, P1-10 touch the frozen interface
     crates (`celnet-types` / `celnet-proto` / `celnet-conventions`) — they must be
-    coordinated under the parallel-session interface-crate discipline (CLAUDE.md §parallel
+    coordinated under the parallel-session interface-crate discipline (GUIDE.md §parallel
     model), not changed unilaterally.

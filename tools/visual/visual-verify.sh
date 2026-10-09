@@ -100,7 +100,7 @@ PLAYWRIGHT_BIN=$(cfg LODESTAR_PLAYWRIGHT_BIN visual playwright_bin "playwright")
 AXE_MODE=$(cfg LODESTAR_AXE_MODE visual axe_mode "addon")
 SHOT_DIR=$(cfg LODESTAR_VISUAL_SHOTS visual screenshot_dir ".lodestar/visual/shots")
 VISION_CMD=$(cfg LODESTAR_VISUAL_VISION_CMD visual vision_cmd "")
-REVIEWER=$(cfg LODESTAR_VISUAL_REVIEWER visual reviewer_model "claude-code:visual-verifier")
+REVIEWER=$(cfg LODESTAR_VISUAL_REVIEWER visual reviewer_model "agent:visual-verifier")
 # Stage-1 deterministic diff (P2). pixel_diff_cmd: explicit command wins;
 # "none" disables pixel tooling explicitly (byte-identity via cmp still
 # decides); "" -> feature-detect pixelmatch, then ImageMagick.

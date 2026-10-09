@@ -1,7 +1,7 @@
 /**
  * riskView — the thin client-side glue between the toolbar Scope and the SERVER's
  * `RiskService` (src/data/contract.RiskService messages). It does NOT aggregate:
- * aggregation is owned by the server (CLAUDE.md rule 11 / API-first parity). This
+ * aggregation is owned by the server (GUIDE.md rule 11 / API-first parity). This
  * module only translates the GUI's `ScopeContext` into the contract's
  * `RiskDimension` + `EntitlementPrincipal`, and assembles the `ReportingNumeraire`
  * from the watched-pairs' live spot so the server can collapse every leg into one

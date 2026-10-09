@@ -18,6 +18,6 @@
 ## Then (RC cut)
 - Read the RC verdict; fix any genuine P0/P1 in the same window (no cut with a known critical defect).
 - R7 (W6 pricing-core mutation) + R8 (crypto-surface) = session-A's lanes (spend-paused); coordinate on the board, don't duplicate.
-- Final t2 on the cut commit + ledger/CLAUDE-anchor/capabilities sync + tag.
+- Final t2 on the cut commit + ledger/GUIDE-anchor/capabilities sync + tag.
 
 ## Mesh: session-A spend-paused, lanes banked on origin (lane/w6-analytics, lane/crypto-surface). §4.2/§4.3 gate protocol on the board. Graph healthy (~17k nodes; probe before trusting). Models: sonnet=mechanical, opus=verify/judgment (memory model-selection-policy).

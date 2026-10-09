@@ -11,7 +11,7 @@
 >
 > This is a **design / sequencing document**, not a record of what is built.
 > §1 states the honest starting point; every build item carries a validation
-> gate (§8). It is governed by `CLAUDE.md` guardrails (OSS-only, no commercial
+> gate (§8). It is governed by `GUIDE.md` guardrails (OSS-only, no commercial
 > products, no mocks, vendor-neutral names, scale-as-requirement) and validated
 > against `docs/ARCHITECTURE.md` §4 (GPU abstraction) and §1.2 (latency budgets,
 > esp. the **≤ 50 ms booking-grade path-dependent exotic** budget), and

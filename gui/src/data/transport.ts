@@ -445,7 +445,7 @@ export interface CelnetTransport {
 
   // --- RiskService — server-side hierarchical risk over the org cube ---------
   //
-  // Aggregation is owned by the SERVER (API-first parity, CLAUDE.md rule 11): a
+  // Aggregation is owned by the SERVER (API-first parity, GUIDE.md rule 11): a
   // client never loops positions and sums. It lists positions, asks for a
   // rolled-up node tree over an org dimension, drills a node to its constituents,
   // and reads limit utilization — all behind this one contract.

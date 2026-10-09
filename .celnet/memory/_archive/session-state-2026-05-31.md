@@ -34,7 +34,7 @@ until absolutely everything is fully implemented and fully verified end-to-end"*
   (Traders/Quants/Tech/Leadership), 30 visuals embedded (`just embed-capabilities` → self-contained
   standalone), 0 hedge language — awaiting operator review then PDF (`deliverable/capabilities-pdf`).
   Follow-up (not W1): `celnet-surface` FX→neutral split (only when a non-FX surface leaf lands).
-  **The ledger is now `docs/IMPLEMENTATION-LEDGER.md`** (CLAUDE.md keeps only the newest entry inline).
+  **The ledger is now `docs/IMPLEMENTATION-LEDGER.md`** (GUIDE.md keeps only the newest entry inline).
 - **(archived) W0 (verification & hygiene foundation) COMPLETE & pushed** — HEAD `e3adc3d` (full `just
   check` "All gates passed."; celnet-parity 127/127; GUI vitest 335/335; Excel real-edge e2e 81/81).
   W0 delivered: central workspace-dep registry + `workspace-deps` lint (`7c40aaf`); a golden-vector corpus
@@ -69,7 +69,7 @@ until absolutely everything is fully implemented and fully verified end-to-end"*
   all four touch the frozen seams; THEN W2+ leaves fan out to disjoint lanes. See MASTER-EVOLUTION §2/§3.
 
 ### 📍 HANDOVER ARTIFACTS (prepared 2026-06-06 for a clean post-/clear resume)
-- **Repo ledger (status source of truth):** `/Users/adrian/code/celnet/CLAUDE.md` — top entry =
+- **Repo ledger (status source of truth):** `/Users/adrian/code/celnet/GUIDE.md` — top entry =
   "Wave 5 DONE → ALL IN-REPO WAVES (1–5) COMPLETE". Auto-loaded each session.
 - **Wiki (narrative knowledge layer):** `~/wiki/celnet/index.md` (graph project
   `Users-adrian-code-celnet`; registered in `~/wiki/index.md` root registry under Standalone
@@ -142,7 +142,7 @@ workflows**, one wave at a time; commit + **push to `origin` (github.com/soarsa/
 
 - **HEAD = Wave 5 ledger commit** (clean, synced to origin/main). Trail tail: `416951c` **W4d** ·
   `d3945af` W4d-ledger · `1a57def` **W3** (replog + fanout) · `e9436cd` W3-ledger · `b743fea` **W5** (GPU
-  batch kernel + perf harness) · then the W5 ledger/memory commit. CLAUDE.md ledger (top entry) is the
+  batch kernel + perf harness) · then the W5 ledger/memory commit. GUIDE.md ledger (top entry) is the
   canonical wave status.
 - **▶▶ ALL FIVE IN-REPO LEADERSHIP WAVES (1–5) ARE COMPLETE & PUSHED. The program is materially done.**
   W1 truth-gates+integration · W2 fleet-SLO+experience · W3 distributed-correctness (replog+fanout) ·
@@ -237,7 +237,7 @@ multi-process boot, thin leader-replicated before full Raft, never fake a cluste
 
 ### Git / push
 `origin` = `https://github.com/soarsa/celnet.git` (private, account `soarsa`, `gh` authed). Push permitted
-**only** there (CLAUDE.md guardrail #1; settings deny-rules removed 2026-06-05). After each wave: commit +
+**only** there (GUIDE.md guardrail #1; settings deny-rules removed 2026-06-05). After each wave: commit +
 `git push origin main` + verify `local==remote`.
 
 ### Demo/services (optional; may have survived the clear)

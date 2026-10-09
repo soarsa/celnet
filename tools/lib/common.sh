@@ -175,7 +175,7 @@ resolve_tier() {
 family_of() {
     id=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
     case "$id" in
-        *claude*|*anthropic*) printf 'anthropic' ;;
+        *agent*|*anthropic*) printf 'anthropic' ;;
         *gpt*|*openai*|*o1*|*o3*) printf 'openai' ;;
         *gemini*|*google*) printf 'google' ;;
         *llama*|*meta*) printf 'meta' ;;

@@ -53,7 +53,7 @@ gap ADR-0010 exists to close (§6).
   `curve.rs:69-74`): **log-linear-on-log-DF** (shipping default, piecewise-flat instantaneous
   forward — `ln_df_log_linear` 252-258) and **monotone-convex-on-forwards**
   (`ln_df_monotone_convex` 267-283, `monotone_convex_forward` 296-314; Hagan-West-style
-  piecewise-quadratic region construction, provenance in prose only per CLAUDE.md §8).
+  piecewise-quadratic region construction, provenance in prose only per GUIDE.md §8).
   Accessors: `discount_factor` (318), `zero_rate` (330), `instantaneous_forward` (343),
   `forward_rate_continuous`/`forward_rate_simple` (356, 367).
 - `turns.rs::with_turns`/`turn_discount_factor` — turn-of-year / meeting-date forward-jump overlay,

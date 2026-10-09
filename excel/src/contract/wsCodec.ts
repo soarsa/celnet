@@ -1,5 +1,5 @@
 // ONE CONTRACT — minimal duplicate of `gui/src/data/wsCodec.ts`, semantics-identical
-// (CLAUDE.md rule 9). This is the EXACT field-for-field mirror of the server's
+// (GUIDE.md rule 9). This is the EXACT field-for-field mirror of the server's
 // `crates/celnet-server/src/ws/codec.rs`; do not diverge from either.
 /**
  * The browser-side JSON codec for the WebSocket mirror — the exact mirror of the
@@ -7,7 +7,7 @@
  * snake_case, numeric-enum JSON the server decodes; every decoder reads the
  * snake_case, numeric-enum JSON the server encodes. There is no second contract:
  * this file and codec.rs are two ends of the SAME single, current `celnet.wire`
- * contract (CLAUDE.md rule 9), so a value priced over WS is byte-identical to the
+ * contract (GUIDE.md rule 9), so a value priced over WS is byte-identical to the
  * gRPC/direct price.
  *
  * Numbers on the wire are plain JSON numbers; identifiers that the proto types as

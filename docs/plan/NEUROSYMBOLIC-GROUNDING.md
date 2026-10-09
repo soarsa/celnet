@@ -7,7 +7,7 @@ claim — so that (a) agents are *collaboratively suggested* the right grounding
 (b) changes are *deterministically post-verified*, and (c) updating any shared asset *propagates
 aligned behaviour to every agent on every machine*, with the staleness loop guarding drift.
 
-lodestar has **no LLM**. Claude (the `celnet-*` fleet) is the conversation agent; lodestar is the
+lodestar has **no LLM**. Agent (the `celnet-*` fleet) is the conversation agent; lodestar is the
 deterministic facts+gates substrate it collaborates with (the "judge-as-collaborator").
 
 ## The model: a neurosymbolic shared asset
@@ -63,7 +63,7 @@ Native via the visual-design-loop. Steps:
    baseline hash flips the mockup claim stale.
 
 ### WS-3 — Directive / quality-attribute corpus (the up-front binding pack)
-Encode CLAUDE.md guardrails + quality attributes as the *reusable directives the judge sets up front*
+Encode GUIDE.md guardrails + quality attributes as the *reusable directives the judge sets up front*
 (verification-loop Phase 1):
 - **Decidable** → `spec:satisfies` + committed `*.acceptance.json` targets: latency/throughput budgets
   (`docs/ARCHITECTURE.md §1.2`), one-clean-API contract shape, no-versioning, schema invariants.
@@ -92,11 +92,11 @@ Phase 2 (post-authoring, cheap): `knowledge_check` + sanitizers + `just` floors 
 a *light* `celnet-verifier` review only for non-decidable residue; never a latent full re-review.
 **No edit blocking** (lodestar is advisory by design + our non-blocking directive).
 
-### WS-6 — Forward-compatibility (don't inhibit new Claude Code capabilities)
+### WS-6 — Forward-compatibility (don't inhibit new Agent capabilities)
 - Every hook stays **structurally non-blocking** (exit 0); no hook may gate a tool call. (The old
   blocking code-graph discovery-gate — from the since-decommissioned prior code-graph tool — was
   already removed.)
-- Every skill/agent carries explicit **when-NOT** triggers so Claude's own router keeps autonomy.
+- Every skill/agent carries explicit **when-NOT** triggers so Agent's own router keeps autonomy.
 - Keep lodestar features **opt-in** (proposals, derive rules, custom kinds, judge) — never mandatory.
 - Portable keys only (`.lodestar/project-id` = git-remote slug). Pin nothing to a person/machine.
 - Re-audit after each lodestar `update` that hooks/skills didn't regain a blocking posture.
@@ -110,8 +110,8 @@ on-connect autoindex + watcher + Stop/post-commit hooks + CI index + post-index 
 
 ## Honest gaps / decisions
 - **Stage-2 judge = `celnet-verifier`** (DECIDED 2026-06-22; not ollama). Wire it as lodestar's
-  `claude-subagent` judge provider: `LODESTAR_JUDGE_PROVIDER=claude-subagent` + vendor the reference
-  `tools/judge/judge-claude-subagent.sh` transport, pointed at the `celnet-verifier` agent. Decidable
+  `agent-subagent` judge provider: `LODESTAR_JUDGE_PROVIDER=agent-subagent` + vendor the reference
+  `tools/judge/judge-agent-subagent.sh` transport, pointed at the `celnet-verifier` agent. Decidable
   directives still gate deterministically without any judge; the judge runs only on behavioral residue.
 - **Watcher** may stay best-effort (git-poll) on some hosts → hooks remain the deterministic guarantee.
 - **Storybook (WS-2)** is sizable and touches `gui/` — coordinate on the lane board; it is the big build.

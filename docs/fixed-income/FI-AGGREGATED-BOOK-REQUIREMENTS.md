@@ -131,7 +131,7 @@ from the existing netting **`BookDef`** (an accounting partition) to avoid confl
 | `depth_levels` | How many levels to consolidate | top-of-book first; depth later |
 
 These bind directly to the existing `consolidate.rs` knobs — no new math. Values must
-be **validated against live/reference feeds**, not merely asserted (CLAUDE.md rule 5).
+be **validated against live/reference feeds**, not merely asserted (GUIDE.md rule 5).
 
 ## 8. Architecture & wiring
 
@@ -160,7 +160,7 @@ be **validated against live/reference feeds**, not merely asserted (CLAUDE.md ru
 - **Runtime:** the server maintains, per enabled book, a consolidator fed by its
   members; recomputes on tick; publishes composites over the WS mirror + gRPC on a
   bounded, offloaded telemetry/stream path (hot core stays alloc/lock/log-free —
-  CLAUDE.md rule 11).
+  GUIDE.md rule 11).
 - **Admin RPCs:** `Create/Update/Delete/ListAggregatedBook` following the
   `FixAdminEdge` pattern (proto → `handle_unary` + gRPC → dual codec + differential
   test → `IdentityStore` → GUI).
@@ -180,7 +180,7 @@ be **validated against live/reference feeds**, not merely asserted (CLAUDE.md ru
 ## 10. Non-functional requirements
 
 - **Scale:** many instruments × many LPs × many books (IB-sized). O(members) per
-  instrument recompute; structures chosen for many-instrument fan-in (CLAUDE.md §6).
+  instrument recompute; structures chosen for many-instrument fan-in (GUIDE.md §6).
 - **Latency/throughput:** composite updates within the FI streaming budget
   (`docs/ARCHITECTURE.md` §1.2); hot path zero-alloc, telemetry offloaded.
 - **Observability:** structured logs + metrics + HdrHistogram for compositor

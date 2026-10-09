@@ -1,6 +1,6 @@
 # Celnet Implementation Roadmap
 
-> A parallel-development roadmap for a Rust-native, SDK-extensible, microsecond-class FX options pricing, vol-surface, exotics, and risk engine, designed for **multiple concurrent Claude sessions** working on **disjoint crates** with **deterministic, non-conflicting** progress.
+> A parallel-development roadmap for a Rust-native, SDK-extensible, microsecond-class FX options pricing, vol-surface, exotics, and risk engine, designed for **multiple concurrent agent sessions** working on **disjoint crates** with **deterministic, non-conflicting** progress.
 
 > **Binding-rules override (2026-05-30):** crate prefix is **`celnet-`**; **no versioned APIs**
 > (single current contract; zero-downtime upgrades use blue-green/full cutover, not N/N-1);
@@ -28,7 +28,7 @@ celnet/
 ├─ Cargo.lock                      # committed
 ├─ rust-toolchain.toml             # pinned stable (1.96.0); pinned nightly only for fuzz job
 ├─ deny.toml                       # cargo-deny: advisories+licenses+bans+sources
-├─ CLAUDE.md                       # the LEDGER & operational guardrails
+├─ GUIDE.md                       # the LEDGER & operational guardrails
 ├─ docs/                           # documentation corpus & reference libraries
 ├─ excel/                          # Excel Custom Functions Add-in
 ├─ gui/                            # React high-density trading studio cockpit
@@ -64,7 +64,7 @@ No cyclic dependencies. Single unversioned contract across all surfaces (Rule 9)
 
 | Phase | Theme | Exit Criteria (all must hold; CI-green) |
 |---|---|---|
-| **P0** | Foundations & interface freeze | Virtual workspace builds; `celnet-types`, `celnet-core` traits, `celnet-proto` v0, `celnet-plugin-api` v0 are **semver-tagged & frozen**; CI matrix (ubuntu/macos/windows × {stable, MSRV}) on `cargo-nextest` green; `clippy -D warnings`, `cargo fmt --check`, `cargo-deny`, coverage (Linux) wired; `CLAUDE.md` ledger + `docs/INTERFACES.md` live; float-compare helper (`assert_close`, ULP+rel+abs) shipped in `celnet-core`. |
+| **P0** | Foundations & interface freeze | Virtual workspace builds; `celnet-types`, `celnet-core` traits, `celnet-proto` v0, `celnet-plugin-api` v0 are **semver-tagged & frozen**; CI matrix (ubuntu/macos/windows × {stable, MSRV}) on `cargo-nextest` green; `clippy -D warnings`, `cargo fmt --check`, `cargo-deny`, coverage (Linux) wired; `GUIDE.md` ledger + `docs/INTERFACES.md` live; float-compare helper (`assert_close`, ULP+rel+abs) shipped in `celnet-core`. |
 | **P1** | Vanilla core | `celnet-conventions` + `celnet-calendar` complete; `celnet-vanilla` prices GK call/put off forward F=S·e^{(r_d−r_f)T} with separate DF_d/DF_f; full first/second/higher Greeks (two rhos, vanna, volga, charm, speed, zomma, color); strike↔delta solver respecting all 4 delta conventions; **validated against Reiswich-Wystup (2010) & Clark worked numbers** within documented tolerances. |
 | **P2** | Vol surface | `celnet-surface` builds delta-space smile from ATM/25d/10d RR/BF; **broker→smile strangle calibration** implemented; VV (Castagna-Mercurio 2nd approx), SABR (Hagan + arbitrage-free PDE), SVI/SSVI (Gatheral-Jacquier) selectable; arbitrage gates (butterfly density ≥0, calendar total-variance monotone, vertical) pass as tests; total-variance/business-time tenor interpolation. |
 | **P3** | Exotics + GPU | `celnet-exotics` two-tier (fast VV for 1st-gen with survival-probability weighting; LSV [Heston+Dupire leverage, particle calibration] for booking/2nd-gen); PDE (Crank-Nicolson+Rannacher, HV-ADI) + MC (Andersen QE, Philox + BGK barrier correction + control variates; **Sobol'+Brownian-bridge Built in `celnet-qmc`**); `celnet-gpu` **wgpu/WGSL** path (Metal/Vulkan/DX12/GLES) with f32 + CPU f64 reconciliation, Philox RNG. (Built: + lookbacks, forward-start/cliquet, TARF/accumulator, quanto, variance/vol swaps, arithmetic Asian — gated `celnet-parity` rows.) |
@@ -79,10 +79,10 @@ No cyclic dependencies. Single unversioned contract across all surfaces (Rule 9)
 
 1. **`celnet-types`** — POD, `Copy`, no IO: `Ccy`, `CcyPair` (FOR=base/CCY1, DOM=quote/CCY2), `Tenor`, `Money`, discount factors `Df`, `Vol`, `Delta`, `Strike`, scalar policy (`f64` CPU canonical / `f32` GPU), enums for `DeltaConvention {SpotUnadj, FwdUnadj, SpotPremAdj, FwdPremAdj}`, `AtmConvention {Atmf, Dns}`, `PremiumStyle {DomPips, For%, Dom%, ForPips}`, `Cut {NY1000, Tokyo1500}`, `DayCount {Act365, Act360}`, `Settlement {Deliverable, Ndo}`. **Frozen first — everything depends on it.**
 2. **`celnet-core` traits** — `PricingModel`, `VolModel`/`SmileModel`, `PricingBackend { simulate_paths, reduce_payoff, solve_pde }`, `Calendar`, `CalibrationTarget`, plus the `assert_close` ULP/rel/abs float helper and the scalar abstraction. Trait *shapes* must match what both the trait-object registry and the wasm host implement (so first-party and user plugins are interchangeable).
-3. **`celnet-proto`** — single current wire contract (prost 0.13 / tonic 0.12); **no** `schema_version`, no version negotiation (CLAUDE.md rule 9). Evolution discipline (`docs/INTERFACES.md`): change the contract **and every dependent in one PR**; no old reader ever decodes a new message, so no reserve/renumber ceremony.
+3. **`celnet-proto`** — single current wire contract (prost 0.13 / tonic 0.12); **no** `schema_version`, no version negotiation (GUIDE.md rule 9). Evolution discipline (`docs/INTERFACES.md`): change the contract **and every dependent in one PR**; no old reader ever decodes a new message, so no reserve/renumber ceremony.
 4. **`celnet-plugin-api`** — the SDK trait surface + WIT `world` definition for wasm plugins; semver-tagged as a *product*.
 
-**Rule:** Any later change to a frozen interface crate is a **dedicated interface PR**: edit the interface crate **and every dependent in the same change**, update `docs/INTERFACES.md`, re-index the memory graph, and announce in `CLAUDE.md`. There is no N/N-1 compat gate (single current contract — rule 9). Implementation sessions rebase, never edit interface crates ad hoc.
+**Rule:** Any later change to a frozen interface crate is a **dedicated interface PR**: edit the interface crate **and every dependent in the same change**, update `docs/INTERFACES.md`, re-index the memory graph, and announce in `GUIDE.md`. There is no N/N-1 compat gate (single current contract — rule 9). Implementation sessions rebase, never edit interface crates ad hoc.
 
 **Gate G1 (end of P1):** `celnet-vanilla` + `celnet-conventions` + `celnet-calendar` stable → unblocks `celnet-surface`.
 **Gate G2 (end of P2):** `celnet-surface` stable → unblocks `celnet-exotics` (needs arbitrage-free smile as upstream input for Dupire local vol).
@@ -95,7 +95,7 @@ No cyclic dependencies. Single unversioned contract across all surfaces (Rule 9)
 > Each row is owned by **one session at a time**. "Depends on" lists hard gates. A stream may start as soon as its dependency gate is green.
 
 ### WS-0 · Interface & Platform (runs first, alone, until G0)
-- **Owns:** `celnet-types`, `celnet-core` (traits + float helper), `celnet-proto`, `celnet-plugin-api`; root `Cargo.toml`, `rust-toolchain.toml`, `deny.toml`, `supply-chain/`, CI workflows, `docs/INTERFACES.md`, `docs/CONVENTIONS.md`, `CLAUDE.md` scaffold.
+- **Owns:** `celnet-types`, `celnet-core` (traits + float helper), `celnet-proto`, `celnet-plugin-api`; root `Cargo.toml`, `rust-toolchain.toml`, `deny.toml`, `supply-chain/`, CI workflows, `docs/INTERFACES.md`, `docs/CONVENTIONS.md`, `GUIDE.md` scaffold.
 - **Deliverables:** virtual workspace; `[workspace.dependencies]` + `[workspace.lints]`; frozen interface crates; CI matrix on `cargo-nextest` + clippy/fmt/deny/coverage; MSRV job (edition 2024, MSRV-aware resolver); `assert_close` helper; proptest-regressions/ + fuzz corpora directories committed.
 - **Depends on:** nothing.
 - **Gates:** workspace builds; interface crates semver-tagged; CI green on all 3 OSes × {stable, MSRV}; `cargo-deny` + `cargo-audit` clean; coverage job (Linux) wired. **= Gate G0.**
@@ -216,10 +216,10 @@ No cyclic dependencies. Single unversioned contract across all surfaces (Rule 9)
 
 ## 7. Per-Session Operating Protocol
 
-Every Claude session, on every pickup, follows this loop:
+Every agent session, on every pickup, follows this loop:
 
 ### 7.1 Pick up work
-1. `git pull`; read `CLAUDE.md` (the ledger) and `docs/INTERFACES.md`.
+1. `git pull`; read `GUIDE.md` (the ledger) and `docs/INTERFACES.md`.
 2. Verify **G0 is green**. If not, and you are not WS-0, **stop** — only interface work proceeds pre-G0.
 3. Choose an **unclaimed** work-stream from the ledger whose dependency gate is green. Claim it by editing the ledger (see §7.3) and committing/pushing that claim *first* (atomic claim to prevent two sessions taking the same stream).
 4. Confirm your stream's crates are **disjoint** from every other `IN-PROGRESS` claim. If overlap, pick another stream.
@@ -229,7 +229,7 @@ Every Claude session, on every pickup, follows this loop:
 6. Consume frozen interfaces by their semver-tagged version. Rebase onto interface updates; do not fork them.
 7. Keep determinism rules: `assert_close` for floats, `rust-lang/libm`, no FMA on reproducible paths, no NaN-bit assertions, GPU=f32.
 
-### 7.3 Update the ledger (`CLAUDE.md`)
+### 7.3 Update the ledger (`GUIDE.md`)
 The ledger is the single source of truth for parallel coordination. Maintain a table:
 
 ```
@@ -377,7 +377,7 @@ A stream is **DONE** only when, on its owned crates:
   the settlement-capital treatment is deferred).
 - **DRC** beyond noting it is immaterial for vanilla FX (no issuer-default leg).
 
-> Add a `WS-R` row to the **Work-Stream Ledger** in `CLAUDE.md` when this stream is claimed; keep
+> Add a `WS-R` row to the **Work-Stream Ledger** in `GUIDE.md` when this stream is claimed; keep
 > `docs/RISK-HIERARCHY.md` and `docs/INTERFACES.md` in sync as the dimension model and streaming-risk
 > contract land.
 
@@ -510,4 +510,4 @@ A stream is **DONE** only when, on its owned crates:
 
 ---
 
-*End of roadmap. Source of truth for live status is `CLAUDE.md` (the ledger); source of truth for contracts is `docs/INTERFACES.md`; FX convention spec is `docs/CONVENTIONS.md`.*
+*End of roadmap. Source of truth for live status is `GUIDE.md` (the ledger); source of truth for contracts is `docs/INTERFACES.md`; FX convention spec is `docs/CONVENTIONS.md`.*

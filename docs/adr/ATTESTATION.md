@@ -19,7 +19,7 @@ claim; the claims remain honestly `draft` in the graph). When #52/#19 land, each
 real cross-family review and each acceptance target is re-indexed so `manage_adr` can attach the
 `GOVERNS` edges; this register is then retired.
 
-**Attested:** 2026-07-01 — coordinator (Claude Opus 4.8 knowledge session). Claims keyed by
+**Attested:** 2026-07-01 — coordinator (AI agent knowledge session). Claims keyed by
 machine-local content-addressed id **and** a content descriptor (the id can churn across index
 generations; the descriptor is the stable identity).
 

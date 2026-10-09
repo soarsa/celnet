@@ -4,7 +4,7 @@
  * type-tagged snake_case wire as the GUI and the server's descriptor-driven
  * `generated_codec`: the `mark_curve` request body and the `mark_curve_response`
  * frame must encode / decode field-for-field identically across every client
- * (CLAUDE.md #9 — one clean current contract). The request reuses the shared
+ * (GUIDE.md #9 — one clean current contract). The request reuses the shared
  * `CurveSet` encoder (`ratesCurveSetToWire`) verbatim — identical to GetCurve, so a
  * mark and a live read bootstrap byte-identically. This asserts the codec byte-shape,
  * the input shaping, the spill layout, the connection round-trip, AND the

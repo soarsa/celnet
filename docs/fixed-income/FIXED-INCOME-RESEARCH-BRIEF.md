@@ -77,7 +77,7 @@ the same five-client parity), not a parallel silo.
 
 ---
 
-## 3. Guardrails & constraints (non-negotiable — from `CLAUDE.md`)
+## 3. Guardrails & constraints (non-negotiable — from `GUIDE.md`)
 
 These bound every recommendation. A design that violates one is out of scope.
 

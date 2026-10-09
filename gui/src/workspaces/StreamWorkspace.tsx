@@ -29,7 +29,7 @@
  * (RFS) blotter as the resting state, the structural inversion of the
  * request-quote-per-click (RFQ) cadence common to incumbent options front-ends.
  *
- * HONESTY (CLAUDE.md rule 2): PREMIUM plots the row's OWN streamed premium-mid
+ * HONESTY (GUIDE.md rule 2): PREMIUM plots the row's OWN streamed premium-mid
  * history; the market-observable modes (ATM vol, RR, BF, spot, forward) plot a
  * REAL series streamed from the contract's market-series feed
  * (`MarketSeriesSubscribe`, served by celnet-server) — never a fabricated line.

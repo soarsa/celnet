@@ -1,6 +1,6 @@
 # Workspace-wide cargo configuration.
 # Note: cargo does NOT auto-source ~/.cargo/env in non-login shells — prefix
-# commands with `source "$HOME/.cargo/env"` (see CLAUDE.md / justfile).
+# commands with `source "$HOME/.cargo/env"` (see GUIDE.md / justfile).
 
 [build]
 # Compilation caching for fast, deterministic incremental builds across sessions.

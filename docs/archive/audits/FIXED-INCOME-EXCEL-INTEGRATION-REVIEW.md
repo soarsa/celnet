@@ -11,7 +11,7 @@ sign-in/capability gating, and the GUI rail launcher.
 [`docs/CURVES-AND-INSTRUMENT-REFERENCE-DATA-REVIEW.md`](CURVES-AND-INSTRUMENT-REFERENCE-DATA-REVIEW.md),
 [`docs/FI-BOND-DEAL-CAPTURE-GAP-ANALYSIS.md`](FI-BOND-DEAL-CAPTURE-GAP-ANALYSIS.md).
 
-> **Naming guardrail (CLAUDE.md §8).** Every proposed function/identifier is
+> **Naming guardrail (GUIDE.md §8).** Every proposed function/identifier is
 > purpose-named and vendor-neutral, under the `CELNET.*` worksheet namespace.
 
 ---

@@ -5,7 +5,7 @@
   `celnet-server` to latency-sensitive (HFT / market-making) counterparties. Does **not**
   touch the pinned zero-alloc hot core, the GPU/PDE/MC math, or the control-plane RPC surface.
 - **Honours:** ADR-0007 (one unversioned wire contract — no `schema_version`), ADR-0008
-  (single clean contract evolved in place), and CLAUDE.md guardrails #2 (no placeholders),
+  (single clean contract evolved in place), and GUIDE.md guardrails #2 (no placeholders),
   #6 (scale/perf are requirements), #7 (OSS-only), #8 (vendor-neutral naming), #9 (no
   versioned APIs), #11 (zero-cost observability, scale-out aware).
 - **Provenance (prose only, never in identifiers):** the fixed-offset flyweight technique is
@@ -114,7 +114,7 @@ This is the load-bearing design constraint and the reason we can use a flyweight
 without the usual SBE ceremony:
 
 - **No `schema_version`, no template/version field, no `schemaId` negotiation.** ADR-0007 and
-  CLAUDE.md #9 establish that Celnet runs exactly **one** current contract with **no
+  GUIDE.md #9 establish that Celnet runs exactly **one** current contract with **no
   mixed-version window** (blue-green full cutover, ARCHITECTURE §5; cross-fleet rolling
   cutover, SCALE-OUT §7). The `EdgeFrame` therefore carries **no version field**. SBE's
   message-header `version`/`schemaId` fields and its "never renumber, only append, reserve

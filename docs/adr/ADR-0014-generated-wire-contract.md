@@ -6,7 +6,7 @@
   byte-identity harness is green and `handle_unary` is swapped. Completes the **"G deferral"**
   (`ws-codec-from-proto`, INC1 landed `655e292`). Extends **ADR-0009** (edge wire codec — the
   "one generator, N projections of the one contract" principle) and honours **ADR-0007** (one
-  unversioned contract) and CLAUDE.md guardrails #2 (no placeholders) / #8 (vendor-neutral
+  unversioned contract) and GUIDE.md guardrails #2 (no placeholders) / #8 (vendor-neutral
   naming) / #9 (no versioned APIs) / #10 (zero legacy) / #11 (API-first parity).
 - **Aligns with:** target-architecture **D2** (`docs/ARCHITECTURE-TARGET.md` §D2, §3 rank 1–2,
   §5 P1(c)+(d)); `docs/INTERFACES.md` deferrals (`ws-codec-from-proto`). The contract SHAPE is

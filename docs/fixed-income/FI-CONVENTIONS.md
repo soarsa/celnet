@@ -9,7 +9,7 @@ expressed as a per-`(currency, index, tenor)` config **schema**, never a global 
 per-`(pair, tenor)` record shape and table style; cross-references it rather than duplicating it.
 
 > **Naming guardrail.** Enum variant names below are **purpose-named and vendor/method-neutral**
-> (CLAUDE.md §8): `DayCount::Act360`, not a standards-body acronym in the identifier. The
+> (GUIDE.md §8): `DayCount::Act360`, not a standards-body acronym in the identifier. The
 > ISDA/ICMA clause provenance lives in this prose and in future doc-comments only.
 >
 > **Why per-`(currency, index, tenor)`, never global.** As in the FX core, *convention errors dwarf

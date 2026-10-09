@@ -7,7 +7,7 @@
  * scroll-to-zoom; a `mode` prop swaps between the shaded mesh, a wireframe and a
  * point cloud; arbitrage-flagged vertices are highlighted with a `--danger` flag.
  *
- * Colour policy (CLAUDE.md / dataviz contract): quantitative colour is the
+ * Colour policy (GUIDE.md / dataviz contract): quantitative colour is the
  * Viridis sequential ramp (`--seq-1..6`), NEVER brand coral/indigo. WebGL cannot
  * read CSS variables, so the six ramp stops (and the danger/grid chrome colours)
  * are resolved ONCE at mount from the live token cascade. The tokens are authored

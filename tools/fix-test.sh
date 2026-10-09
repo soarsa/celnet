@@ -23,7 +23,7 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# CLAUDE.md sources $HOME/.cargo/env for rustup-curl installs; Homebrew rustup puts
+# GUIDE.md sources $HOME/.cargo/env for rustup-curl installs; Homebrew rustup puts
 # cargo on PATH directly, so skip silently when the file is absent.
 if [[ -f "$HOME/.cargo/env" ]]; then
     # shellcheck disable=SC1091

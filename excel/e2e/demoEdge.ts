@@ -7,7 +7,7 @@
  * The edge prints a ready line to stderr ("celnet-server demo edge ready — …
  * WS-mirror ws://HOST:PORT …"); we parse the WS URL from it so the e2e dials the
  * exact bound endpoint. The process is killed on teardown. Cargo is invoked
- * through the user's env exactly as CLAUDE.md prescribes (rustup is not on PATH).
+ * through the user's env exactly as GUIDE.md prescribes (rustup is not on PATH).
  *
  * Mirrors `gui/e2e/demoEdge.ts` — distinct fixed ports so an Excel e2e run can
  * coexist with a GUI e2e run on the same host without a port clash.

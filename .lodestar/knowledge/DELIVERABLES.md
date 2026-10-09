@@ -72,7 +72,7 @@ celnet-linear is the linear-products leaf of the celnet pricing platform: it pri
 ## `celnet-observability`
 **Governed symbols:** `audit_channel`, `publish`, `record_ns`
 
-celnet-observability provides three disjoint, zero-alloc-hot-path observability pillars: (1) a bounded SPSC telemetry ring (HotProbe/TelemetryDrain) for sub-microsecond HotSample capture from the pricing hot core, (2) an unbounded audit channel (AuditSink/AuditDrain) with monotone sequence numbers for lossless compliance-grade audit trails, and (3) HdrHistogram-backed latency recorders (LatencyRecorder/LatencyByKind) with coordinated-omission correction. All three offload to the drain/consumer side; the hot producer path is lock-free and allocation-free, satisfying CLAUDE.md guardrail 11.
+celnet-observability provides three disjoint, zero-alloc-hot-path observability pillars: (1) a bounded SPSC telemetry ring (HotProbe/TelemetryDrain) for sub-microsecond HotSample capture from the pricing hot core, (2) an unbounded audit channel (AuditSink/AuditDrain) with monotone sequence numbers for lossless compliance-grade audit trails, and (3) HdrHistogram-backed latency recorders (LatencyRecorder/LatencyByKind) with coordinated-omission correction. All three offload to the drain/consumer side; the hot producer path is lock-free and allocation-free, satisfying GUIDE.md guardrail 11.
 
 ## `celnet-parity`
 **Governed symbols:** `vanilla_price_matches_closed_form`, `price_and_greeks_are_bit_identical`, `full_greek_set_matches_finite_difference`

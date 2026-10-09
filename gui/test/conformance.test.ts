@@ -30,12 +30,12 @@
  * discrete-lookback model gap that keeps the lookback family OUT of the
  * offline-exposed set; see below).
  *
- * Honesty (CLAUDE.md rules 2 & 5): every family the GUI faithfully prices offline is
+ * Honesty (GUIDE.md rules 2 & 5): every family the GUI faithfully prices offline is
  * covered. Two corpus families are deliberately NOT exposed offline and are listed
  * with their reason in `FAMILIES_NOT_EXPOSED_BY_GUI`, and the reason is asserted
  * (not assumed):
  *  - `window_barrier` - no closed form; server LOCAL_STOCH_VOL-only. The offline
- *    pricer THROWS rather than fabricate a value (CLAUDE.md rule 2).
+ *    pricer THROWS rather than fabricate a value (GUIDE.md rule 2).
  *  - `lookback` (discrete) - the corpus's discrete-monitoring lookback uses the
  *    Beaglehole-Dybvig-Zhou continuous-within-segment extremum correction; the GUI's
  *    offline discrete lookback samples the extremum only at the fixing points (a
@@ -171,7 +171,7 @@ const FAMILIES_COVERED = [
 /**
  * The corpus families the GUI deliberately does NOT price with its OFFLINE
  * in-process pricer, each with a concrete, asserted reason (never a silent gap;
- * CLAUDE.md rule 2):
+ * GUIDE.md rule 2):
  *  - `window_barrier` - no closed form, server LOCAL_STOCH_VOL-only: the offline
  *    pricer THROWS.
  *  - `lookback` - the corpus's discrete lookback uses a Beaglehole-Dybvig-Zhou
@@ -740,7 +740,7 @@ describe("golden-vector conformance - GUI price == frozen server reference", () 
 });
 
 // ---------------------------------------------------------------------------
-// declared NON-coverage - asserted, never a silent gap (CLAUDE.md rule 2)
+// declared NON-coverage - asserted, never a silent gap (GUIDE.md rule 2)
 // ---------------------------------------------------------------------------
 
 describe("window_barrier - declared not exposed offline (server LSV-only)", () => {

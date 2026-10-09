@@ -20,7 +20,7 @@
  *   4. assert the equity carry-rho cell ("rho (dividend yield)") renders a finite,
  *      non-zero value — a real server-computed sensitivity, never a fabricated 0.
  *
- * Honesty (CLAUDE.md rule 2): a finite, non-zero value is required. A 0 would mean
+ * Honesty (GUIDE.md rule 2): a finite, non-zero value is required. A 0 would mean
  * the streamed line priced as worthless (a market-scale/seed failure) and fails the
  * gate — exactly as the variance-swap e2e refuses a 0.000000 fair strike.
  */

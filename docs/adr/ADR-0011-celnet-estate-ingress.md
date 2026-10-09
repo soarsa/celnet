@@ -7,7 +7,7 @@
   runtime-verified in-repo** (see "Honest scope"). Records the decision; the concrete CelNet
   trade-lifecycle transport adapter is a deploy-time/environment concern, not an in-repo type.
 - **Honours:** ADR-0007 (one unversioned contract — no `schema_version`), ADR-0008 (the
-  asset-class-agnostic carry seam the ingested market data feeds), and CLAUDE.md guardrails
+  asset-class-agnostic carry seam the ingested market data feeds), and GUIDE.md guardrails
   #7 (open-source/free only), #8 (vendor-neutral product identifiers — the vendor name appears
   only as a documented external feed *source*, never in a core product identifier), and #11.
 - **Source map:** `docs/CELNET-INTEGRATION.md` (the integration research findings — the

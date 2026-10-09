@@ -1,5 +1,5 @@
 // ONE CONTRACT — minimal duplicate of `gui/src/data/contract.ts`, kept
-// semantics-identical (CLAUDE.md rule 9: one current contract, no fork). The
+// semantics-identical (GUIDE.md rule 9: one current contract, no fork). The
 // add-in is a separate Vite project (outside the GUI package and the cargo
 // workspace), so it cannot import across that boundary; rather than fork the
 // wire semantics we duplicate the *definitions* unchanged. Do NOT add
@@ -9,7 +9,7 @@
  * Typed mirror of the single, current Celnet wire contract (`celnet.proto`,
  * package `celnet.wire`). One contract, two transports (gRPC-Web/Connect and the
  * designed WebSocket JSON-mirror) — the GUI is a consumer of that contract, never
- * a fork of it (CLAUDE.md rule 9: no versioned APIs).
+ * a fork of it (GUIDE.md rule 9: no versioned APIs).
  *
  * These shapes are written here by hand for the standalone build; when the build
  * wave wires `buf`-generated types from `celnet-proto`, this module is replaced
@@ -17,7 +17,7 @@
  * (every consumer imports from here, so the seam is one file). Field names use
  * the proto's camelCase JSON projection; enums mirror the proto enums one-to-one.
  *
- * Provenance note (CLAUDE.md rule 8): identifiers are purpose-named and
+ * Provenance note (GUIDE.md rule 8): identifiers are purpose-named and
  * vendor/research-neutral exactly as the proto demands (`VanillaInputs`, never a
  * person/method name). No mathematical-method names appear in any identifier.
  */
@@ -1930,7 +1930,7 @@ export interface XvaResult {
 
 // ---------------------------------------------------------------------------
 // Desk notification push contract — ONE CONTRACT, minimal duplicate of
-// `gui/src/data/contract.ts` (CLAUDE.md rule 9), semantics-identical. The typed
+// `gui/src/data/contract.ts` (GUIDE.md rule 9), semantics-identical. The typed
 // face of `NotificationService.StreamNotifications`: the server pushes a
 // `Notification` the instant a desk-lifecycle event occurs (an RFQ/IOI lands, a
 // request is withdrawn/expires, a quote is accepted/rejected, an order lands, a

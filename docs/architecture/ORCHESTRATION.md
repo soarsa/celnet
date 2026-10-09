@@ -1,6 +1,6 @@
 # Cross-session task orchestration
 
-> How any Claude session on this repo, on **SessionStart** or after **/clear**, autonomously
+> How any agent session on this repo, on **SessionStart** or after **/clear**, autonomously
 > continues the TRACKED tail tasks shared across sessions — with claim-locking so there is
 > **no duplicated, conflicting, or wasted effort**. This is the L1 git backbone of the ratified
 > cross-session design (auto-memory `cross-session-orchestration`). It **supersedes the live
@@ -13,7 +13,7 @@
   source of truth for what's open / claimed / done.
 - **CLI** `tools/celnet-task` — claim/release/progress/heartbeat/done/… ; claims are taken with
   **git-push-as-CAS** on a dedicated `coord/board` branch.
-- **Hooks** (`.claude/settings.json`) — SessionStart runs the **selector** (picks + claims a task,
+- **Hooks** (`.agents/settings.json`) — SessionStart runs the **selector** (picks + claims a task,
   injects "continue task X"); Stop **heartbeats**; PreCompact **checkpoints**. All fail-safe.
 - **Done = lodestar-verified** — `done` flips status only when the deliverable's lodestar
   roll-up is `active` (see the env caveat at the bottom).
@@ -100,7 +100,7 @@ digest                       print the board
 `expiry + GRACE (30 min)` is **reclaimable** — the selector (and any `claim`) auto-reclaims it back
 to `open` (reclaim is itself a CAS), so a crashed/walled session never wedges a task forever.
 
-**Lock tag** = `${USER}-$(hostname -s)-${CLAUDE_SESSION_ID:0:8}` — stable per session, so a session
+**Lock tag** = `${USER}-$(hostname -s)-${CELNET_SESSION_ID:0:8}` — stable per session, so a session
 recognises and resumes its own claims across SessionStart / heartbeat / done.
 
 **Selector algorithm** (the SessionStart entrypoint):
@@ -120,12 +120,12 @@ any internal error prints a one-line note to stderr and exits 0. Only the direct
 stdout; all diagnostics go to stderr. `heartbeat`/`checkpoint` skip all network work when this
 session owns nothing locally (the common case = zero overhead).
 
-## 4. Hooks (`.claude/settings.json`)
+## 4. Hooks (`.agents/settings.json`)
 
 Added **alongside** the existing backgrounded lodestar SessionStart/Stop hooks (never replacing them):
 
 - **SessionStart** matcher `startup|resume|clear|compact`, **synchronous**, `timeout 60` →
-  `bash tools/celnet-task selector --session "$CLAUDE_SESSION_ID"`. Foreground so its
+  `bash tools/celnet-task selector --session "$CELNET_SESSION_ID"`. Foreground so its
   `additionalContext` is injected into the new/cleared/compacted session.
 - **PreCompact** matcher `auto|manual` → `bash tools/celnet-task checkpoint --session …`.
 - **Stop** → `bash tools/celnet-task heartbeat --session …` (added to the existing Stop hooks).

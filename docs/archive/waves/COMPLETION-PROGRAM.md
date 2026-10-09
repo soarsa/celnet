@@ -16,7 +16,7 @@
 >
 > Drive this wave-by-wave with the proven **`Workflow` (implement → adversarial-verify),
 > TWO DISJOINT tracks per wave**. Read `docs/NEXT-WORKFLOWS.md` §2 (the recipe) and §3
-> (the three hard lessons) before launching each wave. Keep this doc and the CLAUDE.md
+> (the three hard lessons) before launching each wave. Keep this doc and the GUIDE.md
 > ledger in lockstep after every commit.
 
 ---

@@ -27,7 +27,7 @@ produced **O(1)** and **reused across every author and increment** — the flaw 
 **Phase 2 — verify CHEAPLY, post (the authority, ~no reasoning).** The
 **deterministic gate is the authority**: `knowledge_check` (the decidable
 acceptance assertions), the ASan/UBSan/LeakSanitizer build+suite, and the
-benchmark floors. These are mechanical — ~0 tokens, no re-derivation. A Claude
+benchmark floors. These are mechanical — ~0 tokens, no re-derivation. A Agent
 critical persona does ONLY a **light, targeted confirmation of the non-decidable
 residue** (the behavioral/`judged` parts the gate must defer), never a full
 adversarial re-review of what the contract + gate already cover.
@@ -53,10 +53,10 @@ adversarial re-review of what the contract + gate already cover.
 
 ## Judge tier — current and deferred (a tracked clause, not a sticky note)
 
-- **Current:** a **Claude critical persona** (independent, refute-default). Sound
+- **Current:** a **Agent critical persona** (independent, refute-default). Sound
   because rule 3 keeps the deterministic gate authoritative.
 - **Deferred (tracked):** evolve the reviewer to a genuine **cross-family** model
-  via lodestar's judge transport (ollama gemma/qwen or a non-Claude API), per the
+  via lodestar's judge transport (ollama gemma/qwen or a non-Agent API), per the
   product's never-self / distinct-family rule. Recorded in the verification
   `decision` claim + the v0.7.0 charter so it is never forgotten. It strengthens
   the *advisory* layer, never the *authority* layer.

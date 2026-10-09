@@ -305,7 +305,7 @@ describe("Excel real-edge conformance (frozen golden corpus over a REAL WebSocke
   });
 
   it("exposes every corpus family — no family is excluded from the Excel WS path", () => {
-    // Documentation-as-assertion (CLAUDE.md rule 2 — no silent gap). Every corpus
+    // Documentation-as-assertion (GUIDE.md rule 2 — no silent gap). Every corpus
     // family is now WS-priced above, including the three cross-asset vanilla arms
     // (`equity_option` / `commodity_option` / `crypto_option`): the polymorphic
     // `CELNET.INSTRUMENT` underlier grammar shapes each onto the wire (the

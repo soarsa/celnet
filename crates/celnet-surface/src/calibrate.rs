@@ -27,7 +27,7 @@
 //! All arithmetic routes through [`celnet_core::math`] (libm) and the fits are
 //! fixed-iteration Gauss-Newton / damped-Newton solves with deterministic
 //! initialisation, so a calibration is bit-reproducible across platforms (the
-//! `CLAUDE.md` determinism guardrail). No OS RNG, no wall-clock, no global state.
+//! `GUIDE.md` determinism guardrail). No OS RNG, no wall-clock, no global state.
 //!
 //! # Method provenance (doc-only)
 //!

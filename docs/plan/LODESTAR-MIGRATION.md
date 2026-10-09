@@ -13,7 +13,7 @@
 **Goal:** Make **lodestar** the single code-graph + verified-knowledge substrate for the
 CelNet estate, replacing `codebase-memory-mcp` (CBM) with **zero legacy**; auto-index;
 store all shareable knowledge in the remote git (`github.com/soarsa/celnet`) so
-distributed AI coding agents (Claude Code) on **Windows + macOS** converge; optionally
+distributed AI coding agents (Agent) on **Windows + macOS** converge; optionally
 share in realtime on a LAN via `lodestar-syncd`.
 
 This file is the gated plan required by the "full reorg" decision — the crate-layout /
@@ -39,7 +39,7 @@ coordinated on `docs/PARALLEL-SESSIONS.md`.
 | Code structure (graph: nodes/edges) | `.lodestar/graph.db*` | **regenerable, git-ignored**; each machine re-indexes; deterministic → all converge |
 | Verified "why" (invariants, decisions, rationale) | lodestar **claims** (`knowledge_put`) + ADRs (`manage_adr`) → `.lodestar/knowledge/` | **git-committed**; content-addressed, merge-conflict-free; self-invalidates on code change |
 | Narrative / planning (design docs, ledger, wiki prose) | in-repo markdown under `docs/` | **git-committed** (markdown is not a lodestar primitive) |
-| Per-machine config | `.claude/settings.local.json`, caches | **git-ignored** |
+| Per-machine config | `.agents/settings.local.json`, caches | **git-ignored** |
 
 Realtime: **git is the truth** for disconnected machines (commit `.lodestar/knowledge/` →
 pull/push). **`lodestar-syncd`** is an opt-in LAN convenience (mDNS, PSK+AEAD) layered on
@@ -64,11 +64,11 @@ top for co-located developers; killing it reverts to the git-only flow.
 - Prove lodestar serves CelNet (`search_graph price_instrument`, `get_architecture`).
 
 ### P2 — CBM decommission (zero legacy)  ✅ DONE (2026-06-30)
-- Removed `codebase-memory-mcp` from `~/.claude/.mcp.json` and `~/.claude.json` (global MCP
+- Removed `codebase-memory-mcp` from `~/.agents/.mcp.json` and `~/.agents.json` (global MCP
   registration removed 2026-06-30; server disconnected).
-- Deleted orphaned hook scripts `~/.claude/hooks/cbm-*`.
+- Deleted orphaned hook scripts `~/.agents/hooks/cbm-*`.
 - Removed `.codebase-memory/` (migrated `adr.md` content first → ADRs/claims).
-- Scrubbed CBM references: `CLAUDE.md` (guardrail #3 + toolchain), `.claude/workflows/AGENT-PREAMBLE.md`,
+- Scrubbed CBM references: `GUIDE.md` (guardrail #3 + toolchain), `.agents/workflows/AGENT-PREAMBLE.md`,
   `docs/**`, the `codebase-memory` skill, auto-memory (`cbm-mcp-first`,
   `codebase-graph-health`, `dev-environment`, …) → rewritten to lodestar `doctor`-based health.
 
@@ -81,8 +81,8 @@ top for co-located developers; killing it reverts to the git-only flow.
 ### P4 — Repo restructure (GATED — dedicated T2 window)
 - Declutter root: loose `*.png` → `docs/assets/`; delete transient junk (`cur-errors.txt`,
   `mutants.out.old`); ensure `target/` is ignored only.
-- Add **`AGENTS.md`** — the cross-agent entrypoint (12 agents incl. Claude Code) pointing at
-  lodestar + the operating guide; slim `CLAUDE.md` to defer to it.
+- Add **`AGENTS.md`** — the cross-agent entrypoint (12 agents incl. Agent) pointing at
+  lodestar + the operating guide; slim `GUIDE.md` to defer to it.
 - Optional crate **domain grouping** under `crates/<group>/` (core / engines / risk /
   services / clients / infra). Mechanical but touches 39 `Cargo.toml` `path` deps + workspace
   glob + justfile crate lists + docs — **one atomic commit, full T2 gate**, no parallel lane
@@ -93,7 +93,7 @@ top for co-located developers; killing it reverts to the git-only flow.
 - Hooks portable: `.sh` (mac/linux) + `.ps1` (Windows); rely on lodestar's own
   installer-managed hooks where possible (cross-platform); Git-for-Windows ships bash so the
   `post-commit` works there too.
-- Commit `.claude/` (agents, skills, workflows, shared `settings.json`); `settings.local.json`
+- Commit `.agents/` (agents, skills, workflows, shared `settings.json`); `settings.local.json`
   stays ignored. New-machine bootstrap doc (install lodestar → `lodestar install` →
   `lodestar index` → pull knowledge), Windows + macOS.
 - Document `lodestar-syncd` opt-in for LAN realtime.
@@ -104,11 +104,11 @@ top for co-located developers; killing it reverts to the git-only flow.
 
 ### P7 — Verify, commit, push, record
 - Bake-in verify lodestar across a real discovery/workflow; then commit + push knowledge +
-  config to `soarsa/celnet`. Update auto-memory + the CLAUDE.md resume anchor.
+  config to `soarsa/celnet`. Update auto-memory + the GUIDE.md resume anchor.
 
 ## Risk & rollback
-- Full pre-change backup: `~/.claude/backups/lodestar-migration-20260622-202652/`
-  (`.claude.json`, both `.mcp.json`, user+project `settings.json`, `post-commit`, hooks,
+- Full pre-change backup: `~/.agents/backups/lodestar-migration-20260622-202652/`
+  (`.agent.json`, both `.mcp.json`, user+project `settings.json`, `post-commit`, hooks,
   `AGENT-PREAMBLE.md`).
 - CBM was kept registered until P2 (bake-in) for an instant revert by restoring the backup;
   P2 completed on 2026-06-30 and CBM is now fully decommissioned (registration removed, server
@@ -122,5 +122,5 @@ top for co-located developers; killing it reverts to the git-only flow.
 - `just` is cross-platform; verify recipes are pwsh-safe or pinned to a portable shell.
 - **Always index with an ABSOLUTE path.** `lodestar index .` (relative) records `root_path="."`
   and corrupts the projects table (lodestar then auto-deletes the db; re-index required). All
-  hooks pass a runtime-computed absolute root (`"$PWD"` in Claude hooks where cwd = repo root;
+  hooks pass a runtime-computed absolute root (`"$PWD"` in Agent hooks where cwd = repo root;
   `git rev-parse --show-toplevel` in the git hook) — portable, never a hardcoded home path.

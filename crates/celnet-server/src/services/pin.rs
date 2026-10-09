@@ -5,7 +5,7 @@
 //! The wire contract carries an optional `surface_version` on the pricing, RFQ,
 //! RFS, and scenario requests. When present it pins the price to a specific
 //! [`crate::surface_book::SurfaceBook`] mark (a *data* selector, not an API
-//! version — CLAUDE.md rule 9), so the result reproduces exactly the surface the
+//! version — GUIDE.md rule 9), so the result reproduces exactly the surface the
 //! desk marked. When absent the request prices against the engine's current live
 //! mark and the reply echoes the live surface version (if the edge tracks one) or
 //! nothing.

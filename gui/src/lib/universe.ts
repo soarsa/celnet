@@ -2,7 +2,7 @@
  * universe.ts — a registry-ready pair-universe abstraction over the CURRENT
  * seeded pairs (TRADING-UNIVERSE-SCALE §5: navigate a large pair universe).
  *
- * HONESTY (CLAUDE.md rule 2 — no fakes): the full pair-universe REGISTRY of
+ * HONESTY (GUIDE.md rule 2 — no fakes): the full pair-universe REGISTRY of
  * hundreds of pairs is a Phase-1 backlog item (P1-10) that is NOT built. This
  * module classifies, groups, favourites and fuzzy-searches over *today's*
  * seeded `PairContext[]` only — but its shapes (`UniversePair`, `PairGroup`,

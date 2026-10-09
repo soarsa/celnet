@@ -1,7 +1,7 @@
 # NEXT-WORKFLOWS — operator runbook for a fresh (post-/clear) session
 
 > Read this, then launch the next two-disjoint-track Workflow from §4. Append-only intent;
-> keep in sync with the CLAUDE.md ledger after every commit.
+> keep in sync with the GUIDE.md ledger after every commit.
 
 > **STATUS-RECONCILED (post-2026-06-07): the §4 backlog below is now BUILT — this section is a
 > historical snapshot.** After the §1 snapshot, the full 12-wave `docs/COMPLETION-PROGRAM.md`
@@ -13,7 +13,7 @@
 > **(iv)** eSSVI hardening, `celnet-xva` (CVA/DVA/FVA on synthetic netting), Sobol higher-dim
 > (`qmc_highdim.rs`). The **§2 recipe and §3 lessons remain current and correct** — use them for
 > any new workflow. Treat §1/§4 as the record of what *was* next, not what *is* next; for live
-> status see the `CLAUDE.md` ledger, `docs/POST-COMPLETION-AUDIT.md`, and
+> status see the `GUIDE.md` ledger, `docs/POST-COMPLETION-AUDIT.md`, and
 > `docs/CAPABILITIES-REVITALISATION-PLAN.md`.
 
 ## 1. STATUS
@@ -54,7 +54,7 @@ DISJOINT crates per run** (one track each, no shared file).
      gate (see Lesson c);
   5. commits, `git push origin main`, **verifies local==remote** (`git rev-parse HEAD` ==
      `git rev-parse origin/main`);
-  6. updates the CLAUDE.md ledger (top entry) + the resume memory
+  6. updates the GUIDE.md ledger (top entry) + the resume memory
      (`session-state-2026-05-31.md`); optionally `/wiki-ingest`.
 
 Build discipline: `source "$HOME/.cargo/env" && …` (or the justfile). Per-crate

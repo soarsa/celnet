@@ -29,7 +29,7 @@
 //! * `day_count` ⇒ [`celnet_rates::AccrualBasis`] (`act_360` / `act_365_fixed` /
 //!   `thirty_360_bond_basis`), plus `act_act` accepted for the bond family (the
 //!   one convention not yet in an engine enum — resolved by the future bond
-//!   pricer; CLAUDE.md §10 "extend only if a needed convention is missing").
+//!   pricer; GUIDE.md §10 "extend only if a needed convention is missing").
 //! * `business_day_convention` ⇒ [`celnet_calendar::RollRule`].
 //! * each `calendars` entry ⇒ [`celnet_calendar::CentreId`].
 //! * a leg `*_frequency` ⇒ [`celnet_rates::PaymentFrequency`].

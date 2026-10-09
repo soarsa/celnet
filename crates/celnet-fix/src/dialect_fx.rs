@@ -46,7 +46,7 @@ pub const SIDE_SELL: u8 = b'2';
 /// calendar resolution of `MaturityDate(541)` (which would drift with the trade date),
 /// the dialect carries the exact `expiry_years` the engine prices against on a private,
 /// user-defined tag (FIX tolerates unknown tags; this is a dialect provenance field,
-/// never a vendor name — `CLAUDE.md` rule 8). It makes the RFQ instrument fully
+/// never a vendor name — `GUIDE.md` rule 8). It makes the RFQ instrument fully
 /// wire-specified, so the returned premium reproduces the engine/golden price to the
 /// bit, independent of any date. This is the canonical home of the tag; the server's
 /// FIX edge (`celnet-server`) reads it from here.

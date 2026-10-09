@@ -3,7 +3,7 @@
  * `celnet.wire` contract (PC-AMERICAN). The Rust slice added a new `american`
  * product arm at proto field 24 (after `pricing_model`=22 and `window_barrier`=23)
  * — APPENDED additively: no `schema_version`, no renumber, the existing arms
- * byte-identical (CLAUDE.md rule 9). These tests exercise the REAL
+ * byte-identical (GUIDE.md rule 9). These tests exercise the REAL
  * `src/data/seed.ts`, `src/data/enums.ts`, `src/data/wsCodec.ts` and
  * `src/data/pricing.ts` through their public surface with NO server and NO mocks.
  *

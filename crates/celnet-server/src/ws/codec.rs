@@ -2,7 +2,7 @@
 //!
 //! The WebSocket mirror is **not** a second contract — it is a second *encoding* of
 //! the single, current [`celnet_proto`] contract, exactly as gRPC is its protobuf
-//! encoding (`CLAUDE.md` rule 9: one current contract, no fork). Every JSON object
+//! encoding (`GUIDE.md` rule 9: one current contract, no fork). Every JSON object
 //! maps a proto message field-for-field, by the proto field's snake_case name;
 //! every proto enum is carried by its canonical proto **enum number** (the same
 //! numeric tag `prost` assigns), so the JSON form is unambiguous and reversible.

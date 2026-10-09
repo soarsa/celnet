@@ -16,7 +16,7 @@
 //!   curve with no spurious overshoot.
 //!
 //! Both schemes keep queries allocation-free; the monotone-convex knot forwards are precomputed once
-//! at construction. Method/paper provenance lives in prose only — never in identifiers (CLAUDE.md §8).
+//! at construction. Method/paper provenance lives in prose only — never in identifiers (GUIDE.md §8).
 
 use std::sync::Arc;
 

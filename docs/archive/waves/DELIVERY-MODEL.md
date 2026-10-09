@@ -2,12 +2,12 @@
 
 How Celnet is built to be production-grade *and* fast: many agents progressing safely in
 parallel across the whole scope, gate-by-gate, each unit verified before it counts as done.
-This is the operational companion to `docs/ROADMAP.md` (what to build) and `CLAUDE.md`
+This is the operational companion to `docs/ROADMAP.md` (what to build) and `GUIDE.md`
 (the rules + live ledger).
 
 ## 1. Lanes, waves, and gates
 
-- **Lane** = one work-stream owning disjoint crate dir(s) (see the ledger in `CLAUDE.md`).
+- **Lane** = one work-stream owning disjoint crate dir(s) (see the ledger in `GUIDE.md`).
   A lane edits only its own `crates/<name>/` and never the root manifest.
 - **Wave** = one orchestration pass that runs several lanes concurrently and then runs a
   **critique milestone** (full integration gate + adversarial review + competitive gap
@@ -75,6 +75,6 @@ to the tree mid-wave (that would burden the running critique's `just check`).
 ## 6. Knowledge stays live
 
 After any structural change, lodestar re-indexes automatically via its filesystem watcher; run
-`mcp__lodestar__detect_changes` to verify scope after structural changes; update the `CLAUDE.md`
+`mcp__lodestar__detect_changes` to verify scope after structural changes; update the `GUIDE.md`
 ledger + work-stream table; record durable decisions as ADRs (`mcp__lodestar__manage_adr`) and
 auto-memory; keep `docs/` free of stale references (zero-legacy).

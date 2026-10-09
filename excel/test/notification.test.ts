@@ -5,7 +5,7 @@
 // silent default that would drop the new arms into a generic bucket. These are the
 // same numeric-enum JSON frames the server's `notification_to_json` produces and the
 // GUI's `notificationFromWire` decodes; the add-in mirrors that contract exactly
-// (CLAUDE.md rule 9: one contract, two encodings).
+// (GUIDE.md rule 9: one contract, two encodings).
 
 import { describe, expect, it } from "vitest";
 import { notificationFromWire, notificationKindLabel } from "../src/contract/wsCodec";

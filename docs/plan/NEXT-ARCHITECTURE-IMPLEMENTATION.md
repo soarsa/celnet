@@ -8,7 +8,7 @@
 > (§2/§3 follow-up), `docs/plan/CARRY-SEAM-TO-EDGE.md` (the #1 target, fully scoped).
 
 ## 0. Read-first (hard constraints — every workflow agent must honour)
-- **CLAUDE.md guardrails are law.** No mocks/placeholders/`todo!()`; only 100% complete impls
+- **GUIDE.md guardrails are law.** No mocks/placeholders/`todo!()`; only 100% complete impls
   (narrow scope, never fake depth). **Every change passes the gates** before "done": `just check`
   (fmt, clippy `-D`, nextest, deny); numerical code validated against an **independent** oracle
   (QuantLib/published/code-disjoint re-derivation), never "asserted plausible".
@@ -89,7 +89,7 @@ leverage, unlocks cross-asset streaming; do before EdgeFrame) → **F** (the sha
 4. **Gate**: T1 on the changed crates; for any gui/excel/wire item, **T2 with both live e2e under
    `enforce`** (the non-negotiable). Re-run flaky-looking failures once; triage deterministically.
 5. **Land**: merge `--no-ff` to `main`, push (origin `github.com/soarsa/celnet` ONLY). Update this
-   plan's status table, the ledger (`docs/IMPLEMENTATION-LEDGER.md`, newest first), and the CLAUDE.md
+   plan's status table, the ledger (`docs/IMPLEMENTATION-LEDGER.md`, newest first), and the GUIDE.md
    resume anchor (one line, replace in place).
 
 **Workflow scripting notes (Workflow tool):** scripts are plain JS; `meta` must be a pure literal;
@@ -102,7 +102,7 @@ State lives on disk, so a `/clear` is lossless:
 - **This file** = the master plan + live status table (§2). Update the table as items land.
 - `docs/ARCHITECTURE-DETERMINATION.md` = the evidence + the 11 findings with anchors.
 - `docs/SECURITY-AUTHZ-FINDING.md` (B), `docs/plan/CARRY-SEAM-TO-EDGE.md` (A) = the detailed specs.
-- `docs/IMPLEMENTATION-LEDGER.md` (newest-first history) + the CLAUDE.md one-line resume anchor.
+- `docs/IMPLEMENTATION-LEDGER.md` (newest-first history) + the GUIDE.md one-line resume anchor.
 - lodestar graph (structural) + committed knowledge mirror (`.lodestar/knowledge/`, the verified "why").
 "**Done**" for the whole program = every row in §2's REMAINING table landed on `main`, each T2-green
 (live e2e under Enforce where it touches gui/excel/wire), docs reconciled, with no `match carry` in

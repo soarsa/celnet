@@ -6,7 +6,7 @@
 //! it realises the `celnet_core` contract ([`celnet_core::contract`]) on the
 //! *linear* fixed-income paradigm — a bootstrapped discount curve, an OIS, and a
 //! cash bond — **wrapping** the established `celnet-rates` / `celnet-bond` engines
-//! verbatim (never reimplementing their math, `docs/CLAUDE.md`):
+//! verbatim (never reimplementing their math, `GUIDE.md`):
 //!
 //! * [`RatesCurveResolver`] wraps the curve-bootstrap step ([`bootstrap_ois`]) as a
 //!   [`MarketResolver`], producing a [`ResolvedMarket`] whose `discount` leg is the

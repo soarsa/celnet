@@ -8,7 +8,7 @@
 > #10 ("Docs in sync — no overclaim") in `docs/GA-READINESS.md`. All blockers and majors below
 > are **resolved**; the doc is retained as the audit trail, not as open work. The platform has
 > since advanced far beyond this snapshot (34 crates; `just check` 1306/1306) — for current
-> status see the `CLAUDE.md` ledger and `docs/POST-COMPLETION-AUDIT.md`.
+> status see the `GUIDE.md` ledger and `docs/POST-COMPLETION-AUDIT.md`.
 
 ---
 

@@ -4,7 +4,7 @@
  * sibling of `lib/universe.ts` (which remains the FX pair universe, untouched —
  * FX behavior stays byte-identical).
  *
- * HONESTY (CLAUDE.md rule 2): this module classifies, indexes and fuzzy-searches
+ * HONESTY (GUIDE.md rule 2): this module classifies, indexes and fuzzy-searches
  * over TODAY'S seeded `UnderlierSeed[]` (`data/assetUniverse.ts`) only — nothing
  * here invents an underlier, a level, or a venue the seed did not provide. The
  * shapes (`UnderlierRow`, `AssetUniverse`) are feed-ready: an estate market-data

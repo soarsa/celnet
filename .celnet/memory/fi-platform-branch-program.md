@@ -14,7 +14,7 @@ earlier "never merge" rule. Landing merge on `origin/main` = **`ae689fc`** (merg
 conflicts across fix.rs/fix_registry.rs/quote.rs/lib.rs/client rates.rs — union of main's
 pre-trade-limit `store` param + my desk-routing; 394 server tests + workspace clippy green).
 Do NOT recreate the branch or re-apply the never-merge rule. Ongoing FI work now lands on `main`
-directly (respecting CLAUDE.md rule 1: push only to `origin` = `soarsa/celnet`). The FI history
+directly (respecting GUIDE.md rule 1: push only to `origin` = `soarsa/celnet`). The FI history
 below is retained as the delivered-feature record.
 
 --- Historical (pre-merge) instruction, kept for provenance ---

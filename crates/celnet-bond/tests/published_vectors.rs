@@ -14,7 +14,7 @@
 //! 4. **Round-trip** `ytm(dirty_price(y)) == y` and **par** (`price == F` on a coupon date ⇒
 //!    `ytm == coupon`) identities across a family of bonds.
 //!
-//! All figures below are literals with the derivation in the comment, per CLAUDE.md guardrail #5.
+//! All figures below are literals with the derivation in the comment, per GUIDE.md guardrail #5.
 
 use celnet_bond::{
     AccrualBasis, Bond, PaymentFrequency, bond_risk, dirty_price, yield_to_maturity,

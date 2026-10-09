@@ -16,7 +16,7 @@
 //!
 //! This is a **runtime, control-plane ephemeral identity** — it authenticates a
 //! click, it is *never* an input to any priced number. The platform's determinism
-//! guardrail (`CLAUDE.md` rule 5) governs the **pricing** path (libm, no OS RNG) so
+//! guardrail (`GUIDE.md` rule 5) governs the **pricing** path (libm, no OS RNG) so
 //! prices are bit-reproducible; a token's MAC tag is not a price and is not replayed
 //! for pricing. Seeding the MAC key from a CSPRNG is exactly correct here:
 //! unpredictability is the security property we need, and it leaves every priced
@@ -30,7 +30,7 @@
 //! `NewOrderSingle(D)`. Both mint through the identical [`TokenMinter`] and both
 //! validate through the identical last-look / replay / idempotency discipline of a
 //! [`TokenLedger`], so a FIX lift is byte-for-byte the same execution math as a gRPC
-//! click — no forked execution path (`CLAUDE.md` rule 9).
+//! click — no forked execution path (`GUIDE.md` rule 9).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -161,7 +161,7 @@ pub(crate) struct TokenLedger {
     /// needs to block replay *within its own validity window* (after expiry the
     /// token is rejected as `Expired` regardless), so entries past their
     /// `valid_until_nanos` are evicted — the set can never grow without bound over a
-    /// long session (the scale guardrail, `CLAUDE.md` rule 6).
+    /// long session (the scale guardrail, `GUIDE.md` rule 6).
     consumed: HashMap<u64, i64>,
 }
 

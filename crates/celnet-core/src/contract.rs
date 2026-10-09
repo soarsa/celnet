@@ -132,7 +132,7 @@ impl core::ops::Add for RateLadder {
 /// are *additive* — a portfolio carries option Greeks *and* rate ladders
 /// side-by-side, each summed within its tag; the non-additive VaR/ES/FRTB layer
 /// (Phase C) re-derives over the union. Adding an asset class is an additive tag
-/// (e.g. a future credit-spread arm), never a contract break (CLAUDE.md rule 9).
+/// (e.g. a future credit-spread arm), never a contract break (GUIDE.md rule 9).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RiskMeasure {
     /// Options / cross-asset: the generalized 13-member Greek strip (nonlinear;

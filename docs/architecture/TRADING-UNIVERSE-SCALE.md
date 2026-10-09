@@ -21,7 +21,7 @@
 > **unverified** = could not be confirmed in a primary source (stated, not hidden). The document
 > separates **verified facts (cited)** from **Celnet design proposal**. Negative claims about
 > incumbents are flagged as arguments-from-absence (absence of public evidence ≠ proof of absence).
-> Proposed Celnet identifiers are vendor-neutral and purpose-named per CLAUDE.md rule 8; vendor
+> Proposed Celnet identifiers are vendor-neutral and purpose-named per GUIDE.md rule 8; vendor
 > names appear only in research prose, never as shipped API identifiers.
 
 ---

@@ -2,7 +2,7 @@
  * BuildCurve codec parity (Excel add-in). The Excel client speaks the SAME
  * type-tagged snake_case wire as the GUI and the server's `ws/codec.rs`: the
  * `build_curve` request body and the `calibrated_curve` response frame must encode
- * / decode field-for-field identically across every client (CLAUDE.md #9 — one
+ * / decode field-for-field identically across every client (GUIDE.md #9 — one
  * clean current contract). This asserts the round-trip on the Excel codec.
  */
 import { describe, expect, it } from "vitest";

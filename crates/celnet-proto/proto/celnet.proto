@@ -257,7 +257,7 @@ enum QuantoPayoff {
 
 // The booking / pricing model an instrument is priced under. This selects the
 // numerical engine that produces the price and Greeks; it is a *pricing
-// directive*, not an API version (CLAUDE.md rule 9) — the same instrument prices
+// directive*, not an API version (GUIDE.md rule 9) — the same instrument prices
 // identically under the same model on every transport. It travels on the
 // `Instrument` so it reaches the price, quote (RFQ), stream (RFS) and scenario
 // flows uniformly, exactly like the `Solve` directive.
@@ -3478,7 +3478,7 @@ message CurveScenarioResponse {
 enum CurveInterpolation {
   // Linear in `ln DF` against time — piecewise-constant instantaneous forwards.
   // The shipping default; the QuantLib `LogLinear` `InterpolatedDiscountCurve`
-  // equivalent. (Method provenance lives in doc comments only, CLAUDE.md §8.)
+  // equivalent. (Method provenance lives in doc comments only, GUIDE.md §8.)
   CURVE_INTERPOLATION_LOG_LINEAR_DF = 0;
   // Piecewise-quadratic, continuous, monotonicity-preserving instantaneous
   // forwards — the smooth view (no log-linear forward sawtooth).

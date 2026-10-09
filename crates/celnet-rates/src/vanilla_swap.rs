@@ -35,7 +35,7 @@
 //!   accrual basis here is therefore a caller-supplied [`DayCount`] from the supported set.
 //! - **Distinct projection curve** (dual-curve / basis). Projection == discount on the single curve.
 //!
-//! Method/paper provenance lives in prose only — never in identifiers (CLAUDE.md §8).
+//! Method/paper provenance lives in prose only — never in identifiers (GUIDE.md §8).
 
 use crate::bootstrap::{BootstrapError, OisQuote, bootstrap_ois};
 use crate::curve::Curve;

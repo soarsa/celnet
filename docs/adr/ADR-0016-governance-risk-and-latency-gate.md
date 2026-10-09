@@ -8,7 +8,7 @@
 - **Aligns with:** `docs/ARCHITECTURE-TARGET.md` §1 **D6** (governance + connectivity)
   and **D4** (ultra-low-latency + observability); target program **P1(a)** (⚠
   safety-first pre-trade wiring — should lead) and **P4** (harden latency). Honours
-  CLAUDE.md guardrails #5 (gates), #6 (scale/perf), #9 (one unversioned contract), #11
+  GUIDE.md guardrails #5 (gates), #6 (scale/perf), #9 (one unversioned contract), #11
   (zero-cost observability; pinned hot core stays alloc/lock/log-free).
 - **Interlocks with:** ADR-0010 (term-structure unification) — the `Arc<*Curve>` embargo
   below is the **hard constraint ADR-0010 must honour**: the curve trait may NOT be

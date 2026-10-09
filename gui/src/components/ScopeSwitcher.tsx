@@ -30,7 +30,7 @@
  * `role="option"` with no nested focusable controls, so no `nested-interactive`
  * a11y violation).
  *
- * HONESTY (CLAUDE.md rule 2): every class navigates TODAY'S seeded universe (the
+ * HONESTY (GUIDE.md rule 2): every class navigates TODAY'S seeded universe (the
  * FX P1-10 registry / the estate market feeds are not built — the footer says so
  * per class); the org scaffold is the grant-all entitlement seam (a real
  * org/entitlement feed replaces it with zero rework). Nothing is fabricated.

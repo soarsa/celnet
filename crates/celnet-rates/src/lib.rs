@@ -20,7 +20,7 @@
 //! The numeric core does **no IO** and never allocates on a query. A [`Curve`] is backed by an
 //! [`std::sync::Arc`] slice of nodes, so cloning a snapshot to fan scenarios out in parallel is a
 //! single reference-count bump (`FI-CURVES-SPEC.md` §3). Method/paper provenance lives in prose and
-//! doc-comments only — never in identifiers (CLAUDE.md §8).
+//! doc-comments only — never in identifiers (GUIDE.md §8).
 
 #![forbid(unsafe_code)]
 

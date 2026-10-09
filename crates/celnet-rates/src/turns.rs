@@ -23,7 +23,7 @@
 //! A negative `size` models an inverted turn (a forward dip). The overlay is exact and
 //! allocation-light: it touches only curve *construction*, never the zero-alloc query path.
 //!
-//! Method/paper provenance lives in prose only — never in identifiers (CLAUDE.md §8).
+//! Method/paper provenance lives in prose only — never in identifiers (GUIDE.md §8).
 
 use crate::curve::{Curve, CurveError};
 use celnet_types::{Df, Time};

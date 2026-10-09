@@ -9,7 +9,7 @@
 > validated in CI/containers with SIMD AVX-512 / NEON.
 
 > **Binding-rules override (2026-05-30):** where this document predates the current product
-> rules it is superseded by `CLAUDE.md` guardrails: crate prefix is **`celnet-`** (not
+> rules it is superseded by `GUIDE.md` guardrails: crate prefix is **`celnet-`** (not
 > `celnet-`); API identifiers are vendor/research-neutral and purpose-named; **there are no
 > versioned APIs** — the wire contract is single-and-current and zero-downtime upgrades use
 > **blue-green / full cutover** (no `schema_version` / N–N-1). Passages below mentioning a
@@ -368,7 +368,7 @@ pub trait PricingBackend {
 > CubeCL's single-kernel-multi-backend story is attractive but the direct `wgpu`+WGSL path
 > ships today with a working f32 kernel + f64 CPU oracle and no extra build-time codegen
 > dependency. The CUDA backend is kept first-class as a Linux/CI target; the open fallback
-> (`wgpu`/Vulkan) is the primary, satisfying CLAUDE.md guardrail 7.
+> (`wgpu`/Vulkan) is the primary, satisfying GUIDE.md guardrail 7.
 
 ---
 
@@ -586,7 +586,7 @@ framing, FIXT/4.4 session, FX-options dialect, acceptor + initiator) and wired i
 
 - **`celnet-proto` (prost 0.13 / tonic 0.12)** is **one clean, current contract** — there is
   **no** `schema_version`, no header version field, no negotiation, and no N/N-1
-  compatibility gate (CLAUDE.md rule 9: we have no external users and never run a
+  compatibility gate (GUIDE.md rule 9: we have no external users and never run a
   mixed-version window). Evolve and refactor the contract freely; an upgrade deploys a single
   uniform version across the fleet (blue-green full cutover, §5; cross-fleet rolling cutover,
   `docs/SCALE-OUT.md` §7).

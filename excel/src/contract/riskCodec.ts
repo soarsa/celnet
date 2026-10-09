@@ -2,7 +2,7 @@
 // exact field-for-field mirror of the server's `crates/celnet-server/src/ws/codec.rs`
 // risk arms (the `*_request_from_json` / `*_response_to_json` fns) and the documented
 // §Phase-2 contract in `docs/INTERFACES.md`. Same single, current `celnet.wire`
-// contract (CLAUDE.md rule 9), second encoding: snake_case proto field names, every
+// contract (GUIDE.md rule 9), second encoding: snake_case proto field names, every
 // enum by its canonical proto enum NUMBER, `optional` (presence-tracked) fields
 // `null`/absent ⇒ `undefined`. There is no second contract and no client-side
 // aggregation — the client sends scope/principal/numeraire and receives the rolled-up

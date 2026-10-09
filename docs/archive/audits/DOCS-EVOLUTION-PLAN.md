@@ -179,8 +179,8 @@ SOURCE OF TRUTH for captions/alt-text; edit first then re-sync the two mirrors: 
 `POST-COMPLETION-AUDIT.md`, `INTERFACES.md`, `ANALYTICS-SPEC.md`, `API-CLIENTS.md`,
 `CAPABILITIES-VS-COMPETITION.md`, `CLIENT-PARITY-MATRIX.md`. Apply the same A.3 rules. The existing
 `COMPETITIVE-ANALYSIS.md` "Honest boundary" deploy-gated facts are correctly worded — keep the FACTS,
-rename the heading to "Deployment & validation scope" and drop the meta wrapper. (CLAUDE.md ledger and
-`~/.claude` memory are operational logs, not published corpus — leave as-is.)
+rename the heading to "Deployment & validation scope" and drop the meta wrapper. (GUIDE.md ledger and
+`~/.agents` memory are operational logs, not published corpus — leave as-is.)
 
 ---
 

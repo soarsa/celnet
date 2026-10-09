@@ -11,7 +11,7 @@ cash-bond instrument identity, no bond price/yield/spread economics, no
 accrued/settlement money, and no order-lifecycle or regulatory fields. To ingest
 a bond venue's order + execution reports we need a bond-capable capture model.
 
-> **Naming guardrail.** Per `CLAUDE.md` §8, no vendor/competitor names appear in
+> **Naming guardrail.** Per `GUIDE.md` §8, no vendor/competitor names appear in
 > proposed identifiers; "MarketAxess" is referenced here only as the integration
 > target (analysis context). Proposed types are purpose-named.
 

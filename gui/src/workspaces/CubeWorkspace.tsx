@@ -12,7 +12,7 @@
  *   • Universe pivot — rows = pair, cols = tenor, heat = the chosen metric (ATM /
  *                     25Δ RR / 25Δ BF). Scans the whole pair universe at once.
  *
- * HONESTY (CLAUDE.md rule 2 — no fakes): every vol shown is the SERVER's
+ * HONESTY (GUIDE.md rule 2 — no fakes): every vol shown is the SERVER's
  * calibrated smile point, read through the `useCube` hook (which never does
  * client-side vol math). A cell the server has no point for is an honest EMPTY
  * ("—", neutral), never interpolated. Multi-pair scope is registry-ready but

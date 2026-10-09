@@ -21,7 +21,7 @@
 //! The wire contract carries an optional `surface_version` on `PriceRequest`,
 //! `QuoteRequest`, `Subscribe`, `Modify`, and `ScenarioRequest`. It is a **data**
 //! field selecting a surface (not an API version — the contract itself is
-//! unversioned, CLAUDE.md rule 9): a desk that marked a surface at version *V*
+//! unversioned, GUIDE.md rule 9): a desk that marked a surface at version *V*
 //! and quoted a client off it must be able to re-price that exact structure
 //! against *V* for a re-quote, an audit, or a deferred execution, even after the
 //! live mark has rolled forward. This registry is the mechanism: every

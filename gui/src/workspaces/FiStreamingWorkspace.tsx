@@ -21,7 +21,7 @@
  *   dealer two-way bid/offer, so no fake bid/offer spread is fabricated (par/PV are
  *   shown as returned and labelled "indicative").
  *
- * EXECUTE — honest FI trade path (CLAUDE.md rule 2, no fabricated execution): there
+ * EXECUTE — honest FI trade path (GUIDE.md rule 2, no fabricated execution): there
  * is NO stream-token execute for rates (`app.stream.execute` is the FX click-to-
  * trade path, FX-only). The genuine EXISTING FI execution path is the desk RFQ:
  * `app.transport.submitDeskRequest(...)`. So the Execute action routes the risk

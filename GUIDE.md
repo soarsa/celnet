@@ -1,4 +1,4 @@
-# Celnet — Claude Operating Guide
+# Celnet — Operating Guide
 
 State-of-the-art FX **Options** pricing platform in Rust. Ultra-low-latency, scalable,
 mission-critical, hot-upgradable; integrates into the CelNet trade-lifecycle estate and
@@ -12,7 +12,7 @@ Greenfield, started 30 May 2026.
    Commit locally freely. Pushing is permitted **only** to `github.com/soarsa/celnet`
    (the `origin` remote, owner `soarsa`) — authorized 2026-06-05. Do **not** add any
    other remote or push elsewhere. (The previous local-only deny rules in
-   `.claude/settings.json` were removed for this explicit authorization.)
+   `.agents/settings.json` were removed for this explicit authorization.)
    **Multiple sessions share this filesystem — landing must never clobber a peer**
    (learned 2026-07-03 from a near-miss where the shared main checkout was on another
    session's branch with a dirty `Cargo.lock`):
@@ -51,7 +51,7 @@ Greenfield, started 30 May 2026.
      `knowledge_get deliverable=<slug>` (judge=off ⇒ roll-ups stay `draft`; coordinator
      `--attest` only after independent verify).
    The graph **auto-indexes** the entirety of CelNet across every crate (native watcher +
-   `SessionStart`/`Stop` `lodestar index "$PWD"` hooks in `.claude/settings.json`). Stable
+   `SessionStart`/`Stop` `lodestar index "$PWD"` hooks in `.agents/settings.json`). Stable
    project key **`github.com-soarsa-celnet`** (pinned in `.lodestar/project-id`,
    git-remote-derived → identical on every clone — **but a `git worktree` does NOT inherit
    the pin: every parallel-session worktree must carry its own
@@ -174,8 +174,8 @@ validated in CI/containers on Linux. **GPU strategy:** `wgpu` (Metal/Vulkan/DX12
 - `docs/CONVENTIONS.md` — FX convention spec mapped to the `celnet-types` enums.
 - `docs/ROADMAP.md` — phased plan + crate-ownership workstreams for parallel sessions.
 
-Cross-session durable facts/decisions live in the Claude Code per-project auto-memory
-(`~/.claude/projects/<repo-path-slug>/memory/`, index `MEMORY.md`) — the slug is derived
+Cross-session durable facts/decisions live in the Agent per-project auto-memory
+(`~/.agents/projects/<repo-path-slug>/memory/`, index `MEMORY.md`) — the slug is derived
 from each machine's local checkout path, so the live dir is per-machine. It is made durable
 + shared by a git-committed mirror at **`.celnet/memory/`** synced via
 **`tools/celnet-memory-sync.sh`**: the SessionStart hook runs `restore` (bootstraps a fresh
@@ -186,7 +186,7 @@ propagate across developer PCs via the private `origin` repo.
 
 ## Parallel multi-session model
 
-Independent Claude sessions own **disjoint crates** → no merge conflicts. Shared interface
+Independent agent sessions own **disjoint crates** → no merge conflicts. Shared interface
 crates (core types, traits, wire schemas) are stabilized **first**, then changed only with
 coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the implementation
 ledger (`docs/IMPLEMENTATION-LEDGER.md`; newest entry mirrored below), (2) claims a

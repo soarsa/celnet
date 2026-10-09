@@ -59,7 +59,7 @@ use celnet_replog::{
 
 /// Hard upper bound on any single test body — a regression fails loudly here.
 /// Set generously (180s) to tolerate tokio-task starvation when many parallel
-/// Claude sessions saturate the single M4 during a landing t2 — the election +
+/// agent sessions saturate the single M4 during a landing t2 — the election +
 /// partition scenarios need several election rounds, and under load each round
 /// runs slow (not a consensus regression). Mirrors `raft_snapshot`'s 180s budget.
 const TEST_DEADLINE: Duration = Duration::from_secs(180);

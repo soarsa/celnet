@@ -3,7 +3,7 @@
  * forward-start vanilla, cliquet/ratchet and quanto are encoded onto the SAME
  * `Instrument.product` oneof as vanilla/strategy, with the EXACT appended wire
  * field NAMES (`forward_start`/`cliquet`/`quanto`, proto field numbers 16/17/18 —
- * no schema_version, no renumber; CLAUDE.md rule 9), and the standalone build
+ * no schema_version, no renumber; GUIDE.md rule 9), and the standalone build
  * prices each with a genuine closed form (or, for a clamped cliquet, an honest
  * antithetic Monte-Carlo that reports a standard error) whose documented limits
  * are validated here against an independent in-test oracle.

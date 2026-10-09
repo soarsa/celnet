@@ -91,7 +91,7 @@ conformal_max_width = "0.40"          # env: LODESTAR_VISUAL_CONFORMAL_MAX_WIDTH
 axe_runner = ""                       # env: LODESTAR_AXE_RUNNER
 # Reviewer family for the vision verdict. MUST differ from the claim author's
 # family — the engine enforces never-self at the seam (LODE_REVIEW_SAME_FAMILY).
-reviewer_model = "claude-code:visual-verifier"  # env: LODESTAR_VISUAL_REVIEWER
+reviewer_model = "agent:visual-verifier"  # env: LODESTAR_VISUAL_REVIEWER
 
 [mockup]
 # Where the in-repo, team-owned design targets live (committed assets). A target

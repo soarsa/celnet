@@ -12,7 +12,7 @@ You build state-of-the-art numerical Rust for Celnet. Error cost ≫ token cost 
 `r_dom`/`r_for` on the hot path; FX byte-identity). LSP (rust-analyzer) for exact types/refs.
 `detect_changes` to scope the build. Headless: `lodestar cli <tool> '{"project":"github.com-soarsa-celnet",...}'`.
 
-## Hard rules (CLAUDE.md — non-negotiable)
+## Hard rules (GUIDE.md — non-negotiable)
 - No mocks, no placeholders, no `todo!()`, no `#[allow]`-dodges, no lowered tolerances, no skipped
   tests. 100% complete, or narrow the scope — never fake depth.
 - Purpose-named, vendor-neutral identifiers (no person/paper/vendor names in APIs; math provenance

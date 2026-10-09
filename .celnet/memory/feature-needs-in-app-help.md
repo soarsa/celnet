@@ -23,7 +23,7 @@ Concretely, a feature is not "done" until it also delivers, as appropriate to it
 - and the `docs/` guide kept in sync (e.g. `docs/TRADER-RULE-ENGINE-SETUP.md` for the
   acceptance/routing/hedging engines).
 
-**Why:** the platform is trader-centric ([[CLAUDE.md]] guardrail 11) and configuration
+**Why:** the platform is trader-centric ([[GUIDE.md]] guardrail 11) and configuration
 surfaces (pricing groups, acceptance/risk/hedging rule engines, pricing source, tiering,
 aggregated book, notifications, permissions) are dense and non-obvious. The user has
 repeatedly had to *ask* what a control does (e.g. "where is the pricing-source setting",

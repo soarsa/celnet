@@ -42,7 +42,7 @@
 //! - **Deferred (C2c):** integration into the `celnet-risk-cube` non-additive path, sign-normalising
 //!   the position P&L conventions, and exposing the key-rate axis end to end.
 //!
-//! Method/standard provenance lives in prose only, never in identifiers (CLAUDE.md §8). Deterministic:
+//! Method/standard provenance lives in prose only, never in identifiers (GUIDE.md §8). Deterministic:
 //! no RNG; the only transcendental is the correlation `exp`, and all summations run over sorted risk
 //! factors/buckets so a fixed input is bit-reproducible.
 

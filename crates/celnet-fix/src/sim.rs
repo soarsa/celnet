@@ -165,7 +165,7 @@ pub fn strike_ccy_of(pair: &str) -> &str {
 ///
 /// These are demo/fixture labels the SIM stamps into the RFQ's `PartyID(448)`
 /// ([`crate::messages::push_originating_party`]) — the venue reads them as the display
-/// counterparty. They name **no** product artefact, so `CLAUDE.md` rule 8's
+/// counterparty. They name **no** product artefact, so `GUIDE.md` rule 8's
 /// vendor-neutral rule (which governs *our* crate/type/API identifiers) does not apply;
 /// realistic firm names make the simulated desk feel like live trading.
 ///

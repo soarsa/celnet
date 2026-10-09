@@ -46,7 +46,7 @@ pub const SUB_REQ_UNSUBSCRIBE: &[u8] = b"2";
 /// than a calendar resolution of `MaturityDate(541)` (which would drift with the
 /// trade date). Carrying the integer tenor on a private, user-defined tag (FIX
 /// tolerates unknown tags; this is a dialect provenance field, never a vendor
-/// name — `CLAUDE.md` rule 8) makes the RFQ fully wire-specified, so the returned
+/// name — `GUIDE.md` rule 8) makes the RFQ fully wire-specified, so the returned
 /// par rate reproduces the engine/golden value independent of any date. This is
 /// the canonical home of the tag; the server's FIX edge reads it from here.
 pub const TAG_TENOR_YEARS: u32 = 7101;
@@ -401,7 +401,7 @@ fn is_integer_valued(value: f64) -> bool {
 // ===========================================================================
 
 /// FIX `SecurityType(167)` for a fixed-coupon cash bond — the fixed-income analogue of
-/// [`SEC_TYPE_OIS`]. A purpose-named, vendor-neutral dialect selector (`CLAUDE.md`
+/// [`SEC_TYPE_OIS`]. A purpose-named, vendor-neutral dialect selector (`GUIDE.md`
 /// rule 8): FIX tolerates a private `SecurityType` value exactly as it tolerates the
 /// private [`TAG_TENOR_YEARS`], and this is the canonical home of the bond selector the
 /// server's FIX edge content-detects.

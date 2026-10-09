@@ -1,6 +1,6 @@
 // ONE CONTRACT — the add-in's USER-PERMISSION layer (the "who may act" model),
 // the Excel-package port of the GUI's `gui/src/lib/capabilityMatrix.ts` gating
-// half + `gui/src/hooks/useAuth.ts can(...)` semantics (CLAUDE.md rule 9,
+// half + `gui/src/hooks/useAuth.ts can(...)` semantics (GUIDE.md rule 9,
 // semantics-identical). This is DISTINCT from `src/taskpane/capability.ts`, which
 // is the PRODUCT price-matrix (which product arm an asset class can price) — do
 // not conflate the two: this module answers "is THIS signed-in user permitted to

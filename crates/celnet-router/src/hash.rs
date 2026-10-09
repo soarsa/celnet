@@ -13,7 +13,7 @@
 //! highest-random-weight construction needs so that per-replica weights are
 //! effectively independent uniform draws (see `docs/SCALE-OUT.md` §2). The
 //! method name is documentation only; no public identifier is named for it
-//! (CLAUDE.md rule 8).
+//! (GUIDE.md rule 8).
 //!
 //! All operations are `const`-evaluable, branch-free, and never allocate, so
 //! they are safe to call from the routing fast path.

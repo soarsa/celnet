@@ -12,7 +12,7 @@ duplicating it.
 
 > **Naming guardrail.** Method/person/paper provenance (e.g. the monotone-convex forward
 > interpolation, the multi-curve framework) appears in this prose and in future doc-comments
-> **only** — never in `celnet-rates` identifiers (CLAUDE.md §8). Inputs are purpose-named
+> **only** — never in `celnet-rates` identifiers (GUIDE.md §8). Inputs are purpose-named
 > (`CurveBuildSpec`, not a person's name).
 
 ---

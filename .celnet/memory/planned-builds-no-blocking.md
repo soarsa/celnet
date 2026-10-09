@@ -20,7 +20,7 @@ each lane re-ran a full-workspace gate that the other session had just run on ov
    most starvation-sensitive moments (their announced critical seconds), not whole windows.
 2. **Build only what changed.** Per iteration: `just check-crate <crate>` / `check-changed` /
    `cargo … -p` / file-scoped `cargo mutants --file`. NEVER a workspace build/clippy inside a
-   lane step. (This is CLAUDE.md's own incremental rule — enforce it in workflow agent prompts.)
+   lane step. (This is GUIDE.md's own incremental rule — enforce it in workflow agent prompts.)
 3. **One milestone gate per merge window, planned.** The full `just check`-equivalent runs ONCE
    per merge window, by whoever merges LAST into it; the result is posted to §6 (a gate ledger:
    commit hash + exits + section counts) and the other session TRUSTS it instead of re-running.

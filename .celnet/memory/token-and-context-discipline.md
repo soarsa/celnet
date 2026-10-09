@@ -10,7 +10,7 @@ metadata:
 Operate token-optimally **without ever losing context**. Two halves:
 
 **Never lose context — externalize durable state to disk (this is the safety net for any summarization/clear):**
-- Keep `CLAUDE.md` ledger (newest-first, one line per milestone) + the auto-memory (`MEMORY.md` + files) + `docs/` corpus current at **every milestone boundary**. The next context window must be able to fully reconstruct from: ledger + memory + `git log` + the lodestar graph/knowledge — never from chat history alone.
+- Keep `GUIDE.md` ledger (newest-first, one line per milestone) + the auto-memory (`MEMORY.md` + files) + `docs/` corpus current at **every milestone boundary**. The next context window must be able to fully reconstruct from: ledger + memory + `git log` + the lodestar graph/knowledge — never from chat history alone.
 - Record in-flight workflows (id, scope, "what to do on completion") in the CURRENT active ▶ program memory so a post-clear session resumes losslessly.
 - After each verified milestone: commit, update ledger + memory, re-index (post-commit hook). A clear is then safe.
 
@@ -26,7 +26,7 @@ Operate token-optimally **without ever losing context**. Two halves:
 **Memory hygiene — keep the auto-memory LEAN, meaningful, and lodestar-based (operator, 2026-07-01):**
 - **lodestar is the BASIS for durable "why".** Invariants / decisions / rationale / ADRs → lodestar claims (`knowledge_put`) + `manage_adr`: graph-anchored, self-invalidating (goes stale when code changes), and queried **on-demand** (`knowledge_get` / `evidence_pack`) so it costs **zero standing context** and is always current. This holds the BULK of durable knowledge — do NOT copy it into memory files.
 - **auto-memory is a thin OPERATIONAL layer** for only what lodestar can't anchor to code: cross-session handoffs, in-flight state, orchestration pointers, durable user preferences/feedback, external refs. If a fact is about *the code's why*, it belongs in lodestar, not here.
-- **`MEMORY.md` is loaded into EVERY session** — it is the one always-on context cost, so it is the bloat surface. Keep it a terse one-line index; a memory earns a line only if current + operational/preference/pointer. Don't restate CLAUDE.md's hard guardrails (also always-loaded) — link to it.
+- **`MEMORY.md` is loaded into EVERY session** — it is the one always-on context cost, so it is the bloat surface. Keep it a terse one-line index; a memory earns a line only if current + operational/preference/pointer. Don't restate GUIDE.md's hard guardrails (also always-loaded) — link to it.
 - **Prune on completion.** When work lands / a handoff is consumed / a plan is superseded, ARCHIVE the memory (`git mv` its file to `.celnet/memory/_archive/`, drop its `MEMORY.md` line) — don't let handoffs/snapshots accrete. Archiving is lossless (the mirror keeps `_archive/`); the loaded set stays lean. `celnet-memory-sync.sh snapshot` excludes `_archive/`.
 - **Precise `description:` fields** drive relevance-matched recall — vague/overlapping descriptions cause over-recall (noise); specific ones surface only what's relevant.
 - **Durability ≠ load**: `.celnet/memory/` (mirror + `_archive/`) preserves everything for restore/sharing; the live dir + `MEMORY.md` stay the curated CURRENT set.

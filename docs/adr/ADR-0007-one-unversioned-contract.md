@@ -4,7 +4,7 @@
   WebSocket JSON mirror, the admin CLI, Excel) — the single contract they all consume.
 - **Honoured by:** ADR-0008 (multi-asset carry — additive `Underlying`/`CarryModel` oneofs),
   ADR-0009 (edge wire codec — `CELNHND1` content tag, *not* a schema version), and
-  CLAUDE.md guardrail #9.
+  GUIDE.md guardrail #9.
 
 ## Context
 
@@ -32,7 +32,7 @@ Ship **exactly one clean, current wire contract** and evolve it **in place**:
 ## Consequences
 
 - Refactor and evolve the schema freely; there is no compatibility window to preserve and no
-  legacy shape to keep alive (CLAUDE.md guardrails #9, #10).
+  legacy shape to keep alive (GUIDE.md guardrails #9, #10).
 - Conformance is a single corpus run across all 5 clients with `to_bits` equality — there is
   one right answer, not a matrix of versions.
 - A peer that needs a different contract is out of scope by construction; we do not add a

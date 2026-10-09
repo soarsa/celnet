@@ -2,7 +2,7 @@
  * Correlated multi-asset basket / best-of / worst-of for the GUI end of the ONE
  * `celnet.wire` contract (PC-BASKET). The Rust slice added a new `basket` product
  * arm at proto field 25 (after `american`=24) — APPENDED additively: no
- * `schema_version`, no renumber, the existing arms byte-identical (CLAUDE.md
+ * `schema_version`, no renumber, the existing arms byte-identical (GUIDE.md
  * rule 9). These tests exercise the REAL `src/data/seed.ts`, `src/data/enums.ts`
  * and `src/data/wsCodec.ts` through their public surface with NO server and NO
  * mocks.

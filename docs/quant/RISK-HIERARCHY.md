@@ -10,7 +10,7 @@
 > secondary source; **low / inference** = reasoned argument-from-absence or workload-class
 > inference. Negative claims ("incumbent X does *not* do Y") are explicitly flagged as
 > arguments-from-absence — absence of public evidence is **not** proof of absence. Proposed Celnet
-> identifiers are vendor-neutral and purpose-named per CLAUDE.md rule 8; competitor names appear
+> identifiers are vendor-neutral and purpose-named per GUIDE.md rule 8; competitor names appear
 > only in the critique prose (research context), never as shipped API identifiers.
 
 ---

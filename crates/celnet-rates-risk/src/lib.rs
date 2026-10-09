@@ -49,7 +49,7 @@
 //!
 //! No RNG; the only transcendental is the curve's `exp`. For a fixed `(positions, base, shocks,
 //! alpha)` every result is bit-reproducible. Method/paper provenance lives in prose only, never in
-//! identifiers (CLAUDE.md §8).
+//! identifiers (GUIDE.md §8).
 
 #![forbid(unsafe_code)]
 

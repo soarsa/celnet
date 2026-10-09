@@ -61,7 +61,7 @@
 //! LSV / leverage identity: Ren-Madan-Qian (2007), Guyon & Henry-Labordère
 //! (2012). Variance backbone: Heston (1993); QE: Andersen (2008); 2-D ADI:
 //! Hundsdorfer-Verwer (2003), in 't Hout-Foulon (2010). Identifiers are
-//! purpose-named; provenance lives only in documentation (CLAUDE.md rule 8).
+//! purpose-named; provenance lives only in documentation (GUIDE.md rule 8).
 
 use celnet_exotics::{
     AdiGrid, ImpliedVolSurface, LeverageSurface, LsvModel, McConfig, ParticleConfig,

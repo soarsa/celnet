@@ -4,7 +4,7 @@
  * snake_case, numeric-enum JSON the server decodes; every decoder reads the
  * snake_case, numeric-enum JSON the server encodes. There is no second contract:
  * this file and codec.rs are two ends of the SAME single, current `celnet.wire`
- * contract (CLAUDE.md rule 9), so a value priced over WS is byte-identical to the
+ * contract (GUIDE.md rule 9), so a value priced over WS is byte-identical to the
  * gRPC/direct price.
  *
  * Numbers on the wire are plain JSON numbers; identifiers that the proto types as
@@ -650,7 +650,7 @@ export function instrumentToWire(i: Instrument): WireObject {
   // The pricing/booking model (`Instrument.pricing_model`, proto field 22). It
   // travels uniformly through every flow (price/quote/stream/scenario), exactly
   // like the `Solve` directive — appended additively, no schema_version, no
-  // renumber (CLAUDE.md rule 9). Proto3 default-0 (DEFAULT) is OMITTED from the
+  // renumber (GUIDE.md rule 9). Proto3 default-0 (DEFAULT) is OMITTED from the
   // wire object so an analytic instrument is byte-identical to the legacy frame;
   // only LOCAL_STOCH_VOL is emitted. The server's `opt_pricing_model` reads the
   // numeric tag (absent ⇒ DEFAULT).
@@ -660,7 +660,7 @@ export function instrumentToWire(i: Instrument): WireObject {
   // The product oneof: nest the body under its own key, exactly like the proto.
   // The wire field numbers are: vanilla=7, strategy=8, …, digital=11, touch=12,
   // variance_swap=13, volatility_swap=14, asian_option=15 (appended additively —
-  // one current contract, no schema_version; CLAUDE.md rule 9). The WS mirror
+  // one current contract, no schema_version; GUIDE.md rule 9). The WS mirror
   // keys each arm by the proto field NAME (snake_case), matching the server codec.
   switch (i.product.kind) {
     case "vanilla":
@@ -757,7 +757,7 @@ export function instrumentToWire(i: Instrument): WireObject {
     }
     // Wave-2 products, appended additively at the next field numbers:
     // forward_start=16, cliquet=17, quanto=18 (one current contract, no
-    // schema_version, no renumber; CLAUDE.md rule 9). The cliquet's local/global
+    // schema_version, no renumber; GUIDE.md rule 9). The cliquet's local/global
     // clamps are presence-tracked — an absent clamp is OMITTED from the wire
     // object (proto3 optional), matching the server codec's `opt_f64` reader.
     case "forwardStart": {
@@ -798,7 +798,7 @@ export function instrumentToWire(i: Instrument): WireObject {
     }
     // Wave-3 products, appended additively at the next field numbers:
     // tarf=19, accumulator=20, lookback=21 (one current contract, no
-    // schema_version, no renumber; CLAUDE.md rule 9). TARF and accumulator reuse
+    // schema_version, no renumber; GUIDE.md rule 9). TARF and accumulator reuse
     // the SAME nested `FixingSchedule` message (`schedule`); every one is priced by
     // Monte-Carlo except a CONTINUOUS-monitored lookback (exact closed form).
     case "tarf": {
@@ -816,7 +816,7 @@ export function instrumentToWire(i: Instrument): WireObject {
       break;
     }
     // The pivot TRA, appended additively at pivot=32 (one current contract, no
-    // schema_version, no renumber; CLAUDE.md rule 9): the TARF body plus the
+    // schema_version, no renumber; GUIDE.md rule 9): the TARF body plus the
     // distinct `pivot` level, reusing the SAME nested `FixingSchedule` and
     // `TarfRedemption` vocabulary. Fields match the server WS codec's
     // `pivot_from_json` (option_type=1, strike=2, pivot=3, target=4, leverage=5,
@@ -864,7 +864,7 @@ export function instrumentToWire(i: Instrument): WireObject {
     }
     // The window barrier, appended additively at the next field number
     // window_barrier=23 (one current contract, no schema_version, no renumber;
-    // CLAUDE.md rule 9). It REUSES the same nested `vanilla` message (option_type +
+    // GUIDE.md rule 9). It REUSES the same nested `vanilla` message (option_type +
     // strike-or-delta), exactly like the single/double barrier. Fields match the
     // server WS codec's `window_barrier_from_json` (vanilla=1, barrier=2, side=3,
     // window_start=4, window_end=5, mc_pairs=6, mc_steps=7, mc_seed=8). It is
@@ -887,7 +887,7 @@ export function instrumentToWire(i: Instrument): WireObject {
       break;
     }
     // The American / Bermudan early-exercise vanilla, appended additively at
-    // american=24 (one current contract, no schema_version; CLAUDE.md rule 9).
+    // american=24 (one current contract, no schema_version; GUIDE.md rule 9).
     // Fields match the server WS codec's `american_from_json` (option_type=1,
     // strike=2, exercise_style=3, bermudan_dates=4, lsm_paths=5,
     // lsm_exercise_dates=6, lsm_seed=7). `lsm_paths == 0` selects the exact FD
@@ -908,7 +908,7 @@ export function instrumentToWire(i: Instrument): WireObject {
     }
     // The correlated multi-asset basket, appended additively at the next field
     // number basket=25 (one current contract, no schema_version, no renumber;
-    // CLAUDE.md rule 9). Per-leg market data travels IN each leg (the single-pair
+    // GUIDE.md rule 9). Per-leg market data travels IN each leg (the single-pair
     // market context cannot hold N underlyings); the shared domestic rate is the
     // request market context's r_dom. Fields match the server WS codec's
     // `basket_from_json` (legs=1, correlations=2, option_type=3, strike=4, kind=5,
@@ -937,7 +937,7 @@ export function instrumentToWire(i: Instrument): WireObject {
     }
     // The W2 linear products (the `celnet-linear` leaf), appended additively at
     // fx_forward=26, fx_swap=27, ndf=28 (one current contract, no schema_version,
-    // no renumber; CLAUDE.md rule 9). Closed-form discounted cashflows (NOT option
+    // no renumber; GUIDE.md rule 9). Closed-form discounted cashflows (NOT option
     // payoffs); each arm uses the EXACT snake_case field NAMES + numeric enum tags
     // the server WS codec decodes. The Side enum rides each leg (BUY=0/SELL=1).
     case "fxForward": {
@@ -981,7 +981,7 @@ export function instrumentToWire(i: Instrument): WireObject {
     }
     // The new payoff shapes, appended additively at perpetual_option=30 /
     // listed_future_option=31 (one current contract, no schema_version, no
-    // renumber; CLAUDE.md rule 9). Fields match the server WS codec's
+    // renumber; GUIDE.md rule 9). Fields match the server WS codec's
     // `perpetual_option_from_json` (option_type=1, strike=2, notional=3) and
     // `listed_future_option_from_json` (future_symbol=1, future_expiry_years=2,
     // option_type=3, strike=4, notional=5, margining=6). The perpetual rides an

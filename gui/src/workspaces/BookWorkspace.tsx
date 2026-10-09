@@ -156,7 +156,7 @@ interface BookView {
  * (the former BookWorkspace body, unchanged; now the Aggregate Risk lens of the
  * unified Book).
  *
- * Aggregation is owned by the server (CLAUDE.md rule 11 / API-first parity): this
+ * Aggregation is owned by the server (GUIDE.md rule 11 / API-first parity): this
  * view issues ONE `aggregate_risk` call for the rolled-up node tree over the org
  * dimension the active Scope selects, plus a `drill_risk` for the Book→Risk drill
  * — it NEVER loops positions and sums client-side (the old `portfolioRisk`

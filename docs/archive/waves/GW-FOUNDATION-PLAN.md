@@ -9,7 +9,7 @@
 > absorbing the 4 redundant pair affordances; data-driven `⌘N`; the `Σ→▤` glyph fix;
 > `lib/shortcuts.ts` promoted to the real binding registry; saved-views URL+localStorage).
 >
-> **Zero legacy (CLAUDE.md rules 9/10):** every component named below as superseded is
+> **Zero legacy (GUIDE.md rules 9/10):** every component named below as superseded is
 > **decomposed/replaced, not paralleled**. One clean current contract, GUI included.
 >
 > **Scope boundary.** GW6 (multi-asset GUI) is gated on the master program's W1 core-contract

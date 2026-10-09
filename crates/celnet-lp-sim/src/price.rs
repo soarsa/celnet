@@ -19,7 +19,7 @@
 //!   the simulator's prices ARE the oracle (see the crate docs).
 //!
 //! Method/paper provenance lives in prose only, never in identifiers
-//! (CLAUDE.md §8): "Vasicek" and "Ornstein–Uhlenbeck" name the mean-reversion of
+//! (GUIDE.md §8): "Vasicek" and "Ornstein–Uhlenbeck" name the mean-reversion of
 //! the conditional mean we sample; the public type is purpose-named
 //! [`MeanRevertingYield`](MidSource::MeanRevertingYield).
 

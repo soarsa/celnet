@@ -1055,7 +1055,7 @@ impl Edge {
         // The WebSocket JSON mirror: the SAME single contract over WS, driven by the
         // SAME shared services (one `CoreLink`, one `SurfaceBook`, one readiness gate,
         // one spread/clock) — a second encoding of one pricing path, never a fork
-        // (`CLAUDE.md` rule 9). Bound on the caller-supplied `ws_addr` (a fixed port
+        // (`GUIDE.md` rule 9). Bound on the caller-supplied `ws_addr` (a fixed port
         // for a demo edge, or `:0` for an OS-assigned ephemeral port).
         // Clone the edge clock for the FIX acceptor before `clock` is moved into the
         // WS mirror's services (one clock source shared across every edge).

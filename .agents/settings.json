@@ -1,5 +1,5 @@
 {
-  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "$schema": "https://json.schemastore.org/agent-settings.json",
   "permissions": {
     "allow": [
       "Bash(source \"$HOME/.cargo/env\":*)",
@@ -59,7 +59,7 @@
           },
           {
             "type": "command",
-            "command": "nohup sh -c 'bash tools/celnet-task heartbeat --session \"$CLAUDE_SESSION_ID\"' >/dev/null 2>&1 & exit 0"
+            "command": "nohup sh -c 'bash tools/celnet-task heartbeat --session \"$CELNET_SESSION_ID\"' >/dev/null 2>&1 & exit 0"
           }
         ]
       }
@@ -91,7 +91,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash tools/celnet-task selector --session \"$CLAUDE_SESSION_ID\"",
+            "command": "bash tools/celnet-task selector --session \"$CELNET_SESSION_ID\"",
             "timeout": 25
           }
         ]
@@ -103,7 +103,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash tools/celnet-task checkpoint --session \"$CLAUDE_SESSION_ID\""
+            "command": "bash tools/celnet-task checkpoint --session \"$CELNET_SESSION_ID\""
           }
         ]
       }

@@ -77,7 +77,7 @@ use store::PositionStore;
 /// would be **fanned out across physical shards** reached via backend endpoints. This
 /// mirrors the [`crate::deployment`-style](celnet_integration) edge-adapter seam:
 /// the topology is a runtime tag chosen at boot, not a contract concern (no proto
-/// change, no `schema_version` — `CLAUDE.md` rule 9).
+/// change, no `schema_version` — `GUIDE.md` rule 9).
 ///
 /// For [`FleetTopology::InProcess`] (the default, and the only path Phase 2 serves)
 /// the edge behaves **exactly** as the single-node aggregation always has: every RPC
@@ -99,7 +99,7 @@ use store::PositionStore;
 /// **without** a connected fleet (the sync [`RiskEdge::with_topology`], used where the
 /// topology is only inspected) fails loudly with `unavailable` rather than silently
 /// degrading — it never serves a single-node answer it cannot vouch for. No proto /
-/// `schema_version` change: the wire is the same on both sides (`CLAUDE.md` rule 9).
+/// `schema_version` change: the wire is the same on both sides (`GUIDE.md` rule 9).
 #[derive(Debug)]
 pub struct RiskEdge {
     store: Arc<PositionStore>,

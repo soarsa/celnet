@@ -4,7 +4,7 @@
  * SAME `Instrument.product` oneof as vanilla/strategy, with the EXACT wire field
  * NAMES (`single_barrier`/`double_barrier`/`digital`/`touch`, proto field numbers
  * 9/10/11/12 — already on the wire AND priced server-side; no schema_version, no
- * renumber; CLAUDE.md rule 9). The single- and double-barrier REUSE the same nested
+ * renumber; GUIDE.md rule 9). The single- and double-barrier REUSE the same nested
  * `vanilla` message (option_type + strike-or-delta). The standalone build prices
  * each by the SAME Garman-Kohlhagen reflection-principle closed forms the server's
  * `celnet-exotics` (barrier.rs / digital.rs / touch.rs) uses.

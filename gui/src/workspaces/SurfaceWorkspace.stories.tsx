@@ -9,7 +9,7 @@
  *
  * The asset-class-aware family switch gates marked families to the active underlier:
  * FX shows the five delta-space calibration families; a non-FX underlier renders
- * the honest "no marked surface" state — nothing fabricated (CLAUDE.md rule 2).
+ * the honest "no marked surface" state — nothing fabricated (GUIDE.md rule 2).
  *
  * Token contract: all color, spacing, and type references come from the Aurora
  * cascade. The ramp gradient (low→high) uses var(--bid)/var(--offer)-derived

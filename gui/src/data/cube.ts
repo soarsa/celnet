@@ -5,7 +5,7 @@
  * the existing transport seam — `markSurface` (to publish a fresh version) then
  * the smiles it returns, falling back to per-tenor `getSmile` for tenors the
  * marked surface didn't carry. No client-side vol construction (API-first parity,
- * CLAUDE.md rule 11): every vol number is the server's calibrated smile point.
+ * GUIDE.md rule 11): every vol number is the server's calibrated smile point.
  *
  * HONESTY (rule 2 — no fakes): a cell is filled ONLY when the server's smile for
  * that (pair, tenor) actually carries a point at that delta pillar (within a tight

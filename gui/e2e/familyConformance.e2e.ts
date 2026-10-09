@@ -26,7 +26,7 @@
  *     conformance.rs`) and Excel (`excel/e2e/conformance.e2e.ts`), so
  *     "server == GUI == oracle" is a wire-level fact for the GUI too.
  *
- * Honesty (CLAUDE.md rules 2 & 5): no assertion is lowered; every skipped
+ * Honesty (GUIDE.md rules 2 & 5): no assertion is lowered; every skipped
  *  family/flow carries a concrete, ASSERTED reason:
  *  - browser half: the NDF cannot be live-quoted from the ticket today — the
  *    seeded watched-pair set (`src/data/seed.ts` PAIRS) carries only deliverable
@@ -529,7 +529,7 @@ test.describe("golden-vector wire conformance: GUI codec → real edge == frozen
   });
 
   test("every corpus family is WS-priced — no family is excluded from the WS path", () => {
-    // Documentation-as-assertion (CLAUDE.md rule 2 — no silent gap): the three
+    // Documentation-as-assertion (GUIDE.md rule 2 — no silent gap): the three
     // cross-asset vanilla arms are now WS-priced (above), because the server WS
     // decoder routes by the authoritative `underlying` oneof rather than the
     // legacy FX `pair` projection the GUI also emits — proven end-to-end by

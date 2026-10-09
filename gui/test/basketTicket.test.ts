@@ -3,7 +3,7 @@
  * the ONE `celnet.wire` contract. The Rust slice added a correlated multi-asset
  * `basket` product arm at proto field 25 (after `american`=24) — APPENDED
  * additively: no `schema_version`, no renumber, existing arms byte-identical
- * (CLAUDE.md rule 9). The handoff `basketProducts.test.ts` already pins the wire
+ * (GUIDE.md rule 9). The handoff `basketProducts.test.ts` already pins the wire
  * codec (enum tags + field names); THIS suite pins the ticket's PRICING behaviour
  * through the public data surface (`src/data/seed.ts` + `src/data/pricing.ts`)
  * with NO server and NO mocks.

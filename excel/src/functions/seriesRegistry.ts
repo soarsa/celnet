@@ -11,7 +11,7 @@
  *
  * It depends only on a minimal `SeriesConnection` seam (the subset of the real
  * Connection it needs), so it is unit-testable with an in-memory fake — no Office
- * host, no server, no mocks of our functionality (CLAUDE.md guardrail #2).
+ * host, no server, no mocks of our functionality (GUIDE.md guardrail #2).
  */
 
 import type { MarketObservable } from "../contract/contract";

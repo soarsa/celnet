@@ -19,7 +19,7 @@
 //! The model par (break-even) rate the curve implies for a deposit is the inverse
 //! identity `(DF(spot)/DF(maturity) − 1) / τ`; on a curve that carries the pillar
 //! above it recovers `r` exactly, which is the reprice-to-par check the bootstrap
-//! must satisfy. Method/paper provenance lives in prose only (CLAUDE.md §8).
+//! must satisfy. Method/paper provenance lives in prose only (GUIDE.md §8).
 
 use crate::curve::Curve;
 use crate::daycount::AccrualBasis;

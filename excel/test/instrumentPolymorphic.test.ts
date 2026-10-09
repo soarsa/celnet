@@ -1,6 +1,6 @@
 /**
  * The polymorphic-surface PARITY PROOF + grammar gate — the evidence behind
- * retiring the per-product CELNET.* function table (CLAUDE.md #10: zero legacy,
+ * retiring the per-product CELNET.* function table (GUIDE.md #10: zero legacy,
  * retired ONLY at proven parity).
  *
  * 1. PARITY, corpus-wide: for EVERY frozen golden vector (every product family

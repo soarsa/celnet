@@ -6,7 +6,7 @@
   authoritative until each GPU lane passes its ≤1e-12-vs-CPU-oracle gate. Realizes dimension
   **D5** of `docs/ARCHITECTURE-TARGET.md` (§1 "wire the GPU, open the plugin surface",
   §5 P1(b)/P4) and honours ADR-0007 (one unversioned contract), ADR-0008 (carry seam),
-  ADR-0012 (unified gBSM kernel), and CLAUDE.md guardrails #2/#6/#7/#8/#9/#10/#11.
+  ADR-0012 (unified gBSM kernel), and GUIDE.md guardrails #2/#6/#7/#8/#9/#10/#11.
 - **Aligns with:** the "connect the islands" theme — the biggest architectural win here is
   **integration**, not new capability (`docs/ARCHITECTURE-TARGET.md` §0). Latency embargoes
   live in ADR-0016; the generated-codec / cross-asset-client work lives in ADR-0014; this ADR
@@ -191,7 +191,7 @@ behind its own ≤1e-12 gate.
 
 - **GPU results validated vs the CPU f64 oracle + the QuantLib golden vectors at ≤1e-12.** No
   GPU lane lands without its ≤1e-12 parity gate against the independent oracle (never a
-  self-referential regen — CLAUDE.md #5, ADR-0012 §4). f32 GPU math is validated to converge
+  self-referential regen — GUIDE.md #5, ADR-0012 §4). f32 GPU math is validated to converge
   to the f64 reduction within the tolerance.
 - **The single-tick streaming hot path stays CPU.** GPU is the **BATCH / portfolio tier only**
   (large-batch pricing, risk-cube reprice, streaming *fan-out* batch). The per-tick pricing

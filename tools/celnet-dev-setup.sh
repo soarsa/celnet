@@ -3,18 +3,18 @@
 #
 # Brings a fresh `git clone` (or a `git pull`) to a fully-working state in one run:
 #   1. installs/updates the lodestar MCP binary (deterministic code graph + verified "why")
-#   2. installs the Claude Code plugins this repo uses (LSPs, proto, GUI e2e, plugin-dev)
+#   2. installs the Agent plugins this repo uses (LSPs, proto, GUI e2e, plugin-dev)
 #   3. rebuilds the structural graph and rehydrates the committed verified-knowledge mirror
-#   4. leaves the committed settings/hooks in place so it is all live on the next Claude
+#   4. leaves the committed settings/hooks in place so it is all live on the next Agent
 #      Code session start / `/mcp` reconnect.
 #
 # Reproducible-from-the-repo: every input is either committed here (`.mcp.json`,
-# `.claude/`, `.lodestar/project-id`, the knowledge mirror, this script) or fetched from a
+# `.agents/`, `.lodestar/project-id`, the knowledge mirror, this script) or fetched from a
 # pinned public source (the lodestar release, the github plugin marketplaces).
 #
 # Idempotent and re-runnable: run it again any time to pick up a newer lodestar release or
 # to refresh the knowledge projection after a `git pull`. Safe to run alongside a live
-# Claude session — it only writes the shared lodestar cache (cross-process-locked), the
+# agent session — it only writes the shared lodestar cache (cross-process-locked), the
 # user-scope plugin config, and ~/.local/bin; it never touches this repo's git tree.
 #
 # Multi-session / parallel work: plugins + the lodestar binary are machine-global, and the
@@ -25,7 +25,7 @@
 #   tools/celnet-dev-setup.sh                  # full setup (recommended first run)
 #   tools/celnet-dev-setup.sh --update         # force a lodestar upgrade to the latest release
 #   tools/celnet-dev-setup.sh --with-syncd     # also install the opt-in LAN knowledge-sync daemon
-#   tools/celnet-dev-setup.sh --no-plugins     # skip the Claude Code plugin install
+#   tools/celnet-dev-setup.sh --no-plugins     # skip the Agent plugin install
 #   tools/celnet-dev-setup.sh --no-knowledge   # skip the index + knowledge rehydration
 #   tools/celnet-dev-setup.sh --help
 set -euo pipefail
@@ -37,12 +37,12 @@ PROJECT_KEY="github.com-soarsa-celnet"
 INSTALL_ONELINER="https://raw.githubusercontent.com/${LODESTAR_REPO}/main/install.sh"
 
 # Plugins this repo actually uses, by marketplace. Deliberately EXCLUDED:
-#   • claude-codewiki — its marketplace is a local directory, not a shareable git source.
+#   • developer-wiki — its marketplace is a local directory, not a shareable git source.
 #   • expo — disabled estate-wide (no React Native here).
 #   • atlassian / gitlab — left to each developer's own preference.
 PLUGINS_OFFICIAL=(plugin-dev rust-analyzer-lsp typescript-lsp pyright-lsp playwright chrome-devtools-mcp frontend-design)
 PLUGINS_BUF=(protobuf)
-BUF_MARKETPLACE_REPO="bufbuild/claude-plugins"
+BUF_MARKETPLACE_REPO="bufbuild/plugins"
 
 # ── Args ────────────────────────────────────────────────────────────────────────
 DO_PLUGINS=1; DO_KNOWLEDGE=1; FORCE_UPDATE=0; WITH_SYNCD=0
@@ -76,7 +76,7 @@ PIN="$(tr -d '[:space:]' < "$REPO/.lodestar/project-id")"
 for t in git curl python3; do have "$t" || die "missing required tool: $t"; done
 have tar || die "missing required tool: tar"
 have sqlite3 || warn "sqlite3 not found — the knowledge-projection guard will fall back (non-fatal)."
-CLAUDE_OK=1; have claude || { CLAUDE_OK=0; warn "the 'claude' CLI is not on PATH — plugin install will be skipped (install Claude Code first)."; }
+AGENT_CLI_OK=1; have agent || { AGENT_CLI_OK=0; warn "the 'agent' CLI is not on PATH — plugin install will be skipped (install Agent first)."; }
 ok "repo: $REPO"
 ok "project key: $PIN"
 
@@ -108,7 +108,7 @@ else
   fi
 fi
 have lodestar || die "lodestar still not on PATH after install."
-# Health probe (CLAUDE.md guardrail #3)
+# Health probe (GUIDE.md guardrail #3)
 if lodestar doctor --json >/dev/null 2>&1; then
   lodestar doctor --json | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("ok") else 1)' \
     && ok "doctor: ok (problems: 0), $(lodestar --version)" || die "lodestar doctor reported problems — run: lodestar doctor --json"
@@ -137,25 +137,25 @@ if [ "$WITH_SYNCD" = 1 ]; then
   warn "to enable real-time team sync later, run lodestar-syncd with a shared PSK (see the lodestar sync guide)."
 fi
 
-# ── 2. Claude Code plugins ─────────────────────────────────────────────────────────
-if [ "$DO_PLUGINS" = 1 ] && [ "$CLAUDE_OK" = 1 ]; then
-  step "Claude Code plugins"
-  installed="$(claude plugin list 2>/dev/null || true)"
+# ── 2. Agent plugins ─────────────────────────────────────────────────────────
+if [ "$DO_PLUGINS" = 1 ] && [ "$AGENT_CLI_OK" = 1 ]; then
+  step "Agent plugins"
+  installed="$(agent plugin list 2>/dev/null || true)"
   ensure_plugin() { # $1=name  $2=marketplace
     if printf '%s' "$installed" | grep -q "$1@$2"; then ok "$1 (already installed)"; return; fi
-    if claude plugin install "$1@$2" --scope user >/dev/null 2>&1; then ok "installed $1@$2"; else warn "could not install $1@$2 (continue)"; fi
+    if agent plugin install "$1@$2" --scope user >/dev/null 2>&1; then ok "installed $1@$2"; else warn "could not install $1@$2 (continue)"; fi
   }
   # buf marketplace (github-sourced ⇒ reproducible); add if absent.
-  if ! claude plugin marketplace list 2>/dev/null | grep -q "buf-plugins"; then
-    claude plugin marketplace add "$BUF_MARKETPLACE_REPO" >/dev/null 2>&1 && ok "added marketplace buf-plugins" || warn "could not add buf-plugins marketplace"
+  if ! agent plugin marketplace list 2>/dev/null | grep -q "buf-plugins"; then
+    agent plugin marketplace add "$BUF_MARKETPLACE_REPO" >/dev/null 2>&1 && ok "added marketplace buf-plugins" || warn "could not add buf-plugins marketplace"
   fi
-  for p in "${PLUGINS_OFFICIAL[@]}"; do ensure_plugin "$p" "claude-plugins-official"; done
+  for p in "${PLUGINS_OFFICIAL[@]}"; do ensure_plugin "$p" "official-plugins"; done
   for p in "${PLUGINS_BUF[@]}";      do ensure_plugin "$p" "buf-plugins"; done
-  ok "plugins load on your next Claude Code session."
+  ok "plugins load on your next Agent session."
 elif [ "$DO_PLUGINS" = 1 ]; then
-  step "Claude Code plugins"; warn "skipped — 'claude' CLI not found."
+  step "Agent plugins"; warn "skipped — 'agent' CLI not found."
 else
-  step "Claude Code plugins"; ok "skipped (--no-plugins)"
+  step "Agent plugins"; ok "skipped (--no-plugins)"
 fi
 
 # ── 3. Structural index + verified-knowledge rehydration ───────────────────────────
@@ -190,9 +190,9 @@ cat <<EOF
    $(lodestar --version 2>/dev/null)  •  project=$PIN
    The committed settings are already in place:
      • .mcp.json            — registers the lodestar MCP for this project
-     • .claude/settings.json — SessionStart/Stop hooks (auto index + knowledge replay; non-blocking)
+     • .agents/settings.json — SessionStart/Stop hooks (auto index + knowledge replay; non-blocking)
      • .lodestar/project-id  — pins the shared knowledge store
-   ${c_b}Restart Claude Code (or run /mcp) so the lodestar server + plugins load.${c_0}
+   ${c_b}Restart Agent (or run /mcp) so the lodestar server + plugins load.${c_0}
    Solo is fine: nothing here requires a second session or the network — collaboration is
    additive (a shared store + the committed mirror) and every hook is non-blocking.
 EOF

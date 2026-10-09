@@ -18,7 +18,7 @@
 > fully-verified evolution waves that fold into `WORLD-CLASS-BACKLOG.md` and the convergence
 > loop (§6 of the master program).
 >
-> **Honesty contract (CLAUDE.md rules 2/5).** Tags as in `EXPERIENCE-ARCHITECTURE.md`:
+> **Honesty contract (GUIDE.md rules 2/5).** Tags as in `EXPERIENCE-ARCHITECTURE.md`:
 > **[built]** verified in code this session; **[proposal]** design against a partly-built
 > substrate; **[gap]** needs a feed/crate that does not exist; **[ENV]** deploy-bound, never
 > claimed in-repo. No fabricated numbers, ever. Empty-states say "—"; provenance is always
@@ -235,7 +235,7 @@ cohesion.** GW6 (multi-asset GUI) is gated on the master program's W1 core-contr
    server-side). Selection is the same Instrument everywhere, bidirectionally.
 3. **One design system** — documented, versioned, density/appearance/contrast-aware; new
    asset classes and SDK analytics compose from the same primitives and appear native.
-4. **Zero legacy** (CLAUDE.md rules 9/10) — the monolith Ticket, the redundant pair
+4. **Zero legacy** (GUIDE.md rules 9/10) — the monolith Ticket, the redundant pair
    affordances, the ad-hoc per-lane analytics chrome, and the ARIA opt-out are *deleted and
    replaced*, not paralleled. One clean current contract, GUI included.
 5. **Honest by construction** — provenance/empty-state/std-error are shared primitives and a

@@ -26,7 +26,7 @@
  *     alone, so each bucket maps to a tradeable hedge instrument and the ladder
  *     sums (to first order) to the parallel DV01.
  *
- * No method/person/vendor names appear in identifiers (CLAUDE.md rule 8); the
+ * No method/person/vendor names appear in identifiers (GUIDE.md rule 8); the
  * mathematical provenance is documented here, never in API names.
  */
 

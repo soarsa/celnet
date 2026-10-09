@@ -57,7 +57,7 @@
 //! The federated edge speaks the **same** one `celnet-proto` contract on both sides
 //! (it is a `celnet_client::Client` to the backends and a `RiskService` to its own
 //! callers). There is no `schema_version`, no N/N-1 negotiation, no federation-only
-//! message — the wire is unchanged (`CLAUDE.md` rule 9).
+//! message — the wire is unchanged (`GUIDE.md` rule 9).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

@@ -38,7 +38,8 @@ lcov.info
 gui/**/*.tsbuildinfo
 
 # Workflow worktree-isolation checkouts (transient)
-.claude/worktrees/
+.agents/worktrees/
+.agents/
 
 # Transient Playwright-MCP browser-debug console logs (not source)
 .playwright-mcp/

@@ -292,7 +292,7 @@ built `arc-swap` model swap and a SHADOW-style pre-warm) is preserved per shard.
 The distributed layer adds a **router-coordinated rolling upgrade**: drain and cut over **one
 shard at a time** while hot standbys cover, preserving zero dropped connections and zero
 in-flight quote/order loss across the fleet. There is **no mixed-version window** — the wire
-is a single current contract, so the fleet converges to one uniform version (CLAUDE.md rule 9;
+is a single current contract, so the fleet converges to one uniform version (GUIDE.md rule 9;
 this replaces the superseded N/N-1 wire-compat model).
 
 ---
@@ -442,4 +442,4 @@ External (2026): rendezvous/HRW sharding for shard-key→node assignment (chaoti
 fair multicast for cloud financial exchanges (arXiv:2402.09527) for the many-counterparty
 proxy-tree fan-out tier (F=10, D=⌈log₁₀N⌉, VM hedging, Huygens clock-sync fairness,
 129–238 µs to 100–1000 receivers). The N/N-1 wire-compat phrasing was previously replaced
-with the single-current-contract blue-green model per CLAUDE.md rule 9.*
+with the single-current-contract blue-green model per GUIDE.md rule 9.*

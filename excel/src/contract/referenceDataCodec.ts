@@ -2,7 +2,7 @@
 // reference-data roster (`list_instruments` / `get_instrument`), the exact
 // field-for-field mirror of the server's `crates/celnet-server/src/ws/codec.rs`
 // `instrument_def_to_json` (+ its `external_id_to_json` / `family_to_json`
-// sub-encoders). Same single, current `celnet.wire` contract (CLAUDE.md rule 9),
+// sub-encoders). Same single, current `celnet.wire` contract (GUIDE.md rule 9),
 // second encoding: snake_case proto field names; exactly ONE family sub-object,
 // keyed by its family token (deposit / fra / stir_future / vanilla_irs / ois /
 // bond), detected in the server's `family_from_json` order.

@@ -4,7 +4,7 @@ State-of-the-art review and competitive benchmark of Celnet's messaging / durabi
 encoding layers against the best available low-latency designs, grounded in the actual
 code under `crates/celnet-fanout`, `crates/celnet-replog`, `crates/celnet-journal`, and
 `crates/celnet-router`. Provenance (Aeron, SBE, Chronicle, Disruptor, Raft) appears in
-this doc and in code comments **only** — never in product identifiers (CLAUDE.md rule 8).
+this doc and in code comments **only** — never in product identifiers (GUIDE.md rule 8).
 
 > Honesty note: every "we" claim below is anchored to a named file/line in this repo.
 > Every external claim is anchored to a cited URL. Where the comparison is to a JVM
@@ -245,7 +245,7 @@ fixed-offset zero-copy codec (SBE-style) is the SOTA and protobuf is not. Becaus
 is itself deploy-gated (`docs/SCALE-OUT.md` §5/§11), this is a *future* gap, not a current
 defect. Our **unversioned** contract is actually a *good fit* for SBE-style fixed layout:
 SBE's main cost (schema versioning machinery) is something we explicitly don't need
-(CLAUDE.md rule 9).
+(GUIDE.md rule 9).
 
 ---
 

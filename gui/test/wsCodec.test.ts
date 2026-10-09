@@ -1,6 +1,6 @@
 /**
  * wsCodec round-trip identity tests — the GUI end of the ONE `celnet.wire`
- * contract (CLAUDE.md rule 9). For every value type with both an encoder and a
+ * contract (GUIDE.md rule 9). For every value type with both an encoder and a
  * decoder, `fromWire(toWire(x)) === x`: the snake_case / numeric-enum JSON the
  * server speaks is reconstructed losslessly on the way back in. We also pin the
  * frame (de)serialization that carries 64-bit `bigint` tokens without the

@@ -108,7 +108,7 @@ function basketCorrelationMatrix(n: number, rho: number): number[] {
  * successful Cholesky with positive pivots) — the exact admissibility the server's
  * `cholesky` enforces. Used to warn in the ticket before a non-SPD request reaches
  * the pricer (which rejects it as `NotPositiveDefinite`). Provenance documented
- * here only, never in an identifier (CLAUDE.md rule 8).
+ * here only, never in an identifier (GUIDE.md rule 8).
  */
 function choleskyLowerOk(rowMajor: number[], n: number): boolean {
   const l: number[][] = Array.from({ length: n }, () => new Array<number>(n).fill(0));

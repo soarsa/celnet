@@ -6,7 +6,7 @@
 > current Celnet wire contract documented in `docs/API-CLIENTS.md` (`celnet-proto` →
 > `celnet-client` typed SDK; gRPC primary, WebSocket JSON-mirror designed). One contract,
 > two transports — the GUI is just another consumer of that contract, never a fork of it
-> (CLAUDE.md rule 9: no versioned APIs).
+> (GUIDE.md rule 9: no versioned APIs).
 >
 > North star: **out-intuit and out-function SynOption Optimus** (and every incumbent) with
 > an Apple-grade interface — calm, deep, fast, and correct. We earn the word *beautiful* by
@@ -148,7 +148,7 @@ Left rail workspaces (each a hero screen in §4):
 | ⊞  | **Risk** (scenario / what-if grid) | `SurfaceService.Scenario` (+ Greeks from quotes/positions) |
 | Σ  | **Positions / P&L** | *designed-but-not-on-wire* (`GetPosition`/`AttributePnl`, API-v2) |
 
-> Honesty note (CLAUDE.md rule 5/10, no overclaim): the **Positions/P&L** workspace is
+> Honesty note (GUIDE.md rule 5/10, no overclaim): the **Positions/P&L** workspace is
 > designed here but depends on the API-v2 `GetPosition`/`AttributePnl` services that
 > `docs/API-CLIENTS.md` §7 lists as *not yet on the wire*. It ships when that contract does;
 > the GUI build wave must gate it behind that capability, not stub fake P&L.
@@ -430,9 +430,9 @@ Web wins on reach + distribution + streaming, which matter most for a multi-tena
 hot-upgradable platform serving the CelNet front end and external MMs. SwiftUI's only decisive
 edge is free Liquid-Glass fidelity — which we *approximate* well enough in CSS and reserve
 the native build for a later "pro desktop" lane over the **same** typed SDK (no contract
-fork — CLAUDE.md rule 9).
+fork — GUIDE.md rule 9).
 
-### 6.2 Concrete web stack (all OSS / permissive — CLAUDE.md rule 7)
+### 6.2 Concrete web stack (all OSS / permissive — GUIDE.md rule 7)
 
 - **Framework:** React 19 + TypeScript, **Vite** build. (MIT.)
 - **State / streaming:** TanStack Query for request/response (Price/Quote); a thin
@@ -503,7 +503,7 @@ fork — CLAUDE.md rule 9).
 
 The GUI consumes the **one** current contract; anything marked API-v2/designed is drawn here
 for completeness but must be capability-gated in the build so the front end never implies
-data the wire doesn't carry (CLAUDE.md rules 5 & 10).
+data the wire doesn't carry (GUIDE.md rules 5 & 10).
 
 ---
 
@@ -536,7 +536,7 @@ data the wire doesn't carry (CLAUDE.md rules 5 & 10).
    (`docs/API-CLIENTS.md` §2). *Mitigation:* ship on gRPC-Web/Connect now; swap to the mirror
    when it lands, with no UI change (types generated from the same contract).
 4. **Capability over-draw.** Positions/P&L (`GetPosition`/`AttributePnl`) is still not on the
-   wire. *Mitigation:* capability-gate that workspace; never render fake P&L (CLAUDE.md rule 2).
+   wire. *Mitigation:* capability-gate that workspace; never render fake P&L (GUIDE.md rule 2).
    (Click-to-trade is no longer a gap — the multiplex `StreamSession` + `Execute` shipped.)
 5. **Render budget under IB-scale fan-out.** 10k-row streams can blow the frame budget.
    *Mitigation:* virtualization + per-frame conflation + worker decode (§6.3); measured P99

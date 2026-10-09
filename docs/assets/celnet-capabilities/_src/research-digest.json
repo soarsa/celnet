@@ -192,7 +192,7 @@
      "name": "Zero-allocation core-pinned hot pricing path",
      "description": "Non-async busy-poll PricingCore pinned to an isolated core (via core_affinity) that turns celnet-vanilla closed-form GK + the full Greek set into price+Greeks with zero heap allocation on the path \u2014 all pools pre-sized at construction, no locks, no syscalls, no synchronous logging. PricingCore::run drives the loop with a race-free shutdown doing a final lossless drain. Proven, not asserted: tests/zero_alloc.rs (hot_pricing_loop_allocates_zero) asserts zero heap allocations under a counting global allocator, with a deliberate-alloc negative control.",
      "state": "Shipped",
-     "evidence": "crates/celnet-engine/src/core.rs, crates/celnet-engine/src/rt.rs (pin_current_thread_to_core), crates/celnet-engine/tests/zero_alloc.rs:143; CLAUDE.md ledger WS-F DONE; docs/ARCHITECTURE.md \u00a73.3",
+     "evidence": "crates/celnet-engine/src/core.rs, crates/celnet-engine/src/rt.rs (pin_current_thread_to_core), crates/celnet-engine/tests/zero_alloc.rs:143; GUIDE.md ledger WS-F DONE; docs/ARCHITECTURE.md \u00a73.3",
      "confidence": "high"
     },
     {
@@ -220,21 +220,21 @@
      "name": "Durable crash-recovery journal (fsync'd CRC-32 WAL)",
      "description": "celnet-journal: dependency-free, fsync'd, append-only, sequence-ordered log. Each record is payload_len(u32 LE)|sequence(u64 LE)|payload|crc32(u32 LE) with an IEEE CRC-32 over header+payload. append() returns only after File::sync_data flushes to stable storage (and open() fsyncs the parent directory once for first-creation durability). On open a torn tail (truncated final frame or CRC fail on last record) heals to the last good record and truncates; a CRC-valid but non-monotonic-sequence interior record is surfaced as JournalError::CorruptInterior rather than healed. MAX_PAYLOAD_LEN guards the recovery allocation. Wired into celnet-engine::journal: DurableBook fsyncs each booked line/accepted mark via the SHARED handoff byte codec (write_book_entry/read_book_entry \u2014 no format fork), and recover() replays at startup to rebuild BookState+MarketState that reprices bit-identically. Strictly off the hot path (pricing_a_journalled_book_allocates_zero proves price() never touches the journal).",
      "state": "Shipped",
-     "evidence": "crates/celnet-journal/src/lib.rs, crates/celnet-journal/src/crc32.rs, crates/celnet-journal/src/tests.rs (10 tests); crates/celnet-engine/src/journal.rs; crates/celnet-engine/tests/recovery.rs:90, tests/zero_alloc.rs:346; CLAUDE.md ledger (celnet-journal DONE, closes SCALE-OUT \u00a78 gap, task #37)",
+     "evidence": "crates/celnet-journal/src/lib.rs, crates/celnet-journal/src/crc32.rs, crates/celnet-journal/src/tests.rs (10 tests); crates/celnet-engine/src/journal.rs; crates/celnet-engine/tests/recovery.rs:90, tests/zero_alloc.rs:346; GUIDE.md ledger (celnet-journal DONE, closes SCALE-OUT \u00a78 gap, task #37)",
      "confidence": "high"
     },
     {
      "name": "Journal checkpoint/compaction cycle",
      "description": "An unbounded append-only log replays in time linear in its length; the intended bound is a checkpoint-watermark + compaction cycle (snapshot rebuilt state, write a fresh log of records after the watermark, fsync, atomic rename(2) over the old log, replay only the residual tail at startup, sequence numbers stay globally monotonic). Honestly documented as designed in module docs and explicitly NOT implemented in this first cut (no placeholder).",
      "state": "Designed",
-     "evidence": "crates/celnet-journal/src/lib.rs (Checkpointing & compaction design note \u2014 not yet implemented); CLAUDE.md ledger ('Compaction/checkpoint designed in module docs, honestly not built')",
+     "evidence": "crates/celnet-journal/src/lib.rs (Checkpointing & compaction design note \u2014 not yet implemented); GUIDE.md ledger ('Compaction/checkpoint designed in module docs, honestly not built')",
      "confidence": "high"
     },
     {
      "name": "Cross-platform GPU PricingBackend (wgpu/Metal/Vulkan/DX12, f32) with f64 CPU oracle",
      "description": "celnet-gpu exposes a scalar-generic PricingBackend trait (simulate_paths/reduce_payoff, F: Scalar over f64/f32) with two interchangeable impls: CpuBackend (pure-Rust f64 reference oracle, deterministic pairwise/tree-sum reduction) and GpuBackend (wgpu WGSL compute over Metal/Vulkan/GLES/DX12, f32, on-device single-asset GBM terminal Monte-Carlo). GpuBackend probes for an adapter at runtime and falls back to CpuBackend when none is available, so it runs headless in CI (Mesa Lavapipe). Prices single-asset GBM vanilla terminals end-to-end today; PathSpec.steps is a wired-but-reserved field for forthcoming path-dependent (barrier/touch/Asian) kernels. No CubeCL/CUDA dependency in the tree.",
      "state": "Shipped",
-     "evidence": "crates/celnet-gpu/src/backend.rs (PricingBackend/PathSpec), src/cpu.rs (CpuBackend), src/gpu.rs (GpuBackend), src/lib.rs; docs/ARCHITECTURE.md \u00a74; CLAUDE.md ledger WS-E DONE(core)",
+     "evidence": "crates/celnet-gpu/src/backend.rs (PricingBackend/PathSpec), src/cpu.rs (CpuBackend), src/gpu.rs (GpuBackend), src/lib.rs; docs/ARCHITECTURE.md \u00a74; GUIDE.md ledger WS-E DONE(core)",
      "confidence": "high"
     },
     {
@@ -262,7 +262,7 @@
      "name": "Zero-cost observability (HdrHistogram p50/p99/p99.9 + bounded drop-on-full telemetry ring)",
      "description": "Hot core only bumps CachePadded Relaxed atomic counters and pushes one POD PriceSample into a bounded wait-free SPSC ring; on a full ring the sample is dropped (telemetry lossy by design). An off-core drain folds samples into HdrHistograms with coordinated-omission correction (record_correct against the expected inter-arrival interval) reporting p50/p99/p99.9/p99.99, updates the metrics 0.24 facade and emits tracing spans. celnet-observability owns the rings/drains/histograms so celnet-engine takes no tracing/hdrhistogram/metrics dependency. A structured #[repr(u16)] ErrorClass travels inside the POD sample (no string/alloc on the core). Audit (quote/trade lifecycle) is a SEPARATE lossless, back-pressured, fsync'd ring that never drops a booking event.",
      "state": "Shipped",
-     "evidence": "crates/celnet-observability/src/channel.rs, src/latency.rs:1-2 (p50/p99/p99.9/p99.99, coordinated-omission); docs/OBSERVABILITY.md \u00a71/\u00a73/\u00a76; CLAUDE.md crate map (celnet-observability)",
+     "evidence": "crates/celnet-observability/src/channel.rs, src/latency.rs:1-2 (p50/p99/p99.9/p99.99, coordinated-omission); docs/OBSERVABILITY.md \u00a71/\u00a73/\u00a76; GUIDE.md crate map (celnet-observability)",
      "confidence": "high"
     },
     {
@@ -276,7 +276,7 @@
      "name": "Cross-fleet distributed risk / shard fan-out (router tier, HRW map, replicated log, hot-standby)",
      "description": "Stateless HRW/rendezvous shard router, versioned gossiped partition map, thin Raft/Aeron-style replicated event log feeding node-local snapshots, in-proc LMAX-disruptor SPMC fan-out ring, SO_REUSEPORT sharded accept + eBPF steering, hot-standby + deterministic replay \u2014 the whole cross-node fleet layer is designed-only; no celnet-cluster/celnet-router crate exists and no code performs cross-node routing/consensus. The single-shard node-local substrate (arc-swap snapshot, seqlock, rtrb SPSC, blue-green handoff, multi-source aggregation) that the fleet would compose IS built.",
      "state": "Designed",
-     "evidence": "docs/SCALE-OUT.md \u00a70 table (Designed only rows), \u00a712 ('none of these exist in the tree yet'); CLAUDE.md WS work-stream ledger",
+     "evidence": "docs/SCALE-OUT.md \u00a70 table (Designed only rows), \u00a712 ('none of these exist in the tree yet'); GUIDE.md WS work-stream ledger",
      "confidence": "high"
     }
    ],
@@ -302,7 +302,7 @@
     "Wire-path RFQ round-trip, CI-gate sizing (32 RFS + 16 RFQ, 20k round-trips, the committed baseline): p50 388.4 \u00b5s, p99 685.1 \u00b5s, p99.9 1188.9 \u00b5s, min 90.2 \u00b5s, ~40.1k RFQ/s \u2014 README.md / baselines/wire_path.json",
     "Budget targets (docs/ARCHITECTURE.md \u00a71.2): vanilla price+full Greeks p50 \u2264 2 \u00b5s / p99 \u2264 10 \u00b5s / p99.9 \u2264 25 \u00b5s; surface rebuild (pair, all tenors) p99 \u2264 150 \u00b5s; streaming throughput \u2265 1M updates/s/core; path-dependent exotic (GPU) interactive \u2264 50 ms; warm restart with state handoff \u2264 1 s / cold start \u2264 10 s",
     "RING_CAPACITY = 1<<12 (4096) records per hot-path SPSC ring \u2014 crates/celnet-engine/src/rt.rs",
-    "Test counts grounding shipped state: celnet-journal 10 tests; engine zero-alloc/recovery/concurrency suites green; CLAUDE.md ledger '11 journal + 29 engine tests green, full just check green'"
+    "Test counts grounding shipped state: celnet-journal 10 tests; engine zero-alloc/recovery/concurrency suites green; GUIDE.md ledger '11 journal + 29 engine tests green, full just check green'"
    ],
    "caveats": [
     "Wire-path latencies (p50 388\u2013715 \u00b5s) are loopback on the dev Apple M4: they include the full gRPC/HTTP-2 + tonic codec + async\u21c4core SPSC hop + pricing, but NOT a physical NIC/network. They are an upper bound on compute+framing and a lower bound on real cross-host latency; the durable claim is the in-core/wire-path ratio (core ~4 orders of magnitude below the framing cost) and the tail shape, not an absolute cross-host headline. p50/p99 are inflated by closed-loop concurrency; the ~90 \u00b5s min is the closer unloaded-floor proxy.",
@@ -334,7 +334,7 @@
      "name": "Book-shaped risk: bucketed vega + cross-gamma stencil + theta-roll",
      "description": "Per-instrument book-shaped risk over a scenario: vega bucketed by (tenor, delta) pillar, a cross-gamma 2-D stencil (mixed second derivative per named factor-pair, incl. FACTOR_TIME), and a theta-roll evaluating value at each rolled-forward horizon. Exposed on the wire as RiskBucketRequest -> BucketedRisk and served by the surface scenario RPC.",
      "state": "Shipped",
-     "evidence": "crates/celnet-server/src/services/surface.rs (fn scenario L495, fn bucketed_risk L625, fn cross_gamma_value L699); crates/celnet-proto/proto/celnet.proto (RiskBucketRequest L1236, VegaBucket L1292, CrossGamma L1305, BucketedRisk L1318 with theta_roll L1326); CLAUDE.md ledger 2026-05-30 'Scenario now book-shaped: theta-roll (FACTOR_TIME) axis... bucketed vega per (tenor,delta) pillar, cross-gamma 2-D stencil'",
+     "evidence": "crates/celnet-server/src/services/surface.rs (fn scenario L495, fn bucketed_risk L625, fn cross_gamma_value L699); crates/celnet-proto/proto/celnet.proto (RiskBucketRequest L1236, VegaBucket L1292, CrossGamma L1305, BucketedRisk L1318 with theta_roll L1326); GUIDE.md ledger 2026-05-30 'Scenario now book-shaped: theta-roll (FACTOR_TIME) axis... bucketed vega per (tenor,delta) pillar, cross-gamma 2-D stencil'",
      "confidence": "high"
     },
     {
@@ -419,7 +419,7 @@
     "No competitor publishes a portfolio-risk roll-up latency/throughput number; Celnet can only claim to be first-to-publish, not to beat a non-existent number (RISK-HIERARCHY \u00a77.4)"
    ],
    "caveats": [
-    "The four firm-wide risk crates (celnet-risk-normalize, celnet-risk-cube, celnet-limits, celnet-entitlements) are IN-FLIGHT, not Shipped: they compile and pass 39 tests but are git-untracked (?? in git status), have no commit history, and are NOT yet wired into celnet-server, celnet-proto, or celnet-client. Per CLAUDE.md, Shipped requires committed + gated green in the implementation ledger; these are not yet in the ledger.",
+    "The four firm-wide risk crates (celnet-risk-normalize, celnet-risk-cube, celnet-limits, celnet-entitlements) are IN-FLIGHT, not Shipped: they compile and pass 39 tests but are git-untracked (?? in git status), have no commit history, and are NOT yet wired into celnet-server, celnet-proto, or celnet-client. Per GUIDE.md, Shipped requires committed + gated green in the implementation ledger; these are not yet in the ledger.",
     "docs/EXPERIENCE-ARCHITECTURE.md L155-158 explicitly marks the aggregation layer as '[proposal/gap] unbuilt' while engine/server BucketedRisk is '[built]' \u2014 this corpus snapshot predates the in-flight crate work, so treat the crates as actively-landing, not yet integrated.",
     "Shipped book-shaped risk (bucketed vega / cross-gamma / theta-roll) is computed at the SINGLE-INSTRUMENT / single-expiry level in the server scenario service for a flat scenario vol; it is NOT the firm-wide multi-position cube roll-up (that is the in-flight celnet-risk-cube).",
     "DEFERRED: AAD / batched-GPU adjoint Greeks for non-additive reval. Current celnet-risk-cube non-additive measures use bump-and-revalue (scenario P&L over PositionRisk); AAD appears only in doc-comments. RISK-HIERARCHY \u00a73.3 flags AAD as the single most important throughput requirement and the top technical risk \u2014 the firm-hierarchical scale claim depends on it.",
@@ -445,7 +445,7 @@
      "name": "Frozen user-extensibility SDK contract (celnet-plugin-api)",
      "description": "A dependency-light (depends only on the two frozen crates celnet_types + celnet_core), single-current-version contract defining the three model seams: PricingModel (price + opt-in full 14-Greek set), SmileModel (extends celnet_core::Smile, adds try_implied_vol + check_no_arbitrage), and Calibration (generic over produced model + target type; yields a ready-to-use model + CalibrationReport). Self-describing via ModelDescriptor {ModelId, ModelKind, GreekSupport} routed through a ModelRegistry discovery trait so the engine picks a model by purpose without knowing its concrete type or tier. No schema_version, no negotiation (guardrail 9). #![forbid(unsafe_code)].",
      "state": "Shipped",
-     "evidence": "crates/celnet-plugin-api/src/{lib.rs,pricing.rs,smile.rs,calibration.rs,descriptor.rs,registry.rs}; CLAUDE.md ledger WS-0/G0 'celnet-plugin-api (SDK traits + WIT + validated example)' and work-stream table WS-G DONE",
+     "evidence": "crates/celnet-plugin-api/src/{lib.rs,pricing.rs,smile.rs,calibration.rs,descriptor.rs,registry.rs}; GUIDE.md ledger WS-0/G0 'celnet-plugin-api (SDK traits + WIT + validated example)' and work-stream table WS-G DONE",
      "confidence": "high"
     },
     {
@@ -459,14 +459,14 @@
      "name": "Tier-0 native model registry (HostModel seam, hot path)",
      "description": "First-party models implementing celnet_plugin_api::PricingModel run at full native speed with no ABI or sandbox cost via NativeModel<M>, a generic monomorphized, inlinable, zero-per-call-allocation adapter onto the tier-agnostic HostModel seam. Domain errors (PluginError) wrap verbatim into HostError::Model so a caller observes the same model verdict whether native or interpreted \u2014 the basis of the Tier-0==Tier-2 interchangeability gate.",
      "state": "Shipped",
-     "evidence": "crates/celnet-plugin-host/src/native.rs; crates/celnet-plugin-host/src/model.rs (HostModel trait); CLAUDE.md ledger 'WS-G plugin host built' \u2014 Tier-0 native registry via tier-blind HostModel seam",
+     "evidence": "crates/celnet-plugin-host/src/native.rs; crates/celnet-plugin-host/src/model.rs (HostModel trait); GUIDE.md ledger 'WS-G plugin host built' \u2014 Tier-0 native registry via tier-blind HostModel seam",
      "confidence": "high"
     },
     {
      "name": "Tier-2 wasmi deterministic, fuel-metered, no-WASI sandbox for untrusted user models",
      "description": "Untrusted user models run as core Wasm modules on wasmi 1.0.9 (pure-Rust interpreter, no JIT/native-codegen) \u2014 the advisory-clean replacement for the originally-planned wasmtime (blocked by 2026 RustSec advisories under guardrail 7 + cargo-deny). Engine Config consume_fuel on, with the accepted Wasm feature set deliberately narrowed (memory64/bulk_memory/reference_types/tail_call disabled) to shrink attack surface; a guest using a disabled proposal fails validation. Crate contains no unsafe \u2014 wasmi's safe interpreter is the only execution substrate.",
      "state": "Shipped",
-     "evidence": "crates/celnet-plugin-host/src/wasm.rs (WasmModel, sandbox_config); docs/PLUGIN-HOST-ALT.md \u00a73.1/\u00a74; CLAUDE.md ledger 'WS-G plugin host built \u2014 wasmtime blocker CLOSED ... wasmi 1.0.9'",
+     "evidence": "crates/celnet-plugin-host/src/wasm.rs (WasmModel, sandbox_config); docs/PLUGIN-HOST-ALT.md \u00a73.1/\u00a74; GUIDE.md ledger 'WS-G plugin host built \u2014 wasmtime blocker CLOSED ... wasmi 1.0.9'",
      "confidence": "high"
     },
     {
@@ -515,14 +515,14 @@
      "name": "Tier-1 trusted signed-.so plugins via stabby (designed)",
      "description": "A trusted-partner tier loading code-signed, publisher-allowlisted native .so/.dylib exporting celnet-plugin-api trait objects at full native speed via stabby 72.x (stable Rust ABI; abi_stable banned as unmaintained). No sandbox/determinism/metering (native code), so admissible ONLY for signed trusted publishers, never untrusted user code; the only unsafe (a libloading dlopen shim) gated behind the signature check. Designed in PLUGIN-HOST-ALT.md \u00a73.4/\u00a74, deny-vetted, not yet wired.",
      "state": "Designed",
-     "evidence": "docs/PLUGIN-HOST-ALT.md \u00a73.4, \u00a74 Tier-1, \u00a77 ADR; CLAUDE.md ledger 'Tier-1 stabby signed-.so ... designed, not yet wired'",
+     "evidence": "docs/PLUGIN-HOST-ALT.md \u00a73.4, \u00a74 Tier-1, \u00a77 ADR; GUIDE.md ledger 'Tier-1 stabby signed-.so ... designed, not yet wired'",
      "confidence": "high"
     },
     {
      "name": "Tier-3 Linux Landlock+seccomp defense-in-depth ring (designed)",
      "description": "An optional, config-gated, Linux-only outer ring running the wasmi host in a child process confined by Landlock (filesystem/net/IPC scope) + seccomp-bpf (syscall allow-list) for highest-distrust multi-tenant deployments. Not load-bearing for correctness (R1-R3 stay with the wasmi tier); unavailable on the M4/macOS dev target so it cannot be the primary portable mechanism. Designed in PLUGIN-HOST-ALT.md \u00a73.5/\u00a74, not built.",
      "state": "Designed",
-     "evidence": "docs/PLUGIN-HOST-ALT.md \u00a73.5, \u00a74 Tier-3, \u00a77 ADR; CLAUDE.md ledger 'Tier-3 Landlock ring (designed in PLUGIN-HOST-ALT.md)'",
+     "evidence": "docs/PLUGIN-HOST-ALT.md \u00a73.5, \u00a74 Tier-3, \u00a77 ADR; GUIDE.md ledger 'Tier-3 Landlock ring (designed in PLUGIN-HOST-ALT.md)'",
      "confidence": "high"
     }
    ],
@@ -540,7 +540,7 @@
     "Tier-2 resource caps: 64 MiB (1024 pages) max guest linear memory, 4096 max table elements, 1 memory / 1 table / 1 instance (host.rs) \u2014 hard ceilings enforced in-engine"
    ],
    "caveats": [
-    "Tier-1 (stabby signed-.so trusted-partner) and Tier-3 (Linux Landlock+seccomp outer ring) are Designed-only in docs/PLUGIN-HOST-ALT.md and explicitly 'designed, not yet wired' per the CLAUDE.md ledger \u2014 not Shipped.",
+    "Tier-1 (stabby signed-.so trusted-partner) and Tier-3 (Linux Landlock+seccomp outer ring) are Designed-only in docs/PLUGIN-HOST-ALT.md and explicitly 'designed, not yet wired' per the GUIDE.md ledger \u2014 not Shipped.",
     "Bit-identity between an arbitrary Tier-0 native model and a Tier-2 Wasm model is NOT a general guarantee: the crate's own lib.rs and replay.rs document that it holds only when both perform the same IEEE-754 op sequence through the same rust-lang/libm; otherwise agreement is within the model's documented numerical tolerance, and the bit-exact assert_agree is the wrong gate (use a tolerance comparator). The strong bit-identity claim is proven only for a deliberately op-order-matched twin pair in tests/sandbox.rs.",
     "wasmi hosts core Wasm modules, not the Component Model (wasmi's CM is WIP), so the host hand-rolls the WIT\u2192core-module (ptr,len) ABI lowering; the WIT world is a frozen spec/doc mirror, not generated component bindings.",
     "The granted capability surface is intentionally minimal (5 libm math functions, no market-data lookups wired) \u2014 the design document mentions market-data lookups as a possible host-import but only the celnet_core::math primitives are actually granted in host.rs::GRANTED_IMPORTS.",
@@ -995,7 +995,7 @@
      "name": "Out-functions: open customer-extensible quant SDK runtime",
      "description": "The headline differentiator no incumbent offers, now shipped end-to-end: tiered celnet-plugin-host (Tier-0 native registry + Tier-2 wasmi fuel-metered, no-WASI, deterministic sandbox) behind the frozen celnet-plugin-api, with bit-identical replay. All four WS-G gates green (capability-denial, bounded fuel-exhaustion, replay bit-identity, Tier0==Tier2). Matrix marks all incumbents as lacking a customer-extensible quant SDK.",
      "state": "Shipped",
-     "evidence": "docs/CAPABILITIES-VS-COMPETITION.md \u00a76 'Customer quant SDK runtime \u2705 shipped'; GA-READINESS.md \u00a71 plugin/SDK row (MET); CLAUDE.md ledger WS-G DONE",
+     "evidence": "docs/CAPABILITIES-VS-COMPETITION.md \u00a76 'Customer quant SDK runtime \u2705 shipped'; GA-READINESS.md \u00a71 plugin/SDK row (MET); GUIDE.md ledger WS-G DONE",
      "confidence": "high"
     },
     {
@@ -1170,7 +1170,7 @@
   ],
   "honesty_ledger": [
    "IN-FLIGHT \u2014 celnet-calendar ON/SN + IMM resolver fix: corrects the committed bug where Tenor::Overnight resolves as SpotNext, and adds the n-th third-Wednesday IMM resolver. The fix lives only in the uncommitted working tree (+381 lines in fx.rs); git HEAD still carries the ON-resolves-as-SN bug. Landing via the running workflow \u2014 do NOT present as Shipped.",
-   "IN-FLIGHT \u2014 Firm-wide risk-hierarchy crates: celnet-risk-normalize (convention-canonicalized common-numeraire netting), celnet-risk-cube (immutable OLAP position-fact cube, additive incremental roll-up + per-node non-additive re-derivation), celnet-limits (cascading board\u2192entity\u2192desk\u2192book\u2192trader limit tree, pre/post-trade checks), celnet-entitlements (server-side pre-aggregation pruning). They compile and pass 39 unit tests (10/10/11/8) but are git-untracked, have no commit history, and are NOT yet wired into celnet-server/-proto/-client. Per CLAUDE.md, Shipped requires committed + gated green \u2014 these are In-flight.",
+   "IN-FLIGHT \u2014 Firm-wide risk-hierarchy crates: celnet-risk-normalize (convention-canonicalized common-numeraire netting), celnet-risk-cube (immutable OLAP position-fact cube, additive incremental roll-up + per-node non-additive re-derivation), celnet-limits (cascading board\u2192entity\u2192desk\u2192book\u2192trader limit tree, pre/post-trade checks), celnet-entitlements (server-side pre-aggregation pruning). They compile and pass 39 unit tests (10/10/11/8) but are git-untracked, have no commit history, and are NOT yet wired into celnet-server/-proto/-client. Per GUIDE.md, Shipped requires committed + gated green \u2014 these are In-flight.",
    "IN-FLIGHT \u2014 celnet-proto contract extension: SmileModel selector (MARKET_HEDGE/STOCHASTIC_VOL/PARAMETRIC/PARAMETRIC_SURFACE) on MarkSurface/Scenario. Proto + server wiring sit uncommitted in the working tree (+238/-8 proto lines); GUI shows honest 'broker-calibrated' provenance only and the SDK sends smile_model: None today.",
    "IN-FLIGHT \u2014 celnet-proto contract extension: market-series feed (MarketSeriesSubscribe/Point, MarketObservable ATM_VOL/SPOT/RR/BF/FORWARD) multiplexed onto StreamSession for the GUI TrendModes. Contract defined in the working tree; proto comment states the server implements the feed in a later phase \u2014 only the 'Premium' trend mode is live in the GUI, the others are honestly disabled.",
    "IN-FLIGHT \u2014 celnet-proto contract extension: attribution identity (BookId/Owner/AttributionRecord on quote/trade/stream) \u2014 the who's-trading dimension the risk roll-up keys on. Defined in the working tree; celnet-server/src/services/attribution.rs is also untracked; landing with the risk workstream.",

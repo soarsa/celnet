@@ -14,7 +14,7 @@ metadata:
 - the **Excel plugin** (`excel/`, the `CELNET.*` Office.js functions),
 - the **docs** (`docs/INTERFACES.md` registry, design corpus, SDK/Excel guides).
 
-**Why:** one clean current contract with no versioning (CLAUDE.md guardrail #9) only stays clean if every surface evolves together; otherwise the GUI, SDK, and Excel drift and the "intuitive, consistent" promise breaks. This extends guardrails #9 (one contract) and #11 (trader-centric API, evolving SDKs).
+**Why:** one clean current contract with no versioning (GUIDE.md guardrail #9) only stays clean if every surface evolves together; otherwise the GUI, SDK, and Excel drift and the "intuitive, consistent" promise breaks. This extends guardrails #9 (one contract) and #11 (trader-centric API, evolving SDKs).
 
 **How to apply (every feature):**
 1. Add the capability to the API contract first (the engine/server computes it — NOT the GUI). Example tension to fix: the GUI's Book view currently aggregates risk **client-side** by looping `transport.scenario`; the right design is a **server-side aggregate/portfolio-risk API** the GUI *and* SDK *and* Excel all call (see [[session-state-2026-05-31]] risk-hierarchy work).

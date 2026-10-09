@@ -5,7 +5,7 @@
 > live-status numbers are stale; it is retained as a record of intent, not as current state.
 > The live source of truth is: **`docs/POST-GA-ROADMAP.md`** (which explicitly supersedes the
 > Gap→closure map for post-GA scope — see its §7), the **`docs/COMPLETION-PROGRAM.md`** 12-wave
-> program, the **`docs/POST-COMPLETION-AUDIT.md`** gap audit, and the `CLAUDE.md` ledger for
+> program, the **`docs/POST-COMPLETION-AUDIT.md`** gap audit, and the `GUIDE.md` ledger for
 > day-to-day status. Celnet is now functionally complete in-repo (34 crates; `just check`
 > 1306/1306). Do not treat the "Where we are" / sequencing below as current.
 

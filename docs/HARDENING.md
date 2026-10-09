@@ -2,7 +2,7 @@
 
 How Celnet's correctness and robustness are *proven*, not asserted. This is the
 verification companion to `docs/DELIVERY-MODEL.md` (how we build in lanes) and
-`CLAUDE.md` guardrail #5 (every change passes the gates; numerical code is
+`GUIDE.md` guardrail #5 (every change passes the gates; numerical code is
 validated against references). It defines the hardening gates, where they run,
 and records the latest measured numbers.
 

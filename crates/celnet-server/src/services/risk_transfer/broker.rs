@@ -4,7 +4,7 @@
 //! polling — the four-eyes counterparty side of `docs/hedging/RISK-TRANSFER-REQUIREMENTS.md`
 //! §9.2.
 //!
-//! # Design (CLAUDE.md §11: bounded-queue offload, never stall a publisher)
+//! # Design (GUIDE.md §11: bounded-queue offload, never stall a publisher)
 //!
 //! [`RiskTransferBroker`] mirrors the desk [`NotificationBroker`](super::super::desk::notify)
 //! arm-for-arm: a shared registry mapping each subscriber (one per connected client /
@@ -122,7 +122,7 @@ impl RiskTransferBroker {
                 };
                 match sub.tx.try_send(frame) {
                     Ok(()) => {}
-                    // Skip-on-full: never block the publisher (CLAUDE.md §11).
+                    // Skip-on-full: never block the publisher (GUIDE.md §11).
                     Err(mpsc::error::TrySendError::Full(_)) => {}
                     Err(mpsc::error::TrySendError::Closed(_)) => closed.push(sub.id),
                 }

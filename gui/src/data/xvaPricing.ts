@@ -27,7 +27,7 @@
  * byte-identical to a finite-path MC run. This is the standard offline stance for an
  * MC product (mirroring the GUI's other MC surfaces), stated plainly, never faked.
  *
- * No method/person/vendor names appear in identifiers (CLAUDE.md rule 8); the
+ * No method/person/vendor names appear in identifiers (GUIDE.md rule 8); the
  * mathematical provenance is documented here, never in API names.
  */
 

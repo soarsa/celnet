@@ -282,7 +282,7 @@ cd gui   && npm test        # vitest: ticket/grid round-trips (if surfaced)
       are covered, and update `manage_adr` if Step 2a changed an `Underlying` signature.
 - [ ] Commit per lane as **separate green commits**, disjoint files, FX-byte-identity noted in
       each message (the proto edit is one commit; each leaf wiring its own).
-- [ ] Update `docs/IMPLEMENTATION-LEDGER.md` (newest-first) + the CLAUDE.md resume anchor +
+- [ ] Update `docs/IMPLEMENTATION-LEDGER.md` (newest-first) + the GUIDE.md resume anchor +
       memory; mark the manifest's reserved arms as **landed**.
 
 ---

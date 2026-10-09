@@ -2,7 +2,7 @@
  * Typed mirror of the single, current Celnet wire contract (`celnet.proto`,
  * package `celnet.wire`). One contract, two transports (gRPC-Web/Connect and the
  * designed WebSocket JSON-mirror) — the GUI is a consumer of that contract, never
- * a fork of it (CLAUDE.md rule 9: no versioned APIs).
+ * a fork of it (GUIDE.md rule 9: no versioned APIs).
  *
  * These shapes are written here by hand for the standalone build; when the build
  * wave wires `buf`-generated types from `celnet-proto`, this module is replaced
@@ -10,7 +10,7 @@
  * (every consumer imports from here, so the seam is one file). Field names use
  * the proto's camelCase JSON projection; enums mirror the proto enums one-to-one.
  *
- * Provenance note (CLAUDE.md rule 8): identifiers are purpose-named and
+ * Provenance note (GUIDE.md rule 8): identifiers are purpose-named and
  * vendor/research-neutral exactly as the proto demands (`VanillaInputs`, never a
  * person/method name). No mathematical-method names appear in any identifier.
  */
@@ -73,7 +73,7 @@ export type Margining = "EQUITY_STYLE" | "FUTURES_STYLE";
  * settles to (each EMTA / ISDA per-currency template names exactly one) — it is
  * convention IDENTITY, NOT a market-data input: the live fixing VALUE is an
  * estate-gated feed, never sourced in-repo, so only the identity is on the wire.
- * Purpose-named, vendor/method-neutral (CLAUDE.md rule 8).
+ * Purpose-named, vendor/method-neutral (GUIDE.md rule 8).
  */
 export type FixingSource =
   | "KRW_KFTC18"
@@ -135,7 +135,7 @@ export type AveragingStyle = "DISCRETE" | "CONTINUOUS";
  * (`celnet.wire.AsianMethod`): `CURRAN` (geometric-conditioning, the default)
  * or `TURNBULL_WAKEMAN` (two-moment lognormal matching). The mathematical
  * family each maps to lives in the server's doc comments, never in this
- * identifier (CLAUDE.md rule 8).
+ * identifier (GUIDE.md rule 8).
  */
 export type AsianMethod = "CURRAN" | "TURNBULL_WAKEMAN";
 
@@ -177,13 +177,13 @@ export type LookbackStyle = "FLOATING" | "FIXED";
  * `DISCRETE` is priced by Monte-Carlo with the Brownian-bridge extremum
  * correction over a fixed observation count, reporting a standard error
  * (`Quote.priceStdError`). The mathematical family each maps to lives in the
- * server's doc comments, never in this identifier (CLAUDE.md rule 8).
+ * server's doc comments, never in this identifier (GUIDE.md rule 8).
  */
 export type LookbackMonitoring = "CONTINUOUS" | "DISCRETE";
 
 /**
  * The pricing/booking model an instrument is priced under
- * (`celnet.wire.PricingModel`). Purpose-named, vendor/method-neutral (CLAUDE.md
+ * (`celnet.wire.PricingModel`). Purpose-named, vendor/method-neutral (GUIDE.md
  * rule 8) — the mathematical family lives in the server's doc comments, never in
  * this identifier:
  *  - `DEFAULT`          — the per-product closed-form / analytic engine (proto 0)
@@ -208,7 +208,7 @@ export type TenorUnit =
 
 /**
  * The smile-calibration model the surface is marked under (`celnet.wire.SmileModel`).
- * Vendor/method-neutral, purpose-named (CLAUDE.md rule 8) — the mathematical family
+ * Vendor/method-neutral, purpose-named (GUIDE.md rule 8) — the mathematical family
  * each maps to lives in the server's doc comments, never in this identifier:
  *  - `MARKET_HEDGE`        — the desk's market-hedge (vanna-volga) construction (default)
  *  - `STOCHASTIC_VOL`      — a stochastic-vol parameterisation fitted to the same anchors
@@ -610,7 +610,7 @@ export interface Quanto {
  * A discrete fixing schedule for path-dependent structures
  * (`celnet.wire.FixingSchedule`): the ascending fixing year fractions (each ≤ the
  * structure's expiry) and the notional that accrues at each fixing. The number of
- * fixings is `fixingYears.length`. Shared by the TARF and accumulator (CLAUDE.md
+ * fixings is `fixingYears.length`. Shared by the TARF and accumulator (GUIDE.md
  * rule 9: one current contract — the same message is reused, not forked).
  */
 export interface FixingSchedule {
@@ -1389,7 +1389,7 @@ export interface RiskBucketRequest {
 // over the org cube (`celnet-risk-cube` aggregation, `celnet-risk-normalize`
 // common-numeraire conversion, `celnet-limits` utilization/RAG,
 // `celnet-entitlements` pre-aggregation pruning). Aggregation is owned by the
-// SERVER (CLAUDE.md rule 11 / API-first parity): a client never loops positions
+// SERVER (GUIDE.md rule 11 / API-first parity): a client never loops positions
 // and sums — it lists positions, asks for a rolled-up node tree over an org
 // dimension, drills a node to its constituents, and reads limit utilization, all
 // behind this one contract. Mirrors `celnet.proto` `service RiskService`.
@@ -5863,7 +5863,7 @@ export interface CombinedTailRiskResponse {
 // dealer-quoting desk + linear-rates Book/List + notification push. The WS
 // mirror of RfqDeskService / RiskService(BookRatesPosition, ListRatesPositions)
 // / NotificationService (crates/celnet-proto/proto/celnet.proto). One current
-// contract (CLAUDE.md rule 9): a desk request carries the SAME `OisInstrument`
+// contract (GUIDE.md rule 9): a desk request carries the SAME `OisInstrument`
 // + `RatesCurveSet` the `price_rates` path prices, so a desk RFQ is priced by
 // the identical engine the `priceRates` seam exposes.
 // ---------------------------------------------------------------------------

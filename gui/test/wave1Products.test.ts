@@ -3,7 +3,7 @@
  * variance swap, volatility swap and arithmetic-average-rate Asian are encoded
  * onto the SAME `Instrument.product` oneof as vanilla/strategy, with the EXACT
  * appended wire field NAMES (`variance_swap`/`volatility_swap`/`asian_option`,
- * proto field numbers 13/14/15 — no schema_version, no renumber; CLAUDE.md
+ * proto field numbers 13/14/15 — no schema_version, no renumber; GUIDE.md
  * rule 9), and the standalone build prices each with a genuine closed form whose
  * documented limits are validated here against an independent in-test oracle.
  *

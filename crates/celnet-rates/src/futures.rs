@@ -36,7 +36,7 @@
 //!   `FI-STATUS.md`.
 //! - **Stochastic / term-structure-of-vol convexity** (single constant `σ` here).
 //!
-//! Method/paper provenance lives in prose only — never in identifiers (CLAUDE.md §8).
+//! Method/paper provenance lives in prose only — never in identifiers (GUIDE.md §8).
 
 use crate::bond::{CashBond, price_at_yield};
 use crate::curve::Curve;

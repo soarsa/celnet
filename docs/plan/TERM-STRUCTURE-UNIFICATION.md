@@ -3,7 +3,7 @@
 **Operationalizes ADR-0010** (converge FI rates onto the carry seam) with a validated,
 file:line-anchored critique and a phased, gated build order. Continues ADR-0012 (the gBSM
 options kernel unification, landed `4371f17`) into the FI/rates + stochastic-vol half of the
-platform. Honours CLAUDE.md guardrails #6/#8/#9/#10/#11 and the ADR-0010 FX-byte-identity
+platform. Honours GUIDE.md guardrails #6/#8/#9/#10/#11 and the ADR-0010 FX-byte-identity
 invariant.
 
 ## 1. Validated critique — current state (3-agent graph audit, 2026-07-01)

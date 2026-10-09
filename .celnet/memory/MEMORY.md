@@ -41,7 +41,7 @@
 - [GUI release auto-reload watcher](gui-release-auto-reload.md) — version.json poll + UpdateBanner prompts reload on new deploy; armed on UAT from 3b09ae7.
 - [Permissions capability track](permissions-capability-track.md) — action-capability authz (Action×AssetClass); requirement + kernel (1f64125) + FI desk gating (7ef07bf) shipped; tail + admin GUI + items 2-5 pending.
 - [FI platform branch program](fi-platform-branch-program.md) — branch feature/fi-reference-data MERGED to main + DELETED 2026-07-01 (origin/main ae689fc); never-merge rule RETIRED; FI work now lands on main directly.
-- [Arch program status](arch-program-status.md) — main-line items A–L mostly LANDED on origin/main (7878048); only G/D/J + orchestration tail remain; CLAUDE.md resume anchor is STALE.
+- [Arch program status](arch-program-status.md) — main-line items A–L mostly LANDED on origin/main (7878048); only G/D/J + orchestration tail remain; GUIDE.md resume anchor is STALE.
 - [FIX-sim + GUI keepalive](fix-sim-and-gui-keepalive.md) — GUI reconnect-flicker fixed via client WS heartbeat (20s); FIX quote-sim deploy needs CELNET_FIX_ADDR acceptor + logs to deploy/fix-sim-run/log; credit designs (celnet-credit) written; SecurityListRequest delegated.
 - [Server tracing subscriber](server-tracing-subscriber.md) — celnet-server had NO tracing subscriber (all tracing dropped); fixed in main.rs + added detailed login/quote logging (ships next release).
 

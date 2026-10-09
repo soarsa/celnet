@@ -54,7 +54,7 @@ pub const PROVENANCE_RING_CAPACITY: usize = 4_096;
 /// The depth of the live **intent broadcast** every connected client drains. Bounded: a
 /// client that falls this far behind is LAGGED (it drops the backlog and resumes at the
 /// newest state) rather than back-pressuring the booking tier — one slow socket must never
-/// stall risk decisions (`CLAUDE.md` §11, the same discipline as the WS RFS channel).
+/// stall risk decisions (`GUIDE.md` §11, the same discipline as the WS RFS channel).
 const INTENT_CHANNEL_DEPTH: usize = 256;
 
 /// The outcome of one [`AutoHedgeEngine::evaluate`] call.

@@ -9,7 +9,7 @@
 > *interaction model* the GUI must implement against the existing `MarkSurface` / smile / scenario
 > seam and the `MarkedSurface` / `Smile` / `BrokerQuoteSet` / `ArbReport` shapes in
 > `gui/src/data/contract.ts`. Where contract *shape* must evolve, it is flagged as a
-> single-current-contract evolution (CLAUDE.md rule 9: no versioning, evolve in place).
+> single-current-contract evolution (GUIDE.md rule 9: no versioning, evolve in place).
 > **Honesty discipline:** every external market/quant claim carries a SOURCE tag and a
 > CONFIDENCE (high/medium/low). Illustrative numbers and UX inventions are labelled. Competitor
 > *capabilities* are cited where verifiable; competitor *screen layouts* are explicitly held at
@@ -277,7 +277,7 @@ event-vol *magnitudes* and the FX wing reaction are **firm-proprietary / thinly 
 specific numbers (e.g. "FOMC ≈ 0.55% on EURUSD," "weekend weight ~0.1–0.3") are **illustrative
 placeholders pending calibration, never Celnet defaults.** [low]
 
-**Engine seam & open decisions (must be designed, not faked — CLAUDE.md gates #2/#5):**
+**Engine seam & open decisions (must be designed, not faked — GUIDE.md gates #2/#5):**
 `celnet-surface` already has the `BusinessClock` trait with `with_clock(...)`, but only the
 identity `CalendarClock` is implemented — there is **no `EventClock`** (verified in
 `termstructure.rs`). Building the event path requires:
@@ -543,7 +543,7 @@ viz/SmileChart.tsx,viz/SurfaceMesh.tsx,data/surface.ts,data/contract.ts}`.
     status; `MarkedSurface`/`Smile` surface-role + market-context (spot/fwd/depo); `BrokerQuoteSet`
     quoted-BF vs. smile-strangle + conventions + override layer; scheduled-event + interpolation-
     weight fields. *Area:* `celnet-proto` / `celnet-server` / `gui` contract mirror. *Dep:* drives
-    #3, #4, #10 (coordinate — frozen interface crate, CLAUDE.md).
+    #3, #4, #10 (coordinate — frozen interface crate, GUIDE.md).
 12. **Override-layer model** — base (auto-calibrated) + tracked nudges (single handle) and macro
     curve edits (parallel/twist/steepen ATM; widen/compress RR/BF), each revertible/attributable.
     *Area:* `gui/` + `celnet-surface` macro-edit calls (**verify/build the whole-curve edit API

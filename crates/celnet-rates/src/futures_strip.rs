@@ -19,7 +19,7 @@
 //! The convexity term reuses [`crate::futures::convexity_adjustment`], the
 //! one-factor Gaussian (constant normal vol) deterministic adjustment
 //! `½·σ²·T1·T2`. With `σ = 0` the implied forward collapses onto the futures
-//! rate (no debiasing). Method provenance lives in prose only (CLAUDE.md §8).
+//! rate (no debiasing). Method provenance lives in prose only (GUIDE.md §8).
 
 use crate::curve::{Curve, CurveError};
 use crate::futures::{StirFuture, convexity_adjustment};

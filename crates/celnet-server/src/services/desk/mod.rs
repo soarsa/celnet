@@ -13,7 +13,7 @@
 //! a received deal into the [`DealStore`] blotter and a rates position into the shared
 //! [`RatesPositionStore`] the Book workspace reads.
 //!
-//! # Pricing reuse (CLAUDE.md rule 2/8: no re-implementation, vendor-neutral)
+//! # Pricing reuse (GUIDE.md rule 2/8: no re-implementation, vendor-neutral)
 //!
 //! A submitted request is **priced through the exact same entry**
 //! ([`crate::rates_pricing::price_rates`]) `PricingService::PriceRates` and

@@ -1,9 +1,9 @@
-# Celnet Claude Code subagents
+# Celnet Agent subagents
 
 Project-level subagents, committed to git so **every developer on every machine** (macOS or
 Windows) gets the same optimally-configured fleet — and parallel work shares state instead of
-clobbering it. They are discovered automatically from `.claude/agents/` (project scope, higher
-precedence than personal `~/.claude/agents/`). Invoke via the Agent/Task tool or let Claude
+clobbering it. They are discovered automatically from `.agents/agents/` (project scope, higher
+precedence than personal `~/.agents/agents/`). Invoke via the Agent/Task tool or let Agent
 auto-delegate from each agent's `description`.
 
 ## The fleet

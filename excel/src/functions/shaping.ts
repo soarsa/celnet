@@ -6,7 +6,7 @@
  * `"C"`) into the ONE current contract's typed shapes (Instrument / Conventions),
  * and format contract results into the dynamic-array geometries Excel spills.
  * No transport, no Office globals — so they are exhaustively unit-testable under
- * node with no server and no mocks of our own functionality (CLAUDE.md: verify
+ * node with no server and no mocks of our own functionality (GUIDE.md: verify
  * against the real contract shapes, not fakes).
  *
  * Convention transparency (docs/EXCEL-INTEGRATION.md §3.4): every spill carries a

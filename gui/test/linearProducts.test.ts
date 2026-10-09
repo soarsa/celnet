@@ -4,7 +4,7 @@
  * (the 5th client of the W2 wave — SDK/CLI/Excel already carry them) and encoded
  * onto the SAME `Instrument.product` oneof as the option families, with the EXACT
  * appended wire field NAMES (`fx_forward`/`fx_swap`/`ndf`, proto field numbers
- * 26/27/28 — no schema_version, no renumber; CLAUDE.md rule 9). These are LINEAR,
+ * 26/27/28 — no schema_version, no renumber; GUIDE.md rule 9). These are LINEAR,
  * closed-form discounted cashflows (not option payoffs): no option type / strike /
  * vol — a contract rate, a notional and a Side.
  *

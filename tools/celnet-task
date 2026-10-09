@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tools/celnet-task — cross-session task-orchestration CLI for the celnet repo.
 #
-# WHY: any Claude session on this repo, on SessionStart or after /clear, must autonomously
+# WHY: any agent session on this repo, on SessionStart or after /clear, must autonomously
 # continue TRACKED tail tasks shared across sessions, with claim-locking so there is NO
 # duplicated/conflicting/wasted effort. The durable source of truth is a git-committed
 # JSONL manifest (.celnet/tasks.jsonl); claims are taken with git-push-as-CAS on a dedicated
@@ -88,12 +88,12 @@ lease_reclaimable() {
 # Stable per-session lock tag: ${USER}-<short-host>-<session8>. Same string every call so a
 # session recognises its own claims across SessionStart/heartbeat/done.
 session_tag() {
-    local sid=${1:-${CLAUDE_SESSION_ID:-}}
+    local sid=${1:-${CELNET_SESSION_ID:-}}
     local host user
     host=$(hostname -s 2>/dev/null || echo host)
     user=${USER:-$(id -un 2>/dev/null || echo user)}
     # A UNIQUE, STABLE per-session identity is load-bearing: the git-CAS claim/lease/mutex and
-    # the single-coordinator rule all assume distinct tags. Without an explicit CLAUDE_SESSION_ID,
+    # the single-coordinator rule all assume distinct tags. Without an explicit CELNET_SESSION_ID,
     # fall back to the WORKTREE BASENAME (stable across a session's shells, unique per worktree) —
     # NEVER `nosession$$` truncated to "nosessio", which collapsed every id-less session onto ONE
     # identity so they claimed over each other, heartbeat each other's leases, and shared the mutex.

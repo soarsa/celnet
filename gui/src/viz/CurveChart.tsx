@@ -1,7 +1,7 @@
 /**
  * CurveChart — a shared-axis term-structure line chart (FI-ARCHITECTURE §4.2).
  * Canvas 2D, sharp and cheap, in the same hand-rolled idiom as `SmileChart`
- * (no chart library, CLAUDE.md rule 7): it plots one or more value-vs-time series
+ * (no chart library, GUIDE.md rule 7): it plots one or more value-vs-time series
  * on a SHARED time x-axis and a SHARED value y-axis (so overlaid series stay
  * visually comparable), with labelled gridlines, a tone-coded legend, and an
  * optional vertical horizon marker. Device-pixel-ratio aware for crisp lines;

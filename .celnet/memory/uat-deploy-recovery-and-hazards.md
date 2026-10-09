@@ -16,7 +16,7 @@ metadata:
 **Recovery (fast, tiny race window — preferred over another 3-min rebuild):** all artifacts survive in `build/target/release/{celnet-server,celnet,lp-sim,examples/fix_rfq_client}` + `build/gui/dist`. One atomic SSH: `mkdir -p releases/$REL/bin` → `cp -a` the 4 bins (fix_rfq_client → `fix-rfq-client`) → `cp -a build/gui/dist releases/$REL/web` → write VERSION → `ln -sfn releases/$REL current`. Then verify: nginx `curl 127.0.0.1:8080/` = 200, WS `ss -ltnp | grep 50061`, public `curl -sk https://celnetapp.uat.celnet.uk/` = 200 (cert is self-signed → MUST use `-k`; DNS resolves to the box). No server restart needed when the running commit == HEAD (the 07-27 release was already named `69794e8-…`, same as HEAD, so re-deploying was a no-op for the engine; only the GUI dist was rebuilt).
 
 **Two live hazards to raise with the operator:**
-1. **Phantom release-deleter:** something deletes UAT release dirs mid-deploy. Likely a parallel Claude/human session running deploys/cleanup on the shared box. Coordinate before deploying; a lone deploy can be clobbered.
+1. **Phantom release-deleter:** something deletes UAT release dirs mid-deploy. Likely a parallel Agent/human session running deploys/cleanup on the shared box. Coordinate before deploying; a lone deploy can be clobbered.
 2. **Leaked `lp-sim` procs:** 16 orphaned `/opt/celnet/current/bin/lp-sim` processes running for DAYS (each `--book ust-composite --members 5`), holding deleted inodes and RAM on the 3.8Gi box. The launcher/restart path isn't reaping the old ones. Duplicates may also double-drive the demo book feed.
 
 See [[deploy-ssh-drop-on-silent-build]] and [[fi-agg-book-rfq-gap-and-tiering-backlog]] (the detached-prewarm deploy remedy for this same box).

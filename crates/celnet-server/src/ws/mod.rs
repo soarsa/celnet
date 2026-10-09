@@ -1,7 +1,7 @@
 //! The WebSocket JSON mirror of the gRPC contract.
 //!
 //! A browser or any WebSocket client gets the **same single, current contract**
-//! over WS that gRPC clients get over protobuf (`CLAUDE.md` rule 9: one contract,
+//! over WS that gRPC clients get over protobuf (`GUIDE.md` rule 9: one contract,
 //! no fork). The mirror is a second *encoding* — type-tagged JSON ([`codec`]) — of
 //! the exact same [`celnet_proto`] messages, dispatched onto the **same** service
 //! edges (`PricingEdge` / `QuoteEdge` / `StreamEdge` / `SurfaceEdge`) the gRPC
@@ -413,7 +413,7 @@ async fn serve_connection(tcp: TcpStream, services: WsServices) {
     // The per-connection firm-wide **pricing kill-switch** forwarder: emit the CURRENT
     // control state on connect, then a `pricing_control` frame on every change, so all
     // connected GUIs reflect a firm-wide halt/resume. Bounded-queue offload
-    // (`CLAUDE.md` §11), off the pinned core. Ends when the outbound channel closes
+    // (`GUIDE.md` §11), off the pinned core. Ends when the outbound channel closes
     // (socket gone) or is aborted on teardown.
     let pricing_control_tx = out_tx.clone();
     let mut pc_rx = services.pricing_control.subscribe();
@@ -449,7 +449,7 @@ async fn serve_connection(tcp: TcpStream, services: WsServices) {
     // published it — so the board derived from a stream that produced no frames and read
     // "Waiting for the first risk-state tick…" indefinitely. Unsolicited like the
     // `pricing_control` forwarder (no subscribe verb); bounded-queue offload
-    // (`CLAUDE.md` §11), never the pinned pricing core. A LAGGED receiver resumes at the
+    // (`GUIDE.md` §11), never the pinned pricing core. A LAGGED receiver resumes at the
     // newest state rather than back-pressuring the publisher; the task ends when the
     // outbound channel closes (socket gone) or is aborted on teardown.
     let hedge_intent_tx = out_tx.clone();
@@ -514,7 +514,7 @@ async fn serve_connection(tcp: TcpStream, services: WsServices) {
         let _ = ws_tx.close().await;
     });
 
-    // The per-connection notification subscription (at most one; CLAUDE.md §11
+    // The per-connection notification subscription (at most one; GUIDE.md §11
     // bounded-queue offload). Registered on the shared broker when the client sends a
     // `subscribe_notifications` frame, drained by a spawned task onto `out_tx`, and
     // torn down on `unsubscribe_notifications` or socket close.

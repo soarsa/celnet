@@ -39,7 +39,7 @@ const BUILD_TIME = new Date().toISOString();
 // The running SPA polls it; when the served identity differs from its own
 // baked-in constants it knows a newer release was deployed and offers a reload.
 // No server API is involved — this is a static deploy artifact, not a versioned
-// contract (CLAUDE.md §9).
+// contract (GUIDE.md §9).
 function versionManifest(hash: string, buildTime: string): Plugin {
   const body = `${JSON.stringify({ hash, buildTime })}\n`;
   return {

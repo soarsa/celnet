@@ -31,7 +31,7 @@
 //! hasher, so assignments are bit-identical across the fleet and across runs — a
 //! prerequisite for stateless routers to converge on a gossiped membership and
 //! for deterministic replay (`docs/SCALE-OUT.md` §4). No public identifier is
-//! named for a method, person, or vendor (CLAUDE.md rule 8).
+//! named for a method, person, or vendor (GUIDE.md rule 8).
 
 #![forbid(unsafe_code)]
 

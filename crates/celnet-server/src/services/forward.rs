@@ -25,7 +25,7 @@
 //! Forwarding speaks the **same** one `celnet-proto` contract on both legs (the edge is
 //! a `celnet_client::Client` to the backends and the generated service to its callers).
 //! There is no federation-only message, no `schema_version` — the wire is unchanged
-//! (`CLAUDE.md` rule 9). Routing reuses `celnet_router`'s HRW [`PartitionMap`] via
+//! (`GUIDE.md` rule 9). Routing reuses `celnet_router`'s HRW [`PartitionMap`] via
 //! [`Fleet::owner_of_pair`], so the owned-pair forwarding and the risk fan-out agree
 //! on ownership with no extra state.
 //!

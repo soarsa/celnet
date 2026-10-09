@@ -5,7 +5,7 @@
 > **the hot core never logs, locks, or allocates** — all formatting, aggregation and
 > export happen off the critical path. This document describes what is *implemented*
 > today and explicitly marks what is *deferred*; it is kept in sync with the crate
-> manifests (zero-legacy, CLAUDE.md rule 10).
+> manifests (zero-legacy, GUIDE.md rule 10).
 
 ---
 
