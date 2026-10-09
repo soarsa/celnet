@@ -93,7 +93,7 @@ deterministic, microsecond-class pricing and Greeks suitable for continuous auto
 streaming RFS, not just on-request quoting. Clients write their own vol models, exotic payoffs,
 calibration and stress logic against Celnet's SDK and run them **in-engine** (Tier-0 native +
 Tier-2 wasmi sandbox, `crates/celnet-plugin-host/src/{native,wasm}.rs`) — keeping proprietary IP
-instead of consuming a vendor's closed library. Celnet embeds natively in the Celer
+instead of consuming a vendor's closed library. Celnet embeds natively in the CelNet
 trade-lifecycle estate (one data model, one in-process bus) rather than gluing services over FIX;
 it deploys on-prem/co-located/in-process or cloud; and it sits behind or alongside *any* venue as
 the pricing/risk brain — so clients need not adopt a single regulated venue to get value.
@@ -184,7 +184,7 @@ add or override payoffs, vol models, and calibrations as native plugins — no p
 vanilla *and* the full exotic/structured/path-dependent catalogue in deterministic
 nanosecond-to-microsecond time in-process, turning pricing into a streaming engine rather than a
 desktop feature. And it fuses pricing directly into capture, RFQ/RFS, booking, Greeks, hedging and
-downstream lifecycle inside Celer, eliminating the feed-and-reconcile integration tax. On the risk
+downstream lifecycle inside CelNet, eliminating the feed-and-reconcile integration tax. On the risk
 side it goes beyond a vol feed: server-side **hierarchical firm risk** (RiskService:
 ListPositions/AggregateRisk/DrillRisk/LimitStatus, `celnet.proto:2476-2504`), **FRTB-SA**
 standardised-approach capital (full SbM with the three correlation scenarios → max and the 0.75ρ
@@ -255,7 +255,7 @@ GPU + a full FX-exotic catalogue behind one contract.
 > payoffs and calibrations through a sandboxed, deterministic SDK; it hot-swaps versions with zero
 > downtime; it constructs transparent, arbitrage-checked vol surfaces with fully configurable
 > conventions; it computes server-side hierarchical firm risk, FRTB-SA capital and (internal) XVA;
-> and it embeds natively in the Celer trade lifecycle. It integrates Fenics FXO 2.0 (and
+> and it embeds natively in the CelNet trade lifecycle. It integrates Fenics FXO 2.0 (and
 > Bloomberg/other surfaces) as validated inputs — then beats every one of them on the analytics,
 > latency, breadth and openness that turn data into a tradable price. Every claim is grounded in
 > shipped code and proven by a runnable parity matrix against independent oracles
@@ -277,7 +277,7 @@ GPU + a full FX-exotic catalogue behind one contract.
 | **Deployment / hot-upgrade** | On-prem / colo / in-process / cloud; zero-downtime hot-swap (SO_REUSEPORT handoff + single-current-contract blue-green cutover) | SaaS / venue-hosted only | Multi-modal feed delivery; kACE on-prem/desktop; siloed licensing | Seat-licensed terminal; 2-yr minimum; no embeddable colo service |
 | **GPU acceleration** | GPU as live service (**wgpu → Metal/Vulkan/DX12/GLES + WGSL**, CPU fallback): multi-step path kernel, pathwise/LR Greeks, batch closed-form, Sobol-QMC-on-GPU; f32 GPU reconciled to f64 CPU oracle | None published | None (analytics is CPU desktop/OMS) | None exposed as service |
 | **Distributed correctness** | Leader-replicated log + **full Raft** (election/Pre-Vote/truncation/compaction/InstallSnapshot) with bit-identical (`f64::to_bits`) replay; lock-free SPMC fan-out ring under the edge; cross-shard risk fan-out (fan-out == single-node to 1e-12) | n/a | n/a | n/a |
-| **Celer-native integration** | Native: shared data model + in-process bus across capture, RFQ/RFS, booking, Greeks, hedging, lifecycle (in-repo: traits + adapter swap + FIX 4.4 loopback; live JVM estate lifecycle deploy/live-gated) | Stitched estate (Optimus+Orion+Primus+Omega) glued by FIX hops | Data/analytics/execution loosely-coupled silos (FMD/kACE/FMX, FIX 4.4) | Pricing island; MARS API/Python but feed-oriented |
+| **CelNet-native integration** | Native: shared data model + in-process bus across capture, RFQ/RFS, booking, Greeks, hedging, lifecycle (in-repo: traits + adapter swap + FIX 4.4 loopback; live JVM estate lifecycle deploy/live-gated) | Stitched estate (Optimus+Orion+Primus+Omega) glued by FIX hops | Data/analytics/execution loosely-coupled silos (FMD/kACE/FMX, FIX 4.4) | Pricing island; MARS API/Python but feed-oriented |
 | **Openness / APIs** | Open: **5 gRPC services + byte-identical WebSocket JSON mirror**, one unversioned contract reachable identically from GUI/SDK/CLI/Excel/WS with bit-identical values; 27 `CELNET.*` Excel functions; multi-source surface ingestion | FIX + UI + thin STP API; no public dev portal | Enterprise data license; vague public docs; dated FIX 4.4 on execution | Closed, seat-priced; B-PIPE/SAPI feed access |
 
 *Note: latency, throughput and architecture claims about competitors reflect the absence of
@@ -298,7 +298,7 @@ only.
 - **CUDA/NVIDIA ABSOLUTE GPU throughput + ≤50 ms exotic + Workload-A/B absolute numbers** —
   deploy-gated. M4 Metal lacks f64 ⇒ in-repo proves **correctness + RATIOS only** (M4/Lavapipe).
   Never claim f64 on Metal.
-- **The entire live JVM Celer estate lifecycle** (sidecar / FX_OPTION / inferred hops / tenant
+- **The entire live JVM CelNet estate lifecycle** (sidecar / FX_OPTION / inferred hops / tenant
   overlays) — deploy/live-gated; in-repo has the seams + adapters (traits + adapter swap + FIX 4.4
   loopback) only, not an operational live binding.
 - **Raft §6 dynamic membership / cross-DC transport / real network partitions** — deploy-gated;

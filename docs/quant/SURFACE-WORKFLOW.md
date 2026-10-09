@@ -108,7 +108,7 @@ The end-to-end loop, in the order a trader runs it:
 1. **Seed from broker / composite.** Pull the latest broker quotes (ATM + 25Δ/10Δ RR/BF per
    tenor) or an aggregated multi-source composite mid. The marking grid populates with the
    **quoted broker handles**. *(The composite/consensus feed is a dependency on
-   `docs/CELER-INTEGRATION.md`, not assumed to already exist — see §8/§9.)*
+   `docs/CELNET-INTEGRATION.md`, not assumed to already exist — see §8/§9.)*
 
 2. **Calibrate.** For each (pair, tenor), run the **market-strangle → smile-strangle**
    fixed-point so the calibrated smile reprices the broker strangle exactly, then build the
@@ -360,7 +360,7 @@ Concretely, `SurfaceWorkspace.tsx` is reorganised around the marking grid:
    reach the engine.
 5. **Compare / history overlay.** Δ-overlay vs. live broker composite (intraday), history, and
    month-end consensus (monthly cadence, clearly labelled). Depends on the composite/consensus
-   feed (`CELER-INTEGRATION.md`).
+   feed (`CELNET-INTEGRATION.md`).
 6. **Per-tenor smile inspector.** The 2-D smile chart as secondary shape inspector (stable
    y-scale; handle markers; overlay; no-arb), with **term-structure curves** (ATM/RR/BF vs. tenor)
    promoted to the second-most-prominent view; the 3-D mesh demoted to an optional QC panel.
@@ -525,7 +525,7 @@ viz/SmileChart.tsx,viz/SurfaceMesh.tsx,data/surface.ts,data/contract.ts}`.
    *Area:* `gui/` (`viz/`). *Dep:* none.
 6. **Compare / history / consensus overlay** — Δ-overlay vs. live composite, history, month-end
    consensus (cadence-labelled). *Area:* `gui/` + feed. *Dep:* composite/consensus feed in
-   `docs/CELER-INTEGRATION.md` (data dependency — do not specify as if it exists).
+   `docs/CELNET-INTEGRATION.md` (data dependency — do not specify as if it exists).
 7. **Per-tenor smile inspector with sticky-delta/strike toggle** — spot-move simulation showing
    sticky-delta (default) vs. sticky-strike re-mapping. *Area:* `gui/`. *Dep:* #5.
 8. **`EventClock` + event-variance stripping (validated)** — concrete `EventClock` over the

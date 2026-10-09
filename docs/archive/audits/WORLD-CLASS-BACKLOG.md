@@ -480,7 +480,7 @@ independently-landable feature. Format matches this file: dedup-key, evidence, a
   from `docs/celnet-capabilities.html` (the comprehensive capabilities document — full FX +
   multi-asset + SOTA coverage, all ~30 visual assets base64-embedded). Approach: Playwright
   print-to-PDF off the document's `@media print` stylesheet (A4 or US-Letter, page breaks per
-  section, `figure { break-inside: avoid }`, embedded webfonts, the Celer-branded cover,
+  section, `figure { break-inside: avoid }`, embedded webfonts, the CelNet-branded cover,
   no clipped figures or horizontal overflow). Run as a dynamic workflow AFTER: (a) the
   visual-asset set is complete + rendered + uncut-checked, (b) all assets base64-embedded into a
   self-contained HTML, (c) **operator review** of the HTML. Oracle: visual proof — every section
@@ -491,4 +491,4 @@ independently-landable feature. Format matches this file: dedup-key, evidence, a
 - Cross-host wire p99 / inter-DC SLO (loopback proves compute+framing+quorum only).
 - Live LP-panel connectivity + regulated-venue / MAS-RMO status (multi-dealer RFQ workflow).
 - Live crypto/metal NDF fixing VALUES (only fixing identity + convention are in-repo).
-- Live JVM Celer estate lifecycle.
+- Live JVM CelNet estate lifecycle.

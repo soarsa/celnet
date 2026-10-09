@@ -79,7 +79,7 @@ celnet_simulators_restart_with_server: true
 # When true, the release builds the celnet-fix RFQ client, ships it as
 # <release>/bin/fix-rfq-client, and installs the launcher + `fixsimctl` control
 # script. Run it on the host with:  fixsimctl start | once | stop | status | tail
-# It dials the managed FIX acceptor (registry "CELER_FXO_CELNET" @127.0.0.1:56001);
+# It dials the managed FIX acceptor (registry "CELNET_FXO_VENUE" @127.0.0.1:56001);
 # override with celnet_fixsim_host/port/sender/target if the GUI FIX admin changes it.
 celnet_fixsim_enabled: true
 # FAST sub-second cadence (ms) for the FIX sim — OVERRIDES the whole-second heartbeat via
@@ -107,7 +107,7 @@ celnet_fixsim_esp_enabled: true
 # stream venue sits one port above the FI quote venue (56002). Must be a `fixed_income_stream`
 # acceptor in the managed registry; override to match the GUI FIX admin.
 celnet_fixsim_stream_port: 56003
-celnet_fixsim_stream_sender: "CELER_RATES_STREAM"
+celnet_fixsim_stream_sender: "CELNET_RATES_STREAM"
 # The ESP acceptor is a venue of its OWN kind (`fixed_income_esp`, kind 3) — NOT the RFS
 # stream venue. ESP publishes the venue's own clip and runs the group's ESP pricing
 # pipeline, whereas RFS prices the client's requested size; they are different products
@@ -115,7 +115,7 @@ celnet_fixsim_stream_sender: "CELER_RATES_STREAM"
 # onto celnet_fixsim_stream_port, which both collapses ESP onto RFS and trips the
 # launcher's CompID-collision guard so the RFS leg is skipped entirely.
 celnet_fixsim_esp_port: 56004
-celnet_fixsim_esp_sender: "CELER_RATES_ESP"
+celnet_fixsim_esp_sender: "CELNET_RATES_ESP"
 celnet_fixsim_grpc_addr: "http://127.0.0.1:50051"  # reference-data + login endpoint
 # Candidate POOL the RFS/ESP legs download from reference data — not the streamed set. The
 # registry lists every TRADEABLE instrument (strictly larger than the QUOTABLE set) in
@@ -126,7 +126,7 @@ celnet_fixsim_grpc_addr: "http://127.0.0.1:50051"  # reference-data + login endp
 # (`include_bills=0`) — every streamed name was unpriceable, and the two legs contributed 4
 # pricing events against the RFQ leg's 4,662.
 celnet_fixsim_esp_instruments: 40        # candidate pool (8→40: reach the ~141 quotable cash bonds)
-# The RFQ venue (CELER_RATES_CELNET) exists for MANUAL curve requests — the ones the venue
+# The RFQ venue (CELNET_RATES_VENUE) exists for MANUAL curve requests — the ones the venue
 # cannot auto-price and routes to a human rates desk. At 3 only ~1 in 3 was manual and the
 # other two thirds were auto-quoted OIS, which is what drowned the blotter. 1 ⇒ every RFQ is
 # a manual curve request, leaving streaming/agg-book flow to the RFS and ESP legs.
@@ -251,7 +251,7 @@ celnet_env:
   CELNET_LOG_MAX_FILES: "14"
   # FIX acceptors are NOT configured via this legacy env knob. The server binds its
   # FIX 4.4 acceptors from the MANAGED registry (fix-connections.json, edited in the
-  # GUI FIX admin) — on this host that is "celer" (FX/options) at 127.0.0.1:51001 and
+  # GUI FIX admin) — on this host that is "celnet-fxo" (FX/options) at 127.0.0.1:51001 and
   # an FI quote venue at 127.0.0.1:9100. Setting CELNET_FIX_ADDR here binds a SECOND,
   # legacy acceptor that collides with the registry and aborts boot with EADDRINUSE
   # (took the server down 2026-07-01). The quote simulator dials the managed acceptor

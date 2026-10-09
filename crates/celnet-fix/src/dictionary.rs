@@ -4,7 +4,7 @@
 //! The dictionary is the single source of truth for which tags exist, what
 //! scalar type each carries, and which fields a given `MsgType` requires. It is
 //! consulted by [`crate::messages`] (to validate inbound frames) and documented
-//! against the §1.2 tag map in `docs/CELER-FIX-INTEGRATION-PLAN.md`. The shape
+//! against the §1.2 tag map in `docs/architecture/CELNET-FIX-INTEGRATION-PLAN.md`. The shape
 //! follows the dictionary-driven model of `fefix` (cited; not a dependency).
 
 use crate::framing::FrameCursor;

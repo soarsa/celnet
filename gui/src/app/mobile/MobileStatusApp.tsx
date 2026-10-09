@@ -19,7 +19,7 @@
 import { useMemo, useState } from "react";
 
 import { useApp } from "../AppContext";
-import { CelerMark } from "../../components/CelerMark";
+import { CelnetMark } from "../../components/CelnetMark";
 import { useCachedResource } from "../../hooks/useCachedResource";
 import { useConnectionStatus } from "../../hooks/useConnectionStatus";
 import { useAppearance } from "../../design/appearance";
@@ -141,7 +141,7 @@ export function MobileStatusApp({ onUseFullApp }: MobileStatusAppProps): React.R
     <div className={styles.app}>
       <header className={styles.header}>
         <div className={styles.brandRow}>
-          <CelerMark size={22} className={styles.mark} title="Celnet" />
+          <CelnetMark size={22} className={styles.mark} title="Celnet" />
           <span className={styles.wordmark}>Celnet</span>
           <span
             className={styles.status}

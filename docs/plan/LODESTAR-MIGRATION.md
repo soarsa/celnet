@@ -22,7 +22,7 @@ coordinated on `docs/PARALLEL-SESSIONS.md`.
 
 ## Decisions (2026-06-22)
 
-1. **Estate scope** — the 10 celertech-service wikis migrate **onto lodestar in place**
+1. **Estate scope** — the 10 celnet-service wikis migrate **onto lodestar in place**
    (each repo is its own lodestar project; re-point its structural layer off CBM, clean
    references, keep its knowledge with it). lodestar is the shared engine across all;
    CelNet stays a clean standalone product — it does **not** absorb other repos' content.
@@ -73,7 +73,7 @@ top for co-located developers; killing it reverts to the git-only flow.
   `codebase-graph-health`, `dev-environment`, …) → rewritten to lodestar `doctor`-based health.
 
 ### P3 — Knowledge consolidation (CelNet)
-- Fold the `~/wiki/celeroption` narrative into `docs/` (single home), de-duplicating.
+- Fold the `~/wiki/celnet` narrative into `docs/` (single home), de-duplicating.
 - Author durable invariants/decisions as lodestar **claims** anchored to symbols; mirror
   ADRs via `manage_adr`. Run the staleness/constraint gate to flag drifted content.
 - Prune superseded planning per Decision 3.
@@ -98,7 +98,7 @@ top for co-located developers; killing it reverts to the git-only flow.
   `lodestar index` → pull knowledge), Windows + macOS.
 - Document `lodestar-syncd` opt-in for LAN realtime.
 
-### P6 — Estate sweep (10 celertech wikis → lodestar in place)
+### P6 — Estate sweep (10 celnet wikis → lodestar in place)
 - Per repo: re-point structural layer off CBM, clean CBM references, confirm lodestar indexes.
 - Highly parallelizable (disjoint repos) — candidate for a multi-agent workflow (opt-in).
 

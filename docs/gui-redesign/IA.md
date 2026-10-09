@@ -37,7 +37,7 @@ context bus**, with **saved perspectives** (not 16 hard-mounted workspaces).
 ```
 
 ## 2. Global frame
-- **Top command bar** — Celer pinwheel + wordmark · **command palette** (mnemonic + search) · **Desk/
+- **Top command bar** — CelNet pinwheel + wordmark · **command palette** (mnemonic + search) · **Desk/
   Book scope selector** · license/entitlement chip · live ops health (p50/p99) · identity.
 - **Left navigator** — the underlier/capability tree, **license-aware** (licensed = present; unlicensed
   = subtly gated/upsell, never a dead ticket).

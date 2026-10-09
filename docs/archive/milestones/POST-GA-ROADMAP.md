@@ -11,7 +11,7 @@
 > **Honesty boundary (carried forward from `MASTER-PLAN.md`).** Every epic below states the
 > competitor gap it closes, the owner crate(s), and the **validation gate that proves it done**.
 > "New" vs "incremental" is flagged explicitly. Nothing is claimed done from this environment that
-> depends on real GPU hardware or a live Celer/FIX estate; those are flagged as deployment gates.
+> depends on real GPU hardware or a live CelNet/FIX estate; those are flagged as deployment gates.
 > Naming stays `celnet`-logical and vendor-neutral (guardrail 8); the wire contract stays single
 > and unversioned (guardrail 9). This doc is the source of truth for post-GA sequencing and is
 > kept in sync as epics land (zero-legacy).
@@ -274,11 +274,11 @@ post-GA scope.
   gate (Metal lacks f64; CUDA is CI-only) — built and validated against simulation here, the
   real-hardware step flagged, never claimed done from this environment.
 
-**E-9 · Live Celer / FIX trade-lifecycle integration** — **P1, deployment-gated**
+**E-9 · Live CelNet / FIX trade-lifecycle integration** — **P1, deployment-gated**
 - **Gap closed:** native STP — a structural edge over SaaS/venue incumbents (no feed-and-reconcile
   tax); table-stakes FIX connectivity that competitors all have.
 - **Owner crate(s):** `celnet-integration` (FIX dialect + distributor adapter).
-- **Validation gate:** FIX round-trip + distributor adapter against a **simulated** Celer estate;
+- **Validation gate:** FIX round-trip + distributor adapter against a **simulated** CelNet estate;
   live wiring flagged as a staging/deployment gate, not claimed from here.
 
 ### Sequencing summary
@@ -312,7 +312,7 @@ exceeds the incumbents on the three visible checklist axes **and** holds the ope
 | E-6 Var/vol swap + quanto + lookback | **Mixed** | Var/vol swap new; quanto incremental; forward-smile payoffs incremental on built LSV engine. |
 | E-7 Correlation/basket + reg-risk | **New, research-grade** | Multi-asset correlated MC and a regulatory report are genuinely new and the deepest work. |
 | E-8 GPU-at-scale | **Substantiation (deployment-gated)** | GPU engine built; the gap is proven real-HW throughput. |
-| E-9 Celer/FIX | **Incremental + deployment-gated** | Adapters extend `celnet-integration`; live wiring is a staging step. |
+| E-9 CelNet/FIX | **Incremental + deployment-gated** | Adapters extend `celnet-integration`; live wiring is a staging step. |
 
 **Deliberate non-goals (flagged so they are not mistaken for gaps):** American/Bermudan beyond a
 listed-FX-futures-options lane (OTC FX is European); inflation-style products (out of category);

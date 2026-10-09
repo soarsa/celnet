@@ -30,7 +30,7 @@ for the pricing platform with one gating caveat (end-to-end latency-under-load p
 | **G-D Cross-node fleet / scale-out** | Substantiates the IB-portfolio-scale claim beyond per-node headroom | new `celnet-router` (HRW partition map, stateless replica routing, hot-standby, backpressure) | partition-map balance + failover + no-loss handoff tests; throughput vs §1.2 |
 | **G-E Mutation + coverage CI gates** | Closes the 54 `celnet-vanilla` solver survivors; makes test-strength a CI gate, not a snapshot | `celnet-vanilla` tests + CI | kill-rate ≥ 95% on vanilla; coverage/mutation thresholds enforced in CI |
 | **G-F GPU perf-at-scale** | Live-service batch capability no competitor exposes | `celnet-gpu` | large-batch GPU vs f64-CPU reconciliation + throughput (real-HW numbers are CI/container, honestly scoped) |
-| **G-G Live Celer / FIX integration** | Native trade-lifecycle STP — a structural edge over SaaS/venue incumbents | `celnet-integration` | FIX dialect round-trip + distributor adapter against a simulated estate (live wiring = staging, scoped) |
+| **G-G Live CelNet / FIX integration** | Native trade-lifecycle STP — a structural edge over SaaS/venue incumbents | `celnet-integration` | FIX dialect round-trip + distributor adapter against a simulated estate (live wiring = staging, scoped) |
 
 ## Sequencing (respects lane discipline — no two concurrent lanes mutate a crate the other compiles)
 - **Wave 1 (parallel, disjoint dirs):** G-A `celnet-exotics`+`celnet-golden` · G-C `celnet-server` WS-mirror · G-D new `celnet-router`.
@@ -39,7 +39,7 @@ for the pricing platform with one gating caveat (end-to-end latency-under-load p
 - **GA tag** once G-A/B/C/D/E are green and the latency caveat is closed.
 
 ## Honesty boundary
-GPU-on-real-hardware (Metal lacks f64; CUDA is CI/container-only) and live-Celer-estate wiring
+GPU-on-real-hardware (Metal lacks f64; CUDA is CI/container-only) and live-CelNet-estate wiring
 are inherently deployment/hardware-dependent: we **build + validate against simulation/CI**
 here and flag the real-hardware/live-estate step as a deployment gate, never claimed as done
 from this environment.

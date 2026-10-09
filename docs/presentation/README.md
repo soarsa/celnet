@@ -31,8 +31,8 @@ Administration & reference data · Analytics.
 
 - **The product's own design language, mirrored — not a deck theme.** Every colour, face
   and radius in the deck comes from [`gui/src/design/tokens.css`](../../gui/src/design/tokens.css):
-  the dark surface stack (inset 0.185 / base 0.215 / raised 0.285, OKLCH hue ~264), Celer
-  coral for identity and the annotation numbers, Celer indigo for selection and primary
+  the dark surface stack (inset 0.185 / base 0.215 / raised 0.285, OKLCH hue ~264), CelNet
+  coral for identity and the annotation numbers, CelNet indigo for selection and primary
   actions, bid-green / offer-red / warn-amber for semantics — never the brand hue for a
   quantitative one — Anaheim for the wordmark, Space Grotesk for headings and labels, and
   JetBrains Mono for **every** numeric, which is the app's own rule. It is synced by hand:

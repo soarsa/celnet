@@ -7,7 +7,7 @@ metadata:
   originSessionId: b315eccc-f521-4987-b5b5-1a21d5710edb
 ---
 
-**Celnet** is a state-of-the-art FX Options pricing platform, written in Rust, that integrates into the existing Celer trade-lifecycle estate and front end. Started 30 May 2026 (greenfield, `/Users/adrian/code/celeroption`).
+**Celnet** is a state-of-the-art FX Options pricing platform, written in Rust, that integrates into the existing CelNet trade-lifecycle estate and front end. Started 30 May 2026 (greenfield, `/Users/adrian/code/celnet`).
 
 Non-negotiable pillars:
 - **Ultra-low-latency**, scalable, mission-critical stability; 100% non-blocking code.
@@ -17,4 +17,4 @@ Non-negotiable pillars:
 - **Crate-structured workspace**, AI-maintainable file sizes, optimal for parallel Claude sessions.
 - **GPU-accelerated** where available (cross-platform: Metal/Vulkan/DX12 via wgpu locally, CUDA on NVIDIA); deployable on macOS/Windows/Linux + containers.
 
-Knowledge base + design docs live in `docs/` (architecture, analytics spec, competitive analysis, Celer integration map, roadmap), produced by the research/design workflow. See [[no-mocks-policy]], [[parallel-session-model]], [[dev-environment]].
+Knowledge base + design docs live in `docs/` (architecture, analytics spec, competitive analysis, CelNet integration map, roadmap), produced by the research/design workflow. See [[no-mocks-policy]], [[parallel-session-model]], [[dev-environment]].

@@ -412,7 +412,7 @@ diverging perceptual ramp reads magnitude honestly.
 gRPC-Web/WebSocket via the typed SDK, with a WebGPU surface renderer.** A native
 macOS/SwiftUI build is specced as an *optional* later "pro desktop" skin over the same
 SDK; web is the primary because of cross-platform reach, deployment velocity, and zero-
-install distribution to the Celer estate and counterparties.
+install distribution to the CelNet estate and counterparties.
 
 ### 6.1 The choice, weighed
 
@@ -427,7 +427,7 @@ install distribution to the Celer estate and counterparties.
 | HIG fidelity | ⚠️ Liquid-Glass effects approximated | ✅ first-class |
 
 Web wins on reach + distribution + streaming, which matter most for a multi-tenant,
-hot-upgradable platform serving the Celer front end and external MMs. SwiftUI's only decisive
+hot-upgradable platform serving the CelNet front end and external MMs. SwiftUI's only decisive
 edge is free Liquid-Glass fidelity — which we *approximate* well enough in CSS and reserve
 the native build for a later "pro desktop" lane over the **same** typed SDK (no contract
 fork — CLAUDE.md rule 9).

@@ -42,4 +42,4 @@ authority:
 
 When the dialect changes, update the two `gui/public/fix/` artifacts in the same
 change (and re-run `gui/test/fixClientConfig.test.ts`). See also
-`docs/CELER-FIX-INTEGRATION-PLAN.md` for the §1.2 tag map and integration plan.
+`docs/CELNET-FIX-INTEGRATION-PLAN.md` for the §1.2 tag map and integration plan.

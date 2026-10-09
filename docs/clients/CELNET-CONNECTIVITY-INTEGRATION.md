@@ -4,7 +4,7 @@
 > `conn-design`…`conn-gui-console` on `coord/board`. Authored from a 3-agent read-only
 > review of `github.com/soarsa/celnet-connectivity` @ `bb97347` (2026-07-02), cross-checked
 > against CelNet's existing connectivity surface (`celnet-fix`, `celnet-integration`,
-> `celnet-rfq`, `celnet-server`). See `docs/CELER-INTEGRATION.md` (WS-H) for the estate map.
+> `celnet-rfq`, `celnet-server`). See `docs/CELNET-INTEGRATION.md` (WS-H) for the estate map.
 
 ---
 

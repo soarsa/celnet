@@ -111,7 +111,7 @@ fn test_biscuit_token_issuance_attenuation_and_verification() {
 
     // 1. Issue root enterprise license
     let root_facts = vec![
-        Fact::new("tenant", vec![Term::String("GoldmanCelerCorp".to_string())]),
+        Fact::new("tenant", vec![Term::String("GoldmanCelnetCorp".to_string())]),
         Fact::new("licensed_asset", vec![Term::String("FX".to_string())]),
         Fact::new("licensed_asset", vec![Term::String("RATES".to_string())]),
         Fact::new("licensed_tier", vec![Term::String("CORE_PRICING".to_string())]),
@@ -125,7 +125,7 @@ fn test_biscuit_token_issuance_attenuation_and_verification() {
 
     // 2. Verify root token
     let manifest = root_token.verify(&authority_key, &[]).expect("root token verify");
-    assert_eq!(manifest.tenant_id, "GoldmanCelerCorp");
+    assert_eq!(manifest.tenant_id, "GoldmanCelnetCorp");
     assert!(manifest.is_feature_authorized(Some("FX"), LicenseTier::CorePricing));
     assert!(manifest.is_feature_authorized(Some("RATES"), LicenseTier::UltraLowLatencySbe));
     assert!(!manifest.is_feature_authorized(Some("EQUITY"), LicenseTier::CorePricing));

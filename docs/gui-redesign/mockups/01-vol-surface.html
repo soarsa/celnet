@@ -6,9 +6,9 @@
 <title>Celnet — Vol Surface (mockup 01)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="celer.css" />
+<link rel="stylesheet" href="celnet.css" />
 <style>
-  /* ===== screen-specific: Vol Surface (not in shared celer.css) ===== */
+  /* ===== screen-specific: Vol Surface (not in shared celnet.css) ===== */
 
   /* FIX-1 (BAR-failing): .main is a FIXED-HEIGHT flex column (overflow-y:auto). Flex items
      default to min-height:auto but .panel{overflow:hidden} collapses that to 0, so when the
@@ -125,7 +125,7 @@
   .legdot { width:18px; height:0; border-top:2px solid; display:inline-block; vertical-align:middle; margin-right:4px; }
 
   /* surface-family toggle — implied ↔ Dupire local-vol (LIVE) + deferred crypto strike-axis (TARGET).
-     Uses the ONE shared .htag vocab (celer.css) — no local honesty-tag variants. */
+     Uses the ONE shared .htag vocab (celnet.css) — no local honesty-tag variants. */
   .surfview { display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; margin-bottom:var(--space-3); }
   .surfview .sepv { width:1px; height:16px; background:var(--grid-line); }
   .segbtn button[disabled] { opacity:0.5; cursor:not-allowed; }

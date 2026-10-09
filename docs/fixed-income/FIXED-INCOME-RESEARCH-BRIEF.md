@@ -173,7 +173,7 @@ Organise the work into these tracks; each yields a section of the corpus (§6).
    `docs/CONVENTIONS.md`'s per-(pair,tenor) record).
 5. **Market data.** What inputs each capability needs (curve quotes, vol cubes, fixings,
    bond reference data, recovery), and **vendor-neutral feed shapes** to ingest them (no
-   commercial terminal as a runtime dep) — cross-ref `docs/CELER-INTEGRATION.md`.
+   commercial terminal as a runtime dep) — cross-ref `docs/CELNET-INTEGRATION.md`.
 6. **Risk & analytics.** The sensitivities/measures and how they fold into the server-owned
    hierarchical-risk contract; FRTB GIRR/CSR mapping.
 7. **Competitive landscape.** What Murex/Numerix/FINCAD/Bloomberg/ION cover (capability
@@ -284,7 +284,7 @@ On a positive, we can offer cross-asset clearing and provide margin efficiencies
 
  
 
-2. Modular technology embedded in Celer infrastructure
+2. Modular technology embedded in CelNet infrastructure
 
  
 
@@ -304,7 +304,7 @@ The core trading engine (CORE) must be built around key principles, transparency
 
  
 
-It connects external price-makers via FIX protocols and APIs to identify price differentials and asset mispricing in real-time. Celer infrastructure can program algorithmic execution tools which can be tailor-made depending on products, regions and liquidity environment (Smart Order Routers).
+It connects external price-makers via FIX protocols and APIs to identify price differentials and asset mispricing in real-time. CelNet infrastructure can program algorithmic execution tools which can be tailor-made depending on products, regions and liquidity environment (Smart Order Routers).
 
  
 
@@ -326,7 +326,7 @@ We would also add some pre-trades anchors, such a real-time pricing grids that c
 
  
 
-Of course we must feed Celer with various data sources including bond data, referential and real-time (quotes and axes) and historical data so we can build real-time curves and price skewing capabilities.
+Of course we must feed CelNet with various data sources including bond data, referential and real-time (quotes and axes) and historical data so we can build real-time curves and price skewing capabilities.
 
  
 

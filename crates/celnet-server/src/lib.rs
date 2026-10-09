@@ -1,5 +1,5 @@
 //! Celnet service edge — the tokio async gRPC front that exposes the core-pinned
-//! [`celnet_engine`] pricing core to the Celer estate and front end over the
+//! [`celnet_engine`] pricing core to the CelNet estate and front end over the
 //! single, current, unversioned [`celnet_proto`] wire contract
 //! (`docs/ARCHITECTURE.md` §3, §5; `docs/clients/API-CLIENTS.md`).
 //!
@@ -182,7 +182,7 @@ fn fix_addr_from_env() -> Option<SocketAddr> {
 
 /// Read the deployment-mode knob from the environment and resolve it via the pure
 /// [`DeployMode::parse`]. `CELNET_DEPLOY` selects the mode label (`"hybrid"` ⇒ the
-/// Hybrid integration mode, else CelerIntegrated when a feed is configured) and
+/// Hybrid integration mode, else CelnetIntegrated when a feed is configured) and
 /// `CELNET_VENDOR_WS` carries the vendor-feed WS endpoint a [`MarketDataSource`] would
 /// dial. Both absent (or no usable `CELNET_VENDOR_WS`) ⇒ [`DeployMode::Standalone`], the
 /// **byte-identical** default in which no feed and no governor is bound. This is the one

@@ -275,7 +275,7 @@
 
 <!-- LEFT BRAND RAIL — pinwheel mark ONCE -->
 <div class="rail" aria-hidden="true">
-  <svg class="mark" viewBox="0 0 501 500" role="img" aria-label="Celer pinwheel mark">
+  <svg class="mark" viewBox="0 0 501 500" role="img" aria-label="CelNet pinwheel mark">
     <path fill="#ffffff" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/>
   </svg>
   <div class="vlabel">Celnet</div>
@@ -346,7 +346,7 @@
   <a href="#trader-gui">The trader GUI</a>
 
   <span class="toc-part">8 · Integration &amp; Rigor</span>
-  <a href="#celer-integration">Celer estate integration &amp; deployment</a>
+  <a href="#celnet-integration">CelNet estate integration &amp; deployment</a>
   <a href="#engineering-rigor">Engineering rigor &amp; assurance</a>
 
   <a class="top" href="#top">↑ Back to cover</a>
@@ -361,7 +361,7 @@
 
   <p>That cross-asset engine carries a <strong>functionally complete, evidence-backed superset</strong> of what a desk currently stitches together from a closed terminal, a separate analytics library, and a separate booking system. Where those archetypes force three systems with three sources of truth, Celnet is one coherent platform in which the maths, the marking workflow, the firm-wide risk cube, and the trade-lifecycle integration all share a single model and a single contract. On each asset class it prices the complete book a real desk trades — vanilla through the full first-generation exotics catalogue, the structured and path-dependent products, American/Bermudan early exercise, correlated multi-asset baskets, a linear forward/swap/NDF book and the structured Pivot, and a particle-calibrated local-stochastic-volatility (LSV) booking model — marks and calibrates live smiles and surfaces across five smile families, runs firm-wide scenario, regulatory-capital, and limit risk (<a href="#risk-management">§3</a>), aggregates multi-dealer RFQ panels, and streams two-way prices to high-performance counterparties. Every one of those capabilities lives behind a single, clean, unversioned contract and is reachable identically from five clients (<a href="#clients-overview">§7</a>): the React/WebGPU trader GUI, the typed Rust SDK, the admin CLI, the Excel <code>CELNET.*</code> add-in, and a byte-identical WebSocket JSON mirror.</p>
 
-  <p>It is built as a <strong>disciplined, layered Rust platform</strong> (<a href="#architecture">§2</a>) with an extensive automated test suite, supply-chain-clean (open-source, permissively-licensed components only, enforced in the gates), and cross-platform deterministic. In-core pricing is so fast that network framing — not computation — is the only meaningful latency floor (<a href="#performance-latency">§6</a>), so a desk feels a terminal that simply keeps up. Celnet ships as a pricing system-of-record inside the Celer trade lifecycle (<a href="#celer-integration">§8</a>), and runs equally well standalone, so it slots into the estate a desk already has rather than demanding a rewrite.</p>
+  <p>It is built as a <strong>disciplined, layered Rust platform</strong> (<a href="#architecture">§2</a>) with an extensive automated test suite, supply-chain-clean (open-source, permissively-licensed components only, enforced in the gates), and cross-platform deterministic. In-core pricing is so fast that network framing — not computation — is the only meaningful latency floor (<a href="#performance-latency">§6</a>), so a desk feels a terminal that simply keeps up. Celnet ships as a pricing system-of-record inside the CelNet trade lifecycle (<a href="#celnet-integration">§8</a>), and runs equally well standalone, so it slots into the estate a desk already has rather than demanding a rewrite.</p>
 
   <h3>What this document covers</h3>
   <p>This overview is the through-line; the eight chapters expand each capability cluster in turn, and the cross-asset, one-contract promise recurs in every one. Read top to bottom for the full picture, or jump straight to a chapter:</p>
@@ -375,7 +375,7 @@
       <tr><td><a href="#sota-foundations"><strong>5 · State of the Art</strong></a></td><td>The academically-grounded methods catalogue, the architectural SOTA leap, and the continuous-evolution model that absorbs the latest research without a rewrite.</td></tr>
       <tr><td><a href="#performance-latency"><strong>6 · Performance &amp; Plugins</strong></a></td><td>The measured latency ladder, the GPU path, and the <a href="#extensibility-plugins">Open Quant SDK &amp; tiered plugin host</a> for a desk's private models.</td></tr>
       <tr><td><a href="#clients-overview"><strong>7 · Clients &amp; API</strong></a></td><td>The one unversioned contract, the <a href="#five-service-families">five service families</a>, <a href="#streamsession-clicktrade">the streaming session &amp; click-to-trade</a>, the <a href="#sdk-and-cli">SDK/CLI</a>, the <a href="#excel-integration">Excel add-in</a>, and the <a href="#trader-gui">trader GUI</a>.</td></tr>
-      <tr><td><a href="#celer-integration"><strong>8 · Integration &amp; Rigor</strong></a></td><td>Celer-estate integration, the three deployment modes, and the <a href="#engineering-rigor">engineering-rigor</a> wall of executable proofs behind every claim.</td></tr>
+      <tr><td><a href="#celnet-integration"><strong>8 · Integration &amp; Rigor</strong></a></td><td>CelNet-estate integration, the three deployment modes, and the <a href="#engineering-rigor">engineering-rigor</a> wall of executable proofs behind every claim.</td></tr>
     </tbody>
   </table></div>
 
@@ -384,8 +384,8 @@
   </div>
 
   <figure class="cap-figure">
-    <img src="assets/celnet-capabilities/fig-12-capability-landscape.png" alt="The Celnet capability landscape: full-catalogue quant coverage, the in-core engine and GPU acceleration, firm-wide and regulatory risk, the Open Quant SDK, the API-first edge, the five-client suite, and Celer-lifecycle integration, all unified behind one contract." loading="lazy">
-    <figcaption>The Celnet capability landscape — a full FX-options catalogue (vanilla &rarr; first-generation exotics &rarr; structured &amp; path-dependent &rarr; American/Bermudan &rarr; correlated basket &rarr; LSV booking), a nanosecond-class in-core engine with GPU acceleration, server-side hierarchical risk with FRTB-SA and internal XVA, an Open Quant SDK, and Celer trade-lifecycle integration — unified by a single API-first contract reachable identically from five clients.</figcaption>
+    <img src="assets/celnet-capabilities/fig-12-capability-landscape.png" alt="The Celnet capability landscape: full-catalogue quant coverage, the in-core engine and GPU acceleration, firm-wide and regulatory risk, the Open Quant SDK, the API-first edge, the five-client suite, and CelNet-lifecycle integration, all unified behind one contract." loading="lazy">
+    <figcaption>The Celnet capability landscape — a full FX-options catalogue (vanilla &rarr; first-generation exotics &rarr; structured &amp; path-dependent &rarr; American/Bermudan &rarr; correlated basket &rarr; LSV booking), a nanosecond-class in-core engine with GPU acceleration, server-side hierarchical risk with FRTB-SA and internal XVA, an Open Quant SDK, and CelNet trade-lifecycle integration — unified by a single API-first contract reachable identically from five clients.</figcaption>
   </figure>
 
   <h3>Headline capabilities</h3>
@@ -403,7 +403,7 @@
 
     <li><strong>Firm-wide risk, regulatory capital, and valuation adjustments.</strong> Book-shaped scenario risk (shock grids, bucketed vega per tenor&times;delta, cross-gamma, theta-roll, versioned marked surfaces), a server-side hierarchical position-fact cube with common-numeraire netting and additive roll-up that now aggregates exotic legs, per-node VaR/ES re-derivation, a cascading limit tree, and entitlement-aware aggregation — so clients never loop-and-sum. FRTB-SA standardised capital (SbM with the three correlation scenarios, curvature, RRAO) is built and parity-gated against hand-pinned BCBS constants. CVA/DVA/FVA is computed over expected exposure as an internal quant-risk lens.</li>
 
-    <li><strong>Native Celer-lifecycle integration.</strong> Celnet injects FX-option price, Greeks, and surface into the Celer price path and option risk into the risk and position path, across standalone, hybrid, and fully-integrated deployment modes, with a real FIX 4.4 engine, a conflating egress governor, and a vendor-feed normalization layer that adapts to external products and feeds — Fenics, Bloomberg, Refinitiv, EBS — as adapter integration targets.</li>
+    <li><strong>Native CelNet-lifecycle integration.</strong> Celnet injects FX-option price, Greeks, and surface into the CelNet price path and option risk into the risk and position path, across standalone, hybrid, and fully-integrated deployment modes, with a real FIX 4.4 engine, a conflating egress governor, and a vendor-feed normalization layer that adapts to external products and feeds — Fenics, Bloomberg, Refinitiv, EBS — as adapter integration targets.</li>
   </ul>
 
   <h2 id="capability-map">1.1 The Capability Map</h2>
@@ -445,15 +445,15 @@
         <td>A Raft-replicated event log (election + Pre-Vote, conflicting-tail truncation, snapshot compaction, snapshot reseed) with bit-identical replay and hot-standby takeover; a lock-free single-producer/multi-consumer broadcast ring wired under the edge with exact conflation accounting; and a cross-fleet rendezvous-hashed risk fan-out reconciled fan-out==single-node to 1e-12.</td>
       </tr>
       <tr>
-        <td><strong>Celer integration</strong></td>
-        <td>The FX-options pricing system-of-record inside the Celer trade lifecycle — injecting option price/Greeks/surface into the price path and option risk into the risk and position path — across Standalone, Hybrid, and CelerIntegrated deployment modes reached by reversible adapter swaps on the seam traits, never by a rewrite. The same market-data seam ingests external feeds (Fenics, Bloomberg, Refinitiv, EBS) as adapter targets.</td>
+        <td><strong>CelNet integration</strong></td>
+        <td>The FX-options pricing system-of-record inside the CelNet trade lifecycle — injecting option price/Greeks/surface into the price path and option risk into the risk and position path — across Standalone, Hybrid, and CelnetIntegrated deployment modes reached by reversible adapter swaps on the seam traits, never by a rewrite. The same market-data seam ingests external feeds (Fenics, Bloomberg, Refinitiv, EBS) as adapter targets.</td>
       </tr>
     </tbody>
   </table></div>
 
   <figure class="cap-figure">
-    <img src="assets/celnet-capabilities/fig-01-system-architecture-adaptability.png" alt="The Celnet one-platform overview: a single unversioned contract across five gRPC services with a WebSocket mirror, served by an async edge over wait-free rings into pinned zero-allocation hot cores, with the quant catalogue, surface engine, risk cube, plugin host, and Celer-lifecycle adapters all sharing one model." loading="lazy">
-    <figcaption>The one-platform overview — a single unversioned contract fronts the quant catalogue, the surface engine, the firm-wide risk cube, the Open Quant SDK host, and the Celer-lifecycle adapters. The async edge meets pinned, allocation-free hot cores over wait-free rings; deployment-mode adapter swaps move the same platform between Standalone, Hybrid, and CelerIntegrated without a rewrite.</figcaption>
+    <img src="assets/celnet-capabilities/fig-01-system-architecture-adaptability.png" alt="The Celnet one-platform overview: a single unversioned contract across five gRPC services with a WebSocket mirror, served by an async edge over wait-free rings into pinned zero-allocation hot cores, with the quant catalogue, surface engine, risk cube, plugin host, and CelNet-lifecycle adapters all sharing one model." loading="lazy">
+    <figcaption>The one-platform overview — a single unversioned contract fronts the quant catalogue, the surface engine, the firm-wide risk cube, the Open Quant SDK host, and the CelNet-lifecycle adapters. The async edge meets pinned, allocation-free hot cores over wait-free rings; deployment-mode adapter swaps move the same platform between Standalone, Hybrid, and CelnetIntegrated without a rewrite.</figcaption>
   </figure>
 
   <h2 id="positioning">1.2 Competitive Positioning</h2>
@@ -496,7 +496,7 @@
   <p>Celnet now matches Murex MX.3, Numerix CrossAsset, and Fenics kACE on structured and path-dependent <strong>breadth</strong> — full first-generation exotics, var/vol swaps, Asians, forward-start/cliquet, quanto, TARF, accumulator, lookback, American/Bermudan early exercise, correlated basket/best-of/worst-of, and an LSV booking model — <em>while retaining</em> the edges the deep-catalogue incumbents structurally lack: an open quant SDK, one clean unversioned contract with bit-identical values across five clients, a pinned zero-allocation nanosecond hot core, server-side hierarchical risk, FRTB-SA capital, an internal XVA lens, and an evidence trail of parity matrix plus golden tables plus mutation and fuzz estate.</p>
 
   <div class="cap-callout">
-    <strong>The implementation program on the carry-generalized engine.</strong> A defined set of production absolutes is delivered through Celnet's committed implementation program, each engineered, seamed, and gated on the same carry-generalized engine: cross-host wire p99 and the absolute wire-latency SLOs (the in-core latency truth-gate and loopback benches already establish the lower bound, with the SOTA kernel-bypass datapath the program lights up on production topology); CUDA/NVIDIA absolute GPU throughput and the &le;50ms exotic target (GPU correctness and ratio curves are proven today, with the CUDA backend delivered on NVIDIA hardware); the live JVM Celer estate lifecycle (the seams and adapters are built, with the estate-native binding delivered through the program); Raft dynamic membership and cross-DC transport (correctness, quorum and election safety are proven, with §6 joint-consensus membership the next program increment); and the signed-`.so` and OS-sandbox plugin tiers (specified and seamed behind the same frozen contract). The architecture, methods, and seams are state of the art and in place; the program lights each up against production hardware and the running estate.
+    <strong>The implementation program on the carry-generalized engine.</strong> A defined set of production absolutes is delivered through Celnet's committed implementation program, each engineered, seamed, and gated on the same carry-generalized engine: cross-host wire p99 and the absolute wire-latency SLOs (the in-core latency truth-gate and loopback benches already establish the lower bound, with the SOTA kernel-bypass datapath the program lights up on production topology); CUDA/NVIDIA absolute GPU throughput and the &le;50ms exotic target (GPU correctness and ratio curves are proven today, with the CUDA backend delivered on NVIDIA hardware); the live JVM CelNet estate lifecycle (the seams and adapters are built, with the estate-native binding delivered through the program); Raft dynamic membership and cross-DC transport (correctness, quorum and election safety are proven, with §6 joint-consensus membership the next program increment); and the signed-`.so` and OS-sandbox plugin tiers (specified and seamed behind the same frozen contract). The architecture, methods, and seams are state of the art and in place; the program lights each up against production hardware and the running estate.
   </div>
 
   <p>The result is a single, coherent product that meets the closed terminal on reach, the front-to-back platform on lifecycle fit and catalogue depth, the data venue on distribution, and the modern library on numerical rigour — and beats each on the dimension the others lack, on a supply-chain-clean, cross-platform-deterministic foundation. Decisively, it does this across the <em>whole asset spectrum</em> on one engine (<a href="#multi-asset">§4</a>), built on state-of-the-art methods and architecture (<a href="#sota-foundations">§5</a>) where the incumbents cover a single band. The chapters that follow expand each capability cluster in turn.</p>
@@ -505,11 +505,11 @@
   <h2>2. System Architecture, Concurrency &amp; Scale-Out</h2>
   <p class="signpost"><em>How one engine adapts to the desk, stays nanosecond-fast on a pinned hot core, and scales out correctly — the foundation the <a href="#multi-asset">multi-asset</a> seam and the <a href="#quant-coverage">quant catalogue</a> are built on.</em></p>
 
-  <p>Celnet starts from a single design conviction: <b>adapt to the desk, never the other way around.</b> The same engine runs self-contained on a quant's laptop, beside a regional risk hub, or wired straight into the Celer trade lifecycle as the firm's FX-options pricing system-of-record &mdash; and it moves between those shapes through deliberate, reversible adapter swaps on a small set of seam traits, not a rewrite. Every market-data source, price sink, and order/execution path is a pluggable adapter, so a venue feed, a distributor, or a counterparty channel changes without touching the pricing core. That adaptability is not bolted on; it is the consequence of a strict two-tier split, one-way acyclic crate dependencies, and a distributed-correctness substrate that all share the same wait-free discipline.</p>
+  <p>Celnet starts from a single design conviction: <b>adapt to the desk, never the other way around.</b> The same engine runs self-contained on a quant's laptop, beside a regional risk hub, or wired straight into the CelNet trade lifecycle as the firm's FX-options pricing system-of-record &mdash; and it moves between those shapes through deliberate, reversible adapter swaps on a small set of seam traits, not a rewrite. Every market-data source, price sink, and order/execution path is a pluggable adapter, so a venue feed, a distributor, or a counterparty channel changes without touching the pricing core. That adaptability is not bolted on; it is the consequence of a strict two-tier split, one-way acyclic crate dependencies, and a distributed-correctness substrate that all share the same wait-free discipline.</p>
 
   <figure class="cap-figure">
-    <img src="assets/celnet-capabilities/fig-01-system-architecture-adaptability.png" alt="Celnet system architecture: one engine behind seam traits, with three deployment shapes (Standalone, Hybrid, Celer-Integrated) selected by swapping market-data, price-sink and order/execution adapters." loading="lazy">
-    <figcaption>One engine, three deployment shapes. Pricing, risk, and surface logic sit behind seam traits; market-data, price-sink, and order/execution adapters swap underneath them, so the same binary serves <b>Standalone</b>, <b>Hybrid</b>, and <b>Celer-Integrated</b> desks without forking the core.</figcaption>
+    <img src="assets/celnet-capabilities/fig-01-system-architecture-adaptability.png" alt="Celnet system architecture: one engine behind seam traits, with three deployment shapes (Standalone, Hybrid, CelNet-Integrated) selected by swapping market-data, price-sink and order/execution adapters." loading="lazy">
+    <figcaption>One engine, three deployment shapes. Pricing, risk, and surface logic sit behind seam traits; market-data, price-sink, and order/execution adapters swap underneath them, so the same binary serves <b>Standalone</b>, <b>Hybrid</b>, and <b>CelNet-Integrated</b> desks without forking the core.</figcaption>
   </figure>
 
   <h3 id="arch-two-tier">Two tiers: a hot core, an async edge</h3>
@@ -1864,34 +1864,34 @@
   engine's value, identical across every client. The GUI is the desk's richest window onto
   Celnet, not a parallel implementation of it.</p>
 </section>
-<section class="cap-section" id="celer-integration">
-  <h2>8. Celer Estate Integration, Deployment Modes &amp; Engineering Rigor</h2>
-  <p class="signpost"><em>How Celnet slots into a running Celer estate behind clean seam traits across three deployment modes — and (§8.6 onward) the <a href="#engineering-rigor">wall of executable proofs</a> that earns every claim in <a href="#overview">§1</a> through <a href="#clients-overview">§7</a>.</em></p>
+<section class="cap-section" id="celnet-integration">
+  <h2>8. CelNet Estate Integration, Deployment Modes &amp; Engineering Rigor</h2>
+  <p class="signpost"><em>How Celnet slots into a running CelNet estate behind clean seam traits across three deployment modes — and (§8.6 onward) the <a href="#engineering-rigor">wall of executable proofs</a> that earns every claim in <a href="#overview">§1</a> through <a href="#clients-overview">§7</a>.</em></p>
 
-  <p>Celnet is the <b>FX-options pricing system-of-record</b> inside the Celer trade lifecycle. The broader Celer estate routes, risks, clears and books FX flow; Celnet owns the option mathematics — price plus the full desk Greek set, the marked surface across all five smile families (VV · SABR · SVI · SSVI · eSSVI), the full on-wire product catalogue, and server-side hierarchical option risk — and injects them into both the price path and the order path through a small set of clean seam traits. The competitive consequence is decisive: a desk gets a front-to-back FX-options capability that slots into a <em>running</em> Celer estate without standing up a parallel pricing stack and without a rewrite, behind one unversioned contract reachable identically from GUI, SDK, CLI, Excel and the WebSocket mirror.</p>
+  <p>Celnet is the <b>FX-options pricing system-of-record</b> inside the CelNet trade lifecycle. The broader CelNet estate routes, risks, clears and books FX flow; Celnet owns the option mathematics — price plus the full desk Greek set, the marked surface across all five smile families (VV · SABR · SVI · SSVI · eSSVI), the full on-wire product catalogue, and server-side hierarchical option risk — and injects them into both the price path and the order path through a small set of clean seam traits. The competitive consequence is decisive: a desk gets a front-to-back FX-options capability that slots into a <em>running</em> CelNet estate without standing up a parallel pricing stack and without a rewrite, behind one unversioned contract reachable identically from GUI, SDK, CLI, Excel and the WebSocket mirror.</p>
 
   <p>The integration is built as <b>traits and adapters, exercised against real loopback servers and sinks</b>. The live binding to the running JVM estate is delivered through Celnet's implementation program: it slots in behind the already-built seams and is lit up against the running estate at deploy — an integration step on a finished interface, not new engineering.</p>
 
   <figure class="cap-figure">
-    <img src="assets/celnet-capabilities/fig-09-celer-lifecycle.png" alt="The Celer trade lifecycle with Celnet as the FX-options pricing system-of-record: price, Greeks and surface feed the price path, option risk feeds the risk and position path." loading="lazy">
-    <figcaption><b>Celnet in the Celer trade lifecycle.</b> Celnet supplies price, Greeks and the calibrated surface into the price path (<code>celertech-marketdata</code> → <code>marketmerchant</code> → distributor → Celer Trader) and option risk into the risk and position path (<code>celertech-orderrouting</code> → <code>celertech-risk</code> → <code>celertech-destination</code> → <code>celertech-positionmanager</code>). The surrounding Celer services own routing, credit, execution, clearing and the net-position truth source; Celnet owns the option intelligence at each point it is needed.</figcaption>
+    <img src="assets/celnet-capabilities/fig-09-celnet-lifecycle.png" alt="The CelNet trade lifecycle with Celnet as the FX-options pricing system-of-record: price, Greeks and surface feed the price path, option risk feeds the risk and position path." loading="lazy">
+    <figcaption><b>Celnet in the CelNet trade lifecycle.</b> Celnet supplies price, Greeks and the calibrated surface into the price path (<code>celnet-marketdata</code> → <code>marketmerchant</code> → distributor → CelNet Trader) and option risk into the risk and position path (<code>celnet-orderrouting</code> → <code>celnet-risk</code> → <code>celnet-destination</code> → <code>celnet-positionmanager</code>). The surrounding CelNet services own routing, credit, execution, clearing and the net-position truth source; Celnet owns the option intelligence at each point it is needed.</figcaption>
   </figure>
 
   <h3 id="where-celnet-plugs-in">8.1 Where Celnet plugs in</h3>
 
   <p>The estate runs two complementary flows, and Celnet contributes to each at exactly the point where option intelligence is required.</p>
 
-  <p><b>Price path.</b> Venue quotes arrive over FIX, are normalized by <code>celertech-marketdata</code>, assembled by <code>celertech-marketmerchant</code>, fanned out by the distributor over WebSocket, and rendered to the trader in <b>Celer Trader</b> — the <code>celertech-orderrouting-webtrader-react</code> FX front-end. Celnet enriches this path with FX-option price, the full desk Greek set (price + 13 Greeks), and the live calibrated surface, so every option line the trader sees carries Celnet's marks, surface-version pinned.</p>
+  <p><b>Price path.</b> Venue quotes arrive over FIX, are normalized by <code>celnet-marketdata</code>, assembled by <code>celnet-marketmerchant</code>, fanned out by the distributor over WebSocket, and rendered to the trader in <b>CelNet Trader</b> — the <code>celnet-orderrouting-webtrader-react</code> FX front-end. Celnet enriches this path with FX-option price, the full desk Greek set (price + 13 Greeks), and the live calibrated surface, so every option line the trader sees carries Celnet's marks, surface-version pinned.</p>
 
-  <p><b>Order path.</b> From Celer Trader an order flows through <code>celertech-orderrouting</code> (the order-lifecycle hub), <code>celertech-risk</code> (pre-trade credit and limit checks), <code>celertech-destination</code> (FIX-out to many venues), <code>celertech-clearing</code>, and into <code>celertech-positionmanager</code>, the net-position and P&amp;L truth source. Celnet feeds option risk — sensitivities, FRTB-SA capital shape, and scenario surfaces — into the risk and position legs so credit checks and the position book reflect <em>true</em> option exposure rather than a notional approximation. Because aggregation is server-side and hierarchical (entitlement-pruned, numeraire-converted), the risk and position legs consume a firm roll-up rather than looping over Greek grids.</p>
+  <p><b>Order path.</b> From CelNet Trader an order flows through <code>celnet-orderrouting</code> (the order-lifecycle hub), <code>celnet-risk</code> (pre-trade credit and limit checks), <code>celnet-destination</code> (FIX-out to many venues), <code>celnet-clearing</code>, and into <code>celnet-positionmanager</code>, the net-position and P&amp;L truth source. Celnet feeds option risk — sensitivities, FRTB-SA capital shape, and scenario surfaces — into the risk and position legs so credit checks and the position book reflect <em>true</em> option exposure rather than a notional approximation. Because aggregation is server-side and hierarchical (entitlement-pruned, numeraire-converted), the risk and position legs consume a firm roll-up rather than looping over Greek grids.</p>
 
   <div class="tbl-wrap"><table class="cap-table">
     <thead>
-      <tr><th>Celer stage</th><th>Role</th><th>Celnet contribution</th></tr>
+      <tr><th>CelNet stage</th><th>Role</th><th>Celnet contribution</th></tr>
     </thead>
     <tbody>
       <tr><td>Market-data ingest &amp; quote assembly</td><td>Normalize and merchant venue quotes</td><td>FX-option price, Greeks, calibrated surface into the quote</td></tr>
-      <tr><td>Distribution → Celer Trader</td><td>Stream prices to the React front-end</td><td>Option marks on every line, surface-version pinned</td></tr>
+      <tr><td>Distribution → CelNet Trader</td><td>Stream prices to the React front-end</td><td>Option marks on every line, surface-version pinned</td></tr>
       <tr><td>Order-routing hub</td><td>Order lifecycle</td><td>Option valuation and risk on the working order</td></tr>
       <tr><td>Pre-trade risk</td><td>Credit &amp; limit gate</td><td>Option risk sensitivities + FRTB-SA capital for accurate exposure</td></tr>
       <tr><td>Position manager</td><td>Net position &amp; P&amp;L truth</td><td>Option Greeks and marked-surface valuation, server-aggregated</td></tr>
@@ -1915,7 +1915,7 @@
   <p>The order path is fully realised at the integration edge. A streaming quote carries a single-use <b>tradable token</b>: an unguessable, keyed-MAC binding over the line (BUY@offer / SELL@bid) with a last-look validity window, minted on the streaming session and redeemed by an idempotent execute. The same keyed-MAC path drives click-to-trade in the GUI and the live FIX acceptor, so the order-acceptance discipline — accept only a fresh, key-bound, not-yet-consumed token; reject anything stale, forged or replayed — is one mechanism behind one contract, not a per-client reimplementation.</p>
 
   <div class="cap-callout">
-    <p><b>Why one token path matters.</b> A forged token, a replayed token, and a stale token are all rejected identically whether the order arrives from Celer Trader's click-to-trade, the Rust SDK, or an inbound FIX order — because there is exactly one keyed-MAC mechanism, gate-tested against forged / replayed / expired inputs. The order path the estate sees is the order path the GUI sees.</p>
+    <p><b>Why one token path matters.</b> A forged token, a replayed token, and a stale token are all rejected identically whether the order arrives from CelNet Trader's click-to-trade, the Rust SDK, or an inbound FIX order — because there is exactly one keyed-MAC mechanism, gate-tested against forged / replayed / expired inputs. The order path the estate sees is the order path the GUI sees.</p>
   </div>
 
   <figure class="cap-figure">
@@ -1933,8 +1933,8 @@
   <p>Integration depth is a configuration choice, not a fork. Three seam traits — the <b>market-data source</b>, the <b>price sink</b>, and the order/execution adapter — are swapped to move Celnet along a spectrum from fully self-contained to fully estate-native. The engine core never names a transport: it is handed a market-data source and a price sink, and the edge builder picks the concrete adapters for the chosen deployment mode. Migration between modes is a reversible adapter swap, never a rewrite.</p>
 
   <figure class="cap-figure">
-    <img src="assets/celnet-capabilities/fig-10-deployment-modes.png" alt="The three Celnet deployment modes — Standalone, Hybrid, CelerIntegrated — and the adapter seams that distinguish them." loading="lazy">
-    <figcaption><b>Standalone, Hybrid and CelerIntegrated deployment modes.</b> The same engine and the same contract sit behind three adapter configurations on the market-data / price-sink / order-and-execution seams. Standalone is fully real and gate-tested in-crate; CelerIntegrated is the estate-native binding, with the live JVM/WS distributor wiring delivered through Celnet's implementation program on the same seam.</figcaption>
+    <img src="assets/celnet-capabilities/fig-10-deployment-modes.png" alt="The three Celnet deployment modes — Standalone, Hybrid, CelnetIntegrated — and the adapter seams that distinguish them." loading="lazy">
+    <figcaption><b>Standalone, Hybrid and CelnetIntegrated deployment modes.</b> The same engine and the same contract sit behind three adapter configurations on the market-data / price-sink / order-and-execution seams. Standalone is fully real and gate-tested in-crate; CelnetIntegrated is the estate-native binding, with the live JVM/WS distributor wiring delivered through Celnet's implementation program on the same seam.</figcaption>
   </figure>
 
   <div class="tbl-wrap"><table class="cap-table">
@@ -1944,21 +1944,21 @@
     <tbody>
       <tr><td><b>Standalone</b></td><td>Self-contained</td><td>Self-contained</td><td>Celnet runs as an independent FX-options pricing and risk platform — fully real and testable in isolation; the default for a self-contained tenant</td></tr>
       <tr><td><b>Hybrid</b></td><td>Estate <b>and</b> external vendor feeds (blended)</td><td>Governed egress</td><td>Estate market data blended with an external vendor feed, Celnet-owned pricing and distribution</td></tr>
-      <tr><td><b>CelerIntegrated</b></td><td>Celer distributor feed</td><td>Governed publish to the Celer distributor</td><td>Celnet as the estate's FX-options pricing system-of-record</td></tr>
+      <tr><td><b>CelnetIntegrated</b></td><td>CelNet distributor feed</td><td>Governed publish to the CelNet distributor</td><td>Celnet as the estate's FX-options pricing system-of-record</td></tr>
     </tbody>
   </table></div>
 
-  <p><b>Proven today, delivered through the program.</b> The <b>Standalone</b> mode is fully real and gate-tested — its self-contained adapters record and replay every update. The <b>CelerIntegrated</b> and <b>Hybrid</b> modes are wired through the <em>same</em> market-data-source / price-sink seam and exercised against a <b>real loopback server and sink</b> — proving the framing, the governed-egress conflation, and the resync contract. The estate-native binding itself — the JVM distributor sidecar handshake, mailbox calibration, and live quote-feed entitlement — is delivered through Celnet's implementation program: it slots in behind the already-built seam and is lit up against the running estate at deploy, an integration step on a finished interface. Because each mode is just a different binding of the same seam traits, a desk can start Standalone, prove the platform, and migrate deeper into the estate at its own pace.</p>
+  <p><b>Proven today, delivered through the program.</b> The <b>Standalone</b> mode is fully real and gate-tested — its self-contained adapters record and replay every update. The <b>CelnetIntegrated</b> and <b>Hybrid</b> modes are wired through the <em>same</em> market-data-source / price-sink seam and exercised against a <b>real loopback server and sink</b> — proving the framing, the governed-egress conflation, and the resync contract. The estate-native binding itself — the JVM distributor sidecar handshake, mailbox calibration, and live quote-feed entitlement — is delivered through Celnet's implementation program: it slots in behind the already-built seam and is lit up against the running estate at deploy, an integration step on a finished interface. Because each mode is just a different binding of the same seam traits, a desk can start Standalone, prove the platform, and migrate deeper into the estate at its own pace.</p>
 
   <h3 id="adaptable-by-design">8.5 Adaptable by design</h3>
 
-  <p>The same market-data seam that ingests the Celer distributor ingests external products and feeds. Celnet's normalization layer is a vendor-neutral <b>data-shape adapter</b> built to adapt to the venues and terminals a desk already runs — for example <b>Fenics</b>, <b>Bloomberg</b>, <b>Refinitiv</b> and <b>EBS</b>, which are integration/adapter targets. Each is brought in as an adapter behind the seam that maps its quotes into the canonical observable set driving quote assembly, surface marking and live trend series. New sources are added as adapters behind the seam, so onboarding a feed is an integration, not a re-engineering of the pricing core.</p>
+  <p>The same market-data seam that ingests the CelNet distributor ingests external products and feeds. Celnet's normalization layer is a vendor-neutral <b>data-shape adapter</b> built to adapt to the venues and terminals a desk already runs — for example <b>Fenics</b>, <b>Bloomberg</b>, <b>Refinitiv</b> and <b>EBS</b>, which are integration/adapter targets. Each is brought in as an adapter behind the seam that maps its quotes into the canonical observable set driving quote assembly, surface marking and live trend series. New sources are added as adapters behind the seam, so onboarding a feed is an integration, not a re-engineering of the pricing core.</p>
 
-  <p>The throughline across all of this is the platform's single principle: <b>one clean contract, consumed identically everywhere</b>. Whether Celnet runs Standalone or wired into the full Celer lifecycle, the price the order path sees, the risk the position manager books, and the number on the trader's screen are the same value from the same source. Excel is a first-class client of that same contract — every <code>CELNET.*</code> function reaches the identical server, so a structuring desk and a risk desk price from one source of truth.</p>
+  <p>The throughline across all of this is the platform's single principle: <b>one clean contract, consumed identically everywhere</b>. Whether Celnet runs Standalone or wired into the full CelNet lifecycle, the price the order path sees, the risk the position manager books, and the number on the trader's screen are the same value from the same source. Excel is a first-class client of that same contract — every <code>CELNET.*</code> function reaches the identical server, so a structuring desk and a risk desk price from one source of truth.</p>
 
   <figure class="cap-figure">
     <img src="assets/celnet-capabilities/shot-09-excel-taskpane.png" alt="The Celnet Excel task pane with smile-model selection across VV, SABR, SVI, SSVI and eSSVI." loading="lazy">
-    <figcaption><b>Excel as an estate client.</b> The <code>CELNET.*</code> task pane consumes the one unversioned contract — smile-model selection across all five families (VV / SABR / SVI / SSVI / eSSVI) — so a spreadsheet desk prices from the same server and the same marks as Celer Trader and the SDK.</figcaption>
+    <figcaption><b>Excel as an estate client.</b> The <code>CELNET.*</code> task pane consumes the one unversioned contract — smile-model selection across all five families (VV / SABR / SVI / SSVI / eSSVI) — so a spreadsheet desk prices from the same server and the same marks as CelNet Trader and the SDK.</figcaption>
   </figure>
 
   <figure class="cap-figure">
@@ -2046,12 +2046,12 @@
   <ul>
     <li><b>Cross-host wire p99 / SOTA kernel-bypass NIC datapath / absolute wire-latency SLOs</b> — delivered on production topology; the in-core truth-gate plus loopback benches establish the measured compute foundation.</li>
     <li><b>CUDA/NVIDIA absolute GPU throughput, the ≤50ms exotic target, Workload-A/B absolutes</b> — delivered through the CUDA backend on NVIDIA hardware; correctness and ratios are proven against the f64 CPU oracle today (M4 / Lavapipe), with the f64-correct kernels already in place.</li>
-    <li><b>The live JVM Celer estate lifecycle</b> (distributor sidecar handshake, mailbox calibration, live quote-feed entitlement) — lit up against the running estate at deploy; the seams and adapters (FIX 4.4 loopback, the deployment-mode swap) are built today.</li>
+    <li><b>The live JVM CelNet estate lifecycle</b> (distributor sidecar handshake, mailbox calibration, live quote-feed entitlement) — lit up against the running estate at deploy; the seams and adapters (FIX 4.4 loopback, the deployment-mode swap) are built today.</li>
     <li><b>Raft §6 dynamic membership / cross-DC transport / network-partition hardening</b> — delivered on production topology; correctness, quorum, election safety and framing are proven on localhost multi-process today.</li>
     <li><b>Plugin Tier-1 signed-shared-object and Tier-3 OS-sandbox</b> — seamed behind the frozen contract and delivered through the program; Tier-0 native and Tier-2 WebAssembly ship today.</li>
   </ul>
 
-  <p>This is the foundation of trust: Celnet labels every figure precisely by its measurement context (in-core / M4 / loopback) and presents every forward increment as a delivery step on a finished, state-of-the-art seam — methods, architecture and coverage that already out-cover the single-dealer incumbents, with the production absolutes lit up on the same engine. The platform is production-ready by construction: its seams, adapters and proofs are in place so that bringing it up against a running Celer estate and accelerator fleet is integration, not new engineering.</p>
+  <p>This is the foundation of trust: Celnet labels every figure precisely by its measurement context (in-core / M4 / loopback) and presents every forward increment as a delivery step on a finished, state-of-the-art seam — methods, architecture and coverage that already out-cover the single-dealer incumbents, with the production absolutes lit up on the same engine. The platform is production-ready by construction: its seams, adapters and proofs are in place so that bringing it up against a running CelNet estate and accelerator fleet is integration, not new engineering.</p>
 </section>
 </main>
 </div><!-- /.shell -->

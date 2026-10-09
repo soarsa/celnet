@@ -1,4 +1,4 @@
-//! The FX-options dialect mapping (`docs/CELER-FIX-INTEGRATION-PLAN.md` §1.2):
+//! The FX-options dialect mapping (`docs/architecture/CELNET-FIX-INTEGRATION-PLAN.md` §1.2):
 //! FIX instrument/strategy blocks ⇄ `celnet-types` option & strategy
 //! descriptors, convention-checked via `celnet-conventions`, and priced via
 //! `celnet-vanilla` off a supplied market snapshot.

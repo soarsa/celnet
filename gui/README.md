@@ -48,8 +48,8 @@ Requires Node ≥ 22 (developed on Node 26 / npm 11).
   command-palette-style pair browser over the full instrument universe, grouped
   Majors/Crosses/EM with favourites), `PairMenu`/`PairStrip` (pair switcher +
   watchlist), `ScopeBreadcrumb` (the firm→…→leaf risk scope path), `DatePicker`
-  (tenor incl. ON/TN/SN/IMM or an arbitrary broken date), `CelerMark` (the
-  pinwheel brand mark), `ShortcutsOverlay`, `Panel`, `Button`.
+  (tenor incl. ON/TN/SN/IMM or an arbitrary broken date), `CelnetMark` (the
+  geometric brand mark), `ShortcutsOverlay`, `Panel`, `Button`.
 - `viz/SurfaceMesh` (rotatable projected 3D surface, WebGPU-capability-detected,
   Canvas mesh today), `viz/SmileChart` (per-tenor smile), `viz/ramp` (perceptual
   diverging ramp — never rainbow, colourblind-safe).

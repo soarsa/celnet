@@ -5183,7 +5183,7 @@
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-server.src.services.deploy.parse_binds_vendor_feed_when_configured"
   ],
-  "text": "parse_binds_vendor_feed_when_configured asserts that DeployMode::parse with mode string 'integrated' produces WithVendorFeed{vendor_ws=127.0.0.1:9099, integration_mode=CelerIntegrated} and that binds_vendor_feed() returns true; the 'hybrid' mode string selects DeploymentMode::Hybrid. The Standalone variant must never be returned when a non-empty vendor address is provided with a recognised mode string."
+  "text": "parse_binds_vendor_feed_when_configured asserts that DeployMode::parse with mode string 'integrated' produces WithVendorFeed{vendor_ws=127.0.0.1:9099, integration_mode=CelnetIntegrated} and that binds_vendor_feed() returns true; the 'hybrid' mode string selects DeploymentMode::Hybrid. The Standalone variant must never be returned when a non-empty vendor address is provided with a recognised mode string."
  },
  {
   "kind": "invariant",
@@ -7611,7 +7611,7 @@
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-integration.src.normalize.declared_is_premium_adjusted"
   ],
-  "text": "Vendor-feed normalization re-derives the premium-adjusted axis at the integration seam (docs/CONVENTIONS.md DeltaConvention→premium-style; docs/CELER-INTEGRATION.md vendor normalization). `declared_is_premium_adjusted(d)` is a pure const-fn total predicate over DeltaConvention — true exactly for SpotPremiumAdjusted and ForwardPremiumAdjusted, false for the unadjusted Spot/Forward variants — identical in meaning to ConventionRecord::is_delta_premium_adjusted but defined on the integration normalize path where an incoming vendor delta convention is checked against the resolved house record. The two definitions must agree variant-for-variant; drift here would mis-normalize a vendor feed's premium-adjusted flag. Pure: no writes/allocation/IO; deterministic. Self-invalidates if the enum→bool mapping or DeltaConvention variant set changes (WRITES gate)."
+  "text": "Vendor-feed normalization re-derives the premium-adjusted axis at the integration seam (docs/CONVENTIONS.md DeltaConvention→premium-style; docs/CELNET-INTEGRATION.md vendor normalization). `declared_is_premium_adjusted(d)` is a pure const-fn total predicate over DeltaConvention — true exactly for SpotPremiumAdjusted and ForwardPremiumAdjusted, false for the unadjusted Spot/Forward variants — identical in meaning to ConventionRecord::is_delta_premium_adjusted but defined on the integration normalize path where an incoming vendor delta convention is checked against the resolved house record. The two definitions must agree variant-for-variant; drift here would mis-normalize a vendor feed's premium-adjusted flag. Pure: no writes/allocation/IO; deterministic. Self-invalidates if the enum→bool mapping or DeltaConvention variant set changes (WRITES gate)."
  },
  {
   "kind": "invariant:pure",
@@ -13360,7 +13360,7 @@
    "github.com-soarsa-celnet.crates.celnet-integration.src.egress.EgressGovernor",
    "github.com-soarsa-celnet.crates.celnet-server.src.services.deploy.DeployMode.binds_vendor_feed"
   ],
-  "text": "ADR-0011 (Celer-estate ingress): integration into the Celer trade-lifecycle estate is DEPLOYMENT-MODE gated, additive and non-disruptive, with egress bounded+conflating to respect the distributor. DeploymentMode {CelerIntegrated, Hybrid, Standalone, ExternalFeedOnly} selects which feeds attach (uses_celer_feed/uses_external_feed; binds_vendor_feed at the server); all estate publication flows through EgressGovernor (bounded, conflating, rate-limited) so a high-frequency pricer cannot overflow the skip-while-full JVM-distributor mailbox and silently drop prices. HONEST SCOPE: the concrete live Celer trade-lifecycle transport adapter is deploy/estate-gated, NOT an in-repo type — the graph shows no CALLS path from celnet-server into a named Celer order/position adapter; the four lifecycle hops (orderrouting->risk->destination->clearing->positionmanager) are inferred, not runtime-traced."
+  "text": "ADR-0011 (CelNet-estate ingress): integration into the CelNet trade-lifecycle estate is DEPLOYMENT-MODE gated, additive and non-disruptive, with egress bounded+conflating to respect the distributor. DeploymentMode {CelnetIntegrated, Hybrid, Standalone, ExternalFeedOnly} selects which feeds attach (uses_celnet_feed/uses_external_feed; binds_vendor_feed at the server); all estate publication flows through EgressGovernor (bounded, conflating, rate-limited) so a high-frequency pricer cannot overflow the skip-while-full JVM-distributor mailbox and silently drop prices. HONEST SCOPE: the concrete live CelNet trade-lifecycle transport adapter is deploy/estate-gated, NOT an in-repo type — the graph shows no CALLS path from celnet-server into a named CelNet order/position adapter; the four lifecycle hops (orderrouting->risk->destination->clearing->positionmanager) are inferred, not runtime-traced."
  },
  {
   "kind": "invariant:pure",
@@ -13478,7 +13478,7 @@
    "github.com-soarsa-celnet.crates.celnet-integration.src.vendor.VendorSmileMessage",
    "github.com-soarsa-celnet.crates.celnet-server.src.lib.Edge.attach_vendor_feed"
   ],
-  "text": "ADR-0011 (Celer-estate ingress): external vendor FX-options market-data ingress is a SOURCE-AGNOSTIC, normalizing, resilient adapter, not a vendor-named core path. A vendor feed enters via the FeedTransport trait -> ResilientSubscriber (strict-monotone per-key sequencing; on a gap it resyncs from a fresh snapshot, never fabricates) -> vendor::normalize / VendorSmileMessage (+ WireDeltaConvention/WireAtmConvention round-trips) onto the ONE canonical celnet-surface object, bound to the server via Edge::attach_vendor_feed. The vendor name lives only in integration/docs context (guardrail #8); a second source is a second FeedTransport impl, not a fork. Verified: vendor_feed_with_gap_resyncs_and_surface_matches_direct_pipeline."
+  "text": "ADR-0011 (CelNet-estate ingress): external vendor FX-options market-data ingress is a SOURCE-AGNOSTIC, normalizing, resilient adapter, not a vendor-named core path. A vendor feed enters via the FeedTransport trait -> ResilientSubscriber (strict-monotone per-key sequencing; on a gap it resyncs from a fresh snapshot, never fabricates) -> vendor::normalize / VendorSmileMessage (+ WireDeltaConvention/WireAtmConvention round-trips) onto the ONE canonical celnet-surface object, bound to the server via Edge::attach_vendor_feed. The vendor name lives only in integration/docs context (guardrail #8); a second source is a second FeedTransport impl, not a fork. Verified: vendor_feed_with_gap_resyncs_and_surface_matches_direct_pipeline."
  },
  {
   "kind": "decision",

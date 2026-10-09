@@ -79,7 +79,7 @@ pub(crate) fn run_act2(report: &mut DemoReport) {
         98.4375,
         ExchangeTimeInForce::ImmediateOrCancel,
         false,
-        "CELER",
+        "CELNET",
     );
     let mut out_buf = [0u8; 256];
     const ILINK_ITERS: usize = 1_000_000;

@@ -70,7 +70,7 @@ Rigor includes refusing to claim what has not been proven *in-repo*. Celnet's do
 
 - **Cross-host wire p99 / kernel-bypass NIC latency / the §11 absolute wire-latency SLOs** — deploy-gated; in-repo proves the in-core §1.2 truth-gate + loopback benches only.
 - **CUDA/NVIDIA absolute GPU throughput, ≤50ms exotic, Workload-A/B absolute numbers** — deploy-gated. M4 Metal lacks f64 ⇒ in-repo proves **correctness + ratios only** (M4/Lavapipe); never f64 on Metal.
-- **The entire live JVM Celer estate lifecycle** (distributor sidecar handshake, mailbox calibration, live quote-feed entitlement) — deploy/live-gated; in-repo has the seams + adapters (FIX 4.4 loopback, DeployMode swap) only.
+- **The entire live JVM CelNet estate lifecycle** (distributor sidecar handshake, mailbox calibration, live quote-feed entitlement) — deploy/live-gated; in-repo has the seams + adapters (FIX 4.4 loopback, DeployMode swap) only.
 - **Raft §6 dynamic membership / cross-DC transport / real network partitions** — deploy-gated; in-repo proves correctness/quorum/framing on localhost multi-process only.
 - **Plugin Tier-1 signed-shared-object (stabby) + Tier-3 Landlock/seccomp OS-sandbox** — designed-only; only Tier-0 native + Tier-2 wasmi are shipped.
 - **XVA (CVA/DVA/FVA)** — internal-only, **no client/wire surface, synthetic netting sets only**; live CSAs / collateral / wrong-way risk are deploy-gated.

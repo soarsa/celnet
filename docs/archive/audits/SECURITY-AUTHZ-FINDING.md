@@ -93,6 +93,6 @@ Login token + grant-all default, both admitted under `Enforce`).
 
 ## Caveat (threat model)
 This is a static-architecture verdict on the server code. If the WS/stream endpoints sit behind
-an authenticating gateway in deployment (the Celer estate edge), the *exploitability* is reduced —
+an authenticating gateway in deployment (the CelNet estate edge), the *exploitability* is reduced —
 but the server itself enforces nothing, so defense-in-depth is absent. Confirm the deployment
 posture before sizing the remediation.

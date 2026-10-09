@@ -10,10 +10,10 @@
 
 > **Binding-rules override (2026-05-30):** where this document predates the current product
 > rules it is superseded by `CLAUDE.md` guardrails: crate prefix is **`celnet-`** (not
-> `celer-`); API identifiers are vendor/research-neutral and purpose-named; **there are no
+> `celnet-`); API identifiers are vendor/research-neutral and purpose-named; **there are no
 > versioned APIs** — the wire contract is single-and-current and zero-downtime upgrades use
 > **blue-green / full cutover** (no `schema_version` / N–N-1). Passages below mentioning a
-> "versioned wire protocol" or `celer-*` crates are scrubbed as those areas are built.
+> "versioned wire protocol" or `celnet-*` crates are scrubbed as those areas are built.
 
 This document is the source of truth for the system architecture: guiding principles and
 non-functional requirements, the multi-crate Cargo workspace, the concurrency/latency
@@ -175,7 +175,7 @@ celnet/
     ├── celnet-lp-sim          # deterministic synthetic FI liquidity-provider fleet implementing the VenueFeed seam
     ├── celnet-cme-sim         # listed-futures venue built ON TOP of celnet-lp-sim's engine
     ├── celnet-testkit         # shared test fixtures, market data builders, and scenario harnesses
-    ├── celnet-integration     # Celer estate + vendor FX-options MD adapters; multi-source aggregation
+    ├── celnet-integration     # CelNet estate + vendor FX-options MD adapters; multi-source aggregation
     └── celnet-bench           # comprehensive micro-benchmarks, fleet SLO regression gates, and load generators
 ```
 
@@ -474,7 +474,7 @@ lowers the frozen POD records onto a host-controlled core-module `(ptr,len)` ABI
 ## 7. Data flow
 
 End-to-end: external market data → normalized surface → pricing → Greeks/risk →
-distribution to the Celer estate and front end. The **hot core** (busy-polling, pinned) is
+distribution to the CelNet estate and front end. The **hot core** (busy-polling, pinned) is
 boxed; the async edge sits at the boundaries.
 
 ```
@@ -485,7 +485,7 @@ boxed; the async edge sits at the boundaries.
  │ (API or LSEG feed) │──┐    via celnet-integration  (normalize vendor conventions → canonical)
  └────────────────────┘  │
  ┌────────────────────┐  │   ┌───────────────────┐      ┌──────────────────────────┐
- │ Celer marketdata-  │  ├──►│  celnet-integration│ rtrb │   celnet-surface          │
+ │ CelNet marketdata-  │  ├──►│  celnet-integration│ rtrb │   celnet-surface          │
  │ api (WS, spot/vol) │──┘   │ aggregate ·staleness│ SPSC │ broker→smile fly convert │
  │ MarketMerchantPrice│      │ decay · divergence│─────►│ VV / SSVI / SABR / SVI    │
  └────────────────────┘      │ detection         │      │ delta-space, arb checks  │
@@ -515,30 +515,30 @@ boxed; the async edge sits at the boundaries.
                               └───────────────────────┬───────────────────┘
                                      rtrb SPSC         ▼
   ASYNC EDGE (tokio)          ┌──────────────────────────────────────────┐
-  ───────────────            │   celnet-server (tonic gRPC + WS mirror)    │──►  Celer front end
+  ───────────────            │   celnet-server (tonic gRPC + WS mirror)    │──►  CelNet front end
                               │   celnet-client (typed Rust SDK)            │──►  programmatic MMs
-                              │   celnet-integration (Celer estate bridge)  │──►  Celer OMS/EMS/risk
+                              │   celnet-integration (CelNet estate bridge)  │──►  CelNet OMS/EMS/risk
                               │   celnet-fix (FIX 4.4 acceptor + initiator) │──►  venues / clearing
                               └────────────────────────────────────────────┘
 ```
 
-**Notes on the Celer integration edge (from the integration research).** *Market-data
+**Notes on the CelNet integration edge (from the integration research).** *Market-data
 normalization, multi-source aggregation and the egress governor live in the single
 `celnet-integration` crate (the early design's `celnet-distributor` / `celnet-staticdata` /
 `celnet-md-*` split was consolidated); the **FIX 4.4 engine is built as `celnet-fix`** (zero-copy
 framing, FIXT/4.4 session, FX-options dialect, acceptor + initiator) and wired into
 `celnet-server` as a live acceptor; live JVM-estate lifecycle wiring remains deploy/estate-gated.*
-- The Celer distributor is an **in-process disruptor mailbox in the JVM** with
+- The CelNet distributor is an **in-process disruptor mailbox in the JVM** with
   *skip-while-full* back-pressure — a high-frequency option pricer can cause silent price
   drops, so `celnet-integration` sizes mailboxes and rate-limits, and a Rust process joins via
   a **JVM adapter or the `DistributorProducerChannelHandler` socket protocol** (decision
   deferred but scoped in `celnet-integration`).
-- Adding an FX-**option** product type is a broad change touching `celertech-type`,
+- Adding an FX-**option** product type is a broad change touching `celnet-type`,
   staticdata, every API proto enum, positionmanager netting keys, risk exposure models, and
   the destination FIX dialect — concentrated in `celnet-integration` + `celnet-proto` so the
   blast radius is contained.
 - `MarketMerchantPriceService` is WS-only (no fallback, ~6 concurrent HTTP connections per
-  domain) — the `celnet-integration` Celer feed handler is built resilient to WS disconnects with resync.
+  domain) — the `celnet-integration` CelNet feed handler is built resilient to WS disconnects with resync.
 
 ---
 
@@ -597,7 +597,7 @@ framing, FIXT/4.4 session, FX-options dialect, acceptor + initiator) and wired i
   renumber ceremony is required because no old reader must ever decode a new message.
 - **Two framings, one version:** **`rkyv`** zero-copy for in-host IPC, shared-memory and the
   upgrade state handoff (access archived bytes directly); **`tonic` + `prost`** for external
-  service RPC. The hand-rolled zero-copy FIX 4.4 dialect for the venue/Celer-destination wire
+  service RPC. The hand-rolled zero-copy FIX 4.4 dialect for the venue/CelNet-destination wire
   is **built as `celnet-fix`** (acceptor + initiator, loopback-tested, wired into
   `celnet-server`); a separate `celnet-ipc` crate was not needed (the rkyv handoff lives in
   `celnet-engine`).

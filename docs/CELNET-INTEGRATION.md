@@ -1,6 +1,6 @@
-# Celnet — Celer Integration Map
+# Celnet — CelNet Integration Map
 
-> Status: design document for a greenfield Rust service (this repo). All Celer-side service names, hops, transports and constraints below are drawn from the `celnet-integration` research findings. Items the research flagged as **inferred** (not runtime-traced) or otherwise unconfirmed are called out explicitly and collected in the Open Questions section. Do not treat them as verified until checked against the real services.
+> Status: design document for a greenfield Rust service (this repo). All CelNet-side service names, hops, transports and constraints below are drawn from the `celnet-integration` research findings. Items the research flagged as **inferred** (not runtime-traced) or otherwise unconfirmed are called out explicitly and collected in the Open Questions section. Do not treat them as verified until checked against the real services.
 
 ---
 
@@ -13,7 +13,7 @@ These are hard facts from the integration research that shape every decision bel
 - **Cross-service edges are invisible to automated tooling.** `lodestar` finds zero cross-service edges because the estate uses the in-proc distributor + Protobuf + FIX, not HTTP/gRPC. The dependency map must be maintained **manually** and verified against Spring config and distributor `notifyUsers` names.
 - **Several hops are inferred, not traced.** `orderrouting → risk`, `risk → destination`, `destination → clearing`, `clearing → positionmanager` are inferred from API deps and handler signatures — validate before relying on them.
 - **`MarketMerchantPriceService` is WS-only with no fallback** and has a ~6 concurrent HTTP connection semaphore per domain. Any new option price stream must be resilient to WS disconnects.
-- **No option product type exists in the estate today.** Adding one touches `celertech-type`, `staticdata`, every API proto enum, `positionmanager` netting keys, `risk` exposure models, and `destination` FIX dialect mappings. This is a broad, cross-cutting change.
+- **No option product type exists in the estate today.** Adding one touches `celnet-type`, `staticdata`, every API proto enum, `positionmanager` netting keys, `risk` exposure models, and `destination` FIX dialect mappings. This is a broad, cross-cutting change.
 - **Config is layered at deploy time via `celnet-client` tenant overlays**, not baked into artifacts; the `celnet-client` subgroup is not in the default repo pull, so config wiring may be invisible locally. Confirm tenant overlay ownership with devops.
 - **FX options need a vol surface + Greeks inputs that spot-only marketdata may not supply.** Verify `marketdata-api` can deliver vol data or plan an additional feed handler (this is where Fenics FXO 2.0 comes in — see below).
 
@@ -27,17 +27,17 @@ For Garman-Kohlhagen vanilla pricing and the LSV/VV exotics engine, Celnet requi
 
 | Input | Purpose | Likely source |
 |---|---|---|
-| Spot mid/bid/ask | GK spot leg, forward construction | Celer `marketdata` (spot-only today) |
-| Forward points / outrights | Forward `F = S·e^{(r_d−r_f)T}`; deliverable vs NDF | Celer `marketdata` (verify), Fenics FX pricing set |
-| NDF fixings | NDO/NDF cash-settlement pricing | Fenics (350+ pairs incl. NDF), verify Celer coverage |
+| Spot mid/bid/ask | GK spot leg, forward construction | CelNet `marketdata` (spot-only today) |
+| Forward points / outrights | Forward `F = S·e^{(r_d−r_f)T}`; deliverable vs NDF | CelNet `marketdata` (verify), Fenics FX pricing set |
+| NDF fixings | NDO/NDF cash-settlement pricing | Fenics (350+ pairs incl. NDF), verify CelNet coverage |
 | Vol surface quotes: **ATM, 25Δ & 10Δ RR, 25Δ & 10Δ BF** | Smile construction (delta space) | **Fenics FMD FXO 2.0** (primary), verify `marketdata-api` |
-| Deposit / discount curves (DF_d, DF_f) | Two-rate discounting, dual-curve | Celer staticdata/curve service (verify) |
+| Deposit / discount curves (DF_d, DF_f) | Two-rate discounting, dual-curve | CelNet staticdata/curve service (verify) |
 
 > **Critical gap:** the research explicitly warns spot-only marketdata may not deliver vol data. **Fenics Market Data FXO 2.0** is the designated external vol-surface source — it publishes ATM + 25Δ/10Δ RR + BF wing quotes per tenor per pair (300+ pairs, 27 metals) in standard FX-options market convention. Celnet builds an **FMD adapter** that normalizes Fenics' (under-documented) delta/ATM conventions into Celnet's canonical surface object on ingest.
 
 ### 1.2 Transports
 
-- **Internal Celer bus:** the in-process JVM **distributor** (disruptor mailbox). Rust ingress requires a JVM adapter or the `DistributorProducerChannelHandler` socket protocol — decision pending (§0).
+- **Internal CelNet bus:** the in-process JVM **distributor** (disruptor mailbox). Rust ingress requires a JVM adapter or the `DistributorProducerChannelHandler` socket protocol — decision pending (§0).
 - **`MarketMerchantPriceService`:** **WebSocket-only**, no fallback, ~6 concurrent HTTP connections per domain. Spot/forward price streaming likely arrives here — the consumer must reconnect/resubscribe resiliently.
 - **Protobuf** message bodies and **FIX** are the estate's wire formats (not HTTP/gRPC internally).
 - **Fenics FMD:** external feed — API/streaming/snapshot, or via LSEG/Refinitiv redistribution (per the Fenics findings). Ingested by the FMD adapter, not the distributor.
@@ -47,7 +47,7 @@ For Garman-Kohlhagen vanilla pricing and the LSV/VV exotics engine, Celnet requi
 - `marketdata` / `marketdata-api` — spot (confirmed spot-only), verify forward/NDF/vol capability.
 - `MarketMerchantPriceService` — WS price streaming.
 - `staticdata` — instrument/curve reference data; will need new option product reference (§0).
-- `celertech-type` — shared type definitions; needs an option product type added.
+- `celnet-type` — shared type definitions; needs an option product type added.
 - Distributor (`baseserver`, in-process) + `DistributorProducerChannelHandler`.
 - Fenics FMD FXO 2.0 (external).
 
@@ -76,7 +76,7 @@ For Garman-Kohlhagen vanilla pricing and the LSV/VV exotics engine, Celnet requi
 
 ### 2.3 Egress to the React webtrader frontend
 
-- The frontend is **React**. Per the estate pattern and Celer's WS-centric `MarketMerchantPriceService`, the frontend consumes prices/quotes over **WebSocket** (gRPC-web/WS — confirm the exact transport against the real webtrader; the estate internals are Protobuf/FIX, so the browser edge is most likely WS carrying Protobuf or a JSON projection).
+- The frontend is **React**. Per the estate pattern and CelNet's WS-centric `MarketMerchantPriceService`, the frontend consumes prices/quotes over **WebSocket** (gRPC-web/WS — confirm the exact transport against the real webtrader; the estate internals are Protobuf/FIX, so the browser edge is most likely WS carrying Protobuf or a JSON projection).
 - Celnet should expose the constructed surface, live Greeks, and scenario/stress outputs to the webtrader so a desk can build bespoke pre-trade screens, structured-product builders and real-time stress dashboards (the differentiator vs SynOption's fixed screens).
 - **Constraint:** the WS path has no fallback and a ~6-connection-per-domain semaphore — design the frontend feed for disconnect resilience and connection economy.
 
@@ -85,7 +85,7 @@ For Garman-Kohlhagen vanilla pricing and the LSV/VV exotics engine, Celnet requi
 - **Protobuf** request/response and event messages — must extend **every API proto enum** to carry the new option product type (§0).
 - **FIX** for execution via `destination` — new option dialect mappings.
 - Distributor `notifyUsers` channel names — must be added/verified manually (no automated discovery).
-- rkyv/internal Celnet wire formats stay internal to the Rust engine; only the Celer-facing boundary uses Protobuf/FIX/distributor.
+- rkyv/internal Celnet wire formats stay internal to the Rust engine; only the CelNet-facing boundary uses Protobuf/FIX/distributor.
 
 ---
 
@@ -104,7 +104,7 @@ For Garman-Kohlhagen vanilla pricing and the LSV/VV exotics engine, Celnet requi
 | `destination` | FIX execution | New FIX dialect mappings |
 | `clearing` | Post-trade | Verify hops |
 | `staticdata` | Reference data/curves | New option reference data |
-| `celertech-type` | Shared types | New option product type |
+| `celnet-type` | Shared types | New option product type |
 | `celnet-client` | Tenant config overlays (deploy-time) | Confirm overlay ownership w/ devops |
 | API proto definitions | Protobuf enums/messages | Add option product type to **every** enum |
 | Fenics FMD FXO 2.0 (external) | Vol surface + spot/fwd/NDF source | Build FMD ingest adapter |
@@ -121,14 +121,14 @@ The estate has **no option product type today**, so the strategy is to add Celne
 - Confirm `marketdata-api` vol capability vs Fenics dependency; confirm `celnet-client` tenant overlay ownership.
 
 **Phase 1 — Ingress, read-only.**
-- Build the **Fenics FMD adapter** (ATM/RR/BF wings, spot, forward points, NDF fixings → canonical surface) and, if available, a Celer vol feed handler.
-- Consume Celer spot/forward via the WS `MarketMerchantPriceService` and/or distributor as a **passive subscriber**. No publishing yet. Verify resilience to WS disconnects.
+- Build the **Fenics FMD adapter** (ATM/RR/BF wings, spot, forward points, NDF fixings → canonical surface) and, if available, a CelNet vol feed handler.
+- Consume CelNet spot/forward via the WS `MarketMerchantPriceService` and/or distributor as a **passive subscriber**. No publishing yet. Verify resilience to WS disconnects.
 
 **Phase 2 — Pricing engine offline / shadow.**
 - Run GK + VV/LSV pricing producing prices, full Greeks, and the constructed arbitrage-free surface **internally only**. Cross-validate against QuantLib golden tables. No estate egress.
 
 **Phase 3 — Egress as a new, isolated product type.**
-- Add the option product type to `celertech-type`, `staticdata`, **every API proto enum**, `risk` exposure models, `positionmanager` netting keys, and `destination` FIX dialect mappings — behind feature flags / tenant overlays so existing product flows are untouched.
+- Add the option product type to `celnet-type`, `staticdata`, **every API proto enum**, `risk` exposure models, `positionmanager` netting keys, and `destination` FIX dialect mappings — behind feature flags / tenant overlays so existing product flows are untouched.
 - Publish prices/quotes/Greeks to `marketmerchant` and the webtrader over WS, **rate-limited** to respect the bounded distributor mailbox (avoid silent drops). Initially indicative-only.
 
 **Phase 4 — Order routing, risk, booking, clearing.**

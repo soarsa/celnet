@@ -1,7 +1,7 @@
 {
   "deliverable": "desk-session-risk-scoping",
   "title": "Desk-bound session risk scoping under Enforce (arch item J)",
-  "decision": "ADR-0011-celer-estate-ingress",
+  "decision": "ADR-0011-celnet-estate-ingress",
   "description": "A desk-bound trader session resolves its effective_principal and narrows it to its desk (narrow_to_desk), so under the Enforce posture it sees ONLY its desk's risk: an out-of-desk query returns strictly fewer positions than a grant-all principal. The structural narrowing seam is landed; the end-to-end exercise through a wire client is the deferred tail. This is the frozen-contract acceptance for the deliverable 'desk-session-risk-scoping'.",
   "assertions": [
     {

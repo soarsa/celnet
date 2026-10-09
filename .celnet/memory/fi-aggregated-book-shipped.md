@@ -24,7 +24,7 @@ requirement in `docs/FI-AGGREGATED-BOOK-REQUIREMENTS.md` + ADR-0022. Layers:
   distinct seeded character), authenticates, polls `ListAggregatedBooks`, and prices
   exactly the bonds each enabled book scopes to (create/edit a book ⇒ priced next poll).
   Real US-Treasury universe bundled at `crates/celnet-lp-sim/data/treasury-universe.json`
-  (267 bonds, from celertech-treasury-data-fetcher). Broadcast fallback: `--no-book-poll`.
+  (267 bonds, from celnet-treasury-data-fetcher). Broadcast fallback: `--no-book-poll`.
 
 **Run it:** GUI → Aggregation → create book w/ members `LP-SIM-01..05`, scope
 all-members-quote, enabled → on host start the daemon (release ships `start-lp-sim.sh`;

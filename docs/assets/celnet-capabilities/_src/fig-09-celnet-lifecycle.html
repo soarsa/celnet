@@ -28,7 +28,7 @@ body>*{flex:0 0 auto}
 <div class="rail"></div>
 <div class="hd">
 <svg class="mk" viewBox="0 0 501 500"><path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
-<h1>Celer Trade Lifecycle with Celnet</h1>
+<h1>CelNet Trade Lifecycle with Celnet</h1>
 <span class="sub">Celnet</span>
 </div>
 <div class="wrap">
@@ -48,12 +48,12 @@ body>*{flex:0 0 auto}
   </div>
   <div class="arrow">→</div>
   <div class="box" style="width:170px">
-    <div class="t">celertech-marketdata</div>
-    <div class="d">The Celer market-data fabric — curated, blended observables for the desk.</div>
+    <div class="t">celnet-marketdata</div>
+    <div class="d">The CelNet market-data fabric — curated, blended observables for the desk.</div>
   </div>
   <div class="arrow">→</div>
   <div class="box brand" style="width:210px">
-    <div class="t">celertech-marketmerchant</div>
+    <div class="t">celnet-marketmerchant</div>
     <div class="d">Quote assembly. <b>Celnet</b> injects the FX-option price, the full Greek set and the calibrated surface here.</div>
     <div><span class="chip k">Celnet · price &amp; surface</span></div>
   </div>
@@ -70,8 +70,8 @@ body>*{flex:0 0 auto}
   </div>
   <div class="arrow">→</div>
   <div class="box accent" style="width:215px">
-    <div class="t">Celer Trader</div>
-    <div class="d">celertech-orderrouting-webtrader-react — the React FX front-end the desk trades from.</div>
+    <div class="t">CelNet Trader</div>
+    <div class="d">celnet-orderrouting-webtrader-react — the React FX front-end the desk trades from.</div>
   </div>
 </div>
 
@@ -79,33 +79,33 @@ body>*{flex:0 0 auto}
 <div class="section-label" style="margin-top:20px">Order path · execution outbound from the trader</div>
 <div class="row" style="align-items:stretch">
   <div class="box accent" style="width:200px">
-    <div class="t">Celer Trader</div>
+    <div class="t">CelNet Trader</div>
     <div class="d">Click-to-trade on a keyed-MAC tradable token — sell-at-bid / buy-at-offer, last-look validity, idempotent execution.</div>
   </div>
   <div class="arrow">→</div>
   <div class="box" style="width:185px">
-    <div class="t">celertech-orderrouting</div>
+    <div class="t">celnet-orderrouting</div>
     <div class="d">The order-lifecycle hub routing each ticket through the estate.</div>
   </div>
   <div class="arrow">→</div>
   <div class="box brand" style="width:200px">
-    <div class="t">celertech-risk</div>
+    <div class="t">celnet-risk</div>
     <div class="d">Pre-trade credit and limit checks. <b>Celnet</b> supplies option risk — sensitivities and scenario exposure — into the gate.</div>
     <div><span class="chip k">Celnet · option risk</span></div>
   </div>
   <div class="arrow">→</div>
   <div class="box" style="width:165px">
-    <div class="t">celertech-destination</div>
+    <div class="t">celnet-destination</div>
     <div class="d">FIX-out to many venues via the FIX 4.4 initiator.</div>
   </div>
   <div class="arrow">→</div>
   <div class="box" style="width:150px">
-    <div class="t">celertech-clearing</div>
+    <div class="t">celnet-clearing</div>
     <div class="d">Post-trade clearing and confirmation across the estate.</div>
   </div>
   <div class="arrow">→</div>
   <div class="box brand" style="width:235px">
-    <div class="t">celertech-positionmanager</div>
+    <div class="t">celnet-positionmanager</div>
     <div class="d">Net position and P&amp;L truth source. <b>Celnet</b> drives the option risk and revaluation behind every position.</div>
     <div><span class="chip k">Celnet · position risk</span></div>
   </div>
@@ -138,13 +138,13 @@ body>*{flex:0 0 auto}
   <div class="box tint" style="flex:1">
     <div class="t">Three deployment modes · one seam</div>
     <div class="d">Adapter swaps on the market-data / price-sink / order-exec seam traits move Celnet between
-    <span class="chip">Standalone</span><span class="chip">Hybrid</span><span class="chip">CelerIntegrated</span>
-    — reversible swaps, never a rewrite. The Standalone adapters are built and fully tested; <span class="chip">CelerIntegrated</span> is the <b>estate-native binding</b> — the Celnet-side seam traits and FIX engine are built, and the live JVM/WebSocket distributor wiring lands through Celnet's implementation program behind the same seams. A conflating egress governor, a resilient market-data subscriber, vendor-feed normalisation and an intra-fleet partition map carry node-local speed into horizontal scale-out and fan-out to many counterparties. The same seam ingests external products and feeds.</div>
+    <span class="chip">Standalone</span><span class="chip">Hybrid</span><span class="chip">CelnetIntegrated</span>
+    — reversible swaps, never a rewrite. The Standalone adapters are built and fully tested; <span class="chip">CelnetIntegrated</span> is the <b>estate-native binding</b> — the Celnet-side seam traits and FIX engine are built, and the live JVM/WebSocket distributor wiring lands through Celnet's implementation program behind the same seams. A conflating egress governor, a resilient market-data subscriber, vendor-feed normalisation and an intra-fleet partition map carry node-local speed into horizontal scale-out and fan-out to many counterparties. The same seam ingests external products and feeds.</div>
   </div>
 </div>
 
-<div class="note">Celnet is the FX-options pricing system-of-record in the Celer trade lifecycle — pricing, Greeks and the surface flow into the price path; option risk flows into the risk and position path.</div>
-<div class="note" style="font-style:normal;color:#5b6376;border-top:1px dashed var(--line);padding-top:8px">The surrounding <span class="chip" style="margin:0">celertech-*</span> estate components are the integration map: the Celer integration is <b>built and seamed</b> via the DeployMode market-data / price-sink / order-exec adapter traits, with the Standalone path built and tested. The full live JVM Celer estate lifecycle (distributor sidecar handshake, FX_OPTION mailbox calibration, inferred hops, tenant overlays, live quote-feed entitlement) lands through Celnet's implementation program on the carry-generalized engine, binding into the running estate.</div>
+<div class="note">Celnet is the FX-options pricing system-of-record in the CelNet trade lifecycle — pricing, Greeks and the surface flow into the price path; option risk flows into the risk and position path.</div>
+<div class="note" style="font-style:normal;color:#5b6376;border-top:1px dashed var(--line);padding-top:8px">The surrounding <span class="chip" style="margin:0">celnet-*</span> estate components are the integration map: the CelNet integration is <b>built and seamed</b> via the DeployMode market-data / price-sink / order-exec adapter traits, with the Standalone path built and tested. The full live JVM CelNet estate lifecycle (distributor sidecar handshake, FX_OPTION mailbox calibration, inferred hops, tenant overlays, live quote-feed entitlement) lands through Celnet's implementation program on the carry-generalized engine, binding into the running estate.</div>
 
 </div>
 <div class="foot">Celnet Platform</div>

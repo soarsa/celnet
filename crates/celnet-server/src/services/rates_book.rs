@@ -5563,7 +5563,7 @@ pub(crate) mod tests {
     #[test]
     fn counterparty_and_ccy_route_a_rates_fill() {
         use std::collections::BTreeMap;
-        // Chain: Counterparty == "celer-rates-celnet" AND Ccy == "USD" → BOOK-CP, else DEFAULT.
+        // Chain: Counterparty == "celnet-rates-internal" AND Ccy == "USD" → BOOK-CP, else DEFAULT.
         let graph = {
             let mut nodes = BTreeMap::new();
             nodes.insert(
@@ -5571,7 +5571,7 @@ pub(crate) mod tests {
                 RoutingNode::Condition {
                     field: RouteField::Counterparty,
                     op: RouteOp::Eq,
-                    value: RouteValue::Text("celer-rates-celnet".to_owned()),
+                    value: RouteValue::Text("celnet-rates-internal".to_owned()),
                     on_true: 1,
                     on_false: 3,
                 },
@@ -5603,12 +5603,12 @@ pub(crate) mod tests {
         let store = RatesPositionStore::new();
         store.set_routing(Some(graph));
 
-        // A desk-originated fill (counterparty "celer-rates-celnet" in USD) → BOOK-CP.
+        // A desk-originated fill (counterparty "celnet-rates-internal" in USD) → BOOK-CP.
         let routed = store
             .book_with_routing(
                 position(0, 1, 10),
                 RatesRoutingAttribution {
-                    counterparty: "celer-rates-celnet".to_owned(),
+                    counterparty: "celnet-rates-internal".to_owned(),
                     ccy: "USD".to_owned(),
                     ..RatesRoutingAttribution::default()
                 },
@@ -5631,12 +5631,12 @@ pub(crate) mod tests {
         let ctx = routing_context_from_rates(
             &position(1, 1, 10),
             &RatesRoutingAttribution {
-                counterparty: "celer-rates-celnet".to_owned(),
+                counterparty: "celnet-rates-internal".to_owned(),
                 ccy: "USD".to_owned(),
                 ..RatesRoutingAttribution::default()
             },
         );
-        assert_eq!(ctx.counterparty, "celer-rates-celnet");
+        assert_eq!(ctx.counterparty, "celnet-rates-internal");
         assert_eq!(ctx.ccy, "USD");
     }
 

@@ -69,13 +69,13 @@ until absolutely everything is fully implemented and fully verified end-to-end"*
   all four touch the frozen seams; THEN W2+ leaves fan out to disjoint lanes. See MASTER-EVOLUTION §2/§3.
 
 ### 📍 HANDOVER ARTIFACTS (prepared 2026-06-06 for a clean post-/clear resume)
-- **Repo ledger (status source of truth):** `/Users/adrian/code/celeroption/CLAUDE.md` — top entry =
+- **Repo ledger (status source of truth):** `/Users/adrian/code/celnet/CLAUDE.md` — top entry =
   "Wave 5 DONE → ALL IN-REPO WAVES (1–5) COMPLETE". Auto-loaded each session.
-- **Wiki (narrative knowledge layer):** `~/wiki/celeroption/index.md` (graph project
-  `Users-adrian-code-celeroption`; registered in `~/wiki/index.md` root registry under Standalone
+- **Wiki (narrative knowledge layer):** `~/wiki/celnet/index.md` (graph project
+  `Users-adrian-code-celnet`; registered in `~/wiki/index.md` root registry under Standalone
   products). Loaded by the wiki-session-start hook when cwd is this repo. Per-cluster entity/concept
-  pages under `~/wiki/celeroption/{entities,concepts}/`. Keep it current via `/wiki-ingest` after commits.
-- **▶ READY-TO-LAUNCH NEXT WORK:** `/Users/adrian/code/celeroption/docs/NEXT-WORKFLOWS.md` — the operator
+  pages under `~/wiki/celnet/{entities,concepts}/`. Keep it current via `/wiki-ingest` after commits.
+- **▶ READY-TO-LAUNCH NEXT WORK:** `/Users/adrian/code/celnet/docs/NEXT-WORKFLOWS.md` — the operator
   runbook with the proven workflow RECIPE, the 3 hard lessons, and ready-to-launch dynamic-workflow SPECS
   for the deepening increments (full Raft in replog; GPU G3/G6 + QMC-on-GPU KAT; fanout-under-edge; etc.).
   **If asked to continue, read that doc and launch the next two-disjoint-track Workflow from it.**
@@ -153,7 +153,7 @@ workflows**, one wave at a time; commit + **push to `origin` (github.com/soarsa/
   vs an independent oracle, committed+pushed with local==remote.
 - **ONLY Wave 6 REMAINS — and it is NEVER built/claimed in-repo by design** (the honest boundary):
   cross-host wire p99 / kernel-bypass NIC, CUDA deploy-gate absolute throughput / NVIDIA headline / ≤50ms
-  exotic, the live JVM Celer estate lifecycle (sidecar/FX_OPTION/4 inferred hops/tenant overlays), and the
+  exotic, the live JVM CelNet estate lifecycle (sidecar/FX_OPTION/4 inferred hops/tenant overlays), and the
   §11 absolute wire-latency SLOs. In-repo these are closed by the built seams + ADRs + the docs-anchor
   lint; they are proven only at deploy/live-staging. There is no further in-repo workflow to launch for
   the program. If the user wants more: deepen any existing wave (e.g. W3 full Raft election + conflicting-
@@ -182,7 +182,7 @@ workflows**, one wave at a time; commit + **push to `origin` (github.com/soarsa/
   dodge clippy, no `as any`/`@ts-ignore`/eslint-disable, no skipped-and-pretended tests, no mocked-as-real,
   no overclaim. Each workflow's **verify phase must grep the diff for these** and reject if any found.
 - **Honest boundary (never claim from this repo):** cross-host wire p99, kernel-bypass NIC, NVIDIA GPU
-  throughput / ≤50ms exotic, the §11 absolute wire-latency SLOs, and the **entire live JVM Celer estate**
+  throughput / ≤50ms exotic, the §11 absolute wire-latency SLOs, and the **entire live JVM CelNet estate**
   (sidecar/FX_OPTION/4 inferred hops/tenant overlays) — designed+seamed here, proven only at deploy.
   Loopback/M4 numbers are labelled as such; the program doc reproduces the full list verbatim.
 - **⚠️ HARD-WON RULE: after `just check`, verify the literal "All gates passed" line — NEVER trust the

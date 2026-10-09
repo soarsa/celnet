@@ -6,7 +6,7 @@
 //! The initiator is deliberately thin: it owns no pricing, only the session and
 //! the request/lift workflow the hedge desk needs. It shares the session FSM
 //! with the acceptor, so the two interoperate over a loopback socket exactly as
-//! they would against the live Celer FIX edge.
+//! they would against the live CelNet FIX edge.
 
 use std::time::Duration;
 

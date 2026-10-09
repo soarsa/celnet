@@ -95,7 +95,7 @@ to FX-only — the exact "carry the context now" discipline already used for ent
 navigator, Ticket, and Cube are all `CcyPair`-shaped and the multi-asset scope is bolted-on.
 
 ### 2.2 The three orthogonal axes (each owned by exactly one surface)
-- **Axis A — VIEW (left rail): identity + verbs.** Single Celer logo (rail header, the only
+- **Axis A — VIEW (left rail): identity + verbs.** Single CelNet logo (rail header, the only
   logo). Workspaces as a small fixed list, now **eight first-class views**: Ticket · Stream ·
   Surface · **Cube** · Risk · **Lifecycle** · Book · **Universe** (⌘1..n, data-driven not
   hardcoded `⌘1-5` as today at `Shell.tsx:59`). Cube and Lifecycle are *promoted* (today
@@ -269,7 +269,7 @@ In-repo, the GUI proves: workflows, keyboard model, accessibility, virtualisatio
 behaviour, honest-empty/provenance discipline, GUI==server numeric parity, and a host-local
 render-P99 ratio. **[ENV/deploy-bound, never claimed in-repo]:** live multi-dealer LP-panel /
 venue connectivity & regulated (MAS-RMO) status, live crypto/metal fixing VALUES, cross-host
-wire p99, live JVM Celer estate lifecycle. The RFQ ladder (GW6/§3.9) and the consensus/
+wire p99, live JVM CelNet estate lifecycle. The RFQ ladder (GW6/§3.9) and the consensus/
 history overlay (GW4/§3.4) render their seams + honest empty-states in-repo; the live feed
 VALUES behind them are ENV. This is the existing honest-boundary discipline
 (`MASTER-EVOLUTION-PROGRAM.md` §0), unchanged.

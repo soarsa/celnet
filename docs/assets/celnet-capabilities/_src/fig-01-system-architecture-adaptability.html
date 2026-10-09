@@ -45,7 +45,7 @@ body>*{flex:0 0 auto}
 <span class="chip k">Fenics</span><span class="chip k">Bloomberg</span><span class="chip k">Refinitiv</span><span class="chip k">EBS / venues</span>
 </div>
 <div style="margin-top:7px">
-<span class="chip">Celer MarketData</span><span class="chip">Celer MarketMerchant</span>
+<span class="chip">CelNet MarketData</span><span class="chip">CelNet MarketMerchant</span>
 </div>
 <div class="note">Resilient subscriber · vendor-feed normalisation · multi-source blend</div>
 </div>
@@ -149,8 +149,8 @@ body>*{flex:0 0 auto}
 </div>
 </div>
 <div class="box brand" style="padding:10px 13px">
-<div class="t" style="font-size:13px">Celer Trader</div>
-<div class="d">FX-option price · Greeks · surface · option risk injected into the Celer trade lifecycle.</div>
+<div class="t" style="font-size:13px">CelNet Trader</div>
+<div class="d">FX-option price · Greeks · surface · option risk injected into the CelNet trade lifecycle.</div>
 </div>
 </div>
 
@@ -183,12 +183,12 @@ body>*{flex:0 0 auto}
 <div class="arrow">↔</div>
 <div class="box brand" style="flex:1">
 <div class="t">Hybrid</div>
-<div class="d">Celnet plus selected Celer estate services — adapters swapped on the seam, no code fork.</div>
+<div class="d">Celnet plus selected CelNet estate services — adapters swapped on the seam, no code fork.</div>
 </div>
 <div class="arrow">↔</div>
 <div class="box brand" style="flex:1">
-<div class="t">CelerIntegrated</div>
-<div class="d">Estate-native binding — system-of-record inside the Celer trade lifecycle: distributor sidecar handshake, mailbox calibration, live quote-feed entitlement across venues→FIX-in→marketdata→marketmerchant→distributor→Celer Trader and order→orderrouting→risk→destination→clearing→positionmanager. The Celnet-side seam traits, adapter swap and FIX engine are built; the full JVM-estate lifecycle binding lands through Celnet's implementation program on the carry-generalized engine.</div>
+<div class="t">CelnetIntegrated</div>
+<div class="d">Estate-native binding — system-of-record inside the CelNet trade lifecycle: distributor sidecar handshake, mailbox calibration, live quote-feed entitlement across venues→FIX-in→marketdata→marketmerchant→distributor→CelNet Trader and order→orderrouting→risk→destination→clearing→positionmanager. The Celnet-side seam traits, adapter swap and FIX engine are built; the full JVM-estate lifecycle binding lands through Celnet's implementation program on the carry-generalized engine.</div>
 </div>
 <div class="arrow">→</div>
 <div class="box accent" style="flex:.9">
@@ -199,7 +199,7 @@ body>*{flex:0 0 auto}
 </div>
 
 <div class="note">Pluggable adapters in → one streaming wire contract → bit-identical surfaces out → deploys three ways. A modular, one-way-acyclic Rust platform under an extensive automated test suite; supply-chain-clean and cross-platform deterministic.</div>
-<div class="note">Validation today: the §1.2 in-core latency truth-gate is measured on the M4 dev host (p50 ~42 ns / p99 ~125 ns), with loopback and localhost-multiprocess fleet benches and node-by-node GPU correctness &amp; ratios. Celnet's implementation program on the carry-generalized engine carries cross-host wire p99 and §11 SLOs, NVIDIA absolute GPU throughput, Raft dynamic membership / cross-DC, the live JVM Celer estate and Tier-1/Tier-3 plugin isolation onto production targets — methods, architecture and coverage are state of the art per our plans.</div>
+<div class="note">Validation today: the §1.2 in-core latency truth-gate is measured on the M4 dev host (p50 ~42 ns / p99 ~125 ns), with loopback and localhost-multiprocess fleet benches and node-by-node GPU correctness &amp; ratios. Celnet's implementation program on the carry-generalized engine carries cross-host wire p99 and §11 SLOs, NVIDIA absolute GPU throughput, Raft dynamic membership / cross-DC, the live JVM CelNet estate and Tier-1/Tier-3 plugin isolation onto production targets — methods, architecture and coverage are state of the art per our plans.</div>
 
 </div>
 <div class="foot">Celnet Platform</div>

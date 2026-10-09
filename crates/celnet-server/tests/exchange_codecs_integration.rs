@@ -53,7 +53,7 @@ fn test_exchange_gateway_order_and_execution_lifecycle() {
         105.125,
         ExchangeTimeInForce::ImmediateOrCancel,
         false,
-        "CELER",
+        "CELNET",
     );
 
     let written = order.encode(&mut order_buf).expect("encode order");

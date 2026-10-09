@@ -1,12 +1,12 @@
 //! Distributor egress — the bounded, conflating, rate-limited stage that sits
 //! between a microsecond Celnet pricer and a slower downstream price sink
-//! (`docs/CELER-FIX-INTEGRATION-PLAN.md` §2).
+//! (`docs/architecture/CELNET-FIX-INTEGRATION-PLAN.md` §2).
 //!
 //! # Why this stage exists
 //!
-//! The Celer distributor is an in-process JVM disruptor mailbox whose publish
+//! The downstream distributor is an in-process JVM disruptor mailbox whose publish
 //! call (`publishPriceEventOrSkipWhileFull()`) **silently skips while full**
-//! (`docs/CELER-INTEGRATION.md` §0). A Celnet pricer streaming at ≥1M
+//! (`docs/CELNET-INTEGRATION.md` §0). A Celnet pricer streaming at ≥1M
 //! updates/s/core overruns that mailbox trivially, dropping prices with **no
 //! error**. The [`EgressGovernor`] converts that silent failure into an
 //! explicit, observable, *counted* Celnet SLO:
@@ -275,7 +275,7 @@ pub trait PriceSink {
 /// A [`DistributorEgress`] *is* a [`PriceSink`]; the distinct name marks the
 /// role at the wiring boundary (the thing the [`EgressGovernor`] publishes to),
 /// matching the `DistributorEgress` trait named in
-/// `docs/CELER-FIX-INTEGRATION-PLAN.md` §2.3. The seam is identical whether the
+/// `docs/architecture/CELNET-FIX-INTEGRATION-PLAN.md` §2.3. The seam is identical whether the
 /// concrete impl is the JVM sidecar (option A) or the native distributor socket
 /// (option B), so swapping is a leaf change with no caller impact.
 pub trait DistributorEgress: PriceSink {}

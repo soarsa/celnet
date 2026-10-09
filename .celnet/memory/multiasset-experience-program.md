@@ -29,10 +29,10 @@ guard reject with — the matrix made visible, one source ported to Excel later.
   dividend-yield rho, crypto = funding rho; wire fields unchanged, labels only).
 - `aab309a` — increments 6+7+8: the WHOLE Excel task-pane uplift, driven by a dynamic
   workflow (4 disjoint modules built in parallel — `taskpane/capability.ts`,
-  `instrumentBuilder.ts`, `dealerPanel.ts`, `celer-tokens.css` — then an Opus integration
+  `instrumentBuilder.ts`, `dealerPanel.ts`, `celnet-tokens.css` — then an Opus integration
   agent rewired `taskpane.{html,ts,css}`). The pane went from hardcoded FX-vanilla +
   single dealer + raw hex + zero motion → class-aware builder (asset-class → underlier →
-  priceable-arm-with-dimming → terms) + ranked multi-dealer panel + shared Celer tokens +
+  priceable-arm-with-dimming → terms) + ranked multi-dealer panel + shared CelNet tokens +
   "alive" motion (quote-flash, pinwheel spin/heartbeat, pulse, last-look ring). Gates:
   excel tsc + 429 vitest + vite build + verify:headless. Established pattern: workflow
   BUILDS disjoint modules / integrates, coordinator GATES (tsc+vitest+build+verify:headless;

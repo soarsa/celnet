@@ -1,6 +1,6 @@
 /**
  * Book workspace — hard asset-vertical separation by the active domain (the fix
- * that stopped Fixed-Income OIS rows — e.g. "10y OIS", counterparty CELER_RATES —
+ * that stopped Fixed-Income OIS rows — e.g. "10y OIS", counterparty CELNET_RATES —
  * leaking into the FX Options domain's Book).
  *
  * The Book keeps its FOUR VIEW sub-lens tabs (Positions & Booking / Aggregate Risk

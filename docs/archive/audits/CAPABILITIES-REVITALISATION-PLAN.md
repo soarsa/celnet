@@ -278,10 +278,10 @@ The thesis explicitly does **not** assert any deploy-gated absolute (see §6).
   {TicketWorkspace,SurfaceWorkspace}.tsx, gui/src/components/ShortcutsOverlay.tsx.
 - **Parallel-safe:** YES.
 
-### Ch 12 — Celer Integration — SOFT-OVERCLAIM FIX
+### Ch 12 — CelNet Integration — SOFT-OVERCLAIM FIX
 - **Rewrite brief:** Keep the in-repo seams (FIX 4.4 engine acceptor+initiator, egress governor,
   resilient subscriber, normalization, three adapter-bound deployment modes). **Reword §12.3** so
-  CelerIntegrated mode is the **designed estate-native binding**: the JVM distributor sidecar
+  CelnetIntegrated mode is the **designed estate-native binding**: the JVM distributor sidecar
   handshake / mailbox calibration / live quote-feed entitlement are deploy/live-gated, proven at
   deploy against the running estate — distinguish the in-repo seam (traits + adapter swap + FIX
   loopback) from the live-estate proof. Frame §12.4 vendor feeds as adapter targets.
@@ -363,9 +363,9 @@ The thesis explicitly does **not** assert any deploy-gated absolute (see §6).
   1e-12)" tile. ADD a muted honest-boundary .note: "Cross-host wire p99, cross-DC transport, dynamic
   membership and §11 absolute wire SLOs are deploy/live-gated; in-repo proofs are
   loopback/localhost-multiprocess."
-- **fig-09 celer-lifecycle** — No capability change. Ensure it does not imply the live JVM estate is
+- **fig-09 celnet-lifecycle** — No capability change. Ensure it does not imply the live JVM estate is
   exercised in-repo (integration designed + seamed via DeployMode adapters).
-- **fig-10 deployment-modes** — Accurate. Ensure CelerIntegrated is shown as the designed estate-
+- **fig-10 deployment-modes** — Accurate. Ensure CelnetIntegrated is shown as the designed estate-
   native binding (consistent with ch12). Low/no effort.
 - **fig-11 streamsession-clicktrade** — Accurate. Optionally add the market-series multiplex flow +
   the Heartbeat observability fields. Low effort.
@@ -450,7 +450,7 @@ honest boundary, openable with zero build step.
     5 surfaces) + the **6-service / 18-product / WS-mirror reference table** and the **client-surface
     reference (27 Excel functions, ~20 SDK methods, 7 CLI commands)**.
 11. **Excel reference** — excel-grid + shot-09/shot-10 + the full 27-function list with signatures.
-12. **Celer integration** — fig-09, fig-10 (CelerIntegrated = designed estate-native binding).
+12. **CelNet integration** — fig-09, fig-10 (CelnetIntegrated = designed estate-native binding).
 13. **Competitive positioning** — a table distilled from CAPABILITIES-VS-COMPETITION.md (refreshed).
 14. **Screen gallery** — shot-01 … shot-10.
 15. **HONEST BOUNDARY** — the verbatim §6 lines, PROMINENT (its own section, not buried).
@@ -482,7 +482,7 @@ Quote verbatim; never claim any of these as in-repo-proven.
   Never claim f64 on Metal.
 - **The §11 ABSOLUTE wire-latency SLOs** — deploy-gated (in-repo proves the §1.2 truth-gate +
   loopback only).
-- **The entire live JVM Celer estate lifecycle** (sidecar / FX_OPTION / inferred hops / tenant
+- **The entire live JVM CelNet estate lifecycle** (sidecar / FX_OPTION / inferred hops / tenant
   overlays) — deploy/live-gated; in-repo has the seams + adapters only.
 - **Raft §6 dynamic membership / cross-DC transport / real network partitions** — deploy-gated;
   in-repo proves correctness/quorum/framing on localhost multi-process only.

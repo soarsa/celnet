@@ -227,7 +227,7 @@ with `role=grid` claimed), virtualisation/coalescing behaviour, honest-empty/pro
 discipline, scope/saved-view serialisation, GUI==server numeric parity, and a **host-local
 render-P99 ratio** for the high-rate stream. **[ENV/deploy-bound, never claimed in-repo]**
 (unchanged from GUI-EXPERIENCE-DESIGN §7): live multi-dealer LP-panel / venue connectivity &
-regulated status, live feed VALUES, cross-host wire p99, live JVM Celer estate lifecycle. The
+regulated status, live feed VALUES, cross-host wire p99, live JVM CelNet estate lifecycle. The
 high-rate stream render budget is asserted as a **ratio against the measured baseline on this
 host**, never as an absolute cross-host SLO. No `VITE_`/runtime ENV flag is introduced by these
 waves beyond the existing `?mock` transport toggle and the e2e `wsUrl` discovery; the design-

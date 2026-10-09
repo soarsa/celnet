@@ -23,7 +23,7 @@ done & pushed. **HEAD = `9d26c0d` on `main` (== origin/main); 1044/1044 tests; f
 check` green ("All gates passed.").** Wave 6 is **deploy/live-estate-only and is NEVER
 built or claimed in-repo** — the honest boundary: cross-host wire p99 / kernel-bypass NIC,
 CUDA/NVIDIA absolute throughput + ≤50ms exotic, the §11 absolute wire-latency SLOs, and the
-entire live JVM Celer estate (sidecar/FX_OPTION/inferred hops/tenant overlays) are
+entire live JVM CelNet estate (sidecar/FX_OPTION/inferred hops/tenant overlays) are
 designed+seamed+ADR'd here and proven only at deploy/live-staging. Everything below is
 **deepening increments only** (not new waves) — launch only if the user asks.
 
@@ -162,7 +162,7 @@ still uses a bounded tokio broadcast.
 - Do **not** claim cross-host wire p99 / kernel-bypass NIC latency from this repo.
 - Do **not** claim NVIDIA absolute GPU throughput / ≤50ms exotic / Workload-A/B absolutes
   from this repo (M4 Metal lacks f64 — ratios + correctness only).
-- Do **not** claim the live JVM Celer estate lifecycle from this repo (designed+seamed only).
+- Do **not** claim the live JVM CelNet estate lifecycle from this repo (designed+seamed only).
 - Do **not** add a second wire-contract version (guardrail #9: one clean current contract).
 - Do **not** fake a cluster / shared-memory transport (use real localhost multi-process).
 - Do **not** lower a gate, add `#[ignore]`, or `#[allow]`/`as any`/`@ts-ignore`-dodge clippy

@@ -22,8 +22,8 @@ trader **rejects** the RFQ, **back off a random interval** and resume. It double
 **soak / load / realism harness** for the whole RFQ->Quote->Order->Fill lifecycle and the FIX
 session layer.
 
-Vendor-neutral naming (guardrail #8): bot core identifiers are purpose-named. `CELER_FXO` /
-`CELNET` are session CompIDs (Celer is our own estate — fine in session/config context).
+Vendor-neutral naming (guardrail #8): bot core identifiers are purpose-named. `CELNET_FXO` /
+`CELNET` are session CompIDs (CelNet is our own estate — fine in session/config context).
 
 ## 2. What already exists (reuse, don't rebuild)
 
@@ -108,7 +108,7 @@ call — most faithful).
 ```toml
 [session]                 # mirrors the celnet-generated client config
 begin_string    = "FIX.4.4"
-sender_comp_id  = "CELER_FXO"
+sender_comp_id  = "CELNET_FXO"
 target_comp_id  = "CELNET"
 connect_host    = "127.0.0.1"
 connect_port    = 56001
@@ -173,6 +173,6 @@ example is available it exits non-zero with a clear message rather than pretendi
 
 - `crates/celnet-fix/` (`initiator.rs`, `acceptor.rs`, `dialect_fx.rs`, `dialect_rates.rs`,
   `examples/fix_rfq_client.rs`, `tests/session_loopback.rs`)
-- `deploy/start-fix-sim.sh`, `docs/CELER-INTEGRATION.md`, `docs/W4-STRUCTURED-RFQ-PLAN.md`
+- `deploy/start-fix-sim.sh`, `docs/CELNET-INTEGRATION.md`, `docs/W4-STRUCTURED-RFQ-PLAN.md`
 - FIX 4.4: `QuoteRequest(R)`, `Quote(S)`, `QuoteRequestReject(AG)`, `NewOrderSingle(D)`,
   `ExecutionReport(8)`, `SecurityListRequest(x)`, `SecurityList(y)`, `MarketDataRequest(V)`.

@@ -124,12 +124,12 @@ body>*{flex:0 0 auto}
 
 <div class="arrow">→</div>
 
-<!-- CELERINTEGRATED -->
+<!-- CELNETINTEGRATED -->
 <div class="col" style="flex:1.18">
-<div class="section-label">Mode 3 · CelerIntegrated <span style="color:var(--brand-deep);font-weight:800">· estate-native binding</span></div>
+<div class="section-label">Mode 3 · CelnetIntegrated <span style="color:var(--brand-deep);font-weight:800">· estate-native binding</span></div>
 <div class="box brand" style="flex:1">
-<div class="t">Bound into the Celer trade lifecycle</div>
-<div class="d">Celnet injects FX-option price, Greeks and surface into the Celer price path and option risk into the risk and position path — the pricing system-of-record inside the estate. The Celnet-side adapters are built; the JVM-estate binding lands through Celnet's implementation program.</div>
+<div class="t">Bound into the CelNet trade lifecycle</div>
+<div class="d">Celnet injects FX-option price, Greeks and surface into the CelNet price path and option risk into the risk and position path — the pricing system-of-record inside the estate. The Celnet-side adapters are built; the JVM-estate binding lands through Celnet's implementation program.</div>
 <div style="margin-top:6px">
 <div class="box tint" style="padding:7px 11px;margin-bottom:5px">
 <div class="t" style="font-size:12.5px">Market-data → <span style="color:var(--brand-deep)">estate distributor</span></div>
@@ -141,8 +141,8 @@ body>*{flex:0 0 auto}
 </div>
 </div>
 <div class="box tint" style="padding:7px 11px;margin-bottom:5px">
-<div class="t" style="font-size:12.5px">Price sink → <span style="color:var(--brand-deep)">Celer price path</span></div>
-<div class="d" style="margin-top:3px">Quote assembly → distributor → WebSocket → the Celer Trader React front-end.</div>
+<div class="t" style="font-size:12.5px">Price sink → <span style="color:var(--brand-deep)">CelNet price path</span></div>
+<div class="d" style="margin-top:3px">Quote assembly → distributor → WebSocket → the CelNet Trader React front-end.</div>
 </div>
 <div class="box tint" style="padding:7px 11px">
 <div class="t" style="font-size:12.5px">Order &amp; exec → <span style="color:var(--brand-deep)">estate</span></div>
@@ -173,13 +173,13 @@ body>*{flex:0 0 auto}
 <div class="arrow" style="font-size:28px">→</div>
 <div class="box accent" style="flex:0.42;text-align:center">
 <div class="t" style="justify-content:center">Estate distributor</div>
-<div class="d">Fan-out to many counterparties and the Celer Trader front-end.</div>
+<div class="d">Fan-out to many counterparties and the CelNet Trader front-end.</div>
 </div>
 </div>
 
 <div class="note">Pricer → egress governor → SPMC ring → distributor: the same path serves every mode, with the fleet sharded over a rendezvous partition map atop a Raft-replicated log and hot-standby takeover. Migration Standalone &harr; Hybrid &harr; Integrated is reversible adapter swaps on the three seam traits — Celnet stays the FX-options pricing system-of-record in all three, proven across every client surface by an extensive automated test suite.</div>
 
-<div class="note" style="font-style:normal;color:var(--brand-deep);font-weight:700;margin-top:3px">The Celnet-side seams (governor, distributor adapter, sidecar client, FIX dialect, proto projections) are built; the CelerIntegrated binding into the live JVM Celer estate lands through Celnet's implementation program on the carry-generalized engine. Standalone is the fully self-contained mode, provable here and now. <span style="float:right;color:var(--muted);font-weight:400;font-style:italic">Celnet — Platform</span></div>
+<div class="note" style="font-style:normal;color:var(--brand-deep);font-weight:700;margin-top:3px">The Celnet-side seams (governor, distributor adapter, sidecar client, FIX dialect, proto projections) are built; the CelnetIntegrated binding into the live JVM CelNet estate lands through Celnet's implementation program on the carry-generalized engine. Standalone is the fully self-contained mode, provable here and now. <span style="float:right;color:var(--muted);font-weight:400;font-style:italic">Celnet — Platform</span></div>
 
 </div>
 </div>

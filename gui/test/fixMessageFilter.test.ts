@@ -48,13 +48,13 @@ function msg(
 
 /** A representative captured transcript across several symbols + types. */
 const SAMPLE: FixMessage[] = [
-  msg("INBOUND", "A", "Logon", "8=FIX.4.4|35=A|49=CELER_RATES|56=CELNET|34=1|10=000", 60_000),
-  msg("INBOUND", "R", "QuoteRequest", "8=FIX.4.4|35=R|49=CELER_RATES|56=CELNET|55=USD-OIS|54=1|38=25000000|10=000", 40_000),
-  msg("OUTBOUND", "S", "Quote", "8=FIX.4.4|35=S|49=CELNET|56=CELER_RATES|55=USD-OIS|132=3.912|133=3.918|10=000", 39_000),
-  msg("INBOUND", "R", "QuoteRequest", "8=FIX.4.4|35=R|49=CELER_RATES|56=CELNET|55=912797UU9|54=1|38=5000000|10=000", 20_000),
-  msg("OUTBOUND", "S", "Quote", "8=FIX.4.4|35=S|49=CELNET|56=CELER_RATES|55=912797UU9|132=96.214|133=96.238|10=000", 19_000),
-  msg("INBOUND", "D", "NewOrderSingle", "8=FIX.4.4|35=D|49=CELER_RATES|56=CELNET|11=O-1|55=912797UU9|54=1|38=5000000|44=96.238|10=000", 5_000),
-  msg("OUTBOUND", "8", "ExecutionReport", "8=FIX.4.4|35=8|49=CELNET|56=CELER_RATES|37=O-1|150=F|39=2|55=912797UU9|54=1|10=000", 4_000),
+  msg("INBOUND", "A", "Logon", "8=FIX.4.4|35=A|49=CELNET_RATES|56=CELNET|34=1|10=000", 60_000),
+  msg("INBOUND", "R", "QuoteRequest", "8=FIX.4.4|35=R|49=CELNET_RATES|56=CELNET|55=USD-OIS|54=1|38=25000000|10=000", 40_000),
+  msg("OUTBOUND", "S", "Quote", "8=FIX.4.4|35=S|49=CELNET|56=CELNET_RATES|55=USD-OIS|132=3.912|133=3.918|10=000", 39_000),
+  msg("INBOUND", "R", "QuoteRequest", "8=FIX.4.4|35=R|49=CELNET_RATES|56=CELNET|55=912797UU9|54=1|38=5000000|10=000", 20_000),
+  msg("OUTBOUND", "S", "Quote", "8=FIX.4.4|35=S|49=CELNET|56=CELNET_RATES|55=912797UU9|132=96.214|133=96.238|10=000", 19_000),
+  msg("INBOUND", "D", "NewOrderSingle", "8=FIX.4.4|35=D|49=CELNET_RATES|56=CELNET|11=O-1|55=912797UU9|54=1|38=5000000|44=96.238|10=000", 5_000),
+  msg("OUTBOUND", "8", "ExecutionReport", "8=FIX.4.4|35=8|49=CELNET|56=CELNET_RATES|37=O-1|150=F|39=2|55=912797UU9|54=1|10=000", 4_000),
 ];
 
 function withFilter(p: Partial<FixMsgFilter>): FixMsgFilter {
@@ -97,7 +97,7 @@ describe("messageMatches — free text", () => {
 
   it("matches on the decoded label and the CompIDs", () => {
     expect(filterFixMessages(SAMPLE, withFilter({ text: "quoterequest" }), NOW_MS)).toHaveLength(2);
-    expect(filterFixMessages(SAMPLE, withFilter({ text: "celer_rates" }), NOW_MS)).toHaveLength(SAMPLE.length);
+    expect(filterFixMessages(SAMPLE, withFilter({ text: "celnet_rates" }), NOW_MS)).toHaveLength(SAMPLE.length);
   });
 
   it("matches `35=D` free-text", () => {

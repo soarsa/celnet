@@ -9,7 +9,7 @@ metadata:
 
 Binding rules for Celnet's API surface and code evolution (user directive, 30 May 2026):
 
-- **Naming is `celnet`-logical & vendor-neutral.** Crates/modules/types/traits/fns are named for their **purpose** under the `celnet-` namespace (crate prefix is `celnet-`, NOT `celer-`). No commercial-product / competitor / vendor names and no person/paper/framework names in API identifiers (e.g. `VanillaInputs`, not `GkInputs`). Method provenance only in doc comments. The parent firm **Celer** / `celertech` estate (our own systems) may be named in integration/docs context, never in core product identifiers.
+- **Naming is `celnet`-logical & vendor-neutral.** Crates/modules/types/traits/fns are named for their **purpose** under the `celnet-` namespace (crate prefix is `celnet-`, NOT `celnet-`). No commercial-product / competitor / vendor names and no person/paper/framework names in API identifiers (e.g. `VanillaInputs`, not `GkInputs`). Method provenance only in doc comments. The parent firm **CelNet** / `celnet` estate (our own systems) may be named in integration/docs context, never in core product identifiers.
 - **No versioned APIs.** Exactly one clean current contract — no `schema_version`, no N/N-1 negotiation, no back-compat shims (no external users). Zero-downtime upgrades use **blue-green / full cutover**, not mixed-version windows.
 - **Always refactor to cleanest; zero legacy.** Delete dead code, keep files in correct dirs, keep ALL docs/guides/references in sync, no stale/duplicate references. After structural changes, re-`index_repository` so the codebase-memory graph always covers the full scope.
 

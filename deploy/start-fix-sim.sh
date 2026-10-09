@@ -11,12 +11,12 @@
 # What it needs to work (the reason a bare run used to "do nothing"):
 #   * a FIX acceptor must be listening at FIXSIM_HOST:FIXSIM_PORT. The server binds
 #     its acceptors from the MANAGED registry (fix-connections.json, GUI FIX admin) —
-#     on the UAT host that is "CELER_FXO_CELNET" at 127.0.0.1:56001 (the default here).
+#     on the UAT host that is "CELNET_FXO_VENUE" at 127.0.0.1:56001 (the default here).
 #     Do NOT set CELNET_FIX_ADDR to add a legacy acceptor: it collides with this
 #     registry acceptor on the same port and aborts the server at boot (EADDRINUSE).
 #     If nothing is listening, each attempt now logs a LOUD, actionable message.
 #   * the CompIDs must line up: the simulator's FIXSIM_SENDER must equal the venue's
-#     accepted counterparty (target_comp_id, "CELER_FXO"), and FIXSIM_TARGET must
+#     accepted counterparty (target_comp_id, "CELNET_FXO"), and FIXSIM_TARGET must
 #     equal the venue's own CompID (sender_comp_id, "CELNET").
 #
 # Usage:
@@ -33,7 +33,7 @@
 #   FIXSIM_ASSET (fi)        # fi = fixed income / OIS rates (default); fx = FX options;
 #                            # both = drive fi AND fx concurrently (two daemons)
 #   FIXSIM_HOST (127.0.0.1)  FIXSIM_PORT (fi:56002 / fx:56001)
-#   FIXSIM_SENDER (fi:CELER_RATES / fx:CELER_FXO)  FIXSIM_TARGET (CELNET)
+#   FIXSIM_SENDER (fi:CELNET_RATES / fx:CELNET_FXO)  FIXSIM_TARGET (CELNET)
 #   FIXSIM_CURVE (USD-OIS) FIXSIM_TENOR (5)   # FI RFQ shape
 #   FIXSIM_NOTIONAL (mix)    # stream rotates a 100k…30m clip ladder; a number pins it
 #   FIXSIM_SIDE (mix)        # stream rotates pay/receive → BUY/SELL; pay|receive|two-way pins it
@@ -65,14 +65,14 @@ esac
 
 FIXSIM_HOST="${FIXSIM_HOST:-127.0.0.1}"
 if [ "$FIXSIM_ASSET" = "fi" ]; then
-  # Rates venue "CELER_RATES_CELNET" (kind fixed_income_quote) @127.0.0.1:56002.
+  # Rates venue "CELNET_RATES_VENUE" (kind fixed_income_quote) @127.0.0.1:56002.
   FIXSIM_PORT="${FIXSIM_PORT:-56002}"
-  FIXSIM_SENDER="${FIXSIM_SENDER:-CELER_RATES}"
+  FIXSIM_SENDER="${FIXSIM_SENDER:-CELNET_RATES}"
   FIXSIM_TARGET="${FIXSIM_TARGET:-CELNET}"
 else
-  # FX-options venue "CELER_FXO_CELNET" (kind options) @127.0.0.1:56001.
+  # FX-options venue "CELNET_FXO_VENUE" (kind options) @127.0.0.1:56001.
   FIXSIM_PORT="${FIXSIM_PORT:-56001}"
-  FIXSIM_SENDER="${FIXSIM_SENDER:-CELER_FXO}"
+  FIXSIM_SENDER="${FIXSIM_SENDER:-CELNET_FXO}"
   FIXSIM_TARGET="${FIXSIM_TARGET:-CELNET}"
 fi
 # Fixed-income request shape (whole-year OIS tenor, notional in ccy units).
@@ -126,7 +126,7 @@ FIXSIM_LIFT_EVERY="${FIXSIM_LIFT_EVERY:-3}"
 # FIXSIM_STREAM_PORT, a SECOND supervised client subscribes and receives continuous
 # re-priced quotes, lifting one per cycle (an executed streaming deal). Empty ⇒ disabled.
 FIXSIM_STREAM_PORT="${FIXSIM_STREAM_PORT:-}"
-FIXSIM_STREAM_SENDER="${FIXSIM_STREAM_SENDER:-CELER_RATES_STREAM}"
+FIXSIM_STREAM_SENDER="${FIXSIM_STREAM_SENDER:-CELNET_RATES_STREAM}"
 FIXSIM_STREAM_HOLD="${FIXSIM_STREAM_HOLD:-15}"
 # FAST RFS hold per cycle (ms). Non-empty ⇒ the RFS/ESP legs use `--stream-hold-ms`;
 # default 2000ms so the fast cadence turns over many stream cycles.
@@ -138,7 +138,7 @@ FIXSIM_STREAM_HOLD_MS="${FIXSIM_STREAM_HOLD_MS:-2000}"
 # connection's pricing group), randomly lifting some to book live streaming deals.
 FIXSIM_ESP="${FIXSIM_ESP:-0}"
 FIXSIM_ESP_PORT="${FIXSIM_ESP_PORT:-${FIXSIM_STREAM_PORT:-}}"
-FIXSIM_ESP_SENDER="${FIXSIM_ESP_SENDER:-${FIXSIM_STREAM_SENDER:-CELER_RATES_STREAM}}"
+FIXSIM_ESP_SENDER="${FIXSIM_ESP_SENDER:-${FIXSIM_STREAM_SENDER:-CELNET_RATES_STREAM}}"
 FIXSIM_GRPC_ADDR="${FIXSIM_GRPC_ADDR:-http://127.0.0.1:50051}"
 FIXSIM_ESP_INSTRUMENTS="${FIXSIM_ESP_INSTRUMENTS:-15}"
 FIXSIM_ESP_SEED="${FIXSIM_ESP_SEED:-0x5EED1234}"
@@ -230,8 +230,8 @@ fi
 # FIXSIM_DAEMON=1; all other env (period, jitter, manual/lift cadence, the prebuilt
 # FIXSIM_RFQ_BIN path) is inherited, and each child re-derives its own port/CompIDs for
 # its asset. Follow either leg with:
-#   tail -f <run>/fi/log/fix-sim.log   # rates/OIS leg  (CELER_RATES @ :56002)
-#   tail -f <run>/fx/log/fix-sim.log   # FX-options leg (CELER_FXO   @ :56001)
+#   tail -f <run>/fi/log/fix-sim.log   # rates/OIS leg  (CELNET_RATES @ :56002)
+#   tail -f <run>/fx/log/fix-sim.log   # FX-options leg (CELNET_FXO   @ :56001)
 if [ "$FIXSIM_ASSET" = "both" ]; then
   BASE_RUN="${FIXSIM_RUN_DIR:-$REPO_ROOT/deploy/fix-sim-run}"
   log "asset=both — launching supervised FI and FX legs as separate daemons under $BASE_RUN"
@@ -309,7 +309,7 @@ if preflight; then
 else
   log "WARN: acceptor $FIXSIM_HOST:$FIXSIM_PORT is NOT reachable."
   log "      -> confirm the managed FIX acceptor is enabled (GUI FIX admin / fix-connections.json)"
-  log "         and its bind_addr matches FIXSIM_PORT (CELER_FXO_CELNET=56001), then restart the sim."
+  log "         and its bind_addr matches FIXSIM_PORT (CELNET_FXO_VENUE=56001), then restart the sim."
   log "      Continuing anyway — each RFQ attempt is logged below so failures are visible."
 fi
 

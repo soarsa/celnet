@@ -6,9 +6,9 @@
 <title>Celnet — Structure (mockup 02, v2)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="celer.css" />
+<link rel="stylesheet" href="celnet.css" />
 <style>
-  /* ===== Structure screen (02) — screen-scoped only; the shared system stays in celer.css ===== */
+  /* ===== Structure screen (02) — screen-scoped only; the shared system stays in celnet.css ===== */
   .sgrid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);grid-template-rows:auto auto auto;gap:var(--space-4);align-items:start;}
   .payoff-panel{grid-column:1;grid-row:1;position:relative;}
   .gallery-panel{grid-column:2;grid-row:1 / span 2;}
@@ -120,7 +120,7 @@
   .gatemask{display:none;}
   .sworkspace.gated .payoff-panel .gatemask{display:flex;position:absolute;inset:0;align-items:center;justify-content:center;background:oklch(0.165 0.013 264 / .62);border-radius:var(--r-md);z-index:3;font-size:var(--type-caption);color:var(--text-secondary);text-align:center;padding:var(--space-7);line-height:1.6;}
 
-  /* honesty tags — the ONE shared vocabulary (.htag.live / .htag.target) is defined in celer.css */
+  /* honesty tags — the ONE shared vocabulary (.htag.live / .htag.target) is defined in celnet.css */
 
   /* exotics gallery — the FX/Metal engine catalogue (gui/src/products PRODUCT_REGISTRY) */
   .exohdr{display:flex;align-items:center;gap:7px;margin:var(--space-6) 0 0;padding-top:var(--space-4);border-top:var(--hairline);}

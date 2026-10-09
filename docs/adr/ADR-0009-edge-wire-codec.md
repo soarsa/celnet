@@ -187,7 +187,7 @@ one high-volume fixed-shape stream.
   `zerocopy`/`bytemuck`-style checked-cast crate for the safe aligned-view path) —
   `cargo-deny`'s license policy gates this. **No vendor SBE toolkit, no commercial codec, no
   proprietary market-data SDK**, ever (guardrail #7). The `fefix`/FerrumFIX codec *ideas* and
-  dictionary model may inform the design (CELER-FIX-INTEGRATION-PLAN §; self-described
+  dictionary model may inform the design (CELNET-FIX-INTEGRATION-PLAN §; self-described
   "wildly unstable, not for production") but are **not** taken as a runtime dependency — same
   posture we already hold for `celnet-fix`.
 - **Determinism as a gate, not an assertion.** A `to_bits` round-trip test (encode→decode→
@@ -282,7 +282,7 @@ gap #4 is marked ADR-tracked.
 - `celnet-proto` (`proto/celnet.proto`: `Update`, `TwoWayPrice`, `TradableToken`) — the source
   of truth the `EdgeFrame` projects; `celnet-server/src/ws/codec.rs` and
   `services/pricefanout.rs` — the current edge encode/fan-out sites.
-- `docs/CELER-FIX-INTEGRATION-PLAN.md` (the `fefix`/FerrumFIX assessment: codec ideas usable,
+- `docs/CELNET-FIX-INTEGRATION-PLAN.md` (the `fefix`/FerrumFIX assessment: codec ideas usable,
   not a runtime dependency) — the same "build our own, cite provenance" posture as `celnet-fix`.
 - **Method provenance (prose only):** Simple Binary Encoding (SBE), FIX Trading Community —
   fixed-offset flyweight market-data/order encoding. Cited as method; **not** used in any

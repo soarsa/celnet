@@ -51,7 +51,7 @@ import { EventTraceWorkspace } from "../workspaces/analytics/EventTraceWorkspace
 import { StreetLiquidityWorkspace } from "../workspaces/analytics/StreetLiquidityWorkspace";
 import { ExcelWorkspace } from "../workspaces/ExcelWorkspace";
 import { StatusRibbon } from "./StatusRibbon";
-import { CelerMark, CelnetWordmark } from "../components/CelerMark";
+import { CelnetMark, CelnetWordmark } from "../components/CelnetMark";
 import { ScopeControl } from "../components/ScopeControl";
 import { ScopeSwitcher } from "../components/ScopeSwitcher";
 import { SavedViewsMenu } from "../components/SavedViewsMenu";
@@ -515,7 +515,7 @@ export function Shell(): React.ReactElement {
     <div className={styles.shell}>
       <aside className={styles.rail} aria-label="workspaces">
         <div className={styles.brand} title="Celnet">
-          <CelerMark size={30} className={styles.mark} title="Celnet" />
+          <CelnetMark size={30} className={styles.mark} title="Celnet" />
         </div>
         {/*
          * Grouped, scrolling rail: the active domain's visible rows (navRail — hidden

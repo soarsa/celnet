@@ -1,4 +1,4 @@
-<sub>[← Prev: Excel Integration](10-excel-integration.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Celer Integration →](12-celer-integration.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
+<sub>[← Prev: Excel Integration](10-excel-integration.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: CelNet Integration →](12-celnet-integration.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
 
 # 11. The Trader GUI
 
@@ -15,7 +15,7 @@ Three fixtures frame every workspace:
 
 | Region | What it carries |
 |--------|-----------------|
-| **Left rail** | The five workspace glyphs (Ticket `⌁`, Stream `≋`, Surface `◷`, Risk `⊞`, Book `Σ`), each labelled with its `⌘`-number; the Celer coral pinwheel mark anchors the top; a light/dark toggle sits at the foot. |
+| **Left rail** | The five workspace glyphs (Ticket `⌁`, Stream `≋`, Surface `◷`, Risk `⊞`, Book `Σ`), each labelled with its `⌘`-number; the CelNet coral pinwheel mark anchors the top; a light/dark toggle sits at the foot. |
 | **Title bar** | The mark-less **Celnet** wordmark, the **scope breadcrumb**, the **pair menu**, and the **`⌘K` search/command** affordance — left to right, identity → scope → instrument → action. |
 | **Status ribbon** | A slim bottom strip: live stream health, sequence number, lines healthy, LPs in competition, gap count, the active transport seam, a measured render-frame budget, the desk clock, and the real **build stamp** (short SHA · UTC build time). |
 
@@ -134,4 +134,4 @@ Light and dark themes, a high-contrast mode, the keyboard cheatsheet, the trend 
 **See also:** [§9 API & Client Parity](09-api-contract-parity.md) is the contract the GUI consumes as a peer; [§6 Risk Management](06-risk-management.md) is the cube behind the Book↔Risk drill; [§4 Quant Coverage](04-quant-coverage.md) is the catalogue the Ticket prices.
 
 ---
-<sub>[← Prev: Excel Integration](10-excel-integration.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Celer Integration →](12-celer-integration.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
+<sub>[← Prev: Excel Integration](10-excel-integration.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: CelNet Integration →](12-celnet-integration.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

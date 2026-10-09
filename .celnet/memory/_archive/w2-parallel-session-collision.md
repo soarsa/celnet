@@ -9,7 +9,7 @@ metadata:
 
 On 2026-06-08, driving W2 (multi-asset linear + metals) as coordinator, a collision
 surfaced: **two Claude sessions were operating in the SAME working tree**
-(`/Users/adrian/code/celeroption`) and BOTH implemented W2.
+(`/Users/adrian/code/celnet`) and BOTH implemented W2.
 
 - I (coordinator) committed the **W2 contract freeze** locally as `325cfab` (proto
   `FxForward=26`/`FxSwap=27`/`Ndf=28` + `Underlying.metal=3` + `Metal`/`FixingSource`;

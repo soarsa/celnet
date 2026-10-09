@@ -328,7 +328,7 @@ algebra** (cross-asset roll-up + SbM capital). The following remain **deploy/liv
 - **FRTB regulatory risk-weight / correlation calibrations** are caller-supplied data
   (`SbmParams`, never compiled in — the existing §2.3/§2.11 discipline); the live regulatory
   parameter set is a deploy-time configuration, not an in-repo constant.
-- **Cross-host wire p99 / live JVM Celer estate / NVIDIA GPU absolutes** — unchanged honest
+- **Cross-host wire p99 / live JVM CelNet estate / NVIDIA GPU absolutes** — unchanged honest
   boundary; the cross-asset risk roll-up's in-repo proof is the algebra + a host-local relative
   regression, never an absolute cross-host SLO.
 

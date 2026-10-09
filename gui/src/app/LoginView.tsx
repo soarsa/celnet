@@ -16,7 +16,7 @@
 import { useState } from "react";
 
 import { useApp } from "./AppContext";
-import { CelerLockup } from "../components/CelerMark";
+import { CelnetLockup } from "../components/CelnetMark";
 import { isDeskModal } from "../lib/deskPlatform";
 import styles from "./LoginScreen.module.css";
 
@@ -41,7 +41,7 @@ export function LoginView(): React.ReactElement {
     return (
       <main className={styles.screen}>
         <section className={styles.panel} aria-labelledby="login-heading">
-          <CelerLockup size={28} className={styles.lockup} />
+          <CelnetLockup size={28} className={styles.lockup} />
           <h1 id="login-heading" className={styles.heading}>
             DeskModal SSO Pass-Through
           </h1>
@@ -96,7 +96,7 @@ export function LoginView(): React.ReactElement {
   return (
     <main className={styles.screen}>
       <section className={styles.panel} aria-labelledby="login-heading">
-        <CelerLockup size={28} className={styles.lockup} />
+        <CelnetLockup size={28} className={styles.lockup} />
         <h1 id="login-heading" className={styles.heading}>
           Sign in to Celnet
         </h1>

@@ -406,7 +406,7 @@ fn bench_exchange_codecs() {
         98.4375,
         ExchangeTimeInForce::ImmediateOrCancel,
         false,
-        "CELER",
+        "CELNET",
     );
     let mut obuf = [0u8; 128];
     let start = Instant::now();

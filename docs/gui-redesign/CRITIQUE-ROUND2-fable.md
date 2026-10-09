@@ -12,7 +12,7 @@
           "docs/gui-redesign/mockups/14-curve-workbench.html — fix the honesty inversion: the gate pill \"CurveSet ▸ price · risk · FIX\" with a LIVE dot and the draft-v207/prev-live-v206 versioning claim a server-side versioned curve publish that does not exist (lodestar: zero hits for curve_version/CurveBook/publish_curve; curve sets are request-scoped payloads on PriceRates/AggregateRatesRisk). Re-tag the whole publish/version spine TARGET (\"SurfaceBook pattern, port pending\") and keep only bootstrap_ois + request-scoped CurveSet as LIVE.",
           "docs/gui-redesign/mockups/00-shell.html — retrofit the LIVE/TARGET tag pattern the later mockups adopted: the \"½-spread risk-based\" selector and \"Skew nudge − +\" imply inventory/book-risk→pricing-skew wiring that KNOWLEDGE-flow-links.md lists as GAP #2 (no exposure input in SpreadModel), and the T1–T3 tier ladder + \"Update live ▸ T1–3\" is the greenfield contribution/tiering console (IA §6 BUILD) — both currently render as live controls. Also regenerate the hand-drawn static payoff/smile SVGs from the shared-generator pattern 01/14 use so geometry and the quoted mid/RR/BF numbers cannot drift.",
           "docs/gui-redesign/mockups/02-structure.html + gui/src/products/StructureGallery.tsx — the mockup's structure library omits the entire LIVE FX/metal exotics catalogue (~20 families in PRODUCT_REGISTRY: barriers, touch, digital, asian, lookback, TARF, accumulator, cliquet, variance/vol swaps…), under-selling the platform's biggest live differentiator; add a grouped, license-gated \"Exotics · FX/Metal\" gallery section mirroring the real StructureGallery grouping. Also reword \"Recognized · engine auto-names\": recognition is template-driven (proto StrategyKind is a chosen enum, e.g. SEAGULL — the engine does not infer a name from arbitrary leg sets).",
-          "celer.css / all five mockups — unify the three honesty-tag vocabularies into ONE shared class (02 uses .flowtag live/target, 14 uses .wire live/tgt, 15 uses .fam .tag live/tgt, 00 and 01 use none) so the LIVE/TARGET grammar is a single recognizable component across the loop; and fix the capability-rail state on 14 (highlights \"Vol Surface\") and 15 (highlights \"Price & Model\") — add a scoped sub-label (e.g. \"Vol Surface ▸ Curves\" under a Rates scope) so a trader in the FI analog isn't shown the FX surface as active.",
+          "celnet.css / all five mockups — unify the three honesty-tag vocabularies into ONE shared class (02 uses .flowtag live/target, 14 uses .wire live/tgt, 15 uses .fam .tag live/tgt, 00 and 01 use none) so the LIVE/TARGET grammar is a single recognizable component across the loop; and fix the capability-rail state on 14 (highlights \"Vol Surface\") and 15 (highlights \"Price & Model\") — add a scoped sub-label (e.g. \"Vol Surface ▸ Curves\" under a Rates scope) so a trader in the FI analog isn't shown the FX surface as active.",
           "docs/gui-redesign/mockups/15-rates-ticket.html — tag the Cashflow-schedule panel and the Schedule & legs detail (bdc/stub/roll/2d-lookback obs-shift) as ENGINE-preview/TARGET: the wire RatesPricingResult (gui/src/data/contract.ts:2092) carries only pv/parRate/pv01/dv01/keyRateLadder, no cashflows or schedule echo. Conversely split the actnote's \"Contribute / RFQ rates-stream = TARGET\": the inbound desk-RFQ path for rates IS live (RfqDeskEdge → RatesPositionStore, services/desk/mod.rs; desk_pricing_matches_price_rates proves desk pricing rides price_rates) — only the rates RFS/streaming contract is TARGET."
         ],
         "gaps": [
@@ -103,8 +103,8 @@
       "queuedAt": 1782950124156,
       "attempt": 1,
       "lastToolName": "Bash",
-      "lastToolSummary": "cd /Users/adrian/code/celeroption-gui-xp/gui && npx vitest …",
-      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celeroption-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
+      "lastToolSummary": "cd /Users/adrian/code/celnet-gui-xp/gui && npx vitest …",
+      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celnet-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
       "lastProgressAt": 1782950532830,
       "tokens": 104311,
       "toolCalls": 26,
@@ -125,12 +125,12 @@
       "attempt": 1,
       "lastToolName": "Bash",
       "lastToolSummary": "grep -n \"CurveChart\\|fmtRateAxis\\|fmtTenorAxis\" /Users/adri…",
-      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celeroption-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
+      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celnet-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
       "lastProgressAt": 1782950332692,
       "tokens": 66719,
       "toolCalls": 19,
       "durationMs": 208535,
-      "resultPreview": "done wire-curve\nChanged: /Users/adrian/code/celeroption-gui-xp/gui/src/workspaces/CurveWorkspace.tsx (replaced the two hand-rolled CurveChart panels with one `<YieldCurve nodes={curveNodes} interpolation=\"log-linear\">`, mapping the bootstrapped pillar ladder via a new exported `curvePillarNodes` helper) + /Users/adrian/code/celeroption-gui-xp/gui/test/curveWorkspace.test.ts (added node-mapping/DF-…"
+      "resultPreview": "done wire-curve\nChanged: /Users/adrian/code/celnet-gui-xp/gui/src/workspaces/CurveWorkspace.tsx (replaced the two hand-rolled CurveChart panels with one `<YieldCurve nodes={curveNodes} interpolation=\"log-linear\">`, mapping the bootstrapped pillar ladder via a new exported `curvePillarNodes` helper) + /Users/adrian/code/celnet-gui-xp/gui/test/curveWorkspace.test.ts (added node-mapping/DF-…"
     },
     {
       "type": "workflow_agent",
@@ -145,13 +145,13 @@
       "queuedAt": 1782950124156,
       "attempt": 1,
       "lastToolName": "Bash",
-      "lastToolSummary": "cd /Users/adrian/code/celeroption-gui-xp/gui && npx vitest …",
-      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celeroption-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
+      "lastToolSummary": "cd /Users/adrian/code/celnet-gui-xp/gui && npx vitest …",
+      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celnet-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
       "lastProgressAt": 1782950465490,
       "tokens": 96230,
       "toolCalls": 35,
       "durationMs": 341332,
-      "resultPreview": "done wire-payoff\n\nChanged files:\n- `/Users/adrian/code/celeroption-gui-xp/gui/src/workspaces/TicketWorkspace.tsx` — the payoff render site (`products/PayoffChart` was used only here). Added `payoffDiagramLegs(instrument)`: maps the built strategy ladder's wire legs to `PayoffDiagram` Props (`optionType`→`call`/`put`, `side` BUY/SELL→`long`/`short`, absolute `strike`, `ratio`→`quantity`; premiums o…"
+      "resultPreview": "done wire-payoff\n\nChanged files:\n- `/Users/adrian/code/celnet-gui-xp/gui/src/workspaces/TicketWorkspace.tsx` — the payoff render site (`products/PayoffChart` was used only here). Added `payoffDiagramLegs(instrument)`: maps the built strategy ladder's wire legs to `PayoffDiagram` Props (`optionType`→`call`/`put`, `side` BUY/SELL→`long`/`short`, absolute `strike`, `ratio`→`quantity`; premiums o…"
     },
     {
       "type": "workflow_agent",
@@ -167,12 +167,12 @@
       "attempt": 1,
       "lastToolName": "Bash",
       "lastToolSummary": "grep -rln \"tokens.css\\|--bg-base\\|--text-tertiary\\|hairline…",
-      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celeroption-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
+      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celnet-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
       "lastProgressAt": 1782950337644,
       "tokens": 77690,
       "toolCalls": 18,
       "durationMs": 213485,
-      "resultPreview": "done surface-stack\nChanged: /Users/adrian/code/celeroption-gui-xp/gui/src/design/tokens.css (dark stack: --bg-inset 0.165 / --bg-base 0.2 / --bg-raised 0.255 / --bg-overlay(-solid) 0.29, --hairline 1px @ 7% white, strengthened --shadow-panel w/ inset top-light; --text-tertiary re-derived by computed OKLCH→sRGB→WCAG — 0.74 clears AA on all new surfaces incl. worst composite 4.78:1, value unchanged;…"
+      "resultPreview": "done surface-stack\nChanged: /Users/adrian/code/celnet-gui-xp/gui/src/design/tokens.css (dark stack: --bg-inset 0.165 / --bg-base 0.2 / --bg-raised 0.255 / --bg-overlay(-solid) 0.29, --hairline 1px @ 7% white, strengthened --shadow-panel w/ inset top-light; --text-tertiary re-derived by computed OKLCH→sRGB→WCAG — 0.74 clears AA on all new surfaces incl. worst composite 4.78:1, value unchanged;…"
     },
     {
       "type": "workflow_agent",
@@ -188,7 +188,7 @@
       "attempt": 1,
       "lastToolName": "StructuredOutput",
       "lastToolSummary": "Pricing & curves spine — Price&Model (00-shell), Vol Surfac…",
-      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celeroption-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
+      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celnet-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
       "lastProgressAt": 1782950931596,
       "tokens": 223460,
       "toolCalls": 42,
@@ -209,7 +209,7 @@
       "attempt": 1,
       "lastToolName": "StructuredOutput",
       "lastToolSummary": "Market-making loop surfaces: Contribute (03) · RFQ Desk (04…",
-      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celeroption-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
+      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celnet-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
       "lastProgressAt": 1782950902379,
       "tokens": 147796,
       "toolCalls": 25,
@@ -230,7 +230,7 @@
       "attempt": 1,
       "lastToolName": "StructuredOutput",
       "lastToolSummary": "Risk & Scenario (06) · XVA (07) · Books & Positions (08) — …",
-      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celeroption-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
+      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celnet-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
       "lastProgressAt": 1782950876145,
       "tokens": 180265,
       "toolCalls": 33,
@@ -251,7 +251,7 @@
       "attempt": 1,
       "lastToolName": "StructuredOutput",
       "lastToolSummary": "Operate & navigation surfaces: Reporting (09), Admin & Lice…",
-      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celeroption-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
+      "promptPreview": "Celnet GUI redesign (React+Vite+TS, Storybook 8.6). Conventions: one .tsx + co-located .module.css, tokens as CSS-vars only (NEVER raw hex), typed Props, a11y, prefers-reduced-motion. The SOTA design system is in /Users/adrian/code/celnet-gui-xp/gui/src/design/tokens.css (incl. --seq-1..6 Viridis + --div-* diverging + --font-display Space Grotesk). The 7 new lib chart components live in /User…",
       "lastProgressAt": 1782950924464,
       "tokens": 206942,
       "toolCalls": 43,

@@ -27,7 +27,7 @@ sign in `admin@celnet.com` / `password`, logs under `target/dev/`.
 - The FIX acceptor's PORT is operator-created and environment specific, so the
   script ASKS the running server for it over the WS contract (preferring a
   fixed-income venue) instead of hardcoding. On this machine it resolves to
-  **9100** (`fi-quote-venue-…`); there is also an Options acceptor `celer` on
+  **9100** (`fi-quote-venue-…`); there is also an Options acceptor `celnet` on
   51001.
 - An lp-sim provider only streams into a book that lists it as a MEMBER — with no
   such book the feed connects, logs `0 streams` and quotes nothing. The script

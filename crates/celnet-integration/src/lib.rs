@@ -1,6 +1,6 @@
 //! Celnet market-data integration — bring external vendor FX-options feeds into
 //! the canonical Celnet surface input, and blend multiple sources into one fair,
-//! divergence-checked mid (work-stream WS-H, `docs/CELER-INTEGRATION.md` §1).
+//! divergence-checked mid (work-stream WS-H, `docs/CELNET-INTEGRATION.md` §1).
 //!
 //! # The ingest → normalize → blend → canonical-surface-input pipeline
 //!
@@ -8,7 +8,7 @@
 //! an ATM vol plus `25Δ` (and, for liquid pairs, `10Δ`) risk-reversal and
 //! butterfly wings — together with spot, forward points (or an outright), and,
 //! for non-deliverable pairs, an NDF fixing, each in the feed's own units and
-//! convention (the FMD FXO 2.0-style shapes of `docs/CELER-INTEGRATION.md` §1.1;
+//! convention (the FMD FXO 2.0-style shapes of `docs/CELNET-INTEGRATION.md` §1.1;
 //! the feed carries no published convention spec, open question 5). This crate
 //! turns those messages into the canonical surface input that
 //! [`celnet_surface`] construction consumes:
@@ -42,7 +42,7 @@
 //! * **Fault tolerance.** Staleness decay degrades a quiet feed gracefully and
 //!   the divergence gate stops a single mispriced source from poisoning the mid —
 //!   matching the WS-disconnect / skip-while-full realities of the estate
-//!   (`docs/CELER-INTEGRATION.md` §0, §1.2).
+//!   (`docs/CELNET-INTEGRATION.md` §0, §1.2).
 //! * **Determinism & scale.** All transcendentals route through
 //!   [`celnet_core::math`]; normalized slices are `Copy` POD so the hot path is
 //!   allocation-light and the blender is a single linear pass over sources.

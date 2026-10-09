@@ -43,12 +43,12 @@ Size: 1200x676.
 | File | View | State | SHA-256 |
 |---|---|---|---|
 | `qa-pairmenu-open.png` | Stream workspace — pair selector dropdown open | Dropdown showing 5 pairs + "Search all pairs & commands" shortcut, EUR/USD highlighted | `f1f118752b9970d7160bd2da36dd1794ff039db8d927d7acd4543841ff4b836b` |
-| `qa-pairmenu-fixed.png` | Stream workspace — pair selector dropdown (rebrand) | Same dropdown after Celnet rebrand header; "A CELER PRODUCT" subtitle visible | `ce595cc7d87516c952a75a1950a7d2376880a5ac0887443ca1455a0ef5b2d424` |
+| `qa-pairmenu-fixed.png` | Stream workspace — pair selector dropdown (rebrand) | Same dropdown after Celnet rebrand header; "A CELNET PRODUCT" subtitle visible | `ce595cc7d87516c952a75a1950a7d2376880a5ac0887443ca1455a0ef5b2d424` |
 | `qa-palette-open.png` | Command palette open over Stream | Full command palette with WORKSPACE / PAIR categories; Celnet rebrand header | `b84aef2c58c739777cf7f690c7c1d6075c9605c0953cd18f19691fb6b969cd92` |
 
 ### Rebrand wave captures (`rebrand-*`)
 
-Captured after the Celnet → "A CELER PRODUCT" rebrand, before live WebSocket was wired
+Captured after the Celnet → "A CELNET PRODUCT" rebrand, before live WebSocket was wired
 (mock/replay transport). Size: 1200x676.
 
 | File | View | State | SHA-256 |

@@ -6,10 +6,10 @@
 <title>Celnet — Reporting (mockup 09, v1)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="celer.css" />
+<link rel="stylesheet" href="celnet.css" />
 <style>
 /* ============================================================================
- * Reporting screen (09) — screen-scoped styles only. celer.css is untouched.
+ * Reporting screen (09) — screen-scoped styles only. celnet.css is untouched.
  * ========================================================================== */
 .rp-head { display:flex; align-items:center; gap:var(--space-4); flex-wrap:wrap; }
 .rp-badge { display:inline-flex; align-items:center; gap:6px; font-size:var(--type-caption); font-weight:700;
@@ -506,7 +506,7 @@
               <table class="rp-mini" style="margin-top:14px" data-section="cpty">
                 <thead><tr><th>Top counterparties <span class="rp-tag target">target</span></th><th>Quotes</th><th>RFQ</th><th>Hit %</th></tr></thead>
                 <tbody>
-                  <tr><td>Celer Trader — internal desks</td><td class="n">1.82m</td><td class="n">96</td><td class="n">68</td></tr>
+                  <tr><td>CelNet Trader — internal desks</td><td class="n">1.82m</td><td class="n">96</td><td class="n">68</td></tr>
                   <tr><td>CPTY-A (bank)</td><td class="n">0.94m</td><td class="n">54</td><td class="n">57</td></tr>
                   <tr><td>CPTY-B (fund)</td><td class="n">0.61m</td><td class="n">41</td><td class="n">52</td></tr>
                   <tr><td>CPTY-C (corporate)</td><td class="n">0.28m</td><td class="n">23</td><td class="n">61</td></tr>
@@ -710,7 +710,7 @@
               <span class="label">Delivery channels</span>
               <div class="rp-row">
                 <button class="chipbtn on">Email</button>
-                <button class="chipbtn on">Celer Trader inbox</button>
+                <button class="chipbtn on">CelNet Trader inbox</button>
                 <button class="chipbtn">SFTP</button>
                 <button class="chipbtn">Object store</button>
                 <button class="chipbtn">Webhook</button>
@@ -719,8 +719,8 @@
             <div class="rp-fld">
               <span class="label">Recipients</span>
               <div class="rp-row">
-                <span class="pill">desk-head@celer</span>
-                <span class="pill">risk-control@celer</span>
+                <span class="pill">desk-head@celnet</span>
+                <span class="pill">risk-control@celnet</span>
                 <span class="pill">+ add</span>
               </div>
             </div>
@@ -768,11 +768,11 @@
           <div class="kv"><span class="k"><span class="rag g"></span>Weekly Risk &amp; Capital</span><span class="v num">Fri 17:15 · next 04 Jul</span></div>
           <div class="kv"><span class="k"><span class="rag a"></span>Month-end Regulatory</span><span class="v num">31 Jul · sign-off req</span></div>
           <div class="kv"><span class="k"><span class="rag g"></span>Quarter-end XVA</span><span class="v num">30 Sep 18:00</span></div>
-          <div class="kv"><span class="k">Desk activity digest</span><span class="v num">Mon 08:00 → Celer inbox</span></div>
+          <div class="kv"><span class="k">Desk activity digest</span><span class="v num">Mon 08:00 → CelNet inbox</span></div>
 
           <div class="rp-secslabel"><span class="label">Delivery health <span class="rp-tag target">target</span></span></div>
           <div class="kv"><span class="k">Email gateway</span><span class="v"><span class="rag g"></span>ok</span></div>
-          <div class="kv"><span class="k">Celer Trader inbox</span><span class="v"><span class="rag g"></span>ok</span></div>
+          <div class="kv"><span class="k">CelNet Trader inbox</span><span class="v"><span class="rag g"></span>ok</span></div>
           <div class="kv"><span class="k">SFTP archive</span><span class="v num warn">not configured</span></div>
         </div>
       </section>

@@ -8,7 +8,7 @@
 # Thin wrapper over {{ celnet_bin_dir }}/start-fix-sim.sh: it points the launcher
 # at the release-shipped RFQ client binary (no cargo needed on the host) and the
 # managed FIX acceptor, daemonizes, and logs into the shared log dir. The acceptor
-# address/CompIDs default to the runtime registry's "CELER_FXO_CELNET" venue; override
+# address/CompIDs default to the runtime registry's "CELNET_FXO_VENUE" venue; override
 # with celnet_fixsim_* group_vars if the GUI FIX admin changes them.
 # ---------------------------------------------------------------------------
 set -euo pipefail
@@ -51,7 +51,7 @@ export FIXSIM_LIFT_EVERY="{{ celnet_fixsim_lift_every | default('3') }}"
 {% if celnet_fixsim_stream_port is defined and celnet_fixsim_stream_port %}
 # RFS (streaming) leg: a second client subscribes to this fixed-income STREAM acceptor.
 export FIXSIM_STREAM_PORT="{{ celnet_fixsim_stream_port }}"
-export FIXSIM_STREAM_SENDER="{{ celnet_fixsim_stream_sender | default('CELER_RATES_STREAM') }}"
+export FIXSIM_STREAM_SENDER="{{ celnet_fixsim_stream_sender | default('CELNET_RATES_STREAM') }}"
 export FIXSIM_STREAM_HOLD="{{ celnet_fixsim_stream_hold | default('15') }}"
 {% endif %}
 # ESP (streaming) leg: when enabled AND a fixed-income STREAM acceptor is reachable, a
@@ -61,7 +61,7 @@ export FIXSIM_STREAM_HOLD="{{ celnet_fixsim_stream_hold | default('15') }}"
 export FIXSIM_ESP="{{ '1' if celnet_fixsim_esp_enabled | default(false) else '0' }}"
 {% if celnet_fixsim_esp_port is defined and celnet_fixsim_esp_port %}export FIXSIM_ESP_PORT="{{ celnet_fixsim_esp_port }}"
 {% elif celnet_fixsim_stream_port is defined and celnet_fixsim_stream_port %}export FIXSIM_ESP_PORT="{{ celnet_fixsim_stream_port }}"
-{% endif %}export FIXSIM_ESP_SENDER="{{ celnet_fixsim_esp_sender | default('CELER_RATES_STREAM') }}"
+{% endif %}export FIXSIM_ESP_SENDER="{{ celnet_fixsim_esp_sender | default('CELNET_RATES_STREAM') }}"
 export FIXSIM_GRPC_ADDR="{{ celnet_fixsim_grpc_addr | default('http://127.0.0.1:50051') }}"
 export FIXSIM_ESP_INSTRUMENTS="{{ celnet_fixsim_esp_instruments | default('15') }}"
 # Every Nth RFQ is a MANUAL curve request routed to the human rates desk. 1 ⇒ all of them:

@@ -1,29 +1,29 @@
-# ADR-0011 — Celer-estate ingress + external vendor FX-options market-data ingestion
+# ADR-0011 — CelNet-estate ingress + external vendor FX-options market-data ingestion
 
 - **Status:** Accepted as the **integration architecture** (2026-06-28). The in-repo seams
   (vendor-feed adapter, resilient subscriber, deployment-mode gating, egress governor) are
   **built and gated**; the live JVM-estate transport (distributor connectivity) and the four
   inferred trade-lifecycle hops remain **deploy/estate-gated and explicitly NOT claimed as
-  runtime-verified in-repo** (see "Honest scope"). Records the decision; the concrete Celer
+  runtime-verified in-repo** (see "Honest scope"). Records the decision; the concrete CelNet
   trade-lifecycle transport adapter is a deploy-time/environment concern, not an in-repo type.
 - **Honours:** ADR-0007 (one unversioned contract — no `schema_version`), ADR-0008 (the
   asset-class-agnostic carry seam the ingested market data feeds), and CLAUDE.md guardrails
   #7 (open-source/free only), #8 (vendor-neutral product identifiers — the vendor name appears
   only as a documented external feed *source*, never in a core product identifier), and #11.
-- **Source map:** `docs/CELER-INTEGRATION.md` (the integration research findings — the
-  authoritative narrative for the Celer-side service names, transports and the still-inferred
+- **Source map:** `docs/CELNET-INTEGRATION.md` (the integration research findings — the
+  authoritative narrative for the CelNet-side service names, transports and the still-inferred
   hops). This ADR records the *Celnet-side* decision grounded in the built code.
 
 ## Context (grounded in the code + the integration research)
 
 Celnet must (a) **consume** external vendor FX-options market data (ATM + 25Δ/10Δ RR + BF
 wing quotes per tenor per pair, plus spot / forward points / NDF fixings) to build its
-arbitrage-free surface, and (b) **integrate into the Celer trade-lifecycle estate** (front
+arbitrage-free surface, and (b) **integrate into the CelNet trade-lifecycle estate** (front
 end / order routing / risk / position management / clearing) as a net-new, opt-in
 option-product producer/consumer. Hard constraints from the research
-(`docs/CELER-INTEGRATION.md` §0):
+(`docs/CELNET-INTEGRATION.md` §0):
 
-- The Celer **distributor is an in-process JVM disruptor mailbox** with *skip-while-full*
+- The CelNet **distributor is an in-process JVM disruptor mailbox** with *skip-while-full*
   back-pressure — a Rust process cannot natively join it; it speaks the socket protocol
   (`DistributorProducerChannelHandler`) or runs a JVM adapter. A high-frequency pricer can
   cause **silent price drops** unless mailboxes are sized and egress is rate-limited.
@@ -47,8 +47,8 @@ What is **already built in-repo** (verified against the graph):
   trait, the `FeedFrame` (Snapshot/Delta) canonical message, and `ResilientSubscriber`
   (`ingest_frame` strict-monotone per-key sequencing; `run_until` two-level reconnect — on a
   sequence gap it drops to awaiting-snapshot and resyncs, never silently fills).
-- `celnet-integration::deployment::DeploymentMode` — `{ CelerIntegrated, Hybrid, Standalone,
-  ExternalFeedOnly }`; `uses_celer_feed()` / `uses_external_feed()` gate which feeds attach.
+- `celnet-integration::deployment::DeploymentMode` — `{ CelnetIntegrated, Hybrid, Standalone,
+  ExternalFeedOnly }`; `uses_celnet_feed()` / `uses_external_feed()` gate which feeds attach.
 - `celnet-integration::egress::EgressGovernor` — the bounded, conflating egress rate-limiter
   that respects the distributor's skip-while-full mailbox (the silent-drop guard).
 - `celnet-server::Edge::attach_vendor_feed` — binds a `MarketDataSource` + `PriceSink` +
@@ -69,10 +69,10 @@ What is **already built in-repo** (verified against the graph):
 
 2. **Estate integration is DEPLOYMENT-MODE gated, additive, and non-disruptive.**
    `DeploymentMode` selects which feeds bind: `ExternalFeedOnly` (vendor only),
-   `CelerIntegrated`/`Hybrid` (Celer feed ± vendor, with dual-feed divergence detection in
+   `CelnetIntegrated`/`Hybrid` (CelNet feed ± vendor, with dual-feed divergence detection in
    `celnet-integration::divergence`), `Standalone` (neither). Celnet is added as a **net-new,
    opt-in option-product producer/consumer** that does not alter existing spot/FX flows; per
-   the phased plan (`docs/CELER-INTEGRATION.md` §4), ingress (read-only) and shadow pricing
+   the phased plan (`docs/CELNET-INTEGRATION.md` §4), ingress (read-only) and shadow pricing
    precede any estate egress.
 
 3. **Egress to the estate is bounded + conflating to respect the distributor.**
@@ -81,8 +81,8 @@ What is **already built in-repo** (verified against the graph):
    overflow the skip-while-full mailbox and silently drop prices. The browser/webtrader edge
    is the same one WS contract, second encoding (ADR-0009 codec) — not a separate surface.
 
-4. **The Celer-facing boundary speaks Protobuf + FIX; the JVM-estate transport is
-   deploy-gated.** Internal Celnet wire formats stay internal; only the Celer boundary uses
+4. **The CelNet-facing boundary speaks Protobuf + FIX; the JVM-estate transport is
+   deploy-gated.** Internal Celnet wire formats stay internal; only the CelNet boundary uses
    Protobuf/FIX/distributor. The distributor connectivity choice (JVM adapter vs the
    `DistributorProducerChannelHandler` socket protocol) and the four inferred lifecycle hops
    are **environment/staging decisions validated against the real estate**, not asserted in
@@ -100,18 +100,18 @@ What is **already built in-repo** (verified against the graph):
   an underivable observable is skipped, never invented; a lagging egress consumer conflates
   (drops a stale tick) rather than back-pressuring the pricer or fabricating a value.
 - Estate egress stays **off** until a deployment mode + tenant overlay enables it; existing
-  Celer product flows are untouched until the option product is explicitly turned on.
+  CelNet product flows are untouched until the option product is explicitly turned on.
 
 ## Honest scope (what is NOT claimed)
 
-- The concrete **Celer trade-lifecycle transport adapter** (a live distributor/JVM bridge) is
+- The concrete **CelNet trade-lifecycle transport adapter** (a live distributor/JVM bridge) is
   **not** an in-repo type — `DeploymentMode` is the gate; the live wiring is deploy/estate-
-  gated. The graph shows no CALLS path from `celnet-server` into a named "Celer order/position
+  gated. The graph shows no CALLS path from `celnet-server` into a named "CelNet order/position
   adapter".
 - The four lifecycle hops (`orderrouting → risk → destination → clearing → positionmanager`)
-  are **inferred** (`docs/CELER-INTEGRATION.md` §5) and must be runtime-traced against the
+  are **inferred** (`docs/CELNET-INTEGRATION.md` §5) and must be runtime-traced against the
   real services before being relied on.
-- Adding an FX-**option** product type to the estate (`celertech-type`, `staticdata`, every
+- Adding an FX-**option** product type to the estate (`celnet-type`, `staticdata`, every
   API proto enum, `positionmanager` netting keys, `risk` exposure models, `destination` FIX
   dialect) is a broad, cross-cutting estate change concentrated at the `celnet-integration` +
   `celnet-proto` boundary — scoped, not yet executed in the estate.
@@ -125,7 +125,7 @@ What is **already built in-repo** (verified against the graph):
 - **A vendor-named ingest path baked into the core** — rejected (guardrail #8): the vendor is
   a `FeedTransport` impl behind a source-agnostic trait; the vendor name lives only in
   integration/docs context, never in a core product identifier.
-- **A parallel market-data path for ingested vs Celer-native data** — rejected: both
+- **A parallel market-data path for ingested vs CelNet-native data** — rejected: both
   normalize to the one `celnet-surface` object; in `Hybrid` mode they are reconciled by
   divergence detection, not duplicated.
 
@@ -138,7 +138,7 @@ Stage-2 review). Anchors are real `qualified_name`s verified against the graph:
   one canonical surface. Anchors: `celnet-integration::vendor::VendorSmileMessage`,
   `celnet-integration::subscriber::ResilientSubscriber`,
   `celnet-server::lib::Edge::attach_vendor_feed`.
-- `decision` — estate integration is deployment-mode gated and additive; the live Celer
+- `decision` — estate integration is deployment-mode gated and additive; the live CelNet
   transport is deploy-gated, not an in-repo adapter. Anchors:
   `celnet-integration::deployment::DeploymentMode`,
   `celnet-integration::egress::EgressGovernor`,

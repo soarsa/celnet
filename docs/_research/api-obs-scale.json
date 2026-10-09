@@ -63,10 +63,10 @@
       "https://chrisni377.quarto.pub/mercer-street-advisors/posts/Accrual/post_tarf.html",
       "https://www.crisil.com/content/dam/crisil-integral-iq/what-we-think/all-our-thinking/reports/2025/11/fx-accumulator/fx-accumulator.pdf",
       "https://www.ijlrp.com/papers/2025/8/1712.pdf",
-      "/Users/adrian/code/celeroption/docs/COMPETITIVE-ANALYSIS.md",
-      "/Users/adrian/code/celeroption/crates/celnet-server/proto/edge.proto",
-      "/Users/adrian/code/celeroption/crates/celnet-server/src/ws.rs",
-      "/Users/adrian/code/celeroption/docs/INTERFACES.md"
+      "/Users/adrian/code/celnet/docs/COMPETITIVE-ANALYSIS.md",
+      "/Users/adrian/code/celnet/crates/celnet-server/proto/edge.proto",
+      "/Users/adrian/code/celnet/crates/celnet-server/src/ws.rs",
+      "/Users/adrian/code/celnet/docs/INTERFACES.md"
     ]
   },
   {
@@ -104,7 +104,7 @@
       "Celnet's own NFRs already assume single-node mechanical sympathy: p50 ≤2µs / p99 ≤10µs vanilla on a pinned core, ≥1M updates/s/core via thread-per-core lock-free fan-out with no cross-core cache traffic, huge pages + mlock + prefault + NUMA-local + IRQ affinity per Rigtorp tuning. This means the hot core must NOT depend on a distributed read for surface/curve data — distribution belongs around it, not inside it.",
       "Partitioning: rendezvous (HRW / highest-random-weight) hashing is now generally preferred over classic consistent hashing for shard assignment — simpler, no token ring to precompute/store, better load balance, minimal reshuffle on node add/remove (used by Kafka, Twitter EventBus). For FX options the natural shard key is (currency-pair) as the primary axis, sub-partitioned by book/tenant where a single hot pair (e.g. EURUSD) exceeds one core; all tenors of a pair stay co-resident on one shard because surface rebuild is per-pair-all-tenors (Celnet targets p99 ≤150µs for that) and must not cross nodes.",
       "Shared state (arb-free surface + curves) is best distributed as an event-sourced, replicated log fanned out to node-LOCAL replicas, not read remotely per price. Industry practice (e.g. SpiderRock) broadcasts live vol surfaces over multicast to execution/risk/pricing consumers. Combined with Celnet's existing arc-swap hot model swap, each pricer should read a lock-free local snapshot (arc-swap) of the latest surface; publisher updates are atomic and readers never block — near-zero staleness, zero cross-node read on the hot path, cache-coherent within the node.",
-      "Streaming fan-out: the LMAX Disruptor SPMC ring publishes every event to all consumers from a single producer with no per-consumer queue contention — exactly the in-process distributor pattern Celnet already bridges to (Celer in-proc disruptor). Mature Rust crates exist (nicholassm/disruptor-rs, the `disruptor` crate, jonhoo/bus broadcast). Note: crossbeam can beat the disruptor for simple SPSC/MPSC because it busy-spins; the disruptor's win is multi-consumer fan-out with consumer interdependency and batch publish — which is the quoting use case.",
+      "Streaming fan-out: the LMAX Disruptor SPMC ring publishes every event to all consumers from a single producer with no per-consumer queue contention — exactly the in-process distributor pattern Celnet already bridges to (CelNet in-proc disruptor). Mature Rust crates exist (nicholassm/disruptor-rs, the `disruptor` crate, jonhoo/bus broadcast). Note: crossbeam can beat the disruptor for simple SPSC/MPSC because it busy-spins; the disruptor's win is multi-consumer fan-out with consumer interdependency and batch publish — which is the quoting use case.",
       "Edge networking tradeoffs (2025-2026): SO_REUSEPORT (with eBPF SK_REUSEPORT steering) gives sharded accept + graceful handoff with stock kernel — Celnet already uses it for zero-dropped-connection blue-green. DPDK delivers the best raw latency (~7µs userspace floor) and packet rate but costs a dedicated-core/ownership model and ops complexity; io_uring (2025 research: DeferTR+NAPI beats SQPoll; registered buffers help large but slightly hurt small msgs) is the lower-friction middle ground and pairs well with Rust. Recommendation: SO_REUSEPORT + conflation/last-value-cache by default; reach for io_uring/XDP next; reserve full DPDK for the proven extreme tier.",
       "Consistency / failover / replay: Aeron Cluster (Raft consensus, formally proven) is the e-FX-standard pattern — leader appends + replicates to quorum, deterministic replicated state machine rebuild, full-rate archive to disk for real-time-or-later replay, reconnect without message loss, failover bounded by ~2x election timeout. Best-practice guidance: keep the cluster thin (push minimal data through consensus), prefer standby nodes over dynamic membership. This maps cleanly onto Celnet's need for deterministic replay, hot-standby shards, and bit-identical reproducibility.",
       "Backpressure: the disruptor's bounded ring provides natural backpressure; Aeron Archive lets latency-sensitive producers relay without blocking via dynamic flow control. For slow counterparties the correct primitive is conflation (last-value-cache / coalescing) at the edge rather than unbounded buffering — never let a slow subscriber backpressure the pricing core.",
@@ -157,7 +157,7 @@
       "https://github.com/jonhoo/bus",
       "https://docs.neeveresearch.com/display/TALONDOC/Tuning+Thread+Affinitization+and+NUMA",
       "https://weareadaptive.com/trading-resources/blog/aeronhydra/",
-      "/Users/adrian/code/celeroption/docs/ARCHITECTURE.md"
+      "/Users/adrian/code/celnet/docs/ARCHITECTURE.md"
     ]
   }
 ]

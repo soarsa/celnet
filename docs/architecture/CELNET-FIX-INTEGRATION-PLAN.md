@@ -1,4 +1,4 @@
-# Celnet — Celer + FIX Integration Build Plan
+# Celnet — CelNet + FIX Integration Build Plan
 
 > **No mocks (binding).** Nothing in the Celnet product is mocked or stubbed: the FIX engine
 > (acceptor AND initiator), the dialect, the session FSM, the distributor egress governor, and
@@ -6,16 +6,16 @@
 > REAL protocol peers — our own initiator vs our own acceptor over a loopback socket; a real
 > rate-limited socket sink; a real loopback WS server replaying recorded frames — never against
 > fakes of our own functionality. The ONLY thing not done in this environment is connecting to
-> the live deployed Celer JVM processes (separate `celertech-*` repos, not running here): that is
+> the live deployed CelNet JVM processes (separate `celnet-*` repos, not running here): that is
 > a deployment/credentials gate, not a mock — the same contract test re-runs unchanged against
 > the real far side in staging.
 
 > Status: **buildable plan** for the next integration wave (WS-H/WS-I follow-on). Supersedes
-> nothing in `docs/CELER-INTEGRATION.md` (the integration *map*) — this is the *engineering
+> nothing in `docs/CELNET-INTEGRATION.md` (the integration *map*) — this is the *engineering
 > plan* that turns that map into crates, ADRs, and a build-vs-defer task list with a validation
 > gate per item.
 >
-> **Cross-checked against the live Celer estate wikis** under `~/wiki/` (celertech-destination,
+> **Cross-checked against the live CelNet estate wikis** under `~/wiki/` (celnet-destination,
 > -orderrouting, -marketmerchant, -marketdata, -positionmanager, -risk, -devops). Facts drawn
 > from those wikis are tagged **[wiki]**; items the wiki itself marks *inferred* (not runtime-
 > traced) are tagged **[inferred]** and gate on live-staging verification. Everything else is a
@@ -23,7 +23,7 @@
 >
 > **The live-estate boundary is honest and explicit (see §7).** Everything in §1–§5 marked
 > *REAL-buildable-here* can be built and proven *here, now*, against a real loopback FIX peer (our own acceptor+initiator over a socket, no stub) and
-> a real rate-limited socket sink, with no access to a running Celer estate. Everything marked
+> a real rate-limited socket sink, with no access to a running CelNet estate. Everything marked
 > *LIVE-GATED* cannot be finished without a staging tenant and is deferred behind a deployment
 > gate — we build the seam and the contract test, not a fake of the far side.
 
@@ -31,29 +31,29 @@
 
 ## 0. What the estate actually is (grounding facts from the wikis)
 
-The Celer trade lifecycle, reconstructed from `~/wiki/celertech-devops/concepts/trade-lifecycle`:
+The CelNet trade lifecycle, reconstructed from `~/wiki/celnet-devops/concepts/trade-lifecycle`:
 
 **Order path** [wiki]: frontend `OrderServiceClient` (gRPC-over-WebSocket, `nice-grpc-web`,
-Netty `/stream`, `authorization-token` metadata) → `celertech-orderrouting`
+Netty `/stream`, `authorization-token` metadata) → `celnet-orderrouting`
 (`CreateFxOrderRequestHandler` → `OrderManagerImpl.onCreateOrderRequest`, ~4000 LOC, the filter
-chain) → pre-trade `celertech-risk` (`RiskCheckFxOrderRequestHandler.handleCepEvent` →
-`RiskCheckManager`) **[inferred hop]** → `celertech-destination`
+chain) → pre-trade `celnet-risk` (`RiskCheckFxOrderRequestHandler.handleCepEvent` →
+`RiskCheckManager`) **[inferred hop]** → `celnet-destination`
 (`ConfigurableFixOrderRoutingDestination` + 20+ venue adapters) → **FIX out** to LP/venue →
-`ExecutionReport` (FIX `35=8`) back → `celertech-clearing`
-(`CreateTradeCaptureReportRequestHandler`) **[inferred]** → `celertech-positionmanager`
+`ExecutionReport` (FIX `35=8`) back → `celnet-clearing`
+(`CreateTradeCaptureReportRequestHandler`) **[inferred]** → `celnet-positionmanager`
 (`NetPositionManager.handleTransactionDownstreamEvent`, netting key **(ProductType,
 SettlementDate, SettlementType)**) → `NetPositionDisseminator` → WS push to frontend.
 
-**Price path** [wiki]: external venues → **FIX in** → `celertech-marketdata`
-(`MarketDataManager`, BBG SAPI / Currenex / FastMatch / HotSpot) → `celertech-marketmerchant`
+**Price path** [wiki]: external venues → **FIX in** → `celnet-marketdata`
+(`MarketDataManager`, BBG SAPI / Currenex / FastMatch / HotSpot) → `celnet-marketmerchant`
 (`NonRingBufferBasedMarketMerchantSession`, the quote-assembly DAG,
-`publishPriceEventOrSkipWhileFull()`) **[inferred]** → `celertech-marketwarehouse` → in-proc
-`celertech-distributor` (`DistributorProducerClientHelper.notifyUsers(name, proto)`) → frontend
+`publishPriceEventOrSkipWhileFull()`) **[inferred]** → `celnet-marketwarehouse` → in-proc
+`celnet-distributor` (`DistributorProducerClientHelper.notifyUsers(name, proto)`) → frontend
 `MarketMerchantPriceServiceClient` (**WS-only, no fallback**).
 
 **Three load-bearing constraints that shape every decision below:**
 
-1. **The distributor is an in-process JVM disruptor mailbox** living in `celertech-baseserver`
+1. **The distributor is an in-process JVM disruptor mailbox** living in `celnet-baseserver`
    [wiki]. A Rust process cannot natively join a JVM disruptor. The publish call is literally
    `publishPriceEventOrSkipWhileFull()` — **back-pressure is silent skip-while-full** [wiki].
    A microsecond pricer overruns it trivially. This is the single highest-risk seam and gets a
@@ -224,10 +224,10 @@ The distributor is an **in-proc JVM disruptor** in `baseserver` [wiki]; `marketm
 publishes via `publishPriceEventOrSkipWhileFull()` — **bounded mailbox, silent skip on full**
 [wiki]. Celnet is a Rust process that streams at ≥1M updates/s/core (`ARCHITECTURE.md` §1.2) and
 prices vanillas at p50 ≤ 2 µs. **An unthrottled Celnet pricer will silently saturate the JVM
-mailbox and drop prices with no error** — the failure mode `docs/CELER-INTEGRATION.md` §0
+mailbox and drop prices with no error** — the failure mode `docs/CELNET-INTEGRATION.md` §0
 flagged.
 
-### 2.2 Two connectivity options (the choice `CELER-INTEGRATION.md` §0 said must be made first)
+### 2.2 Two connectivity options (the choice `CELNET-INTEGRATION.md` §0 said must be made first)
 
 - **(A) JVM sidecar adapter.** A thin JVM process embeds the real `baseserver` distributor client
   and exposes a local socket (UDS/TCP) to Celnet. Celnet speaks a trivial length-prefixed
@@ -281,7 +281,7 @@ Key properties:
 `manage_adr`: **Decision** = §2.2 (A now, B deferred) + §2.3 (the governor). **Status** accepted.
 **Consequences:** an operated JVM sidecar; a Celnet egress stage that converts silent
 skip-while-full into observable, counted conflation; calibration of mailbox depth + drain rate is
-LIVE-GATED (open question 2 in `CELER-INTEGRATION.md`).
+LIVE-GATED (open question 2 in `CELNET-INTEGRATION.md`).
 
 **Validation gate:**
 - **REAL-buildable-here:** the `EgressGovernor` (bounded ring + conflation + token bucket +
@@ -299,11 +299,11 @@ LIVE-GATED (open question 2 in `CELER-INTEGRATION.md`).
 Adding an option product type touches the whole estate [wiki]. We **concentrate** the change to
 one new enum value + one new message shape per service, behind a feature flag / tenant overlay so
 existing FX-spot/forward flows are byte-for-byte unchanged until a tenant opts in (guardrail:
-non-disruptive, `CELER-INTEGRATION.md` §4 phasing).
+non-disruptive, `CELNET-INTEGRATION.md` §4 phasing).
 
 | Service / artifact | Change | Containment | Gate |
 |---|---|---|---|
-| `celertech-type` / `staticdata` | add `FX_OPTION` product + option reference data (strike, expiry, cut, style, settlement) | one new enum value + one reference record type; spot/fwd untouched | LIVE-GATED (estate repo change) |
+| `celnet-type` / `staticdata` | add `FX_OPTION` product + option reference data (strike, expiry, cut, style, settlement) | one new enum value + one reference record type; spot/fwd untouched | LIVE-GATED (estate repo change) |
 | **every `*-api` proto enum** carrying `ProductType` | add `FX_OPTION = <next>` | append-only enum value (no renumber → wire-safe); single value, not a new message family | LIVE-GATED |
 | `positionmanager` netting key `(ProductType, SettlementDate, SettlementType)` | options net by **(ProductType, pair, strike, expiry, call/put, SettlementType)** — strike+expiry are part of the option's identity, unlike spot | new key *only* when `ProductType==FX_OPTION`; existing spot key path unchanged | LIVE-GATED; REAL-here key-logic proof here |
 | `risk` exposure model | option exposure = delta-equivalent notional + vega/gamma buckets, not linear notional | new exposure calculator branch keyed on `FX_OPTION`; `RiskCheckFxOrderRequestHandler` gains an option arm | LIVE-GATED; REAL-here: Celnet exports the Greeks risk needs |
@@ -317,7 +317,7 @@ mapping** (`celnet-fix`, §1), and a **proto bridge** in `celnet-proto`/`celnet-
 *projects* a Celnet option + Greeks into the shape each estate proto will need — so that when the
 estate enums gain `FX_OPTION`, the mapping is a thin, already-tested adapter, not new design.
 
-> **Honesty note:** the enum/netting/exposure/dialect changes are **edits to Celer estate repos**
+> **Honesty note:** the enum/netting/exposure/dialect changes are **edits to CelNet estate repos**
 > we do **not** modify here (this plan only writes the Celnet-side seam + the contract tests).
 > The touch-list is the coordination checklist devops/estate owners execute in a staging tenant.
 
@@ -386,13 +386,13 @@ last-look path is proven in a staging tenant.
 | B11 | Option netting-key + delta-equiv/vega exposure logic (Celnet-side reference impl) | celnet-types/integration | unit-proven key + exposure math vs golden |
 | B12 | ADRs: hand-rolled FIX (§1.4), distributor egress (§2.4), product-type plan (§3) | — (mcp__lodestar__manage_adr) | recorded via lodestar manage_adr; docs synced |
 
-### DEFER — LIVE-GATED (cannot be finished without a running Celer staging tenant)
+### DEFER — LIVE-GATED (cannot be finished without a running CelNet staging tenant)
 
 | # | Task | Blocked on | Deployment gate to lift |
 |---|---|---|---|
 | D1 | JVM distributor sidecar handshake + calibrate mailbox depth/drain rate | real `baseserver` distributor | sidecar connects; no skip-while-full under calibrated budget |
 | D2 | Native `DistributorProducerChannelHandler` client (impl B, optimization) | reverse-engineered socket protocol | bench beats A; same governor seam |
-| D3 | `FX_OPTION` enum across every `*-api` proto + `celertech-type`/`staticdata` | estate repo changes (devops-owned) | append-only enum; spot/fwd flows byte-unchanged |
+| D3 | `FX_OPTION` enum across every `*-api` proto + `celnet-type`/`staticdata` | estate repo changes (devops-owned) | append-only enum; spot/fwd flows byte-unchanged |
 | D4 | `positionmanager` option netting key + `risk` option exposure model | estate repo changes | staging: option position nets correctly, risk gate passes/rejects |
 | D5 | `destination` FX-options FIX dialect wiring (uses B2 as spec) | estate repo + venue FIX certs | venue cert: RFQ/order/exec round-trips to a real LP venue |
 | D6 | `marketmerchant` DAG option-quote branch | estate repo change | option quotes assemble + publish in staging |
@@ -405,7 +405,7 @@ last-look path is proven in a staging tenant.
 
 ## 7. The live-estate boundary (honest statement)
 
-**Buildable + testable here, now, with no Celer access:** the entire `celnet-fix` crate (codec,
+**Buildable + testable here, now, with no CelNet access:** the entire `celnet-fix` crate (codec,
 dialect, session, acceptor/initiator), the egress governor, the resilient WS subscriber, the feed
 adapter, and the proto projections — **all driven by two test doubles we build ourselves:**
 
@@ -417,7 +417,7 @@ adapter, and the proto projections — **all driven by two test doubles we build
    trait that asserts capacity is never exceeded and conflation keeps newest-per-key — proving the
    governor *here*, while the real `notifyUsers` stays behind the same seam.
 
-**Not finishable without a live staging estate (D1–D10):** anything that crosses into a Celer
+**Not finishable without a live staging estate (D1–D10):** anything that crosses into a CelNet
 process — the JVM distributor handshake and its real mailbox calibration, the `*-api` proto enum +
 `positionmanager`/`risk`/`destination` edits (estate repos we do not touch from here), the four
 **inferred** lifecycle hops, the live `MarketMerchantPriceService` endpoint + feed entitlement,
@@ -428,5 +428,5 @@ tenant, passes."* We never fake the far side to claim completion (guardrail #2).
 The honest critical path to a *live* option RFQ in staging is therefore: **B1–B12 (here) →
 D3+D4+D5 (estate enum/netting/risk/dialect edits, devops-coordinated) → D1+D8 (live transports) →
 D7 (verify the inferred hops) → D9 (tenant enablement) → D10 (frontend).** Phases D3–D10 are
-estate-side execution gated on a staging environment, exactly the boundary `CELER-INTEGRATION.md`
+estate-side execution gated on a staging environment, exactly the boundary `CELNET-INTEGRATION.md`
 §5 enumerates as open questions.

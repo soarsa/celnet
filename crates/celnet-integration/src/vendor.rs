@@ -2,7 +2,7 @@
 //! message, before it is mapped onto Celnet's canonical vocabulary.
 //!
 //! External FX-options feeds (the FMD FXO 2.0-style shapes referenced in
-//! `docs/CELER-INTEGRATION.md` §1) publish, per `(pair, tenor)`, a *delta-space*
+//! `docs/CELNET-INTEGRATION.md` §1) publish, per `(pair, tenor)`, a *delta-space*
 //! smile: an at-the-money volatility plus risk-reversal and butterfly wings at
 //! the `25Δ` and (for liquid pairs) `10Δ` pillars, together with the spot mid,
 //! forward points (or an outright forward), and — for non-deliverable pairs —
@@ -11,7 +11,7 @@
 //! `0.0025`) and the feed carries its own **convention descriptor** (delta style,
 //! ATM style, premium currency, cut) which Celnet must honour on ingest rather
 //! than assume — convention error dwarfs model error
-//! (`docs/ANALYTICS-SPEC.md` §1.1, open question 5 in `docs/CELER-INTEGRATION.md`).
+//! (`docs/ANALYTICS-SPEC.md` §1.1, open question 5 in `docs/CELNET-INTEGRATION.md`).
 //!
 //! This module defines *only the decoded wire shapes* and their `serde`
 //! (de)serialization. It does no numerics and applies no conventions; the

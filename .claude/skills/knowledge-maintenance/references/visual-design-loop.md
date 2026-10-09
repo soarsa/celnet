@@ -43,7 +43,7 @@ engine adjudicates. A **refute** marks the claim `contradicted`; an **affirm**
 provider installed the seam returns a **recorded/stub** verdict — say so; never
 present a stub as a live judgment.
 
-## The agent loop (editing a Celer component toward a moved mockup)
+## The agent loop (editing a CelNet component toward a moved mockup)
 
 1. **Read.** `evidence_pack(PriceCell)` returns the design rules *with the code* —
    the consumed tokens, the props/spec, the target mockup hash, and the alignment

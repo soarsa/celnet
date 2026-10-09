@@ -1,15 +1,15 @@
-# Celnet — Deployment Modes (Standalone / Celer-Integrated / Hybrid)
+# Celnet — Deployment Modes (Standalone / CelNet-Integrated / Hybrid)
 
-> **Purpose.** Celnet is the FX-**options** pricing platform. The parent **Celer** estate
-> (`celertech-*`, ~113 repos) has *no option product type today*
+> **Purpose.** Celnet is the FX-**options** pricing platform. The parent **CelNet** estate
+> (`celnet-*`, ~113 repos) has *no option product type today*
 > and prices FX **spot/forward** through a JVM, disruptor-based price/order path. This document
-> specifies the **three deployment topologies** in which Celnet ships, and for each: which Celer
+> specifies the **three deployment topologies** in which Celnet ships, and for each: which CelNet
 > services Celnet **replaces**, **consumes**, and **publishes-to**; the **adapter** each mode
 > needs (`MarketDataSource` / `PriceSink` / order+exec path); how Celnet remains the **system of
 > record (SoR) for FX-options pricing** in all three; the **process/JVM topology** (what runs
 > where); and the **migration path** Standalone → Hybrid → Integrated.
 >
-> **Sibling docs.** `docs/CELER-INTEGRATION.md` is the integration *map*; `docs/CELER-FIX-
+> **Sibling docs.** `docs/CELNET-INTEGRATION.md` is the integration *map*; `docs/CELNET-FIX-
 > INTEGRATION-PLAN.md` is the engineering *plan* (crates, ADRs, build-vs-defer). This doc is the
 > *topology* layer that selects among them. It does not change any guardrail.
 >
@@ -23,34 +23,34 @@
 
 ---
 
-## 0. Grounding: what the Celer price/order path actually is
+## 0. Grounding: what the CelNet price/order path actually is
 
-Reconstructed from the graph + wikis (`~/wiki/celertech-marketmerchant`, `-marketdata`,
-`-destination`, `-positionmanager`, and `~/wiki/celertech-devops/concepts/trade-lifecycle`):
+Reconstructed from the graph + wikis (`~/wiki/celnet-marketmerchant`, `-marketdata`,
+`-destination`, `-positionmanager`, and `~/wiki/celnet-devops/concepts/trade-lifecycle`):
 
 **Price path** [wiki + graph]:
-external venues → **FIX in** → `celertech-marketdata` `MarketDataManager.subscribe()` [graph:
-`com.celertech.marketdata.connectivity.MarketDataManager.subscribe`, with venue destinations
+external venues → **FIX in** → `celnet-marketdata` `MarketDataManager.subscribe()` [graph:
+`com.celnet.marketdata.connectivity.MarketDataManager.subscribe`, with venue destinations
 `BloombergSAPIMarketDataDestination`, `CurrenexMarketDataDestination`, FastMatch, HotSpot under
-`MarketDataDestinationManager`] → `celertech-marketmerchant`
+`MarketDataDestinationManager`] → `celnet-marketmerchant`
 `NonRingBufferBasedMarketMerchantSession` (the quote-assembly DAG) → publish via the in-proc
-`celertech-distributor` disruptor → frontend `MarketMerchantPriceServiceClient` (**WS-only, no
+`celnet-distributor` disruptor → frontend `MarketMerchantPriceServiceClient` (**WS-only, no
 fallback**) [wiki].
 
 **Order path** [wiki, with inferred hops]:
-frontend `OrderServiceClient` (gRPC-over-WebSocket) → `celertech-orderrouting`
-(`OrderManagerImpl.onCreateOrderRequest`) → pre-trade `celertech-risk`
-(`RiskCheckFxOrderRequestHandler`) **[inferred hop]** → `celertech-destination`
+frontend `OrderServiceClient` (gRPC-over-WebSocket) → `celnet-orderrouting`
+(`OrderManagerImpl.onCreateOrderRequest`) → pre-trade `celnet-risk`
+(`RiskCheckFxOrderRequestHandler`) **[inferred hop]** → `celnet-destination`
 (`ConfigurableFixOrderRoutingDestination` + 20+ venue adapters; the FIX edge is
 `AcceptorFixEngineAdapter` / `InitiatorFixEngineAdapter` / `FixEngineAdapter.sendFixMessage`
-[graph]) → **FIX out** to LP/venue → `ExecutionReport (35=8)` back → `celertech-clearing`
-**[inferred]** → `celertech-positionmanager`
+[graph]) → **FIX out** to LP/venue → `ExecutionReport (35=8)` back → `celnet-clearing`
+**[inferred]** → `celnet-positionmanager`
 (`NetPositionManager.handleTransactionDownstreamEvent` [graph]) → `NetPositionDisseminator` → WS
 push to frontend.
 
 **Three load-bearing facts that constrain every mode:**
 
-1. **The distributor is an in-process JVM disruptor mailbox** (in `celertech-baseserver`) with
+1. **The distributor is an in-process JVM disruptor mailbox** (in `celnet-baseserver`) with
    **silent skip-while-full back-pressure** [wiki + graph]. `marketmerchant` publishes assembled
    prices via `NonRingBufferBasedMarketMerchantSession.publishPriceEventOrSkipWhileFull()`
    [graph: `…session.NonRingBufferBasedMarketMerchantSession.publishPriceEventOrSkipWhileFull`,
@@ -60,7 +60,7 @@ push to frontend.
 2. **There is no `FX_OPTION` product type anywhere in the estate** [wiki]. `ProductType` is a
    **netting-key component** in `positionmanager` and an enum across every `*-api` proto. Adding
    it is a broad, append-only, cross-cutting change — concentrated and feature-flagged per
-   `docs/CELER-FIX-INTEGRATION-PLAN.md` §3.
+   `docs/CELNET-FIX-INTEGRATION-PLAN.md` §3.
 3. **Four lifecycle hops are inferred, not traced** (orderrouting→risk, risk→destination,
    destination→clearing, clearing→positionmanager). Every mode element that crosses one is
    **[inferred — live-staging gate]**.
@@ -76,18 +76,18 @@ pinned zero-alloc hot core (`celnet-engine`) is mode-agnostic; modes are an **ed
 
 | Seam | Trait (celnet-side) | Standalone impl | Hybrid impl | Integrated impl |
 |---|---|---|---|---|
-| **`MarketDataSource`** (ingress: spot, fwd pts, NDF fixings, **vol surface** ATM/RR/BF, curves) | `celnet-integration::MarketDataSource` | direct external vol/FX feed adapter (FMD-FXO-style WS/stream client) + synthetic/file curves | external vol feed **+** a *read* subscription to Celer `marketdata`/`MarketMerchantPriceService` for spot/fwd | Celer `marketdata` distributor subscription (via JVM sidecar) as primary; external vol feed where the estate has no vol |
-| **`PriceSink`** (egress: option prices/quotes, full Greek set, surface, risk/PnL) | `celnet-integration::PriceSink` | `celnet-server` native edge (gRPC-over-WS + FIX acceptor) to **Celnet's own clients** | native edge **+** Celer egress for the subset of consumers that opt in | Celer egress (`marketmerchant` quote stream + distributor) as primary; native edge retained for direct/desk clients |
-| **order+exec path** (RFQ/RFS → quote → order → ExecutionReport; delta-hedge initiator) | `celnet-fix` acceptor+initiator engine | `celnet-fix` acceptor+initiator to Celnet's own/counterparty FIX | `celnet-fix` acceptor for option RFQ; hedge via `celnet-fix` initiator to venues directly | option order routed through Celer `orderrouting`→`destination`→`clearing`→`positionmanager` with `FX_OPTION` product type |
+| **`MarketDataSource`** (ingress: spot, fwd pts, NDF fixings, **vol surface** ATM/RR/BF, curves) | `celnet-integration::MarketDataSource` | direct external vol/FX feed adapter (FMD-FXO-style WS/stream client) + synthetic/file curves | external vol feed **+** a *read* subscription to CelNet `marketdata`/`MarketMerchantPriceService` for spot/fwd | CelNet `marketdata` distributor subscription (via JVM sidecar) as primary; external vol feed where the estate has no vol |
+| **`PriceSink`** (egress: option prices/quotes, full Greek set, surface, risk/PnL) | `celnet-integration::PriceSink` | `celnet-server` native edge (gRPC-over-WS + FIX acceptor) to **Celnet's own clients** | native edge **+** CelNet egress for the subset of consumers that opt in | CelNet egress (`marketmerchant` quote stream + distributor) as primary; native edge retained for direct/desk clients |
+| **order+exec path** (RFQ/RFS → quote → order → ExecutionReport; delta-hedge initiator) | `celnet-fix` acceptor+initiator engine | `celnet-fix` acceptor+initiator to Celnet's own/counterparty FIX | `celnet-fix` acceptor for option RFQ; hedge via `celnet-fix` initiator to venues directly | option order routed through CelNet `orderrouting`→`destination`→`clearing`→`positionmanager` with `FX_OPTION` product type |
 
 These three traits are the **only** things that vary by mode. The `DistributorEgress` trait and
-`EgressGovernor` (bounded conflating governor, `docs/CELER-FIX-INTEGRATION-PLAN.md` §2.3) are the
-concrete `PriceSink` adapter used whenever the sink is the Celer distributor — in Hybrid and
+`EgressGovernor` (bounded conflating governor, `docs/CELNET-FIX-INTEGRATION-PLAN.md` §2.3) are the
+concrete `PriceSink` adapter used whenever the sink is the CelNet distributor — in Hybrid and
 Integrated, never in Standalone.
 
 ### 1.1 Fleet topology — an orthogonal deploy-time knob (same bind-at-deploy pattern)
 
-Independent of which Celer mode is selected, Celnet's **horizontal-scale topology** is the same
+Independent of which CelNet mode is selected, Celnet's **horizontal-scale topology** is the same
 kind of deploy-time-bound seam (`docs/SCALE-OUT.md` §0). A single config knob —
 `celnet_risk_fleet::FleetTopology`, resolved at `Edge` boot from `CELNET_FLEET_MODE`
 (`in-process` | `distributed`) + `CELNET_FLEET_BACKENDS` — selects:
@@ -112,16 +112,16 @@ pre-warm, and the absolute cross-host wire SLOs — these stay deploy-gated (`do
 ## 2. Mode A — STANDALONE
 
 **Definition.** Celnet runs as a self-contained FX-options pricing/quoting platform with **no
-Celer estate dependency**. It is the full SoR: pricing, surface construction, the quote venue,
+CelNet estate dependency**. It is the full SoR: pricing, surface construction, the quote venue,
 and execution capture for options it quotes.
 
 ### Replaces / Consumes / Publishes-to
 
-| Verb | Celer service | Standalone behavior |
+| Verb | CelNet service | Standalone behavior |
 |---|---|---|
 | **Replaces** | `marketmerchant` (quote assembly), `marketdata` (as the option-pricing feed hub), the distributor fan-out, `destination` (FIX edge), the frontend price/order WS edge | Celnet performs all of these *for options* itself: `celnet-server` is the WS/gRPC + FIX edge; `celnet-engine` + `celnet-surface` are the pricing/surface engine. |
-| **Consumes** | *none of Celer* | Only **external** market data via `MarketDataSource`: a vol-surface feed (ATM + 25Δ/10Δ RR/BF, spot, fwd points, NDF fixings) normalized by `celnet-integration::normalize` into the canonical surface; curves from a file/external curve adapter. |
-| **Publishes-to** | *none of Celer* | Celnet's own SDK clients / GUI / counterparty FIX peers, via the native `PriceSink` (gRPC-over-WS multiplex `StreamSession` + `celnet-fix` acceptor). |
+| **Consumes** | *none of CelNet* | Only **external** market data via `MarketDataSource`: a vol-surface feed (ATM + 25Δ/10Δ RR/BF, spot, fwd points, NDF fixings) normalized by `celnet-integration::normalize` into the canonical surface; curves from a file/external curve adapter. |
+| **Publishes-to** | *none of CelNet* | Celnet's own SDK clients / GUI / counterparty FIX peers, via the native `PriceSink` (gRPC-over-WS multiplex `StreamSession` + `celnet-fix` acceptor). |
 
 ### Adapters bound
 
@@ -136,7 +136,7 @@ and execution capture for options it quotes.
 
 - **Pure Rust. No JVM.** Processes: `celnet-server` (edge), the `celnet-engine` core (pinned,
   zero-alloc), `celnet-plugin-host` (Tier-0/Tier-2), optional `celnet-gpu` workers. Horizontal
-  scale-out per `docs/SCALE-OUT.md`. No `celertech-baseserver`, no distributor, no sidecar.
+  scale-out per `docs/SCALE-OUT.md`. No `celnet-baseserver`, no distributor, no sidecar.
 
 ### SoR statement
 
@@ -149,19 +149,19 @@ target of the current crate set (per the implementation ledger).
 
 ---
 
-## 3. Mode C — CELER-INTEGRATED
+## 3. Mode C — CELNET-INTEGRATED
 
-**Definition.** Celnet is the FX-options **brain embedded inside the Celer trade lifecycle**:
+**Definition.** Celnet is the FX-options **brain embedded inside the CelNet trade lifecycle**:
 options flow through the *same* `marketmerchant` quote stream, `orderrouting`→`destination`→
 `clearing`→`positionmanager` order path, `risk` checks, and the React webtrader that the estate
 uses for spot/forward — but every option *price, Greek, and surface* originates in Celnet.
 
 ### Replaces / Consumes / Publishes-to
 
-| Verb | Celer service | Integrated behavior |
+| Verb | CelNet service | Integrated behavior |
 |---|---|---|
 | **Replaces** | the **pricing logic** for options *inside* `marketmerchant` (Celnet is the option price source feeding the assembly DAG); any legacy/absent option analytics in `risk` | Celnet does **not** replace the *service*; it replaces the *option-pricing function* the service would otherwise lack. `marketmerchant` keeps owning quote-assembly/credit/business-rule DAG; Celnet supplies the option price events it assembles. |
-| **Consumes** | `marketdata` (spot/fwd via distributor, through the JVM sidecar) [inferred — vol capability gate], `staticdata` (option reference data once `FX_OPTION` exists) [live-gate], a curve service (DF_d/DF_f) [live-gate] | `MarketDataSource` = distributor subscription (sidecar) for spot/fwd + external vol feed where Celer has no vol surface. |
+| **Consumes** | `marketdata` (spot/fwd via distributor, through the JVM sidecar) [inferred — vol capability gate], `staticdata` (option reference data once `FX_OPTION` exists) [live-gate], a curve service (DF_d/DF_f) [live-gate] | `MarketDataSource` = distributor subscription (sidecar) for spot/fwd + external vol feed where CelNet has no vol surface. |
 | **Publishes-to** | `marketmerchant` (option price events → assembly → `publishPriceEventOrSkipWhileFull` fan-out), `risk` (Greeks/exposure for the option arm), `positionmanager` (booking events under a new option netting key), `destination` (FIX dialect for option exec), the React webtrader (option ticket + surface/Greeks panels) | `PriceSink` = `DistributorEgress` (JVM sidecar + `EgressGovernor`). order+exec = the estate path with `FX_OPTION` plumbed end-to-end. |
 
 ### Adapters bound
@@ -179,15 +179,15 @@ uses for spot/forward — but every option *price, Greek, and surface* originate
 
 - **Rust engine + JVM estate side-by-side**, bridged by the **JVM distributor sidecar** (the only
   protocol-correct way for Rust to touch the in-proc disruptor; native socket client is a deferred
-  benchmark-gated optimization — `docs/CELER-FIX-INTEGRATION-PLAN.md` §2.2). Topology: `celnet-engine`
+  benchmark-gated optimization — `docs/CELNET-FIX-INTEGRATION-PLAN.md` §2.2). Topology: `celnet-engine`
   + `celnet-server` (Rust) ↔ **distributor sidecar** (thin JVM embedding the real `baseserver`
-  distributor client, exposing a UDS/TCP length-prefixed Protobuf seam) ↔ `celertech-baseserver` /
+  distributor client, exposing a UDS/TCP length-prefixed Protobuf seam) ↔ `celnet-baseserver` /
   `marketmerchant` / `marketdata` (JVM) ↔ `orderrouting`/`risk`/`destination`/`clearing`/
   `positionmanager` (JVM). Per-tenant enablement via `celnet-client` overlays [live-gate].
 
 ### SoR statement
 
-**Celnet remains the SoR for FX-options pricing even inside Celer.** The estate services *carry*
+**Celnet remains the SoR for FX-options pricing even inside CelNet.** The estate services *carry*
 and *assemble* Celnet's option prices but never *recompute* them: `marketmerchant`'s DAG applies
 credit/tiering/business rules on top of a Celnet-originated option price event; `risk` consumes
 Celnet-exported Greeks; `positionmanager` books what Celnet quoted. Every option price event
@@ -197,7 +197,7 @@ Celnet**, not in the estate.
 
 **Status:** the Celnet-side seams (governor, dialect spec, proto projections, sidecar client
 trait) are **REAL-buildable here**; everything crossing into a JVM process — sidecar handshake +
-mailbox calibration, `FX_OPTION` enum across `*-api`/`staticdata`/`celertech-type`, the netting
+mailbox calibration, `FX_OPTION` enum across `*-api`/`staticdata`/`celnet-type`, the netting
 key + risk exposure edits, the 4 inferred hops, live `MarketMerchantPriceService` + feed
 entitlement, tenant overlays — is **[inferred / live-staging gate]** (D1–D10 in the FIX plan).
 
@@ -226,22 +226,22 @@ wiring it into `positionmanager`'s `netPositionKeyFactory` (a new key variant ga
 ## 5. Mode B — HYBRID (the migration midpoint and a first-class steady state)
 
 **Definition.** Celnet is the **option SoR and quote venue on its own native edge**, *and*
-selectively bridges into Celer for the consumers that need estate integration — typically:
-**consume** Celer spot/forward for surface inputs, **publish** indicative option prices into
+selectively bridges into CelNet for the consumers that need estate integration — typically:
+**consume** CelNet spot/forward for surface inputs, **publish** indicative option prices into
 `marketmerchant` for desk visibility, while keeping **firm RFS execution and booking on Celnet's
 own FIX edge** until the estate's `FX_OPTION` plumbing is proven.
 
 ### Replaces / Consumes / Publishes-to
 
-| Verb | Celer service | Hybrid behavior |
+| Verb | CelNet service | Hybrid behavior |
 |---|---|---|
 | **Replaces** | the option quote venue + execution + surface (kept on Celnet's native edge) | Celnet's `celnet-server` + `celnet-fix` stay the firm-quote/exec path; the estate is *not* in the critical execution loop yet. |
-| **Consumes** | `marketdata` / `MarketMerchantPriceService` (WS-only) for **spot/forward** [wiki — resilient WS subscriber: subscribe→snapshot→sequenced deltas→on-gap full-resync, ≤6 conn/domain multiplex], external vol feed for the **surface** | `MarketDataSource` = external vol feed (primary for vol) + Celer spot/fwd read subscription. |
+| **Consumes** | `marketdata` / `MarketMerchantPriceService` (WS-only) for **spot/forward** [wiki — resilient WS subscriber: subscribe→snapshot→sequenced deltas→on-gap full-resync, ≤6 conn/domain multiplex], external vol feed for the **surface** | `MarketDataSource` = external vol feed (primary for vol) + CelNet spot/fwd read subscription. |
 | **Publishes-to** | `marketmerchant` (**indicative** option prices only, rate-limited + conflated via `EgressGovernor`), the React webtrader (read-only surface/Greeks panels) [live-gate] | `PriceSink` = native edge (firm) **+** `DistributorEgress` (indicative, governed). Booking stays Celnet-internal until D3/D4 land. |
 
 ### Adapters bound
 
-- `MarketDataSource` = external vol feed **+** resilient Celer WS subscriber (REAL-buildable here
+- `MarketDataSource` = external vol feed **+** resilient CelNet WS subscriber (REAL-buildable here
   against a real loopback WS server replaying recorded frames; live endpoint is a gate).
 - `PriceSink` = **native edge (firm/tradeable)** + **governed `DistributorEgress` (indicative)**.
 - order+exec = **`celnet-fix` acceptor/initiator** (firm RFS + hedge stay on Celnet's edge); the
@@ -259,25 +259,25 @@ own FIX edge** until the estate's `FX_OPTION` plumbing is proven.
 ### SoR statement
 
 Celnet is unambiguously the option SoR: it *originates* every price, *owns* the surface registry,
-and *executes + books firm trades itself*. Celer sees a **read-only, indicative projection** of
+and *executes + books firm trades itself*. CelNet sees a **read-only, indicative projection** of
 Celnet's option prices for desk visibility — never the authoritative mark. The migration to
 Integrated only *moves where firm execution/booking happen*; it never moves *who computes the
 option price*.
 
-**Status:** Celnet-side fully **REAL-buildable here**; the Celer read subscription + indicative
+**Status:** Celnet-side fully **REAL-buildable here**; the CelNet read subscription + indicative
 publish are **[live-gate D8/D6]**.
 
 ---
 
 ## 6. marketmerchant — key findings (the throughput/back-pressure bottleneck)
 
-`celertech-marketmerchant` is the largest estate service (60,164 graph nodes / 203,079 edges) and
+`celnet-marketmerchant` is the largest estate service (60,164 graph nodes / 203,079 edges) and
 the **logic + throughput bottleneck of the price path** [wiki index]. Concrete findings that
 shape Celnet's `PriceSink`:
 
 1. **`NonRingBufferBasedMarketMerchantSession` is the quote-streaming session** [graph], holding a
    `DistributorProducerClientHelper` and publishing assembled price events to the in-proc
-   distributor. It runs a **disruptor ring buffer** (`celerDisruptor.publishEvent(...)`) plus a
+   distributor. It runs a **disruptor ring buffer** (`celnetDisruptor.publishEvent(...)`) plus a
    secondary **non-ring-buffer** path for reference (non-executable) prices.
 2. **`publishPriceEventOrSkipWhileFull` (lines 552–594) is the back-pressure seam** [graph]. The
    traced logic is precise and important: when the non-ring buffer is full it logs at most once a
@@ -300,14 +300,14 @@ shape Celnet's `PriceSink`:
    [graph]) for peer/RFQ quote dissemination. Celnet's indicative-price egress targets the former;
    firm-quote/RFQ responses (if ever bridged) map to the latter.
 5. **`MarketMerchantPriceService` is WS-only with no fallback** and a ~6-concurrent-connection-per-
-   domain semaphore [wiki/CELER-INTEGRATION] — so the Celnet ingress subscriber (Hybrid/Integrated)
+   domain semaphore [wiki/CELNET-INTEGRATION] — so the Celnet ingress subscriber (Hybrid/Integrated)
    must multiplex many pairs over ≤6 sockets and resync on gap.
 
 **Net effect on Celnet:** Celnet's egress to marketmerchant must (a) conflate newest-per-key
 *before* the JVM boundary, (b) rate-limit to the **measured** ring-buffer drain rate
 (calibration is **[live-gate D1]** — the safe ring size / drain rate is not knowable from source),
 and (c) **count every drop** (HdrHistogram + metric) so the estate's silent skip becomes an
-observable Celnet SLO. The governor design in `docs/CELER-FIX-INTEGRATION-PLAN.md` §2.3 implements
+observable Celnet SLO. The governor design in `docs/CELNET-FIX-INTEGRATION-PLAN.md` §2.3 implements
 exactly this and is provable here against a real rate-limited socket sink.
 
 ---
@@ -320,7 +320,7 @@ step is independently shippable and reversible (flip the adapter back).
 ```
 STANDALONE                         HYBRID                              INTEGRATED
 ─────────                          ──────                              ──────────
-MarketDataSource = ext feed   →    + Celer spot/fwd WS read sub   →    Celer marketdata (sidecar)
+MarketDataSource = ext feed   →    + CelNet spot/fwd WS read sub   →    CelNet marketdata (sidecar)
                                                                         primary; ext vol where
                                                                         estate lacks vol
 PriceSink = native edge       →    native (firm) + governed       →    governed DistributorEgress
@@ -342,7 +342,7 @@ JVM: none                     →    sidecar (ingress + indicative) →    sidec
    `skip-while-full` under the calibrated budget. Firm execution/booking stay on Celnet. Reversible.
 
 **Step H→I (book + execute in the estate):**
-3. Land `FX_OPTION` append-only across `celertech-type`/`staticdata`/every `*-api` proto enum
+3. Land `FX_OPTION` append-only across `celnet-type`/`staticdata`/every `*-api` proto enum
    (wire-safe, no renumber) **[live-gate D3]**; add the option netting-key variant (§4) +
    `risk` option exposure arm **[live-gate D4]**; implement the `destination` FX-options FIX
    dialect from `celnet-fix::dialect_fx` as spec + venue certification **[live-gate D5]**; add the
@@ -362,7 +362,7 @@ three modes.
 
 ---
 
-## 8. Open questions (carry forward to live-staging; mirror of CELER-INTEGRATION §5)
+## 8. Open questions (carry forward to live-staging; mirror of CELNET-INTEGRATION §5)
 
 All marked **[inferred — live-staging gate]**: (1) distributor sidecar handshake + back-pressure
 contract; (2) marketmerchant ring-buffer depth + drain rate calibration (the safe `EgressGovernor`

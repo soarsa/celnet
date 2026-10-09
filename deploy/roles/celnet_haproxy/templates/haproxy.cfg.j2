@@ -73,7 +73,7 @@ backend celnet_ws
 backend celnet_softek_var
     mode http
     option forwardfor
-    # celertech-softek var-server (Rust/axum REST) bound loopback on this host.
+    # celnet-softek var-server (Rust/axum REST) bound loopback on this host.
     # HMAC request-signing is end-to-end, so HAProxy only terminates TLS + proxies.
     server softek_var1 {{ celnet_softek_var_backend }} check inter 5s rise 2 fall 3
 {% endif %}

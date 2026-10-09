@@ -13,7 +13,7 @@
 //!    instant is down-weighted by an exponential `e^{−Δt/τ}` with a configurable
 //!    half-life. A feed that has gone quiet contributes geometrically less the
 //!    older its last tick, so a fresh source dominates a stale one without a hard
-//!    cut-off (`docs/CELER-INTEGRATION.md` §1.2: WS feeds disconnect; the blend
+//!    cut-off (`docs/CELNET-INTEGRATION.md` §1.2: WS feeds disconnect; the blend
 //!    must degrade gracefully).
 //! 2. **Divergence gating** — a source flagged by [`crate::divergence`] as an
 //!    outlier (its smile sits more than the tolerance, in vol points, from the

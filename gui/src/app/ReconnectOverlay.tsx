@@ -8,7 +8,7 @@
  * Pure presentation: all timing/state lives in `useConnectionStatus`.
  */
 
-import { CelerMark } from "../components/CelerMark";
+import { CelnetMark } from "../components/CelnetMark";
 import styles from "./ReconnectOverlay.module.css";
 
 export interface ReconnectOverlayProps {
@@ -36,7 +36,7 @@ export function ReconnectOverlay({
     >
       <div className={styles.card}>
         <div className={styles.markRing} aria-hidden="true">
-          <CelerMark size={36} className={styles.mark} />
+          <CelnetMark size={36} className={styles.mark} />
         </div>
         <h2 id="reconnect-title" className={styles.title}>
           Connection lost

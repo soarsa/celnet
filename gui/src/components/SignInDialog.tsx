@@ -15,7 +15,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 
 import { useApp } from "../app/AppContext";
-import { CelerLockup } from "./CelerMark";
+import { CelnetLockup } from "./CelnetMark";
 import { Button } from "./Button";
 import { isDeskModal, getDeskModalAuthToken } from "../lib/deskPlatform";
 import styles from "./SignInDialog.module.css";
@@ -98,7 +98,7 @@ export function SignInDialog(): React.ReactElement | null {
     >
       <div className={styles.panel} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className={styles.head}>
-          <CelerLockup size={24} className={styles.lockup} />
+          <CelnetLockup size={24} className={styles.lockup} />
           <h2 id={titleId} className={styles.title}>
             {inDesk ? "DeskModal Session & Identity" : "Sign in"}
           </h2>

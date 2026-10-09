@@ -10,7 +10,7 @@
  * the design system reserves for splash/about/login surfaces.
  */
 
-import { CelerLockup } from "../components/CelerMark";
+import { CelnetLockup } from "../components/CelnetMark";
 import { isDeskModal } from "../lib/deskPlatform";
 import styles from "./LoginScreen.module.css";
 
@@ -36,7 +36,7 @@ export function LoginScreen({ onSignIn, reason }: LoginScreenProps): React.React
   return (
     <main className={styles.screen}>
       <section className={styles.panel} aria-labelledby="login-heading">
-        <CelerLockup size={28} className={styles.lockup} />
+        <CelnetLockup size={28} className={styles.lockup} />
         <h1 id="login-heading" className={styles.heading}>
           {inDesk ? "Trading Edge Disconnected" : "Session Disconnected"}
         </h1>

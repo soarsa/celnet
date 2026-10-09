@@ -52,7 +52,7 @@ invalidate. To make it *complete*:
 ### WS-2 — Storybook + visual reference grounding (styling alignment)
 Native via the visual-design-loop. Steps:
 1. Stand up **Storybook** for `gui/` (+ a baseline story per key component); build `storybook-static/`.
-2. Author **`gui/design-tokens.json`** (W3C DTCG) from the Celer brand kit (coral `#ff7357`, indigo,
+2. Author **`gui/design-tokens.json`** (W3C DTCG) from the CelNet brand kit (coral `#ff7357`, indigo,
    Anaheim) — the single styling source; migrate raw literals → token refs.
 3. Vendor `tools/visual/storybook-ingest.sh` + `visual-verify.sh` + `lodestar.visual.toml` from the
    lodestar repo; ingest: `storybook-ingest anchor storybook-static/index.json design:token,a11y:labeled`.

@@ -73,7 +73,7 @@ fn test_ilink_new_order_single_roundtrip() {
         98.4375,
         ExchangeTimeInForce::ImmediateOrCancel,
         false,
-        "CELER",
+        "CELNET",
     );
 
     let written = order.encode(&mut buf).expect("encode new order");

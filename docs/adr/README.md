@@ -15,7 +15,7 @@ free number in this table.
 | [0008](ADR-0008-multi-asset-carry-architecture.md) | Multi-asset: identity / carry-producing market / agnostic payoff | Accepted |
 | [0009](ADR-0009-edge-wire-codec.md) | Network price-edge codec — fixed-offset zero-copy `EdgeFrame` | Accepted (Active target) |
 | [0010](ADR-0010-converge-fi-rates-onto-carry-seam.md) | Converge FI rates onto the carry seam as a term structure | Superseded by ADR-0018 & ADR-0020 |
-| [0011](ADR-0011-celer-estate-ingress.md) | Celer-estate ingress + vendor FX-options market-data ingestion | Accepted |
+| [0011](ADR-0011-celnet-estate-ingress.md) | CelNet-estate ingress + vendor FX-options market-data ingestion | Accepted |
 | [0012](ADR-0012-unified-gbsm-kernel.md) | One unified generalized-BSM carry kernel | Accepted |
 | [0013](ADR-0013-acceleration-extensibility-wiring.md) | Acceleration & extensibility wiring (GPU + plugin surface) | Accepted / Active (`celnet-risk-accel` live) |
 | [0014](ADR-0014-generated-wire-contract.md) | Generated wire contract & client parity | Accepted (Target architecture) |

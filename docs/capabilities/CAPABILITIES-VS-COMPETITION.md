@@ -40,7 +40,7 @@ American/Bermudan early exercise → correlated multi-asset basket → an LSV bo
 Heston — over an **arbitrage-free surface (5 smile families incl. eSSVI)**, with GPU acceleration, a
 **trader-shaped typed gRPC contract + byte-identical WebSocket mirror** reachable from a client SDK,
 CLI and Excel, server-side hierarchical risk + FRTB-SA, a sandboxed open quant SDK, zero-downtime
-blue-green upgrades, zero-cost observability, and seamed Celer trade-lifecycle integration — every
+blue-green upgrades, zero-cost observability, and seamed CelNet trade-lifecycle integration — every
 numeric row gated against an independent oracle (QuantLib 1.42.1 / closed-form limits / FD /
 hand-pinned published constants / honest MC std-error bands).
 
@@ -191,10 +191,10 @@ hand-pinned published constants / honest MC std-error bands).
   pure-Rust replacement (`docs/PLUGIN-HOST-ALT.md`). 🟡 **Tier-1 signed-`.so` (stabby) + Tier-3
   Landlock/seccomp OS-sandbox are DESIGNED-ONLY** — seamed to slot behind the same frozen contract,
   not shipped in-repo.
-- ✅ **Seamed Celer trade-lifecycle integration** — FIX 4.4 engine (acceptor + initiator,
+- ✅ **Seamed CelNet trade-lifecycle integration** — FIX 4.4 engine (acceptor + initiator,
   loopback-tested, `celnet-fix`), egress governor / resilient subscriber / normalization
   (`celnet-integration`), and three adapter-bound deployment modes (`celnet-server/services/
-  deploy.rs`). ⛔ **The live JVM Celer estate lifecycle** (distributor sidecar handshake / mailbox
+  deploy.rs`). ⛔ **The live JVM CelNet estate lifecycle** (distributor sidecar handshake / mailbox
   calibration / live quote-feed entitlement) is **deploy/live-gated** — in-repo has the traits +
   adapter swap + FIX loopback only, not a live-estate connection.
 - ✅ **Vendor market-data integration** — FMD-style ATM/RR/BF normalization through the convention
@@ -239,7 +239,7 @@ hand-pinned published constants / honest MC std-error bands).
 | Multi-source surface aggregation + divergence | ✅ algorithm (live feed VALUES = integration target) | ✅ Primus (broad LP panel) | partial | ❌ | ⚠️ |
 | Asset-class / pair breadth | ⚠️ 19-pair universe (G10 + EM NDF + XAU/XAG; no crypto) | ✅ 75 pairs + crypto | ✅ 300+ pairs + 27 metals (data) | ✅ 200+ pairs | ✅ |
 | Zero-cost observability (HdrHistogram, audit) | ✅ proven | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
-| Native Celer trade-lifecycle integration | ✅ seamed (FIX 4.4 + DeployMode adapters); ⛔ live JVM estate deploy-gated | ❌ | ❌ | ❌ | n/a |
+| Native CelNet trade-lifecycle integration | ✅ seamed (FIX 4.4 + DeployMode adapters); ⛔ live JVM estate deploy-gated | ❌ | ❌ | ❌ | n/a |
 | On-prem / in-process embeddable | ✅ Rust crates + service | ❌ SaaS/venue | feed only | ❌ terminal | on-prem heavy |
 | Regulated multi-bank RFQ venue (RMO) | ✱ non-goal (sit alongside) | ✅ Optimus | ❌ | ❌ | ❌ |
 | FIX connectivity | ✅ FIX 4.4 engine (loopback-tested); live estate deploy-gated | ✅ | ✅ | ✅ | ✅ |
@@ -304,7 +304,7 @@ These are the canonical boundary lines. In-repo proves correctness / ratios / lo
 | Cross-host wire p99 / kernel-bypass NIC latency | §1.2 in-core truth-gate + loopback benches only | Absolute cross-host wire p99 |
 | §11 ABSOLUTE wire-latency SLOs | §1.2 truth-gate + loopback only | Absolute wire SLOs |
 | CUDA/NVIDIA GPU throughput + ≤50ms exotic + Workload-A/B | **correctness + RATIOS only** (M4/Lavapipe; Metal lacks f64) | Absolute NVIDIA throughput |
-| Live JVM Celer estate lifecycle (sidecar / FX_OPTION / tenant overlays) | seams + adapters + FIX loopback only | Live estate connection |
+| Live JVM CelNet estate lifecycle (sidecar / FX_OPTION / tenant overlays) | seams + adapters + FIX loopback only | Live estate connection |
 | Raft §6 dynamic membership / cross-DC transport / real partitions | correctness/quorum/framing on localhost multi-process only | Cross-DC / membership / partitions |
 | Plugin Tier-1 signed-`.so` (stabby) + Tier-3 Landlock/seccomp | **designed-only** (only Tier-0 native + Tier-2 wasmi shipped) | OS-isolated tiers at deploy |
 | XVA (CVA/DVA/FVA, `celnet-xva`) | **internal-only, no client/wire surface, synthetic netting sets** | Live CSAs / collateral / wrong-way risk |
@@ -321,7 +321,7 @@ These are the canonical boundary lines. In-repo proves correctness / ratios / lo
 | Pivot + remaining structured catalogue | ⚠️ core structures shipped; pivot pending | Extend the catalogue via the same parity-gated pattern |
 | Plugin Tier-1 signed-`.so` + Tier-3 OS-sandbox | 🟡 designed/seamed (`PLUGIN-HOST-ALT.md`) | Wire behind the frozen contract; prove at deploy |
 | Cross-DC / dynamic-membership distributed deploy | ⛔ deploy-gated (correctness proven loopback) | Prove absolute wire p99 / membership at deploy |
-| Live Celer JVM estate + multi-vendor feed VALUES | ⛔ deploy/live-gated (seams + algorithm built) | Integration/deploy wave against the running estate |
+| Live CelNet JVM estate + multi-vendor feed VALUES | ⛔ deploy/live-gated (seams + algorithm built) | Integration/deploy wave against the running estate |
 | Regulated multi-bank RFQ venue (RMO) | ✱ deliberate non-goal | Sit alongside venues, not replace them |
 
 ---

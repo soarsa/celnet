@@ -210,7 +210,7 @@ ROADMAP P3 + CLIENT-PARITY-MATRIX reconciled in W12.
 CUDA/NVIDIA ABSOLUTE GPU throughput + ≤50ms exotic + Workload-A/B absolutes (M4 Metal lacks f64 ⇒
 in-repo proves correctness + host-local RATIOS only); cross-host wire p99 / kernel-bypass NIC /
 §11 ABSOLUTE wire-latency SLOs (in-repo proves the §1.2 in-core truth-gate + loopback fleet_slo only);
-live JVM Celer estate lifecycle (sidecar/FX_OPTION/inferred hops/tenant overlays); CUDA-backend
+live JVM CelNet estate lifecycle (sidecar/FX_OPTION/inferred hops/tenant overlays); CUDA-backend
 (CubeCL) device-resident f64 parity lane on real NVIDIA; Raft §6 dynamic membership change (correctness
 complete for fixed membership; live cross-host reconfig is deploy-gated); cross-owner multiplexing
 within one StreamSession + cross-node transport for risk-fleet/risk-cube (in-process algebra proven;

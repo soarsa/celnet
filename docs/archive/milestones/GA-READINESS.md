@@ -7,8 +7,8 @@
 > **end-to-end latency-under-load harness + CI bench-regression gate** (the prior GA gating
 > caveat — now MET), and CI mutation/coverage gates. **22 crates + `gui/`, 618 tests green,
 > `just check` terminating.** **Verdict: GO for the Celnet pricing-platform GA.** Remaining
-> work is deployment/hardware-gated only — GPU perf-on-real-NVIDIA and live-Celer/FIX wiring —
-> each with a written plan (`GPU-AT-SCALE-PLAN.md`, `CELER-FIX-INTEGRATION-PLAN.md`) and a
+> work is deployment/hardware-gated only — GPU perf-on-real-NVIDIA and live-CelNet/FIX wiring —
+> each with a written plan (`GPU-AT-SCALE-PLAN.md`, `CELNET-FIX-INTEGRATION-PLAN.md`) and a
 > contract test that re-runs against the real far side in staging; plus the post-GA breadth
 > roadmap (`POST-GA-ROADMAP.md`: pair/asset-class + crypto). Nothing remaining is research or
 > correctness risk. Rows below are the prior rev-2 detail (still valid); the caveat in §3/§4 is
@@ -52,7 +52,7 @@
 | — | **Plugin / SDK runtime (sandbox host)** | **MET** | `celnet-plugin-host` is **built** on the decided tiered architecture: Tier-0 native registry + Tier-2 **`wasmi` v1.0.9** sandbox (pure-Rust, fuel-metered, no-WASI capability linker, zero ambient authority, `(ptr,len)` ABI with boundary NaN-canonicalization, ResourceLimiter capping guest memory 64 MiB/tables/instances, unneeded proposals disabled), deterministic bit-identical replay. All 4 WS-G gates pass on real WAT fixtures (capability-denial, bounded fuel-exhaustion, replay bit-identity, Tier0==Tier2); 20 tests; `#![forbid(unsafe_code)]`. wasmtime family **hard-banned** in `deny.toml`. The open-quant-SDK differentiator is now real, not contract-only. Remaining (post-GA): Tier-1 signed-`stabby` partner tier, Tier-3 Landlock/seccomp ring, a `celnet-plugin-guest` SDK crate. |
 | — | **Trader GUI** | **MET (foundation)** | `gui/` is a **built, runnable** Vite + React 19 + TS (strict) app: the "Aurora" OKLCH design system (dark/light/increased-contrast, materials, purposeful motion), the four hero screens (RFS streaming blotter as resting state, click-to-trade Ticket with last-look ring + real smile-vol, 3D vol-surface + smile + marking grid, spot×vol risk shock grid), a typed data layer mirroring the `celnet-proto` contract with an **isolated** gRPC-web/WS client seam (deterministic in-app mock source today). `tsc --noEmit` clean; `vite build` succeeds. Out-intuits SynOption (blotter-first workflow). Remaining (post-GA): wire to the live `celnet-server` (needs the WS mirror), production polish/test harness. |
 | — | **Distributed / horizontal scale-out** | **PARTIAL** | Single-shard substrate exists and is validated (engine hot path, server edge). The cross-node fleet layer (router tier, HRW partition map, replicated log, hot-standby) is **designed, not built** — no `celnet-router`/`celnet-cluster` crate, no cross-node routing/consensus code (`SCALE-OUT.md` §0). IB-portfolio scale is argued from per-node throughput headroom, not demonstrated across a fleet. |
-| — | **Celer estate / FIX integration** | **PARTIAL** | `celnet-integration` (5 src, 2.1k LOC): FMD-style ATM/RR/BF normalization through the convention layer + multi-source aggregation with time-weighted staleness decay and divergence detection. FIX STP and live Celer trade-lifecycle wiring are **mapped** (`CELER-INTEGRATION.md`) but not wired to a running estate. |
+| — | **CelNet estate / FIX integration** | **PARTIAL** | `celnet-integration` (5 src, 2.1k LOC): FMD-style ATM/RR/BF normalization through the convention layer + multi-source aggregation with time-weighted staleness decay and divergence detection. FIX STP and live CelNet trade-lifecycle wiring are **mapped** (`CELNET-INTEGRATION.md`) but not wired to a running estate. |
 | — | **GPU backend** | **MET (functional); PARTIAL (perf-at-scale)** | `celnet-gpu` (5 src, 1.3k LOC): wgpu (Metal/Vulkan/DX12) MC with f64 CPU reconciliation oracle and bit-stable Philox. CI exercises the Vulkan path headless via Mesa lavapipe (software). **Gap:** no on-GPU large-batch latency/throughput numbers vs the §1.2 ≤ 50 ms booking-grade budget on real hardware (Metal lacks f64; the CUDA path is CI-only). |
 
 ---
@@ -100,7 +100,7 @@
    validated against §1.2 budgets, to substantiate the IB-portfolio scale claim beyond
    per-node headroom (`SCALE-OUT.md`; task #19).
 6. **GPU perf-at-scale** numbers on real hardware against the ≤ 50 ms booking-grade budget.
-7. **Live Celer / FIX integration** wired to a (staging) estate, not just mapped.
+7. **Live CelNet / FIX integration** wired to a (staging) estate, not just mapped.
 8. **Close the 54 missed mutants** in `celnet-vanilla` delta/solver (comparison-operator and
    arithmetic mutants) and stand up coverage + mutation as CI gates with thresholds.
 
@@ -131,10 +131,10 @@ The remaining work is **execution/deployment, not research or correctness risk**
 end-to-end wire-path p99/p99.9 under sustained load + a CI bench-regression gate — the one item
 that should gate the latency headline; then the should-dos — (4) the WebSocket mirror + the
 already-built API-v2 ergonomics, (5) the cross-node fleet layer, (6) GPU perf-at-scale on real
-hardware, (7) live Celer/FIX wiring, (8) closing the 54 `celnet-vanilla` solver mutants + CI
+hardware, (7) live CelNet/FIX wiring, (8) closing the 54 `celnet-vanilla` solver mutants + CI
 coverage/mutation gates — and the post-GA roadmap (9: TARF/accumulator/quanto breadth, pair
 coverage). Recommended order to the production GA tag: (3) latency-under-load + CI gate → (4)
-WS mirror + wire the GUI live → (7) staging Celer/FIX → tag; (5)(6)(8)(9) follow as roadmap.
+WS mirror + wire the GUI live → (7) staging CelNet/FIX → tag; (5)(6)(8)(9) follow as roadmap.
 
 **Bottom line:** Celnet is a demonstrably state-of-the-art, production-grade FX-options pricing
 platform on its implemented scope — out-functioning, out-intuiting and out-performing the

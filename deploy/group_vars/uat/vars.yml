@@ -16,9 +16,9 @@ celnet_domain_aliases:
 celnet_grpc_addr: "127.0.0.1:50051"
 celnet_ws_addr:   "127.0.0.1:50061"
 
-# Front the celertech-softek VAR app on https://var.uat.celnet.uk via the same
+# Front the celnet-softek VAR app on https://var.uat.celnet.uk via the same
 # :443 edge. var-server binds loopback on a DISTINCT port (8080 collides with
-# celnet's nginx GUI) — this MUST match `softek_var_port` in the celertech-softek
+# celnet's nginx GUI) — this MUST match `softek_var_port` in the celnet-softek
 # deploy's group_vars, and var.uat.celnet.uk must resolve to this host.
 celnet_softek_var_enabled: true
 celnet_softek_var_host: var.uat.celnet.uk

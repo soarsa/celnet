@@ -14,7 +14,7 @@ an LB. The UAT `celnet-server` was FLAPPING (log: 27 `ready` / 24 `draining`, en
 on `EADDRINUSE`). Every drain dropped all WebSockets → the flash; every restart → "goes back".
 **Root cause = self-inflicted:** the `CELNET_FIX_ADDR` I added to `celnet_env` bound a LEGACY FIX
 acceptor that COLLIDES with the acceptors the server already binds from the MANAGED registry
-(`/home/celnet/fix-connections.json`: "celer" FX/options @127.0.0.1:51001, FI quote venue @9100).
+(`/home/celnet/fix-connections.json`: "celnet" FX/options @127.0.0.1:51001, FI quote venue @9100).
 With `CELNET_FIX_ADDR` set the process aborts at boot; unset → boots clean (verified foreground on
 the box). **Fix (commit 74e424d):** removed `CELNET_FIX_ADDR/SENDER/TARGET` from `group_vars/all.yml`
 — FIX is configured via the managed registry ONLY; re-enabling the legacy env aborts boot. Live
@@ -33,7 +33,7 @@ server.
 build+connect errors and foreground mode never logged to a file. Fixed the launcher: prebuild
 visibly, drop `--quiet`, ALWAYS tee every RFQ sent + Quote/fill received to
 `deploy/fix-sim-run/log/fix-sim.log` (all modes), loud preflight, clean daemon re-exec + pidfile.
-It now dials the EXISTING managed "celer" acceptor: **127.0.0.1:51001, sim SENDER=CELNET-CPTY,
+It now dials the EXISTING managed "celnet" acceptor: **127.0.0.1:51001, sim SENDER=CELNET-CPTY,
 TARGET=CELNET** (sim SENDER == venue target_comp_id; sim TARGET == venue sender_comp_id; FI venue is
 9100). Run: `FIXSIM_DAEMON=1 deploy/start-fix-sim.sh` then `tail -f deploy/fix-sim-run/log/fix-sim.log`.
 App-level RFQ/Quote logs there; raw FIX WIRE in/out is server-side (FixAdminService / GUI FIX
@@ -43,9 +43,9 @@ monitor). Full `fix-sim` bot binary still design-only (`docs/FIX-SIM-DESIGN.md` 
 `fix_rfq_client --asset fi|fx` (default **fi**): FI builds an OIS rates RFQ via
 `dialect_rates::build_rates_quote_request` (`--curve USD-OIS --tenor 5 --notional 10000000 --side
 pay|receive|two-way`), Observe only. `start-fix-sim.sh`/`fixsimctl` derive per-asset acceptor:
-**fi → 127.0.0.1:56002 (sim SENDER=CELER_RATES, TARGET=CELNET)**, fx → :56001 (CELER_FXO). A
-**`fixed_income_quote` acceptor `celer-rates-celnet` @56002** was added to the box registry
-(`/home/celnet/fix-connections.json`, enabled, sender_comp_id=CELNET/target_comp_id=CELER_RATES,
+**fi → 127.0.0.1:56002 (sim SENDER=CELNET_RATES, TARGET=CELNET)**, fx → :56001 (CELNET_FXO). A
+**`fixed_income_quote` acceptor `celnet-rates-celnet` @56002** was added to the box registry
+(`/home/celnet/fix-connections.json`, enabled, sender_comp_id=CELNET/target_comp_id=CELNET_RATES,
 desk=celnet) + server restarted (both 56001/56002 listening). Registry acceptors bind at boot and a
 bad bind is SKIPPED (never aborts boot — unlike the legacy CELNET_FIX_ADDR). Verified end-to-end: FI
 RFQ → **Quote 0.04045/0.04055 (~4.05% 5y OIS)**. **The box still runs the OLD client (no `--asset`)

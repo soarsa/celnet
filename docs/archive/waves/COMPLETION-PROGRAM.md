@@ -161,7 +161,7 @@ deploy/live-staging. The program keeps them OUT of in-repo build scope:
   claim f64 on Metal.
 - **The §11 ABSOLUTE wire-latency SLOs** (in-repo proves the in-core §1.2 truth-gate +
   loopback benches only).
-- **The entire live JVM Celer estate lifecycle** (sidecar / FX_OPTION / inferred hops /
+- **The entire live JVM CelNet estate lifecycle** (sidecar / FX_OPTION / inferred hops /
   tenant overlays).
 
 Plus the in-wave deferrals: live CSAs/collateral/wrong-way risk (W10 is synthetic netting

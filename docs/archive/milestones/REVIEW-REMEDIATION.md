@@ -69,7 +69,7 @@ single-writer-enforcement minor paired with the seqlock fix (**m32**). All 30 we
 
 43 minors (doc wording, naming polish, residual versioned-protocol phrasing in **W6**, test-name
 tidy) and 18 gaps (Sobol'/Brownian-bridge absence, mutation-survivor backlog, coverage/mutation
-CI gates, plugin-host, API-v2 ergonomics, scale-out tier, GPU perf-at-scale, live Celer/FIX)
+CI gates, plugin-host, API-v2 ergonomics, scale-out tier, GPU perf-at-scale, live CelNet/FIX)
 were filed as prioritized backlog. These were correctness-safe at the time and have since been
 closed across the GA, leadership, and completion programs (see `docs/GA-READINESS.md`,
 `docs/COMPLETION-PROGRAM.md`, `docs/POST-COMPLETION-AUDIT.md`).

@@ -114,7 +114,7 @@ fn resolves_the_exact_member_by_instrument_stream_set() {
         book(
             "external",
             true,
-            &["FIX-BOX-CELER", "API-LP-7"],
+            &["FIX-BOX-CELNET", "API-LP-7"],
             AggregationScopeMode::AllMembersQuote,
             &[],
         ),
@@ -154,7 +154,7 @@ fn resolves_the_exact_member_by_instrument_stream_set() {
         ids[2]
     );
     // The external book's members never appear.
-    assert!(!plan.members().contains("FIX-BOX-CELER"));
+    assert!(!plan.members().contains("FIX-BOX-CELNET"));
     assert!(!plan.members().contains("API-LP-7"));
     // The disabled book contributes nothing beyond what ust-all already gave.
     assert_eq!(

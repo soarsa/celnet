@@ -7,11 +7,11 @@
  * renders the ONE celnet-proto contract over the shared WS mirror — no pricing
  * runs here; every number comes from the server (see taskpane.ts).
  *
- * ALL colour/motion tokens live in celer-tokens.css (the single source of
+ * ALL colour/motion tokens live in celnet-tokens.css (the single source of
  * truth, imported BEFORE this file in taskpane.html). This file only consumes
  * the var(--brand / --accent / --bid / …) tokens and lays out the pane; it must
  * never re-declare a raw hex/OKLCH value. A brand refresh changes only
- * celer-tokens.css.
+ * celnet-tokens.css.
  */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {

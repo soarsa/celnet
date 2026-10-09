@@ -3571,7 +3571,7 @@ fn a_capability(action: &str, asset: &str) -> CapabilityDesc {
 fn a_user_desc(desk_ids: &[&str], all_desks: bool) -> UserDesc {
     UserDesc {
         id: "u-1".to_owned(),
-        email: "trader@celer.example".to_owned(),
+        email: "trader@celnet.example".to_owned(),
         display_name: "A Trader".to_owned(),
         role: 2,
         desk_ids: desk_ids.iter().map(|s| (*s).to_owned()).collect(),
@@ -3583,7 +3583,7 @@ fn a_user_desc(desk_ids: &[&str], all_desks: bool) -> UserDesc {
 fn an_entity_desc() -> EntityDesc {
     EntityDesc {
         key: 7,
-        name: "Celer Capital".to_owned(),
+        name: "Celnet Capital".to_owned(),
         code: "CELCAP".to_owned(),
     }
 }
@@ -4602,7 +4602,7 @@ fn notification_manual_intervention_is_byte_identical() {
         at_nanos: 1_700_000_000_123_000_000,
         request_id: Some("desk-req-7".to_owned()),
         desk: "g10-rates".to_owned(),
-        counterparty: "CELER_RATES".to_owned(),
+        counterparty: "CELNET_RATES".to_owned(),
         request_kind: celnet_proto::DeskRequestKind::Rfq as i32,
         headline: "Manual pricing needed".to_owned(),
         detail: Some("15y OIS — unconfigured tenor".to_owned()),

@@ -84,7 +84,7 @@ critique (audit §2).
 
 ### Axis A — VIEW (the **left rail**): *how I look*
 The rail owns **identity + view selection**, nothing else.
-- **Brand:** the single Celer logo lives here (rail header) — the only logo in the app.
+- **Brand:** the single CelNet logo lives here (rail header) — the only logo in the app.
 - **Workspaces:** Ticket · Stream · Surface · Risk · Book (+ future **Universe** navigator
   and **Cube** heatmap as they land). ⌘1..n. The rail is a *fixed, small* list — it is
   the product's verbs, not its data.
@@ -276,7 +276,7 @@ tenor) become the second-most-prominent view (SURFACE-WORKFLOW §4).
   (SURFACE-WORKFLOW §2.6/§3.6). **[GUI + needs Rust confirm of role on contract]**
 - **Compare / history / consensus overlay** as a Δ-ghost on the chart + Δ-column on the
   grid (live broker composite, history T-1/T-5, month-end consensus). **[gap]** depends on
-  a composite/consensus feed (CELER-INTEGRATION) — do not render as if it exists.
+  a composite/consensus feed (CELNET-INTEGRATION) — do not render as if it exists.
 - **Model selector + per-mark provenance** (VV/SABR/SVI/SSVI + conventions + role) in the
   inspector strip (§5). **[GUI-only]** (engine already ships the four).
 - **Quoted broker-BF vs calibrated smile-strangle** shown side-by-side when they diverge
@@ -411,7 +411,7 @@ source. **(Does not edit ROADMAP — the orchestrator merges backlogs.)**
 | P1-4 | **Delivery-led scheduling policy flag** + month-end golden test | `celnet-calendar` | P1-2 | US#5 |
 | P1-5 | **Event/turn/fixing registries + `EventClock` + business clock** (day-weighting, total-variance, validated vs QuantLib) | `celnet-surface`+`celnet-calendar` | P1-2,P1-4 | US#6, SW#8 |
 | P1-6 | **Broken-date / event-aware ticket** (dual-mode tenor⇄date, two clocks, mark-to-impact) | `gui/`+engine | P1-2,P1-3,P1-5 | SW#10, US#16 |
-| P1-7 | **Consensus / composite surface feed** (intraday composite + month-end Totem-style) → compare/history/overlay | `celnet-integration` (CELER-INTEGRATION) | — | SW#6 |
+| P1-7 | **Consensus / composite surface feed** (intraday composite + month-end Totem-style) → compare/history/overlay | `celnet-integration` (CELNET-INTEGRATION) | — | SW#6 |
 | P1-8 | **Book/owner identity + `AttributionRecord`** (human seat OR auto-pricer; LP competition; `surface_version`) + auto-pricer governance | `celnet-observability`+`celnet-server` | — | US#12, feeds RH |
 | P1-9 | **Surface contract evolutions** (quoted-BF vs smile-strangle; surface-role; market-context; arb-report cross-tenor fields) | `celnet-proto` (coordinate) | — | SW#11 |
 | P1-10 | **Pair-universe registry + liquidity tiers**; settlement/clearing/CNH≠CNY/metals attributes | `celnet-types`+`celnet-conventions` (coordinate) | — | US#1,#2,#3 |
@@ -470,7 +470,7 @@ source. **(Does not edit ROADMAP — the orchestrator merges backlogs.)**
    honest today — the defect is semantics/label/direction, fixed in P0 without any feed.
 
 6. **Surface overlays need feeds that don't exist.** Composite (intraday) and consensus
-   (month-end Totem-style) are a CELER-INTEGRATION dependency — overlay/compare must not
+   (month-end Totem-style) are a CELNET-INTEGRATION dependency — overlay/compare must not
    be rendered as if a feed exists (SW §3.4). Reconciled: P1-7, behind an honest
    empty-state until the feed lands.
 

@@ -4,8 +4,8 @@
 
 Celnet is not a thin challenger closing gaps — it is a functionally complete, evidence-backed superset of what a derivatives desk stitches together today, proven by a runnable parity matrix against independent oracles, behind one unversioned contract reachable identically from five clients. This section is the scannable master inventory — what the platform does, grouped by capability cluster. Every later chapter expands a row here, and the recurring promise across all of them is the same: every value is bit-identical across the GUI, the Excel add-in, the Rust SDK, the admin CLI, and the WebSocket mirror, because they all consume the one contract.
 
-![The Celnet capability landscape — pricing & analytics, engine & performance, GPU, risk, extensibility, edge & API, clients, and Celer integration, all served from one contract.](../assets/celnet-capabilities/fig-12-capability-landscape.png)
-*Figure 12 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The capability landscape: a full FX-options catalogue (vanilla → first-generation exotics → structured & path-dependent → American/Bermudan → correlated basket → LSV booking), a nanosecond-class in-core engine, GPU acceleration, server-side hierarchical risk with FRTB-SA and internal XVA, an open quant SDK, and Celer trade-lifecycle integration — unified by a single API-first contract.*
+![The Celnet capability landscape — pricing & analytics, engine & performance, GPU, risk, extensibility, edge & API, clients, and CelNet integration, all served from one contract.](../assets/celnet-capabilities/fig-12-capability-landscape.png)
+*Figure 12 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The capability landscape: a full FX-options catalogue (vanilla → first-generation exotics → structured & path-dependent → American/Bermudan → correlated basket → LSV booking), a nanosecond-class in-core engine, GPU acceleration, server-side hierarchical risk with FRTB-SA and internal XVA, an open quant SDK, and CelNet trade-lifecycle integration — unified by a single API-first contract.*
 
 ## 2.1 Pricing & analytics — the full catalogue
 
@@ -129,18 +129,18 @@ Horizontal scale-out is a built substrate, not a promise: a Raft-replicated even
 
 > **Scale-out boundary (verbatim).** Localhost multi-process proves correctness / quorum / framing only. **Cross-host wire p99, kernel-bypass NIC latency, cross-DC transport, real network partitions, Raft §6 dynamic membership, the §11 absolute wire-latency SLOs, and the physical cross-node risk transport are deploy-gated** — never claimed as in-repo-proven.
 
-## 2.8 Celer integration
+## 2.8 CelNet integration
 
-Celnet is the FX-options pricing system-of-record inside the Celer trade lifecycle. It injects option price, Greeks, and surface into the price path and option risk into the risk and position path, and runs in three deployment modes reached by swapping adapters on the seam traits — never by a rewrite.
+Celnet is the FX-options pricing system-of-record inside the CelNet trade lifecycle. It injects option price, Greeks, and surface into the price path and option risk into the risk and position path, and runs in three deployment modes reached by swapping adapters on the seam traits — never by a rewrite.
 
 | Capability | What it delivers |
 |---|---|
-| Price path | Injects FX-option price / Greeks / surface into venues → FIX-in → market-data → market-merchant → distributor → WebSocket → Celer Trader |
+| Price path | Injects FX-option price / Greeks / surface into venues → FIX-in → market-data → market-merchant → distributor → WebSocket → CelNet Trader |
 | Risk / position path | Injects option risk into order-routing → risk → destination → clearing → position-manager |
-| Deployment modes | Standalone, Hybrid, and **CelerIntegrated (designed estate-native binding)** — reversible adapter swaps on market-data-source / price-sink / order-and-exec seams |
+| Deployment modes | Standalone, Hybrid, and **CelnetIntegrated (designed estate-native binding)** — reversible adapter swaps on market-data-source / price-sink / order-and-exec seams |
 | Adaptability | The same market-data seam ingests external products and feeds — for example Fenics, Bloomberg, Refinitiv, EBS — as adapter targets |
 
-> **Celer boundary (verbatim).** The in-repo work is the **seams + adapters only** (trait swap + FIX 4.4 loopback). The **entire live JVM Celer estate lifecycle** — distributor sidecar handshake, mailbox calibration, live quote-feed entitlement, tenant overlays — is **deploy/live-gated, proven at deploy against the running estate**, not exercised in-repo.
+> **CelNet boundary (verbatim).** The in-repo work is the **seams + adapters only** (trait swap + FIX 4.4 loopback). The **entire live JVM CelNet estate lifecycle** — distributor sidecar handshake, mailbox calibration, live quote-feed entitlement, tenant overlays — is **deploy/live-gated, proven at deploy against the running estate**, not exercised in-repo.
 
 ## 2.9 Positioning
 
@@ -153,7 +153,7 @@ Celnet's parity claims are executable: `CLIENT-PARITY-MATRIX.md` plus ~26 `celne
 | Determinism | Cross-platform, bit-identical results (mutation + fuzz estate) |
 | Honesty as a differentiator | Every figure is labelled (in-core / M4 / loopback); deploy-gated absolutes are never claimed in-repo — a reviewer doing diligence finds proof, not marketing fiction |
 
-**See also:** each cluster above is expanded in its own chapter — [§3 System Architecture](03-system-architecture.md), [§4 Quant Coverage](04-quant-coverage.md), [§5 Extensibility](05-extensibility-plugins.md), [§6 Risk Management](06-risk-management.md), [§7 Performance & Latency](07-performance-latency.md), [§8 Scalability & Scale-Out](08-scalability-scaleout.md), [§9 API & Client Parity](09-api-contract-parity.md) and [§12 Celer Integration](12-celer-integration.md).
+**See also:** each cluster above is expanded in its own chapter — [§3 System Architecture](03-system-architecture.md), [§4 Quant Coverage](04-quant-coverage.md), [§5 Extensibility](05-extensibility-plugins.md), [§6 Risk Management](06-risk-management.md), [§7 Performance & Latency](07-performance-latency.md), [§8 Scalability & Scale-Out](08-scalability-scaleout.md), [§9 API & Client Parity](09-api-contract-parity.md) and [§12 CelNet Integration](12-celnet-integration.md).
 
 ---
 <sub>[← Prev: Executive Summary](01-executive-summary.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: System Architecture →](03-system-architecture.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

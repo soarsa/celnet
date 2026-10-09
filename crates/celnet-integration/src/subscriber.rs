@@ -1,6 +1,6 @@
 //! Resilient market-data ingress — the inbound deployment seam plus a resilient
 //! subscriber that reconnects, resubscribes, and resyncs on a sequence gap
-//! (`docs/CELER-FIX-INTEGRATION-PLAN.md` §4).
+//! (`docs/architecture/CELNET-FIX-INTEGRATION-PLAN.md` §4).
 //!
 //! # The resync contract
 //!
@@ -166,10 +166,10 @@ pub trait FeedTransport {
 
 /// The market-data source — the factory for [`FeedTransport`] connections (the
 /// inbound side of the deployment seam, named in
-/// `docs/CELER-FIX-INTEGRATION-PLAN.md` §4).
+/// `docs/architecture/CELNET-FIX-INTEGRATION-PLAN.md` §4).
 ///
 /// Swapping the `MarketDataSource` implementation is how the same engine runs in
-/// Standalone vs CelerIntegrated vs Hybrid mode with no core change.
+/// Standalone vs CelnetIntegrated vs Hybrid mode with no core change.
 pub trait MarketDataSource {
     /// The transport this source produces.
     type Transport: FeedTransport;

@@ -22,4 +22,4 @@ metadata:
 3. Update `docs/INTERFACES.md` and the relevant guides in the same change.
 4. Keep it **intuitive** at every surface as it evolves — no half-wired or inconsistent capabilities.
 
-Treat a feature as "done" only when API + SDK + Excel + GUI + docs are all consistent. Relevant context: [[celer-brand-kit]], the experience-architecture work, and `docs/EXPERIENCE-ARCHITECTURE.md` should carry a "contract & client parity" lens for each proposed capability.
+Treat a feature as "done" only when API + SDK + Excel + GUI + docs are all consistent. Relevant context: [[celnet-brand-kit]], the experience-architecture work, and `docs/EXPERIENCE-ARCHITECTURE.md` should carry a "contract & client parity" lens for each proposed capability.

@@ -22,7 +22,7 @@ parity-gated**. The platform is **materially complete**. Verified directly at th
 
 **The work is overwhelmingly the reframe.** The genuine in-repo gap list is short (one material SOTA
 capability + a small rigor/oracle tail). Everything else is either already-complete-SOTA or correctly
-**environment-bound** (CUDA absolute throughput, cross-host wire p99, live JVM Celer estate, Raft §6
+**environment-bound** (CUDA absolute throughput, cross-host wire p99, live JVM CelNet estate, Raft §6
 cross-DC, live vendor/CSA VALUES) — which must stay neutrally reframed as deploy-validated, **never**
 claimed in-repo and **never** fabricated.
 
@@ -86,7 +86,7 @@ in-repo-proven"); **(2)** `docs/CELNET-CAPABILITIES.md` (`## Honest boundary`); 
 in all three: rename to **Deployment & validation scope**, drop the kicker / the
 "never claimed as in-repo-proven" / "None of these is claimed in-repo" clauses, apply the lead-in
 template, keep **every bullet's factual content** (cross-host wire p99; CUDA/NVIDIA absolute throughput +
-≤50ms exotic + Workload-A/B absolutes; §11 SLOs; live JVM Celer estate; Raft §6 cross-DC; Tier-1/3
+≤50ms exotic + Workload-A/B absolutes; §11 SLOs; live JVM CelNet estate; Raft §6 cross-DC; Tier-1/3
 plugins; XVA synthetic netting/internal-only; MC std-error), restated as plain validation-locus
 statements. Example bullet:
 
@@ -143,7 +143,7 @@ Honesty-meta hit counts at audit time (search `honest|overclaim|marketing fictio
   and resync state"; "honest provenance, not the requested label" → "the calibrated provenance, not the
   requested label"; "reads magnitude honestly" → "reads magnitude faithfully"; two "stated/labelled
   honestly" → "stated"/"labelled 'largest of N'").
-- `12-celer-integration` (2): `### 12.5 Honest boundary` → `### 12.5 Deployment & validation scope`
+- `12-celnet-integration` (2): `### 12.5 Honest boundary` → `### 12.5 Deployment & validation scope`
   (seams + FIX 4.4 loopback in-repo; live JVM estate lifecycle deploy-validated).
 - `13-competitive-positioning` (4): "the validation bar is honest per product class" → "stated per
   product class"; "with honest std-error" → "with a reported std-error".
@@ -287,7 +287,7 @@ missing capability. Adopt the audit/SOTA-2026 scopes verbatim (sound):
 CUDA/NVIDIA absolute GPU throughput + ≤50ms exotic + Workload-A/B absolutes (M4 Metal lacks f64 → in-repo
 proves correctness f32==f64==golden + host-local RATIOS). Cross-host wire p99 / kernel-bypass NIC / §11
 absolute SLOs (no multi-host network in-sandbox → in-repo proves §1.2 in-core truth-gate + loopback
-fleet_slo). Live JVM Celer estate lifecycle (seams + FIX 4.4 loopback in-repo). Raft §6 dynamic
+fleet_slo). Live JVM CelNet estate lifecycle (seams + FIX 4.4 loopback in-repo). Raft §6 dynamic
 membership / cross-DC / real partitions (fixed-membership correctness complete). Live vendor implied-vol
 VALUES + live FX fixing VALUES + live CSA/collateral/wrong-way-risk for XVA (synthetic/published in-repo;
 XVA deliberately internal-only, no wire surface). Plugin Tier-1 stabby signed-.so + Tier-3 Landlock/

@@ -36,7 +36,7 @@ Synoption**, not a taker's trading blotter. This retunes everything below (§1�
     "axe" surface **flips to the SELL side**: the desk's OWN contributed axes/skew + inbound-RFQ
     **auto-quoting (maker)** — NOT lifting others' axes. **Core Synoption/Fenics pillar — was inverted.**
   - **Administration** — users, roles, entitlements (deny-wins), FIX connectivity, config, monitoring.
-- **Still valid, retargeted:** cross-asset unification, the Celer design system, the command spine,
+- **Still valid, retargeted:** cross-asset unification, the CelNet design system, the command spine,
   and XVA-as-a-pricing-analytic. Competitive frame is **Fenics/Synoption (sell-side pricing +
   market-data + distribution)** — NOT SpectrAxe/OptAxe execution venues. Ground-truth re-inventory in
   flight; §7 mockup set + §3 are being reworked to the pricing/feed/contribution/admin jobs.
@@ -96,7 +96,7 @@ agent walks flows) — build → critique → fix until clean.
   underlier → product/structure → quant details (model · surface/curve · conventions · calibration) →
   price. Full FX + FI + Crypto depth.
 - **Visual language upgraded SIGNIFICANTLY** to feel July-2026 SOTA (evolve color/type/depth/motion,
-  keep Celer identity but modernize; the pricing tiles + charts must become genuinely state-of-the-art).
+  keep CelNet identity but modernize; the pricing tiles + charts must become genuinely state-of-the-art).
 - **Interactive:** HTML mockups must be CLICKABLE prototypes; then promote validated components into
   the `gui/` **Storybook** as real, reusable, evolvable components.
 - **Risk / XVA / books/positions** must be a stunning INTEGRATED experience (part of the loop), not
@@ -208,7 +208,7 @@ Excel parity (shared contract). Each maps to a composable panel, not a silo.
 
 - **Out-function:** breadth (all classes + exotics + rates + XVA in one flow) and cohesion
   (cross-capability drill, cross-asset netting) that single-purpose FX RFQ tools lack.
-- **Out-style:** June-2026 SOTA — the mature OKLCH/Celer token system, MacOS-HIG vibrancy /
+- **Out-style:** June-2026 SOTA — the mature OKLCH/CelNet token system, MacOS-HIG vibrancy /
   "Liquid-Glass" depth, tabular-num density, disciplined live-price flash, keyboard-first.
 - **Axe-based contribution (beat Spectraxe):** dealers contribute inventory-driven axes (directional
   interest + skew); buy-side sees live *axed* streaming prices ranked in the DealerPanel, can

@@ -99,7 +99,7 @@
 
 - 2026-07-01 — **🧮 D-xva ACTIVATION: `PriceXva` RPC serving celnet-xva CVA/DVA/FVA LANDED on `origin/main` (`dfcb1e2→dcf260a`) — full t2 19/19 GREEN, ≤1e-12 passthrough.** Operator-authorized after the proto-unfrozen pivot (the FI wave proved celnet.proto is editable around the dead G-full). WIRE the dormant celnet-xva analytics over the one contract, mirroring `PriceRates` — no XVA math reimplemented. **Proto (additive, FI arms untouched):** `rpc PriceXva(PriceXvaRequest) returns (PriceXvaResponse)` on PricingService + `XvaTrade`/`XvaSurvivalCurve`/`PriceXvaRequest`/`XvaResult`/`PriceXvaResponse`. **Server:** new `xva_pricing.rs::price_xva` maps wire→engine (`celnet_xva::NettedTrade`→`NettingSet`→`ExposureConfig`→`SurvivalCurve::flat`/`piecewise`→`ExposureProfile::simulate`→`compute_xva`→`XvaResult`), typed `XvaPriceError`→`invalid_argument`/`internal` (validates before the engine so it never panics); `PricingEdge::price_xva` tonic arm + `celnet-xva` server dep; WS-mirror codec (`price_xva_request_from_json`/`price_xva_response_to_json`) + dispatch. **Gate:** crate oracle 32/32 (untouched incl. independent-quadrature CVA/DVA/FVA), **passthrough ≤1e-12 bit-identical (seeded QMC) vs a direct compute_xva**, WS round-trip + 7 validation-rejects (9/9 server), wire_contract 65/65, full `just t2` 19/19 on `dcf260a`. **DEFERRED (owning sessions):** GUI/Excel/CLI/SDK XVA surface; live CSA/collateral/WWR (celnet-xva's honest boundary — not faked into the wire). **⚠ CLEARED TWO SHARED-GATE LANDMINES from undergated parallel landings (both blocked ANY full-t2): (1) `fix_registry::load` clippy `too_many_arguments` from the FI/desk `aa88b22` → minimal house `#[allow]` (`2f31d3f`); (2) `celnet-rfq/tests/harness/mod.rs` unformatted → `cargo fmt --all --check` FAIL → fmt-fixed. Shared gate GREEN again.** LESSON: parallel FI/GUI sessions land undergated (origin/main red on clippy/fmt) — a full-t2 landing must first clear their landmines. Self-landed via cargo-lane → atomic ff-push. **▶ NEXT:** reconcile the ADR-0012/0013 number collision (2× each on main); P2 `Underlying::InterestRate`+risk-envelope (high-blast — verify no active session on celnet-types Underlying first).
 
-- 2026-07-01 — **🤖 FIX client-simulator bot — design + UAT start script (branch `feature/fi-reference-data`; general tooling, build-when-scheduled off `main`).** External FIX **initiator** bot that exercises the live acceptor end-to-end (logon → download securities → RFQ every few min → act randomly: accept-and-fill / cancel / expire → back off on trader reject). Discovery: **celnet-fix already has both sides** — `Initiator`, `acceptor.rs`, `dialect_fx`+`dialect_rates`, `examples/fix_rfq_client.rs`, `tests/session_loopback.rs` — so the bot is an orchestration+policy layer over existing primitives, NOT a new FIX engine. One acceptor-side gap: **no `SecurityListRequest`(35=x/y)** → chosen securities-download path is to add it (thin FIX projection of the pairs/reference-data universe). Wrote `docs/FIX-SIM-DESIGN.md` (state machine, seeded policy engine, dialect-param, SecurityList design, 6-step build order, loopback testing) + **`deploy/start-fix-sim.sh`** — a runnable UAT launcher: sources cargo env, makes store/log dirs (mirrors QuickFIX FileStorePath/FileLogPath), TCP-preflights `127.0.0.1:56001`, PREFERS a `fix-sim` binary when built, else FALLS BACK to looping the runnable `cargo run -p celnet-fix --example fix_rfq_client` (one randomized RFQ per period±jitter) as a v0 simulator; env-overridable (FIXSIM_HOST/PORT/SENDER/TARGET/PERIOD/JITTER/ONESHOT/DAEMON); `bash -n` clean; all passed flags verified against the example client's CLI. Honest: exits non-zero if neither binary nor example can run. **Design + ops only, no bot code yet** (per user: design-only for now). Session CompIDs `CELER_FXO`→`CELNET` (Celer = our own estate, fine in session context; guardrail #8). **▶ NEXT when built (off `main`):** SecurityList in celnet-fix → `fix-sim` skeleton → policy agent → reject-backoff/reconnect → streaming+telemetry → multi-identity soak.
+- 2026-07-01 — **🤖 FIX client-simulator bot — design + UAT start script (branch `feature/fi-reference-data`; general tooling, build-when-scheduled off `main`).** External FIX **initiator** bot that exercises the live acceptor end-to-end (logon → download securities → RFQ every few min → act randomly: accept-and-fill / cancel / expire → back off on trader reject). Discovery: **celnet-fix already has both sides** — `Initiator`, `acceptor.rs`, `dialect_fx`+`dialect_rates`, `examples/fix_rfq_client.rs`, `tests/session_loopback.rs` — so the bot is an orchestration+policy layer over existing primitives, NOT a new FIX engine. One acceptor-side gap: **no `SecurityListRequest`(35=x/y)** → chosen securities-download path is to add it (thin FIX projection of the pairs/reference-data universe). Wrote `docs/FIX-SIM-DESIGN.md` (state machine, seeded policy engine, dialect-param, SecurityList design, 6-step build order, loopback testing) + **`deploy/start-fix-sim.sh`** — a runnable UAT launcher: sources cargo env, makes store/log dirs (mirrors QuickFIX FileStorePath/FileLogPath), TCP-preflights `127.0.0.1:56001`, PREFERS a `fix-sim` binary when built, else FALLS BACK to looping the runnable `cargo run -p celnet-fix --example fix_rfq_client` (one randomized RFQ per period±jitter) as a v0 simulator; env-overridable (FIXSIM_HOST/PORT/SENDER/TARGET/PERIOD/JITTER/ONESHOT/DAEMON); `bash -n` clean; all passed flags verified against the example client's CLI. Honest: exits non-zero if neither binary nor example can run. **Design + ops only, no bot code yet** (per user: design-only for now). Session CompIDs `CELNET_FXO`→`CELNET` (CelNet = our own estate, fine in session context; guardrail #8). **▶ NEXT when built (off `main`):** SecurityList in celnet-fix → `fix-sim` skeleton → policy agent → reject-backoff/reconnect → streaming+telemetry → multi-identity soak.
 
 - 2026-07-01 — **📐 FI Pricing engine step 1 — `celnet-bond` cash-bond analytics leaf (`7f852a3`, branch `feature/fi-reference-data`, pushed; NOT on `main`).** First code of the FI-pricing build order (`docs/FI-PRICING-ENGINE-DESIGN.md` §9 / ADR-0012). New standalone **pure** crate `crates/celnet-bond`: DCF dirty/clean price (from a flat yield AND from a `celnet_rates::Curve`), accrued interest, YTM by **safeguarded Newton–Raphson**, DV01, Macaulay/modified duration, convexity; `BondRisk` rollup. Decoupled `Bond` input (NOT the server `BondDef`); reuses `celnet-rates` (`Curve`, `AccrualBasis::year_fraction`, `PaymentFrequency`) + `celnet-calendar` (schedule/`add_months`) — not reinvented. **Correctness:** the between-coupon fractional first period is discounted by `(1+y/f)^-(w+k-1)` with `w∈(0,1]`, not integer periods (the textbook trap). **Oracle — QuantLib NOT runnable on this workstation (honestly disclosed, no QL claim; the goldenv Py3.14 has no pip + a broken pyexpat):** independent closed-form annuity cross-check (1e-9, a different computation path than the per-cashflow sum), published street price literal (6% semi 3y @8% ⇒ 94.75786, hand-verified) + hand-derived Macaulay/modified/convexity literals, price→ytm→price round-trip (1e-10) across a coupon×maturity×yield grid, par identity (ytm==coupon incl. quarterly), curve-consistency, and analytic-vs-finite-difference risk. **Gates:** `celnet-bond` **29 lib + 3 vector** tests green; `clippy -p celnet-bond --all-targets -D` clean; `cargo fmt --check` clean; `cargo check --workspace` clean (leaf added to `[workspace.dependencies]`; nothing consumes it yet — by design). Zero placeholders (scanned). **Scope held:** regular schedule anchored at maturity; EOM/IMM roll + explicit issue/first-coupon stubs + credit-spread discounting OUT (step 2 = `celnet-credit`). **▶ NEXT:** step 2 `celnet-credit` (spread curve + CR01), then step 3 FI leaf registration (`ProductEngine` — main-targeted). QuantLib literal cross-check is a follow-up on a machine with a working QL.
 
@@ -295,13 +295,13 @@
   details every gRPC service/RPC + WS mirror + all 19 products + SDK + CLI; ch10 details all 27 Excel
   functions. NEW: committed reproducible figure renderer (`tools/render-capability-figures.mjs` +
   `just render-figures`, Playwright — closes the guardrail-#10 ad-hoc-PNG gap); standalone self-contained
-  HTML showcase (`docs/celnet-capabilities.html`, Celer-branded, full API+Excel reference + honest boundary);
+  HTML showcase (`docs/celnet-capabilities.html`, CelNet-branded, full API+Excel reference + honest boundary);
   hub-as-canonical-index + uniform per-chapter nav + bidirectional cross-references (chapters ↔ showcase);
   responsive/scroll (showcase + figure pages, zero horizontal overflow 375→1920); committed link +
   responsive checkers (`tools/check-doc-links.mjs`, `tools/check-html-responsive.mjs` + `just check-docs`/
   `check-html-responsive`). **Adversarial verify caught + fixed a real factual error** ("six gRPC services"
   → FIVE; "six surfaces" correct, preserved) and the two known overclaims (plugin Tier-1/3 → DESIGNED-ONLY;
-  live JVM Celer estate → deploy-gated). Honest boundary held verbatim throughout. Docs-only; `just check`
+  live JVM CelNet estate → deploy-gated). Honest boundary held verbatim throughout. Docs-only; `just check`
   unaffected. **Lesson: this shell is ZSH — unquoted scalar `$var` does NOT word-split; use arrays (a sed/
   perl batch silently no-op'd on `$files` until switched to a zsh array).**
 
@@ -329,7 +329,7 @@
   proc-macro-error2 via iai-callgrind, triaged like the bincode one; cargo-mutants worktree-leak merge
   artifacts). **1306/1306 tests**; GUI app+e2e tsc 0 / 247 tests + Playwright a11y 8/8; Excel 221. **Only
   the deploy/live-gated frontier remains (NEVER in-repo): NVIDIA absolute GPU throughput / ≤50ms exotic,
-  cross-host wire p99 / §11 SLOs, live JVM Celer estate, Raft §6 dynamic membership, plugin Tier-1/3. The
+  cross-host wire p99 / §11 SLOs, live JVM CelNet estate, Raft §6 dynamic membership, plugin Tier-1/3. The
   in-repo platform is complete, SOTA, api-first across all clients, and polished.**
 
 - 2026-06-07 — **▶▶ COMPLETION-PROGRAM COMPLETE — ALL 12 WAVES + the full Raft increment landed & pushed
@@ -355,7 +355,7 @@
   before commit+push. Disjoint Arc-II/III waves run on parallel git-worktree lanes; Arc-I forced-sequential
   (shared contract). **HONEST BOUNDARY held throughout (NEVER claimed in-repo):** cross-host wire p99 /
   kernel-bypass NIC, CUDA/NVIDIA ABSOLUTE throughput + ≤50ms exotic + Workload-A/B absolutes (Metal lacks
-  f64 ⇒ correctness+ratios only), §11 absolute wire SLOs, live JVM Celer estate. Remaining in-repo frontier:
+  f64 ⇒ correctness+ratios only), §11 absolute wire SLOs, live JVM CelNet estate. Remaining in-repo frontier:
   Raft §6 dynamic membership (documented next increment); everything else in `docs/COMPLETION-PROGRAM.md` is
   built. **The program bar is met: SOTA, fully-integrated, api-first across all clients, polished.**
 
@@ -565,7 +565,7 @@
   edit; proto untouched). Full `just check` green (literal "All gates passed."), **1044/1044 tests** (was
   1035). **▶ PROGRAM STATUS: all five in-repo leadership waves (1 truth-gates+integration, 2 fleet-SLO+
   experience, 3 distributed-correctness, 4 catalogue, 5 GPU-ratios) are COMPLETE & pushed.** Only **Wave 6**
-  (deploy/live-estate proof tracks — cross-host wire p99, CUDA deploy-gate baselines, live JVM Celer
+  (deploy/live-estate proof tracks — cross-host wire p99, CUDA deploy-gate baselines, live JVM CelNet
   estate lifecycle) remains, and it is **deploy/live-gated by design — never built or claimed in-repo**
   per the honest boundary; in-repo it is closed by the seams + ADRs + the docs-anchor lint already in
   place. The leadership program is materially complete against its measurable bar.
@@ -749,7 +749,7 @@
   `6a8bde3`; pushed to github.com/soarsa/celnet).** Multi-agent assessment + architect synthesis →
   **`docs/LEADERSHIP-PROGRAM.md`**: a 6-wave, dependency-ordered, gate-defined program to
   world-leading, with a measurable bar and a verbatim **honest boundary** (cross-host wire p99 /
-  NVIDIA throughput / live JVM Celer estate stay deploy/live-gated, never claimed in-repo). Executed
+  NVIDIA throughput / live JVM CelNet estate stay deploy/live-gated, never claimed in-repo). Executed
   as gated implement→adversarial-verify waves; **SOTA, zero workarounds** (user directive — verify
   phase greps the diff for lowered gates / `#[ignore]` / `as any` / disabled lints). **Wave 1
   (`0761a03` perf+gui, `6a8bde3` integration):** (1) **in-core §1.2 absolute latency truth-gate** —
@@ -953,7 +953,7 @@
   cross-gamma/theta-roll/vega. Headless e2e PASS (PRICE==server, MARK→version pin,
   forged-token reject). **Persistence audit (this session):** recovery = deterministic replay;
   durable today = `celnet-fix` FileStore + `celnet-observability` lossless audit (committer
-  seam); blue-green handoff = in-memory; integrated-mode trade/position durability = the Celer
+  seam); blue-green handoff = in-memory; integrated-mode trade/position durability = the CelNet
   estate; **gap = a standalone durable event-log/WAL (SCALE-OUT §8 "designed only")** → now
   being built as `celnet-journal` (task #37). See memory [[session-state-2026-05-31]] for the
   running services + how to resume.
@@ -962,7 +962,7 @@
   book-shaped risk, surface_version — no versioning). 21 crates + `gui/`, **555 tests green**,
   full `just check` terminating. `docs/GA-READINESS.md`: **GO** for the pricing-platform GA with
   one honest gating caveat — end-to-end latency-under-load proof + CI bench gate before the
-  wire-latency headline is GA-grade; fleet layer, GPU-at-scale, live Celer/FIX, WS-mirror, and
+  wire-latency headline is GA-grade; fleet layer, GPU-at-scale, live CelNet/FIX, WS-mirror, and
   TARF/quanto breadth are de-risked post-GA execution.
 - 2026-05-30 — **WS-G plugin host built — wasmtime blocker CLOSED.** `celnet-plugin-host` is a
   tiered host behind the frozen `celnet-plugin-api` contract: a unified `ModelRegistry` routes
@@ -1052,7 +1052,7 @@
   of every Greek. `just check` fully green (fmt/clippy-D/nextest/deny). **Next:** complete
   G0 (`celnet-proto`, `celnet-plugin-api`), then fan out post-G0 workstreams via a workflow.
 - 2026-05-30 — Design corpus written to `docs/` (ARCHITECTURE, ANALYTICS-SPEC,
-  COMPETITIVE-ANALYSIS, CELER-INTEGRATION, ROADMAP + `_research/`). Product renamed
-  CelerOption → **Celnet**.
+  COMPETITIVE-ANALYSIS, CELNET-INTEGRATION, ROADMAP + `_research/`). Product renamed
+  CelnetOption → **Celnet**.
 - 2026-05-30 — Foundations: git (local-only) init; Rust 1.96.0 + tooling; rust-analyzer-lsp
   plugin; memory bootstrapped; settings/guardrails; toolchain/config files.

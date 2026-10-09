@@ -21,7 +21,7 @@ These 15 canonical documents define the system's architecture, contracts, quanti
 | [CONVENTIONS.md](CONVENTIONS.md) | **FX Market Conventions**: Per-(pair, tenor) delta conventions (spot/forward, premium-adjusted), ATM styles (DNS/ATMF), and cut-offs. | `REFERENCE` |
 | [HEDGING-AND-RISK-EXIT.md](HEDGING-AND-RISK-EXIT.md) | **Hedging & Risk Exit (As-Built)**: How risk lands in a book, is aggregated, and the exact offsetting-leg exit mechanism. | `LIVE` |
 | [COMPETITIVE-ANALYSIS.md](COMPETITIVE-ANALYSIS.md) | **Competitive Analysis & Moats**: Competitor critique (SynOption, Fenics/kACE, Murex, Bloomberg) and platform positioning. | `REFERENCE` |
-| [CELER-INTEGRATION.md](CELER-INTEGRATION.md) | **Celer Integration Map**: Native integration with Celer Trader, trade-lifecycle estate, and market-data vendor feeds. | `REFERENCE` |
+| [CELNET-INTEGRATION.md](CELNET-INTEGRATION.md) | **CelNet Integration Map**: Native integration with CelNet Trader, trade-lifecycle estate, and market-data vendor feeds. | `REFERENCE` |
 | [SCALE-OUT.md](SCALE-OUT.md) | **Horizontal Scale-Out Architecture**: Shard-by-pair HRW partitioning, Raft log replication, and cross-fleet risk fan-out. | `REFERENCE` |
 | [VERIFICATION-CONTRACT.md](VERIFICATION-CONTRACT.md) | **Verification Contract**: Per-asset-class golden vector and independent golden-oracle parity gates (QuantLib golden oracle). | `LIVE` |
 | [HARDENING.md](HARDENING.md) | **Hardening Gates (WS-T)**: Mutation-to-zero testing floors, fuzzing suites, sanitizer verification, and memory safety gates. | `LIVE` |
@@ -53,13 +53,13 @@ docs/
 ### 2.1 Architecture & Systems ([architecture/](architecture/README.md))
 - [ARCHITECTURE-TARGET.md](architecture/ARCHITECTURE-TARGET.md) — Target architecture and multi-dimensional convergence plan.
 - [ARCHITECTURE-DETERMINATION.md](architecture/ARCHITECTURE-DETERMINATION.md) — Chief-architect synthesis and decision trail across all platform dimensions.
-- [DEPLOYMENT-MODES.md](architecture/DEPLOYMENT-MODES.md) — Standalone, hybrid, Celer-integrated, and external-feed-only operational deployment topologies.
+- [DEPLOYMENT-MODES.md](architecture/DEPLOYMENT-MODES.md) — Standalone, hybrid, CelNet-integrated, and external-feed-only operational deployment topologies.
 - [PLUGIN-HOST-ALT.md](architecture/PLUGIN-HOST-ALT.md) — Sandboxed plugin-host architecture using `wasmi` (WebAssembly) and native model registries.
 - [GPU-AT-SCALE-PLAN.md](architecture/GPU-AT-SCALE-PLAN.md) — GPU compute abstraction (`celnet-gpu`), `wgpu` pipelines, and CPU SIMD fallbacks.
 - [TRADING-UNIVERSE-SCALE.md](architecture/TRADING-UNIVERSE-SCALE.md) — Symbol universe breadth, multi-pair concurrency, and memory budget scaling analysis.
 - [SIMULATOR-SERVICE-IDENTITIES.md](architecture/SIMULATOR-SERVICE-IDENTITIES.md) — Architecture and identity mapping for synthetic LP simulation.
 - [ORCHESTRATION.md](architecture/ORCHESTRATION.md) — Cross-session task orchestration and multi-agent coordination protocol.
-- [CELER-FIX-INTEGRATION-PLAN.md](architecture/CELER-FIX-INTEGRATION-PLAN.md) — Architectural plan for Celer trade-lifecycle ingress and FIX engine integration.
+- [CELNET-FIX-INTEGRATION-PLAN.md](architecture/CELNET-FIX-INTEGRATION-PLAN.md) — Architectural plan for CelNet trade-lifecycle ingress and FIX engine integration.
 
 ### 2.2 Quantitative Models & Risk ([quant/](quant/README.md))
 - [RISK-HIERARCHY.md](quant/RISK-HIERARCHY.md) — Hierarchical OLAP risk aggregation design (firm -> division -> desk -> book -> portfolio).

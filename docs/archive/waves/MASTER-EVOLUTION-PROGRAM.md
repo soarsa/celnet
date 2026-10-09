@@ -25,7 +25,7 @@ with cited references; every new asset class/product validated vs an **independe
 
 **Honest boundary (NOT gaps, validated at deploy not in-repo):** CUDA/NVIDIA absolute
 throughput, cross-host wire p99, live LP-panel/venue connectivity & regulatory (MAS-RMO)
-status, live crypto/metal fixing VALUES, live JVM Celer estate lifecycle. In-repo proves
+status, live crypto/metal fixing VALUES, live JVM CelNet estate lifecycle. In-repo proves
 payoff math + convention identity + routing/quorum arithmetic + relative regression + a
 host-local ratio. These are excluded from the convergence dry-round count.
 

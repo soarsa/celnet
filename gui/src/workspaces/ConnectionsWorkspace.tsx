@@ -164,7 +164,7 @@ export function ConnectionsWorkspace(): React.ReactElement {
     downloadText(fixClientConfigFilename(c), buildFixClientConfig(c), "text/plain");
   };
 
-  // A FIX roster is a lookup surface — "is CELER_RATES_ESP up, and where does it bind" —
+  // A FIX roster is a lookup surface — "is CELNET_RATES_ESP up, and where does it bind" —
   // so it carries the same search + per-column filters as every other roster. Status,
   // dialect and desk are select filters because they are small closed vocabularies; the
   // identifiers are free text.

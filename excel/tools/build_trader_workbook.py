@@ -9,8 +9,8 @@ RV -> Risk Cockpit). Every tab is a scenario a trader actually runs, never a
 function catalogue.
 
 Celnet dark theme (memory: brand-kit): deep-navy canvas, coral signature +
-indigo interactive accent, the pinwheel logo + Anaheim "Celnet / CELER
-TECHNOLOGIES" wordmark band, the 6px coral cap-rail, the build-stamp footer.
+indigo interactive accent, the geometric mark + Anaheim "Celnet"
+wordmark band, the 6px coral cap-rail, the build-stamp footer.
 
 Uses ONLY the 13 registered custom functions (INSTRUMENT, PRICE, GREEKS, RFQ,
 SUBSCRIBE, SURFACE, MARKSURFACE, SERIES, MARK, RISK, POSITIONS, LIMITS, STATUS).

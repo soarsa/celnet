@@ -6,9 +6,9 @@
 <title>Celnet — Admin &amp; License (mockup 10)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="celer.css" />
+<link rel="stylesheet" href="celnet.css" />
 <style>
-  /* ============ Admin & License — screen-specific only (celer.css shared, untouched) ============ */
+  /* ============ Admin & License — screen-specific only (celnet.css shared, untouched) ============ */
   /* CRITICAL: .main is a flex column; .panel has overflow:hidden which zeroes its flex min-height
      and lets every child shrink to a sliver so the pane never overflows. Pin natural height so it scrolls. */
   .main > *{flex:0 0 auto;}
@@ -23,7 +23,7 @@
   .badge.gate::before{content:"⊘";opacity:.8;}
   .badge.warn::before{content:"◑";}
 
-  /* persona segmented control (extends celer .seg, wider labels) */
+  /* persona segmented control (extends celnet .seg, wider labels) */
   .pseg{display:inline-flex;background:var(--bg-inset);border-radius:var(--r-full);padding:2px;gap:2px;flex-wrap:wrap;}
   .pseg button{border:0;background:transparent;color:var(--text-tertiary);font-size:var(--type-caption);padding:5px 12px;border-radius:var(--r-full);cursor:pointer;font-weight:600;}
   .pseg button.on{background:var(--accent);color:#fff;}

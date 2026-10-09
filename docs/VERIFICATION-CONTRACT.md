@@ -211,7 +211,7 @@ is proven here vs deferred. The standing deploy-bound set (unchanged discipline)
 - **Cross-host wire p99 / kernel-bypass NIC / §11 absolute wire SLOs** — loopback
   proves the compute + framing + relative regression (upper bound on compute,
   lower bound on cross-host wire); absolutes are deploy-gated.
-- **Live JVM Celer estate lifecycle** — integration is seamed + ADR'd; live
+- **Live JVM CelNet estate lifecycle** — integration is seamed + ADR'd; live
   behaviour is deploy/live-gated.
 - **Raft §6 dynamic membership** — documented as the next increment, not half-built.
 

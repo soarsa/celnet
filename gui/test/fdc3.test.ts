@@ -58,12 +58,12 @@ describe("FDC3 v2.1 Compliance & Interoperability", () => {
 
     await agent.joinUserChannel("red");
     const current = await agent.getCurrentChannel();
-    expect(current?.id).toBe("red");
-    expect(current?.displayMetadata?.name).toBe("RED");
+    expect(current?.id).toBe("fdc3.channel.1");
+    expect(current?.displayMetadata?.name).toBe("Red");
 
     await agent.joinUserChannel("blue");
     const blueChannel = await agent.getCurrentChannel();
-    expect(blueChannel?.id).toBe("blue");
+    expect(blueChannel?.id).toBe("fdc3.channel.5");
   });
 
   it("supports context broadcasting and listener subscription", async () => {

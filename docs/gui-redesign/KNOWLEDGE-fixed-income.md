@@ -9,7 +9,7 @@
 > facts remain accurate; for the shipped IA see [`../fixed-income/FI-STATUS.md`](../fixed-income/FI-STATUS.md) slice F.
 
 Project: `github.com-soarsa-celnet` · index healthy (24,602 nodes / 75,644 edges, `status:ready`).
-Read-only review. All paths absolute under `/Users/adrian/code/celeroption/`.
+Read-only review. All paths absolute under `/Users/adrian/code/celnet/`.
 
 ---
 

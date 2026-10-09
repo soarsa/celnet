@@ -2,10 +2,10 @@
 
 # 3. System Architecture
 
-Celnet's architecture starts from a single design conviction: **adapt to the desk, never the other way around.** The same engine runs self-contained on a quant's laptop, beside a regional risk hub, or wired straight into the Celer trade lifecycle as the firm's FX-options pricing system-of-record — and it moves between those shapes through deliberate, reversible adapter swaps on a small set of seam traits, not a rewrite. Every market-data source, price sink, and order/execution path is a pluggable adapter, so a venue feed, a distributor, or a counterparty channel changes without touching the pricing core. That adaptability is not bolted on; it is the consequence of a strict two-tier split, one-way crate dependencies, and a distributed-correctness substrate that all share the same wait-free discipline.
+Celnet's architecture starts from a single design conviction: **adapt to the desk, never the other way around.** The same engine runs self-contained on a quant's laptop, beside a regional risk hub, or wired straight into the CelNet trade lifecycle as the firm's FX-options pricing system-of-record — and it moves between those shapes through deliberate, reversible adapter swaps on a small set of seam traits, not a rewrite. Every market-data source, price sink, and order/execution path is a pluggable adapter, so a venue feed, a distributor, or a counterparty channel changes without touching the pricing core. That adaptability is not bolted on; it is the consequence of a strict two-tier split, one-way crate dependencies, and a distributed-correctness substrate that all share the same wait-free discipline.
 
 ![Celnet system architecture and adaptability](../assets/celnet-capabilities/fig-01-system-architecture-adaptability.png)
-*Figure 3.1 ([index](../CELNET-CAPABILITIES.md#figure-index)) — One engine, three deployment shapes. Pricing, risk, and surface logic sit behind seam traits; market-data, price-sink, and order/execution adapters swap underneath them, so the same binary serves Standalone, Hybrid, and Celer-Integrated desks without forking the core.*
+*Figure 3.1 ([index](../CELNET-CAPABILITIES.md#figure-index)) — One engine, three deployment shapes. Pricing, risk, and surface logic sit behind seam traits; market-data, price-sink, and order/execution adapters swap underneath them, so the same binary serves Standalone, Hybrid, and CelNet-Integrated desks without forking the core.*
 
 ## 3.1 Two tiers: a hot core, an async edge
 
@@ -58,7 +58,7 @@ From a single laptop to a Raft-replicated, fan-out-fronted, risk-sharded fleet, 
 
 > **Honest boundary.** The distributed proofs in this repository run on **localhost multi-process / real loopback sockets** and prove **correctness, quorum, and framing** only. **Cross-host wire p99, cross-DC transport, real network partitions, and Raft §6 dynamic membership (joint-consensus) are deploy-gated and never claimed in-repo;** so too are the §11 absolute wire-latency SLOs (in-repo proves the §1.2 in-core truth-gate + loopback benches only). Physical cross-node risk transport is the deploy-time drop-in behind the now-built HRW + fan-out seam.
 
-**See also:** [§8 Scalability & Scale-Out](08-scalability-scaleout.md) builds on the distributed-correctness substrate introduced here; [§14 Engineering Rigor](14-engineering-rigor.md) covers the determinism and replay guarantees of this concurrency model; [§12 Celer Integration](12-celer-integration.md) shows the adapter seams that bind the same engine into the estate.
+**See also:** [§8 Scalability & Scale-Out](08-scalability-scaleout.md) builds on the distributed-correctness substrate introduced here; [§14 Engineering Rigor](14-engineering-rigor.md) covers the determinism and replay guarantees of this concurrency model; [§12 CelNet Integration](12-celnet-integration.md) shows the adapter seams that bind the same engine into the estate.
 
 ---
 <sub>[← Prev: Capability Map](02-capability-map.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Quant & Pricing Methodology Coverage →](04-quant-coverage.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

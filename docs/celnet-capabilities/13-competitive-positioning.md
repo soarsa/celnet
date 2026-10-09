@@ -1,4 +1,4 @@
-<sub>[← Prev: Celer Integration](12-celer-integration.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Engineering Rigor & Assurance →](14-engineering-rigor.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
+<sub>[← Prev: CelNet Integration](12-celnet-integration.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Engineering Rigor & Assurance →](14-engineering-rigor.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
 
 # 13. Competitive Positioning
 
@@ -65,10 +65,10 @@ Determinism is the second pillar. A counter-based RNG is bit-identical between C
 
 ## 13.6 Adapts into the estate you already run
 
-Positioning is not only about a head-to-head; it is about fit. Celnet is the FX-options pricing system-of-record inside the Celer trade lifecycle and runs across Standalone, Hybrid, and CelerIntegrated deployment modes via reversible adapter swaps on its seam traits — never a rewrite. The in-repo proof is the seam: the FIX 4.4 engine (acceptor + initiator, loopback-tested), the egress governor, the resilient subscriber, the normalization layer, and the DeployMode adapter swap. **CelerIntegrated mode is the designed estate-native binding**: the live JVM distributor sidecar handshake, mailbox calibration, and live quote-feed entitlement are deploy/live-gated, proven at deploy against the running estate — distinct from the in-repo seam. The same market-data seam ingests external products and feeds as integration targets: venue and aggregator feeds such as **Fenics**, **Bloomberg**, **Refinitiv**, and **EBS** are adapter destinations, demonstrating that Celnet meets a desk where its data already lives.
+Positioning is not only about a head-to-head; it is about fit. Celnet is the FX-options pricing system-of-record inside the CelNet trade lifecycle and runs across Standalone, Hybrid, and CelnetIntegrated deployment modes via reversible adapter swaps on its seam traits — never a rewrite. The in-repo proof is the seam: the FIX 4.4 engine (acceptor + initiator, loopback-tested), the egress governor, the resilient subscriber, the normalization layer, and the DeployMode adapter swap. **CelnetIntegrated mode is the designed estate-native binding**: the live JVM distributor sidecar handshake, mailbox calibration, and live quote-feed entitlement are deploy/live-gated, proven at deploy against the running estate — distinct from the in-repo seam. The same market-data seam ingests external products and feeds as integration targets: venue and aggregator feeds such as **Fenics**, **Bloomberg**, **Refinitiv**, and **EBS** are adapter destinations, demonstrating that Celnet meets a desk where its data already lives.
 
 ![Celnet's adaptability across deployment modes and external feeds](../assets/celnet-capabilities/fig-10-deployment-modes.png)
-*Figure 13.4 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Reversible adapter swaps move Celnet between Standalone, Hybrid, and CelerIntegrated modes; the same seam ingests external market-data feeds. CelerIntegrated is the designed estate-native binding, proven at deploy against the live JVM estate.*
+*Figure 13.4 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Reversible adapter swaps move Celnet between Standalone, Hybrid, and CelnetIntegrated modes; the same seam ingests external market-data feeds. CelnetIntegrated is the designed estate-native binding, proven at deploy against the live JVM estate.*
 
 ## 13.7 The positioning, in one line
 
@@ -77,4 +77,4 @@ Celnet now matches Murex MX.3, Numerix CrossAsset, and Fenics kACE on structured
 **See also:** [`CAPABILITIES-VS-COMPETITION.md`](../capabilities/CAPABILITIES-VS-COMPETITION.md) is the feature-by-feature comparison; [`COMPETITIVE-ANALYSIS.md`](../COMPETITIVE-ANALYSIS.md) is the market-positioning critique; [`CLIENT-PARITY-MATRIX.md`](../clients/CLIENT-PARITY-MATRIX.md) is the runnable five-client parity proof; [§14 Engineering Rigor](14-engineering-rigor.md) is the evidence trail behind every claim.
 
 ---
-<sub>[← Prev: Celer Integration](12-celer-integration.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Engineering Rigor & Assurance →](14-engineering-rigor.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
+<sub>[← Prev: CelNet Integration](12-celnet-integration.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Engineering Rigor & Assurance →](14-engineering-rigor.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

@@ -71,7 +71,7 @@ celnet-qmc            →  Sobol'/scramble/Brownian-bridge variate source over c
 celnet-journal        →  dependency-free fsync'd append-only log + crash recovery; under celnet-engine
 celnet-replog         →  leader-replicated deterministic-replay log over loopback sockets (→ celnet-journal)
 celnet-fanout         →  lock-free SPMC broadcast ring (reuses crossbeam-utils CachePadded only)
-celnet-integration    →  Celer estate + vendor MD adapters, over celnet-surface/-types
+celnet-integration    →  CelNet estate + vendor MD adapters, over celnet-surface/-types
 celnet-risk-normalize →  pure leaf transform (no IO) over celnet-core/-types + vanilla tier;
                          the convention/numeraire boundary the risk cube sits on
 celnet-rates          →  fixed-income/rates leaf: OIS/SOFR multi-curve bootstrap (log-linear-DF Curve)

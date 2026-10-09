@@ -3664,8 +3664,8 @@ export class MockTransport implements CelnetTransport {
     this.fixSeq += 1n;
     const seq = this.fixSeq;
     const inbound = direction === "INBOUND";
-    const sender = inbound ? "CELER_RATES" : "CELNET";
-    const target = inbound ? "CELNET" : "CELER_RATES";
+    const sender = inbound ? "CELNET_RATES" : "CELNET";
+    const target = inbound ? "CELNET" : "CELNET_RATES";
     const bodyTags = Object.entries(body)
       .map(([tag, val]) => `${tag}=${val}`)
       .join("|");

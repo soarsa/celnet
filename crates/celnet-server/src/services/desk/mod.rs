@@ -2438,7 +2438,7 @@ pub(crate) mod tests {
     fn two_way_stream(edge: &RfqDeskEdge) -> String {
         edge.ingest_fix_rfq(
             "g10-rates",
-            "CELER_RATES_ESP",
+            "CELNET_RATES_ESP",
             ois_instrument(Side::TwoWay),
             curve(),
             Side::TwoWay,
@@ -2595,7 +2595,7 @@ pub(crate) mod tests {
         // The FIX MD-venue records the streamed line as an RFS auto-quote (QUOTED).
         let stored = edge.ingest_fix_rfq(
             "g10",
-            "CELER_RATES",
+            "CELNET_RATES",
             ois_instrument(Side::Buy),
             curve(),
             Side::Buy,
@@ -3183,7 +3183,7 @@ pub(crate) mod tests {
         // Auto-quoted: carries a firm quote ⇒ QUOTED history, quiet QUOTE_ACCEPTED.
         let auto = edge.ingest_fix_rfq(
             "g10-rates",
-            "CELER_RATES",
+            "CELNET_RATES",
             ois_instrument(Side::Buy),
             curve(),
             Side::Buy,
@@ -3198,7 +3198,7 @@ pub(crate) mod tests {
         );
         assert_eq!(auto.state, DeskRequestState::Quoted as i32);
         assert_eq!(auto.desk, "g10-rates");
-        assert_eq!(auto.counterparty, "CELER_RATES");
+        assert_eq!(auto.counterparty, "CELNET_RATES");
         assert!(auto.quote.is_some());
         let n = sub.rx.try_recv().expect("auto-quote fans a notification");
         assert_eq!(n.kind, NotificationKind::QuoteAccepted as i32);
@@ -3208,7 +3208,7 @@ pub(crate) mod tests {
         // Routed to a human as a routine RFQ ⇒ PENDING, quiet RFQ_RECEIVED.
         let manual = edge.ingest_fix_rfq(
             "g10-rates",
-            "CELER_RATES",
+            "CELNET_RATES",
             ois_instrument(Side::Sell),
             curve(),
             Side::Sell,
@@ -3245,7 +3245,7 @@ pub(crate) mod tests {
         let mut sub = edge.notify.subscribe(DeskFilter::All);
         let manual = edge.ingest_fix_rfq(
             "g10-rates",
-            "CELER_RATES",
+            "CELNET_RATES",
             ois_instrument(Side::Buy),
             curve(),
             Side::Buy,

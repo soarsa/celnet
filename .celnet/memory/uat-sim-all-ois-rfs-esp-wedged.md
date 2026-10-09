@@ -13,9 +13,9 @@ assumed — `pricing.2026-08-17.log` by connection:
 
 | connection | events | symbols |
 |---|---|---|
-| `celer-rates-celnet` (RFQ :56002) | **4662** | `USD-OIS` |
-| `celer-rates-stream-celnet` (RFS :56003) | **2** | `ust-2y-note`, `acme-5y-corp` |
-| `celer-rates-esp-celnet` (ESP :56004) | **2** | `ust-2y-note`, `acme-5y-corp` |
+| `celnet-rates-celnet` (RFQ :56002) | **4662** | `USD-OIS` |
+| `celnet-rates-stream-celnet` (RFS :56003) | **2** | `ust-2y-note`, `acme-5y-corp` |
+| `celnet-rates-esp-celnet` (ESP :56004) | **2** | `ust-2y-note`, `acme-5y-corp` |
 
 RFS/ESP stopped dead at 10:57:46 and produced nothing for 2h35m.
 

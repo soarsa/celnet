@@ -6,9 +6,9 @@
 <title>Celnet — Books &amp; Positions (mockup 08)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="celer.css" />
+<link rel="stylesheet" href="celnet.css" />
 <style>
-/* ===== 08 Books & Positions — screen-scoped only (shared tokens live in celer.css) ===== */
+/* ===== 08 Books & Positions — screen-scoped only (shared tokens live in celnet.css) ===== */
 
 /* lens strip — book-as-home consolidation header */
 .bp-lens { display:flex; align-items:center; gap:var(--space-4); flex-wrap:wrap; }
@@ -202,9 +202,9 @@ tfoot.blot-foot td.n { font-family:var(--font-mono); font-variant-numeric:tabula
         </header>
         <div class="body" style="padding:var(--space-3)">
           <div class="tree" id="tree">
-            <div class="tnode lvl-firm" data-kids="e-lon,e-ny"><span class="car" data-car>▾</span><span class="nm"><span class="lv">Firm</span> Celer Markets</span><span class="tbar"><i class="pos" style="width:46px"></i></span><span class="mtm pos">+4.82mm</span></div>
+            <div class="tnode lvl-firm" data-kids="e-lon,e-ny"><span class="car" data-car>▾</span><span class="nm"><span class="lv">Firm</span> CelNet Markets</span><span class="tbar"><i class="pos" style="width:46px"></i></span><span class="mtm pos">+4.82mm</span></div>
 
-            <div class="tnode lvl-entity" data-id="e-lon" data-kids="d-fxv,d-fxf,d-rts"><span class="car" data-car>▾</span><span class="nm"><span class="lv">Ent</span> Celer Bank London</span><span class="tbar"><i class="pos" style="width:38px"></i></span><span class="mtm pos">+3.14mm</span></div>
+            <div class="tnode lvl-entity" data-id="e-lon" data-kids="d-fxv,d-fxf,d-rts"><span class="car" data-car>▾</span><span class="nm"><span class="lv">Ent</span> CelNet Bank London</span><span class="tbar"><i class="pos" style="width:38px"></i></span><span class="mtm pos">+3.14mm</span></div>
 
             <div class="tnode lvl-desk sel" data-id="d-fxv" data-kids="b-g10a,b-g10b,b-em1"><span class="car" data-car>▾</span><span class="nm"><span class="lv">Desk</span> FX Vol <span class="badge-live" style="padding:1px 6px">LIVE</span></span><span class="tbar"><i class="pos" style="width:30px"></i></span><span class="mtm pos">+1.86mm</span></div>
             <div class="tnode lvl-book" data-parent="d-fxv" data-id="b-g10a"><span class="car leaf">◆</span><span class="nm">G10-A</span><span class="tbar"><i class="pos" style="width:22px"></i></span><span class="mtm pos">+0.92mm</span></div>
@@ -217,7 +217,7 @@ tfoot.blot-foot td.n { font-family:var(--font-mono); font-variant-numeric:tabula
             <div class="tnode lvl-desk" data-id="d-rts" data-kids="b-rt1"><span class="car" data-car>▸</span><span class="nm"><span class="lv">Desk</span> Rates <span class="badge-target" style="padding:1px 6px"><span class="tgt-dot"></span> TARGET</span></span><span class="tbar"><i class="pos" style="width:20px"></i></span><span class="mtm pos">+0.80mm</span></div>
             <div class="tnode lvl-book hidden" data-parent="d-rts" data-id="b-rt1"><span class="car leaf">◆</span><span class="nm" title="Federated from RatesPositionStore">IRS-EUR</span><span class="tbar"><i class="pos" style="width:20px"></i></span><span class="mtm pos">+0.80mm</span></div>
 
-            <div class="tnode lvl-entity" data-id="e-ny" data-kids="d-ny1"><span class="car" data-car>▸</span><span class="nm"><span class="lv">Ent</span> Celer Bank NY</span><span class="tbar"><i class="pos" style="width:24px"></i></span><span class="mtm pos">+1.68mm</span></div>
+            <div class="tnode lvl-entity" data-id="e-ny" data-kids="d-ny1"><span class="car" data-car>▸</span><span class="nm"><span class="lv">Ent</span> CelNet Bank NY</span><span class="tbar"><i class="pos" style="width:24px"></i></span><span class="mtm pos">+1.68mm</span></div>
             <div class="tnode lvl-desk hidden" data-parent="e-ny" data-id="d-ny1"><span class="car leaf">◆</span><span class="nm"><span class="lv">Desk</span> FX Vol NY</span><span class="tbar"><i class="pos" style="width:24px"></i></span><span class="mtm pos">+1.68mm</span></div>
           </div>
         </div>
@@ -690,8 +690,8 @@ tfoot.blot-foot td.n { font-family:var(--font-mono); font-variant-numeric:tabula
     trader: { label: "Trader · A. Marchetti",      mtm: "+1.36mm", pnl: "+112.0k", pnld: "▲ +0.71% NAV", delta: "+6.10mm",  vega: "+142k", dv01: "—",       var: "−286k" },
     book:   { label: "Book · G10-A",               mtm: "+0.92mm", pnl: "+52.4k",  pnld: "▲ +0.44% NAV", delta: "+4.20mm",  vega: "+96k",  dv01: "—",       var: "−198k" },
     desk:   { label: "Desk · FX Vol",              mtm: "+1.86mm", pnl: "+148.0k", pnld: "▲ +0.83% NAV", delta: "+8.42mm",  vega: "+184k", dv01: "−86.0k",  var: "−412k" },
-    entity: { label: "Entity · Celer Bank London", mtm: "+3.14mm", pnl: "+226.0k", pnld: "▲ +0.74% NAV", delta: "+12.80mm", vega: "+214k", dv01: "−128.0k", var: "−642k" },
-    firm:   { label: "Firm · Celer Markets",       mtm: "+4.82mm", pnl: "+318.0k", pnld: "▲ +0.69% NAV", delta: "+18.40mm", vega: "+268k", dv01: "−214.0k", var: "−884k" }
+    entity: { label: "Entity · CelNet Bank London", mtm: "+3.14mm", pnl: "+226.0k", pnld: "▲ +0.74% NAV", delta: "+12.80mm", vega: "+214k", dv01: "−128.0k", var: "−642k" },
+    firm:   { label: "Firm · CelNet Markets",       mtm: "+4.82mm", pnl: "+318.0k", pnld: "▲ +0.69% NAV", delta: "+18.40mm", vega: "+268k", dv01: "−214.0k", var: "−884k" }
   };
   function setV(id, txt, cls) { var el = $("#" + id); if (el) { el.textContent = txt; el.className = "v " + cls; } }
   $("#rollup").addEventListener("click", function (e) {

@@ -7,7 +7,7 @@ metadata:
   originSessionId: 022c5024-0efd-40df-b066-eb5f16656b52
 ---
 
-**Two-session mesh on one repo `/Users/adrian/code/celeroption`, one M4.** session-A = coordinator
+**Two-session mesh on one repo `/Users/adrian/code/celnet`, one M4.** session-A = coordinator
 (owns seam/proto-adjacent merges + rigor/risk/exotic lanes); session-B = W2 + the proto window +
 the cross-asset integration. Collaborate through git + `docs/PARALLEL-SESSIONS.md` (the board + §6).
 

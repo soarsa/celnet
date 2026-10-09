@@ -6,9 +6,9 @@
 <title>Celnet — Feed Manage (mockup 05)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Anaheim&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="celer.css" />
+<link rel="stylesheet" href="celnet.css" />
 <style>
-  /* ============ Feed Manage — screen-specific only (celer.css is shared, untouched) ============ */
+  /* ============ Feed Manage — screen-specific only (celnet.css is shared, untouched) ============ */
   .badge{display:inline-flex;align-items:center;gap:5px;font-size:var(--type-caption);font-weight:700;padding:3px 9px;border-radius:var(--r-full);white-space:nowrap;}
   .badge.live{background:oklch(0.78 0.16 155/.16);color:var(--bid);}
   .badge.target{background:var(--accent-soft);color:var(--accent);}
@@ -143,7 +143,7 @@
           <div class="legend" style="margin-bottom:8px">
             <span class="lg"><span class="sw" style="background:var(--seq-2)"></span>EBS</span>
             <span class="lg"><span class="sw" style="background:var(--seq-3)"></span>Reuters</span>
-            <span class="lg"><span class="sw" style="background:var(--seq-4)"></span>Celer-Internal</span>
+            <span class="lg"><span class="sw" style="background:var(--seq-4)"></span>CelNet-Internal</span>
             <span class="lg"><span class="sw" style="background:var(--seq-6)"></span>Vendor-C <span class="dim">stale</span></span>
             <span class="lg"><span class="sw dash"></span>median consensus ± tol</span>
           </div>
@@ -162,7 +162,7 @@
             <!-- source lines — categorical Viridis per source (JS sets points) -->
             <polyline id="ln-EBS" points="" style="fill:none;stroke:var(--seq-2);stroke-width:1.6;stroke-linejoin:round"/>
             <polyline id="ln-Reuters" points="" style="fill:none;stroke:var(--seq-3);stroke-width:1.6;stroke-linejoin:round"/>
-            <polyline id="ln-Celer" points="" style="fill:none;stroke:var(--seq-4);stroke-width:1.6;stroke-linejoin:round"/>
+            <polyline id="ln-CelNet" points="" style="fill:none;stroke:var(--seq-4);stroke-width:1.6;stroke-linejoin:round"/>
             <polyline id="ln-VendorC" points="" style="fill:none;stroke:var(--seq-6);stroke-width:1.9;stroke-linejoin:round"/>
             <polyline id="ln-consensus" points="" style="fill:none;stroke:var(--text-secondary);stroke-width:2;stroke-dasharray:5 3;stroke-linejoin:round"/>
             <!-- latest-tick markers (JS) -->
@@ -201,8 +201,8 @@
             <line x1="308" y1="30" x2="308" y2="176" style="stroke:var(--warn);stroke-width:1.2;stroke-dasharray:3 3;opacity:.85"/>
             <text class="axlbl" x="308" y="27" text-anchor="middle" fill="var(--warn)">stale cutoff 2.0s</text>
 
-            <!-- Celer-Internal · in-proc bus · p50 3ms / p99 9ms -->
-            <text class="axlbl b" x="58" y="49" fill="var(--seq-4)">Celer-Internal</text>
+            <!-- CelNet-Internal · in-proc bus · p50 3ms / p99 9ms -->
+            <text class="axlbl b" x="58" y="49" fill="var(--seq-4)">CelNet-Internal</text>
             <text class="axlbl" x="352" y="49" text-anchor="end" fill="var(--text-tertiary)">p50 3 · p99 9 ms · 312/s</text>
             <line x1="94.1" y1="61" x2="130.2" y2="61" style="stroke:var(--seq-4);stroke-width:2.4;opacity:.9"/>
             <line x1="130.2" y1="57" x2="130.2" y2="65" style="stroke:var(--seq-4);stroke-width:1.6"/>
@@ -276,13 +276,13 @@
               <td style="text-align:center"><span class="tog off lock" id="tog-VendorC" data-src="Vendor-C" data-w="0" title="auto-excluded by the divergence gate — re-included only if tolerance widens past its smile-dev">MAD</span></td>
             </tr>
             <tr>
-              <td><span class="srcdot" style="background:var(--seq-4)"></span> Celer-Internal</td>
+              <td><span class="srcdot" style="background:var(--seq-4)"></span> CelNet-Internal</td>
               <td style="font-family:var(--font-mono);color:var(--text-secondary)">EURUSD</td>
               <td>in-proc bus</td>
-              <td class="n">0.2s</td><td class="n">0.99</td><td class="n">0.02</td><td class="n" id="bw-Celer">0.26</td>
+              <td class="n">0.2s</td><td class="n">0.99</td><td class="n">0.02</td><td class="n" id="bw-CelNet">0.26</td>
               <td><span class="fresh"><i class="h6"></i><i class="h6"></i><i class="h6"></i><i class="h6"></i><i class="h5"></i><i class="h6"></i><i class="h6"></i><i class="h6"></i></span></td>
-              <td><span class="st on" id="st-Celer"><span class="rag g"></span>Active</span></td>
-              <td style="text-align:center"><span class="tog" data-src="Celer-Internal" data-w="0.26"><span class="sw2"></span></span></td>
+              <td><span class="st on" id="st-CelNet"><span class="rag g"></span>Active</span></td>
+              <td style="text-align:center"><span class="tog" data-src="CelNet-Internal" data-w="0.26"><span class="sw2"></span></span></td>
             </tr>
           </tbody>
         </table>
@@ -305,7 +305,7 @@
               <tr><td>EBS</td><td class="vend">EURUSD</td><td class="arrow">→</td><td class="canon">EUR/USD</td><td class="num" style="font-size:11px">spot · pa</td></tr>
               <tr><td>Reuters</td><td class="vend">EUR=</td><td class="arrow">→</td><td class="canon">EUR/USD</td><td class="num" style="font-size:11px">spot · pa</td></tr>
               <tr><td>Vendor-C</td><td class="vend">EUR/USD.SPOT</td><td class="arrow">→</td><td class="canon">EUR/USD</td><td class="num" style="font-size:11px" title="forward-delta, premium-unadjusted — normalized on ingest before consensus; likely driver of its divergence">fwd · <span class="warn">unadj ⚠</span></td></tr>
-              <tr><td>Celer-Internal</td><td class="vend">EURUSD</td><td class="arrow">→</td><td class="canon">EUR/USD</td><td class="num" style="font-size:11px">spot · pa</td></tr>
+              <tr><td>CelNet-Internal</td><td class="vend">EURUSD</td><td class="arrow">→</td><td class="canon">EUR/USD</td><td class="num" style="font-size:11px">spot · pa</td></tr>
             </tbody>
           </table>
           <div style="margin-top:12px;display:flex;gap:6px">
@@ -330,7 +330,7 @@
           <div class="label" style="margin:14px 0 6px">Final normalized weights</div>
           <div class="wrow" id="wr-EBS"><span class="src"><span class="srcdot" style="background:var(--seq-2)"></span>EBS</span><span class="wbar"><i id="wb-EBS" style="width:41%"></i></span><span class="wv" id="wv-EBS">0.41</span></div>
           <div class="wrow" id="wr-Reuters"><span class="src"><span class="srcdot" style="background:var(--seq-3)"></span>Reuters</span><span class="wbar"><i id="wb-Reuters" style="width:33%"></i></span><span class="wv" id="wv-Reuters">0.33</span></div>
-          <div class="wrow" id="wr-Celer"><span class="src"><span class="srcdot" style="background:var(--seq-4)"></span>Celer-Internal</span><span class="wbar"><i id="wb-Celer" style="width:26%"></i></span><span class="wv" id="wv-Celer">0.26</span></div>
+          <div class="wrow" id="wr-CelNet"><span class="src"><span class="srcdot" style="background:var(--seq-4)"></span>CelNet-Internal</span><span class="wbar"><i id="wb-CelNet" style="width:26%"></i></span><span class="wv" id="wv-CelNet">0.26</span></div>
           <div class="wrow ex" id="wr-VendorC"><span class="src"><span class="srcdot" style="background:var(--seq-6)"></span>Vendor-C</span><span class="wbar"><i id="wb-VendorC" style="width:0%"></i></span><span class="wv dim" id="wv-VendorC">excl</span></div>
 
           <div style="margin-top:12px;display:flex;gap:6px;align-items:center">
@@ -454,28 +454,28 @@
   const FREEZE = 8;                           // Vendor-C freezes at this sample (x=312)
   const MAD_FLOOR = 0.09;                     // MAD-scaled bound (vol pts)
   const MIN_SOURCES = 3;                      // gating undecidable below this
-  const RAW = { EBS:0.41, Reuters:0.33, Celer:0.26, VendorC:0.18 }; // pre-norm staleness·tier
-  const GOODS = ['EBS','Reuters','Celer'];
+  const RAW = { EBS:0.41, Reuters:0.33, CelNet:0.26, VendorC:0.18 }; // pre-norm staleness·tier
+  const GOODS = ['EBS','Reuters','CelNet'];
   // shared gentle common drift (the consensus core moves together), ~0-mean
   const DRIFT = [-.05,-.03,.00,.01,.03,.04,.06,.05,.08,.09,.08,.11,.12];
 
   // per-characteristic real data — signed quantities (RR/BF/wings) are 0-centered
   const CHARS = {
     'ATM vol':            { cap:'ATM vol',  ticks:[8.30,8.10,7.90,7.70], zero:null,
-                            base:{EBS:7.93,Reuters:8.01,Celer:7.97}, amp:1.0,
+                            base:{EBS:7.93,Reuters:8.01,CelNet:7.97}, amp:1.0,
                             vc:{from:8.00,to:8.24}, dev:0.22 },
     '25Δ risk-reversal':  { cap:'25Δ RR',   ticks:[0.60,0.20,-0.20,-0.60], zero:0,
-                            base:{EBS:-0.45,Reuters:-0.39,Celer:-0.42}, amp:0.55,
+                            base:{EBS:-0.45,Reuters:-0.39,CelNet:-0.42}, amp:0.55,
                             vc:{from:-0.42,to:-0.12}, dev:0.30 },
     '25Δ butterfly':      { cap:'25Δ BF',   ticks:[0.40,0.20,0.00,-0.20], zero:0,
-                            base:{EBS:0.19,Reuters:0.23,Celer:0.21}, amp:0.45,
+                            base:{EBS:0.19,Reuters:0.23,CelNet:0.21}, amp:0.45,
                             vc:{from:0.22,to:0.41}, dev:0.19 },
     '10Δ wings':          { cap:'10Δ wings',ticks:[1.20,0.60,0.00,-0.60], zero:0,
-                            base:{EBS:-0.76,Reuters:-0.68,Celer:-0.72}, amp:0.80,
+                            base:{EBS:-0.76,Reuters:-0.68,CelNet:-0.72}, amp:0.80,
                             vc:{from:-0.72,to:-0.20}, dev:0.52 }
   };
 
-  const state = { char:'ATM vol', tol:0.12, inc:{EBS:true,Reuters:true,Celer:true} };
+  const state = { char:'ATM vol', tol:0.12, inc:{EBS:true,Reuters:true,CelNet:true} };
 
   const yFor = (v,t) => {
     const y = YTOP + (v - t[0]) * (YBOT - YTOP) / (t[3] - t[0]);
@@ -503,7 +503,7 @@
     const vcIn = !vcFlagged;
     const included = goodOn.concat(vcIn ? ['VendorC'] : []);
     const total = included.reduce((s,k)=>s+RAW[k],0) || 1;
-    const w = {}; ['EBS','Reuters','Celer','VendorC'].forEach(k=>{
+    const w = {}; ['EBS','Reuters','CelNet','VendorC'].forEach(k=>{
       w[k] = included.includes(k) ? RAW[k]/total : 0; });
 
     // ---- overlay: y-axis, diverging backdrop, zero line ----
@@ -523,7 +523,7 @@
 
     // ---- source series ----
     const arr = { EBS:seriesGood(c,'EBS'), Reuters:seriesGood(c,'Reuters'),
-                  Celer:seriesGood(c,'Celer'), VendorC:seriesVC(c) };
+                  CelNet:seriesGood(c,'CelNet'), VendorC:seriesVC(c) };
     const cons = XS.map((_,i)=> median(goodOn.map(s=>arr[s][i])));      // consensus = median of the contributing core
     const haveCons = goodOn.length > 0;
 
@@ -559,7 +559,7 @@
     $('ovAnn').innerHTML = ann;
 
     // ---- weights panel + table (re-normalized to Σ1) ----
-    ['EBS','Reuters','Celer','VendorC'].forEach(k=>{
+    ['EBS','Reuters','CelNet','VendorC'].forEach(k=>{
       const on = included.includes(k), row=$('wr-'+k), bar=$('wb-'+k), val=$('wv-'+k);
       row.classList.toggle('ex', !on);
       bar.style.width = (w[k]*100).toFixed(0)+'%';
@@ -602,7 +602,7 @@
   document.querySelectorAll('.grid .tog').forEach(tg => {
     if (tg.classList.contains('lock')) return;                 // Vendor-C is auto-gated
     tg.addEventListener('click', () => {
-      const key = tg.dataset.src === 'Celer-Internal' ? 'Celer' : tg.dataset.src;
+      const key = tg.dataset.src === 'CelNet-Internal' ? 'CelNet' : tg.dataset.src;
       tg.classList.toggle('off');
       state.inc[key] = !tg.classList.contains('off');
       render();

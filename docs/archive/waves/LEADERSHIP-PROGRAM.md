@@ -63,7 +63,7 @@ fully closable in this repo** (no NVIDIA / cross-host / live-JVM dependency):
 | **3** | **Distributed correctness: replicated log + hot-standby** (XL) | new `celnet-replog` (leader-replicated/thin-Raft over the journal, deterministic replay); hot-standby pre-warm; new `celnet-fanout` SPMC ring; IB-cardinality federation | kill-leader → follower replays **bit-identical** prices (f64 oracle); standby takeover ≤ target, zero in-flight loss; SPMC at 100/1000 consumers; `just check` green |
 | **4** | **Functionality catalogue & surface depth** (parallel to W3) | eSSVI; variance/vol swaps; arithmetic Asian; forward-start/cliquet; standalone Heston FFT/COS; Sobol+bridge QMC; FRTB-SA completeness; pair-universe breadth | each a gated `celnet-parity` row vs QuantLib/quadrature; Sobol variance-reduction ≥3× + CPU↔GPU KAT |
 | **5** | **GPU perf at scale** (ratios here, NVIDIA headline gated) | GPU perf harness G1; batch many-instrument (G2) + multi-step path (G3) + payoff kernels (G4); GPU pathwise/LR Greeks (G6) | `gpu_load` headless on M4/Lavapipe; f32↔f64 reconcile; three-way GPU-MC≈CPU-MC≈golden; **NVIDIA absolute headline explicitly deferred** |
-| **6** | **Deploy/live-estate proof tracks** (designed+seamed here, proven at deploy; never blocks/claims in-repo) | cross-host/kernel-bypass wire p99; CUDA deploy-gate baselines; live JVM Celer estate lifecycle; integration ADRs + docs reconcile | deploy-gated; in-repo only the tree/fairness unit tests, the ADRs, and the docs-anchor lint close |
+| **6** | **Deploy/live-estate proof tracks** (designed+seamed here, proven at deploy; never blocks/claims in-repo) | cross-host/kernel-bypass wire p99; CUDA deploy-gate baselines; live JVM CelNet estate lifecycle; integration ADRs + docs reconcile | deploy-gated; in-repo only the tree/fairness unit tests, the ADRs, and the docs-anchor lint close |
 
 **Dependency notes:** the absolute-budget `bench_gate` (W1) precedes the §11 SLO baselines (W2);
 the Standalone edge + `demo_edge` (W1) precede CLI/GUI integration tests (W2); `celnet-replog`
@@ -106,7 +106,7 @@ CUDA deploy-gate CI; in-repo we prove only correctness + **ratios** on M4/Lavapi
 isolcpus/nohz_full/rcu_nocbs + mlock + huge-pages p99.9 benefit — realizable only on tuned
 bare-metal Linux. (5) The §11 fleet **wire-latency** SLOs under real NIC / inter-DC — loopback
 baselines prove routing/conflation/fan-out arithmetic + relative regression, not absolute wire
-latency. (6) The entire JVM Celer estate lifecycle: distributor sidecar handshake + mailbox
+latency. (6) The entire JVM CelNet estate lifecycle: distributor sidecar handshake + mailbox
 drain-rate, FX_OPTION enum/netting/risk/dialect rollout, the 4 inferred orderrouting→risk→
 destination→clearing→positionmanager hops (inferred from signatures, NOT runtime traces), tenant
 overlays, webtrader — all live-estate-gated; each estate-side hop stays tagged
@@ -116,7 +116,7 @@ here, the live data is consumed from the estate. (8) XVA (CVA/FVA/MVA) — desig
 netting sets vs an analytic benchmark, but firm-wide exposure/collateral/CSA inputs live in the
 estate. (9) Sustained ≥1M updates/s/core under real fan-out to high-performance counterparties —
 provable in principle on loopback, but the production headline needs real concurrent network
-connections; the egress governor's contract is proven against the *documented* Celer silent-skip
+connections; the egress governor's contract is proven against the *documented* CelNet silent-skip
 behaviour, not a live JVM distributor.
 
 ## Top risks

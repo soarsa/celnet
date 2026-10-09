@@ -1,12 +1,12 @@
 # Celnet Design Language — July-2026 SOTA (the visual upgrade spec)
 
-From `RESEARCH-sota-design-2026.md` (cited). Governs the celer.css rewrite + every screen + the
+From `RESEARCH-sota-design-2026.md` (cited). Governs the celnet.css rewrite + every screen + the
 Storybook components. Principle: **premium restraint** — high contrast, generous rhythm, monochrome
 base + one rationed accent, sharp grotesque type, density via a tight elevation stack (not cramming).
 
 ## 1. Color
 - **Re-found coral `#ff7357` + indigo in OKLCH**; generate fixed-lightness ramps (perceptually even
-  states, one source for light/dark). Keep the Celer identity; modernize execution.
+  states, one source for light/dark). Keep the CelNet identity; modernize execution.
 - **Tight 4-step surface stack** (canvas → 3 elevated), small lightness increments; **1px low-alpha
   (5–8% white) hairline borders are the PRIMARY depth cue**, shadows minimal/for floats only.
 - **Ration the accent:** coral = the ONE primary action / live highlight per view; indigo =
@@ -70,5 +70,5 @@ testable (seeded data in stories), and honors `prefers-reduced-motion`.
 Mockups become **interactive/clickable** prototypes approximating these; validated components are then
 promoted into the `gui/` **Storybook** as reusable, evolvable primitives (Button/Panel/DataGrid/
 QuoteTile/SurfaceChart/SmileChart/PayoffChart/ScenarioHeatmap/XvaProfile/Blotter/CommandPalette),
-each with the token contract above. The mockup `celer.css` is the staging ground for the token system
+each with the token contract above. The mockup `celnet.css` is the staging ground for the token system
 that lands in `gui/design-tokens.json` + `gui/src/design/tokens.css`.

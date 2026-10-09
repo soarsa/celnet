@@ -1,5 +1,5 @@
 //! Celnet FIX engine — the real FX-options FIX edge (work-stream WS-I /
-//! integration; design in `docs/CELER-FIX-INTEGRATION-PLAN.md`).
+//! integration; design in `docs/architecture/CELNET-FIX-INTEGRATION-PLAN.md`).
 //!
 //! A complete, hand-rolled, zero-copy FIX 4.4 implementation (no stub, no
 //! off-the-shelf engine): SOH framing + BodyLength/CheckSum validation, a

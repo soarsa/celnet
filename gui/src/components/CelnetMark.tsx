@@ -5,7 +5,7 @@
  * but it inherits any text colour if dropped elsewhere.
  */
 
-import styles from "./CelerMark.module.css";
+import styles from "./CelnetMark.module.css";
 
 /** The Celnet geometric mark path (high-precision C arc). */
 const CELNET_MARK_PATH =
@@ -36,10 +36,6 @@ export function CelnetMark({ size = 24, className, title }: CelnetMarkProps): Re
   );
 }
 
-/** Backward-compatible alias for existing imports. */
-export const CelerMark = CelnetMark;
-export type CelerMarkProps = CelnetMarkProps;
-
 export interface CelnetLockupProps {
   /** Mark edge length in px (default 22). The wordmark scales with it. */
   size?: number | undefined;
@@ -63,10 +59,6 @@ export function CelnetLockup({
     </span>
   );
 }
-
-/** Backward-compatible alias for existing imports. */
-export const CelerLockup = CelnetLockup;
-export type CelerLockupProps = CelnetLockupProps;
 
 /**
  * CelnetWordmark — the product wordmark without the mark icon: "Celnet".

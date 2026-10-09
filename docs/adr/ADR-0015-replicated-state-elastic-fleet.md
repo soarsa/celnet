@@ -12,7 +12,7 @@
   program phase **P3** of the target architecture (`docs/ARCHITECTURE-TARGET.md` §5) and the
   concrete build-out of `docs/SCALE-OUT.md` §4 / §8 / §2 / §12.
 - **Date:** 2026-07-01
-- **Extends:** ADR-0011 (Celer-estate ingress — the `DeploymentMode` / fleet boot seams).
+- **Extends:** ADR-0011 (CelNet-estate ingress — the `DeploymentMode` / fleet boot seams).
   **Constrained by:** ADR-0016 (hot-core embargoes + latency SLO gate) — the
   `Arc<*Curve>`/`Arc<*Surface>`-in-`MarketState` embargo is the hard boundary this ADR's
   surface-distribution feed must honour. Honours CLAUDE.md guardrails #6 (scale is a

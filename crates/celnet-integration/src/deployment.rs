@@ -1,20 +1,20 @@
 //! Deployment-mode seam — the same Celnet engine runs in three modes by swapping
 //! the *edge adapters* (the inbound [`MarketDataSource`] and the outbound
 //! [`PriceSink`]/[`DistributorEgress`]) with **no core change**
-//! (`docs/CELER-FIX-INTEGRATION-PLAN.md` §2.3 / §4).
+//! (`docs/CELNET-FIX-INTEGRATION-PLAN.md` §2.3 / §4).
 //!
 //! # The three modes
 //!
 //! * [`DeploymentMode::Standalone`] — Celnet owns both edges: its own feed
 //!   ([`StandaloneSource`]) in, its own distributor ([`StandaloneSink`]) out.
 //!   Fully REAL and testable in-crate; the default for a self-contained tenant.
-//! * [`DeploymentMode::CelerIntegrated`] — consume the Celer
-//!   `MarketMerchantPriceService` feed, publish to the Celer distributor through
-//!   the [`crate::egress::EgressGovernor`]. The Celer adapters expose the same
-//!   [`MarketDataSource`]/[`PriceSink`] traits; the live JVM/WS wiring is the
+//! * [`DeploymentMode::CelnetIntegrated`] — consume the CelNet
+//!   `MarketMerchantPriceService` feed, publish to the CelNet distributor through
+//!   the [`crate::egress::EgressGovernor`]. The CelNet adapters expose the same
+//!   [`MarketDataSource`]/[`PriceSink`] traits; the live WS wiring is the
 //!   deployment gate, but the seam is exercised here against a real loopback
 //!   server/sink.
-//! * [`DeploymentMode::Hybrid`] — blend the Celer feed **and** an external vendor
+//! * [`DeploymentMode::Hybrid`] — blend the CelNet feed **and** an external vendor
 //!   feed (via the existing [`crate::pipeline_messages`] blend), publish through
 //!   the governed egress. Combines both inbound sources behind the one seam.
 //!
@@ -37,19 +37,19 @@ use crate::vendor::VendorSmileMessage;
 pub enum DeploymentMode {
     /// Celnet owns its own feed and its own distributor sink.
     Standalone,
-    /// Consume the Celer feed; publish to the Celer distributor (governed).
-    CelerIntegrated,
-    /// Blend the Celer feed with an external vendor feed; governed egress.
+    /// Consume the Celnet feed; publish to the Celnet distributor (governed).
+    CelnetIntegrated,
+    /// Blend the Celnet feed with an external vendor feed; governed egress.
     Hybrid,
 }
 
 impl DeploymentMode {
-    /// Whether this mode consumes the Celer (estate) feed.
+    /// Whether this mode consumes the Celnet (estate) feed.
     #[must_use]
-    pub fn uses_celer_feed(self) -> bool {
+    pub fn uses_celnet_feed(self) -> bool {
         matches!(
             self,
-            DeploymentMode::CelerIntegrated | DeploymentMode::Hybrid
+            DeploymentMode::CelnetIntegrated | DeploymentMode::Hybrid
         )
     }
 
@@ -197,7 +197,7 @@ pub struct Edge<S, K> {
 
 /// Builder that wires the right inbound/outbound adapters for a chosen
 /// [`DeploymentMode`]. Generic over the adapter types so the *same* builder wires
-/// the standalone in-crate adapters or the Celer socket adapters — the mode is a
+/// the standalone in-crate adapters or the CelNet socket adapters — the mode is a
 /// runtime tag, the adapters are the type parameters the caller supplies.
 #[derive(Debug)]
 pub struct EdgeBuilder<S, K> {
@@ -394,25 +394,25 @@ mod tests {
 
     #[test]
     fn mode_capabilities_are_correct() {
-        assert!(!DeploymentMode::Standalone.uses_celer_feed());
+        assert!(!DeploymentMode::Standalone.uses_celnet_feed());
         assert!(DeploymentMode::Standalone.uses_external_feed());
-        assert!(DeploymentMode::CelerIntegrated.uses_celer_feed());
-        assert!(!DeploymentMode::CelerIntegrated.uses_external_feed());
-        assert!(DeploymentMode::Hybrid.uses_celer_feed());
+        assert!(DeploymentMode::CelnetIntegrated.uses_celnet_feed());
+        assert!(!DeploymentMode::CelnetIntegrated.uses_external_feed());
+        assert!(DeploymentMode::Hybrid.uses_celnet_feed());
         assert!(DeploymentMode::Hybrid.uses_external_feed());
     }
 
     /// All three modes construct via the builder and round-trip a price through
-    /// the seam. The standalone in-crate adapters are REAL; the Celer modes use
+    /// the seam. The standalone in-crate adapters are REAL; the CelNet modes use
     /// the SAME standalone adapters as their loopback stand-in here (the live
-    /// JVM/WS far side is the deployment gate — the seam and the contract test
+    /// far side is the deployment gate — the seam and the contract test
     /// are identical, which is exactly the point of the seam).
     #[tokio::test]
     async fn all_three_modes_construct_and_round_trip_a_price() {
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
             for mode in [
                 DeploymentMode::Standalone,
-                DeploymentMode::CelerIntegrated,
+                DeploymentMode::CelnetIntegrated,
                 DeploymentMode::Hybrid,
             ] {
                 let source = StandaloneSource::new(script(), 6);

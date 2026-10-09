@@ -1,7 +1,7 @@
 # Celnet — Claude Operating Guide
 
 State-of-the-art FX **Options** pricing platform in Rust. Ultra-low-latency, scalable,
-mission-critical, hot-upgradable; integrates into the Celer trade-lifecycle estate and
+mission-critical, hot-upgradable; integrates into the CelNet trade-lifecycle estate and
 front end, consumes external vendor FX-options market-data feeds, and exposes
 user-extensible analytics via SDKs.
 Greenfield, started 30 May 2026.
@@ -90,7 +90,7 @@ Greenfield, started 30 May 2026.
    commercial-product / competitor / vendor names (Bloomberg, Fenics, Synoption, Murex,
    Numerix, QuantLib, MKL, …) and **no** person/paper/framework names in API identifiers —
    e.g. inputs are `VanillaInputs`, not `GkInputs`. Mathematical-method provenance may appear
-   in doc comments only, never in names. (The parent firm **Celer** and its `celertech`
+   in doc comments only, never in names. (The parent firm **CelNet** and its
    estate are our own systems; their names are fine in integration/docs context, never in
    core product identifiers.)
 9. **No versioned APIs.** We have no external users — there is exactly **one clean, current
@@ -169,7 +169,7 @@ validated in CI/containers on Linux. **GPU strategy:** `wgpu` (Metal/Vulkan/DX12
   the exact mechanism by which it EXITS a book (offsetting leg). Start here for the hedging
   subsystem; `HEDGING-CONFIGURATION-GUIDE.md` is the trader control walkthrough.
 - `docs/COMPETITIVE-ANALYSIS.md` — competitor critique & positioning (analysis doc only).
-- `docs/CELER-INTEGRATION.md` — integration map with the Celer estate + vendor feeds.
+- `docs/CELNET-INTEGRATION.md` — integration map with the CelNet estate + vendor feeds.
 - `docs/INTERFACES.md` — frozen-interface registry (the current contracts).
 - `docs/CONVENTIONS.md` — FX convention spec mapped to the `celnet-types` enums.
 - `docs/ROADMAP.md` — phased plan + crate-ownership workstreams for parallel sessions.

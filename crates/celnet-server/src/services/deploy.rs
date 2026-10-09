@@ -19,8 +19,8 @@
 //!   feed is bound, no governor is constructed, and the edge is **byte-identical to
 //!   today** — a price / surface result is bit-for-bit the current path. The vendor
 //!   feed is a leaf the standalone edge never instantiates.
-//! * **A vendor feed configured** (`CELNET_VENDOR_WS=HOST:PORT`, the
-//!   [`DeployMode::CelerIntegrated`] / [`DeployMode::Hybrid`] inbound) ⇒ a
+//!   [`DeployMode::WithVendorFeed`] (with
+//!   [`DeploymentMode::CelnetIntegrated`] / [`DeploymentMode::Hybrid`] inbound) ⇒ a
 //!   [`VendorFeed`] is wired: the loopback-WS vendor replay is driven by the
 //!   [`ResilientSubscriber`] (which resyncs on a sequence gap), each accepted message
 //!   is [`normalize`]d into a canonical slice, calibrated, and **deposited into the
@@ -69,7 +69,7 @@ pub enum DeployMode {
     /// An external vendor feed is bound on `vendor_ws`: the loopback-WS replay →
     /// [`ResilientSubscriber`] → [`normalize`] → [`SurfaceBook`] deposit, governed
     /// egress. Carries the integration [`DeploymentMode`] the feed realizes
-    /// ([`DeploymentMode::CelerIntegrated`] for a single vendor feed; the seam is the
+    /// ([`DeploymentMode::CelnetIntegrated`] for a single vendor feed; the seam is the
     /// same for [`DeploymentMode::Hybrid`]).
     WithVendorFeed {
         /// The vendor-feed WS endpoint the [`MarketDataSource`] dials.
@@ -91,7 +91,7 @@ impl DeployMode {
     ///   (the inbound vendor feed is bound regardless of the `deploy` label, since a
     ///   configured feed is the operative signal); the `integration_mode` is
     ///   [`DeploymentMode::Hybrid`] when `deploy == "hybrid"`, else
-    ///   [`DeploymentMode::CelerIntegrated`];
+    ///   [`DeploymentMode::CelnetIntegrated`];
     /// * **every other input** — `deploy` absent / `"standalone"` / anything, with no
     ///   usable `vendor_ws` — resolves to [`DeployMode::Standalone`], the safe,
     ///   byte-identical default.
@@ -101,7 +101,7 @@ impl DeployMode {
             let integration_mode = if deploy.trim().eq_ignore_ascii_case("hybrid") {
                 DeploymentMode::Hybrid
             } else {
-                DeploymentMode::CelerIntegrated
+                DeploymentMode::CelnetIntegrated
             };
             return DeployMode::WithVendorFeed {
                 vendor_ws: addr,
@@ -137,7 +137,7 @@ const CTRL_RESYNC: u8 = b'R';
 /// smile message. The server replays a `Vec<ReplayFrame>` in order, then — when the
 /// subscriber asks (control byte `R`) after detecting a sequence gap — replays a
 /// **fresh full snapshot** and the post-resync tail, exactly as a real estate feed
-/// recovers (`docs/CELER-FIX-INTEGRATION-PLAN.md` §4).
+/// recovers (`docs/CELNET-FIX-INTEGRATION-PLAN.md` §4).
 #[derive(Debug, Clone)]
 pub struct ReplayFrame {
     op: u8,
@@ -693,7 +693,7 @@ mod tests {
                 integration_mode,
             } => {
                 assert_eq!(vendor_ws, "127.0.0.1:9099".parse().unwrap());
-                assert_eq!(integration_mode, DeploymentMode::CelerIntegrated);
+                assert_eq!(integration_mode, DeploymentMode::CelnetIntegrated);
             }
             DeployMode::Standalone => panic!("expected a bound vendor feed"),
         }

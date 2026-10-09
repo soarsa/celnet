@@ -30,5 +30,5 @@ All client surfaces consume **one clean, unversioned API contract** mirrored acr
 
 ## Related Root Anchors
 
-- [CELER-INTEGRATION.md](../CELER-INTEGRATION.md) — Integration map with Celer Trader and the trade-lifecycle estate.
+- [CELNET-INTEGRATION.md](../CELNET-INTEGRATION.md) — Integration map with CelNet Trader and the trade-lifecycle estate.
 - [INTERFACES.md](../INTERFACES.md) — The single unversioned wire contract and gRPC/WS service definitions.

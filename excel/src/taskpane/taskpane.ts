@@ -788,7 +788,7 @@ function sideButton(
   v.textContent = price.toFixed(5);
   btn.append(lab, v);
   btn.setAttribute("aria-label", `${label} ${price.toFixed(5)}`);
-  // Spring-pop ripple on click (celer-tokens .btn-clicked), then book.
+  // Spring-pop ripple on click (celnet-tokens .btn-clicked), then book.
   btn.addEventListener("mousedown", () => btn.classList.add("btn-clicked"));
   btn.addEventListener("animationend", () => btn.classList.remove("btn-clicked"));
   btn.addEventListener("click", onClick);

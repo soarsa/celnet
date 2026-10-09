@@ -369,7 +369,7 @@ adopting are called out separately from the *mechanisms* that conflict.
   (`crates/celnet-fix/`): SOH framing, FIXT/4.4 session FSM, **acceptor + initiator**
   roles, an **FX-options dialect** (`dialect_fx.rs`) and a **rates dialect**
   (`dialect_rates.rs`), plus gRPC and WebSocket edges. Estate ingress is governed by
-  **ADR-0011** (`celnet-fix` as the in-repo Celer-estate ingress).
+  **ADR-0011** (`celnet-fix` as the in-repo CelNet-estate ingress).
 - **Aligned:** FIX 4.4 transport, RFQ→Quote/ExecutionReport flow, acceptor venue
   role, sub-engine latency targets (ARCHITECTURE §1.2 p50/p99 budgets).
 - **Missing — a cash-bond FIX dialect.** There is no bond mapping:
@@ -517,8 +517,8 @@ core) and ADR-0007 (one unversioned contract).
 - Registry pattern: `crates/celnet-server/src/config/identity.rs`.
 - FIX edge: `crates/celnet-fix/` (`dialect_fx.rs`, `dialect_rates.rs`).
 - Grounding docs: `docs/ARCHITECTURE.md`, `docs/ANALYTICS-SPEC.md`,
-  `docs/CONVENTIONS.md`, `docs/CELER-INTEGRATION.md`,
-  `docs/adr/ADR-0011-celer-estate-ingress.md`,
+  `docs/CONVENTIONS.md`, `docs/CELNET-INTEGRATION.md`,
+  `docs/adr/ADR-0011-celnet-estate-ingress.md`,
   `docs/FI-BOND-DEAL-CAPTURE-GAP-ANALYSIS.md`.
 </content>
 </invoke>
